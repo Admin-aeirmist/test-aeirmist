@@ -259,6 +259,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   const [editingPhoto, setEditingPhoto] = useState<{ file: File; src: string; type: 'avatar' | 'cover' } | null>(null);
   const [isNGLDashboardOpen, setIsNGLDashboardOpen] = useState(false);
   const [isNGLComposerOpen, setIsNGLComposerOpen] = useState(false);
+  const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [tempBio, setTempBio] = useState('');
@@ -2367,6 +2368,28 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                 className="absolute inset-0 bg-black/80 backdrop-blur-md" 
               />
               <NGLComposer targetProfile={displayUser} onClose={() => setIsNGLComposerOpen(false)} />
+            </div>
+          )}
+
+          {/* QR Code Modal */}
+          {isQRModalOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsQRModalOpen(false)} className="absolute inset-0 bg-black/80 backdrop-blur-md" />
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative z-10 bg-[#080b12] border border-white/10 rounded-2xl p-6 flex flex-col items-center gap-4 w-72 shadow-2xl">
+                <button onClick={() => setIsQRModalOpen(false)} className="absolute top-3 right-3 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all"><X size={14} /></button>
+                <div className="text-xs font-black uppercase text-white tracking-widest">Profile QR Code</div>
+                <div className="p-2 bg-white rounded-xl">
+                  <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(displayUser?.username ? window.location.origin + '/@' + displayUser.username : window.location.href)}`} alt="Profile QR" className="w-48 h-48 rounded-lg" />
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] text-white/40">Scan to visit</p>
+                  <p className="text-xs font-bold text-[#00f3ff]">@{displayUser?.username || 'profile'}</p>
+                </div>
+                <a href={`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(displayUser?.username ? window.location.origin + '/@' + displayUser.username : window.location.href)}`} download={`aeirmist-${displayUser?.username || 'profile'}-qr.png`} target="_blank" rel="noreferrer" className="w-full py-2 bg-[#00f3ff]/10 border border-[#00f3ff]/20 rounded-xl text-xs text-[#00f3ff] font-bold text-center hover:bg-[#00f3ff]/20 transition-all">⬇ Download QR</a>
+              </motion.div>
+            </div>
+          )}
+ />
             </div>
           )}
 
