@@ -44,7 +44,7 @@ const app =
 let appCheck;
 if (typeof window !== 'undefined') {
   // Use VITE_RECAPTCHA_SITE_KEY if available, else use the real key provided by user
-  const recaptchaKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LcIm9EtAAAAADFB2i2GL62oUMmEpqGsaJPaADs2'; 
+  const recaptchaKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LcIm9EtAAAAADzAlaECvnGsifEw38S9OOs0Tbe6'; 
   
   if (import.meta.env.DEV) {
     // Allows testing on localhost
