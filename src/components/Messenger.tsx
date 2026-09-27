@@ -1966,7 +1966,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                     key={chat.id} 
                     onClick={() => handleChatSelect(chat)}
                     onContextMenu={(e) => handleContextMenu(e, chat.id)}
-                    className={`h-[72px] px-4 flex items-center gap-3.5 cursor-pointer hover:bg-aeirmist-cyan/[0.05] transition-all relative group ${isSelected ? 'bg-aeirmist-cyan/[0.08]' : ''}`}
+                    className={`w-full h-[72px] px-3.5 md:px-4 flex items-center gap-3 cursor-pointer hover:bg-aeirmist-cyan/[0.05] transition-all relative group ${isSelected ? 'bg-aeirmist-cyan/[0.08]' : ''}`}
                   >
                     {/* Avatar */}
                     {chat.isGroup || chat.type === 'group' ? (
@@ -1989,11 +1989,11 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                     )}
 
                     {/* Chat Info */}
-                    <div className="flex-1 min-w-0 pr-1">
+                    <div className="flex-1 min-w-0">
                       {/* Top Row: Name + Pin badge + Meta timestamp */}
-                      <div className="flex items-center justify-between gap-1.5 min-w-0">
+                      <div className="flex items-center justify-between gap-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <h3 className={`text-[14px] font-bold truncate ${chat.unread ? 'text-white' : 'text-white/90'}`}>
+                          <h3 className={`text-[13px] md:text-[14px] font-bold truncate ${chat.unread ? 'text-white' : 'text-white/90'}`}>
                             {chat.isGroup || chat.type === 'group' ? (chat.name || chat.groupName || 'Group Chat') : (chat.otherParticipantId === profile?.id ? 'My Space' : <LiveParticipantName participantId={chat.otherParticipantId} fallbackName={chat.name} chatId={chat.id} />)}
                           </h3>
                           {chat.isPinned && (
@@ -2001,14 +2001,10 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                           )}
                         </div>
                         {metaTime ? (
-                          <span className={`text-[11px] shrink-0 font-medium min-w-[50px] text-right whitespace-nowrap ${chat.unread ? 'text-aeirmist-cyan font-bold' : 'text-white/40'}`}>
+                          <span className={`text-[10px] md:text-[11px] shrink-0 font-medium text-right whitespace-nowrap pl-1 ${chat.unread ? 'text-aeirmist-cyan font-bold' : 'text-white/40'}`}>
                             {metaTime}
                           </span>
-                        ) : (
-                          <span className="text-[11px] shrink-0 font-medium min-w-[50px] text-right text-transparent select-none">
-                            &nbsp;
-                          </span>
-                        )}
+                        ) : null}
                       </div>
 
                       {/* Bottom Row: Last message preview + Unread badge */}
@@ -2020,20 +2016,6 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                           <div className="w-2.5 h-2.5 rounded-full bg-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.5)] shrink-0" />
                         )}
                       </div>
-                    </div>
-
-                    {/* Context Menu Action Button - hidden on mobile */}
-                    <div className="hidden md:flex items-center shrink-0">
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleContextMenu(e as any, chat.id);
-                        }}
-                        className="p-1.5 text-white/10 hover:text-white hover:bg-white/5 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                        title="Chat options"
-                      >
-                        <MoreVertical size={16} />
-                      </button>
                     </div>
                   </div>
                 );

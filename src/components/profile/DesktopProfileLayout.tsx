@@ -901,15 +901,26 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
             ) : (
               <>
                 {activeTab === 'posts' && (() => {
-                  const picturePosts = (posts || []).filter(post => post && !post.isArchived).filter(post => {
+                  const isPostVideo = (post: any) => {
                     if (!post) return false;
+                    if (post.mediaType === 'video' || post.type === 'video' || post.isVideo) return true;
+                    const checkUrl = (url: any) => {
+                      if (!url || typeof url !== 'string') return false;
+                      const clean = url.split('?')[0].toLowerCase();
+                      return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.webm') || clean.endsWith('.mkv') || url.toLowerCase().includes('.mp4') || url.toLowerCase().includes('video');
+                    };
+                    if (checkUrl(post.mediaUrl) || checkUrl(post.mediaURL)) return true;
+                    if (Array.isArray(post.mediaUrls) && post.mediaUrls.some((u: any) => checkUrl(u))) return true;
+                    if (Array.isArray(post.mediaItems) && post.mediaItems.some((item: any) => item?.type === 'video' || checkUrl(item?.url))) return true;
+                    return false;
+                  };
+
+                  const picturePosts = (posts || []).filter(post => post && !post.isArchived).filter(post => {
+                    const isVideo = isPostVideo(post);
                     const hasImage = (post.mediaUrls && post.mediaUrls.length > 0) || 
                                      (post.mediaUrl) || 
                                      (post.mediaURL) || 
                                      (post.mediaItems && (Array.isArray(post.mediaItems) ? post.mediaItems.some((item: any) => item?.type === 'image') : false));
-                    const isVideo = post.mediaType === 'video' || 
-                                    (post.mediaItems && (Array.isArray(post.mediaItems) ? post.mediaItems.some((item: any) => item?.type === 'video') : false)) || 
-                                    (post.mediaUrl && post.mediaUrl.toString().endsWith('.mp4'));
                     return hasImage && !isVideo;
                   });
                   return (
@@ -932,13 +943,21 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 })()}
 
                 {activeTab === 'videos' && (() => {
-                  const videoPosts = (posts || []).filter(p => p && !p.isArchived).filter(p => {
-                    if (!p) return false;
-                    return p.mediaType === 'video' || 
-                    (p.mediaItems && (Array.isArray(p.mediaItems) ? p.mediaItems.some((item: any) => item?.type === 'video') : false)) ||
-                    (p.mediaUrls && (Array.isArray(p.mediaUrls) ? p.mediaUrls.some((url: any) => url?.toString().toLowerCase().includes('.mp4') || url?.toString().toLowerCase().includes('video')) : false)) ||
-                    (p.mediaUrl && p.mediaUrl.toString().endsWith('.mp4'));
-                  });
+                  const isPostVideo = (post: any) => {
+                    if (!post) return false;
+                    if (post.mediaType === 'video' || post.type === 'video' || post.isVideo) return true;
+                    const checkUrl = (url: any) => {
+                      if (!url || typeof url !== 'string') return false;
+                      const clean = url.split('?')[0].toLowerCase();
+                      return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.webm') || clean.endsWith('.mkv') || url.toLowerCase().includes('.mp4') || url.toLowerCase().includes('video');
+                    };
+                    if (checkUrl(post.mediaUrl) || checkUrl(post.mediaURL)) return true;
+                    if (Array.isArray(post.mediaUrls) && post.mediaUrls.some((u: any) => checkUrl(u))) return true;
+                    if (Array.isArray(post.mediaItems) && post.mediaItems.some((item: any) => item?.type === 'video' || checkUrl(item?.url))) return true;
+                    return false;
+                  };
+
+                  const videoPosts = (posts || []).filter(p => p && !p.isArchived).filter(p => isPostVideo(p));
                   return (
                     <div id="videos-panel" role="tabpanel" aria-labelledby="videos-tab" className="grid grid-cols-3 gap-4">
                         {videoPosts.map(post => {

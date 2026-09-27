@@ -658,14 +658,20 @@ export const Vault: React.FC<VaultProps> = ({
     const files = e.target.files;
     if (!files || files.length === 0 || !db || !profile?.id) return;
 
-    const targetUid = profile.uid || profile.id;
+    const authUid = user?.uid || profile.uid || profile.id;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
         let mediaUrl = '';
-        if (uploadMedia) {
-          mediaUrl = await uploadMedia(file, `vault/${targetUid}`);
-        } else {
+        try {
+          if (uploadMedia) {
+            mediaUrl = await uploadMedia(file, `vault/${authUid}`);
+          }
+        } catch (uploadErr) {
+          logger.warn("[Vault] Storage upload failed, falling back to data URL:", uploadErr);
+        }
+
+        if (!mediaUrl) {
           mediaUrl = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = (event) => resolve(event.target?.result as string);
@@ -676,7 +682,7 @@ export const Vault: React.FC<VaultProps> = ({
 
         await addDoc(collection(db, 'vault_media'), {
           userId: profile.id,
-          ownerUid: targetUid,
+          ownerUid: authUid,
           url: mediaUrl,
           type: file.type.startsWith('video') ? 'video' : 'image',
           name: file.name,

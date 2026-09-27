@@ -2420,15 +2420,26 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         {/* Content Grid */}
         <div className="lg:hidden grid grid-cols-3 gap-1 sm:gap-4 md:gap-6 px-0">
           {!isLocked && activeTab === 'posts' && (() => {
-            const picturePosts = (posts || []).filter(post => {
-              if (!post || post.isArchived) return false;
+            const isPostVideo = (post: any) => {
+              if (!post) return false;
+              if (post.mediaType === 'video' || post.type === 'video' || post.isVideo) return true;
+              const checkUrl = (url: any) => {
+                if (!url || typeof url !== 'string') return false;
+                const clean = url.split('?')[0].toLowerCase();
+                return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.webm') || clean.endsWith('.mkv') || url.toLowerCase().includes('.mp4') || url.toLowerCase().includes('video');
+              };
+              if (checkUrl(post.mediaUrl) || checkUrl(post.mediaURL)) return true;
+              if (Array.isArray(post.mediaUrls) && post.mediaUrls.some((u: any) => checkUrl(u))) return true;
+              if (Array.isArray(post.mediaItems) && post.mediaItems.some((item: any) => item?.type === 'video' || checkUrl(item?.url))) return true;
+              return false;
+            };
+
+            const picturePosts = (posts || []).filter(post => post && !post.isArchived).filter(post => {
+              const isVideo = isPostVideo(post);
               const hasImage = (post.mediaUrls && post.mediaUrls.length > 0) || 
                                (post.mediaUrl) || 
                                (post.mediaURL) || 
                                (post.mediaItems && post.mediaItems.some((item: any) => item?.type === 'image'));
-              const isVideo = post.mediaType === 'video' || 
-                              (post.mediaItems && post.mediaItems.every((item: any) => item?.type === 'video')) || 
-                              (post.mediaUrl && post.mediaUrl.toString().endsWith('.mp4'));
               return hasImage && !isVideo;
             });
             return picturePosts.map(post => {
@@ -2438,13 +2449,21 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
           })()}
           
           {activeTab === 'videos' && (() => {
-            const videoPosts = (posts || []).filter(p => {
-              if (!p || p.isArchived) return false;
-              return p.mediaType === 'video' || 
-              (p.mediaItems && p.mediaItems.some((item: any) => item?.type === 'video')) ||
-              (p.mediaUrls && (Array.isArray(p.mediaUrls) ? p.mediaUrls.some((url: any) => url?.toString().toLowerCase().includes('.mp4') || url?.toString().toLowerCase().includes('video')) : false)) ||
-              (p.mediaUrl && p.mediaUrl.toString().endsWith('.mp4'));
-            });
+            const isPostVideo = (post: any) => {
+              if (!post) return false;
+              if (post.mediaType === 'video' || post.type === 'video' || post.isVideo) return true;
+              const checkUrl = (url: any) => {
+                if (!url || typeof url !== 'string') return false;
+                const clean = url.split('?')[0].toLowerCase();
+                return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.webm') || clean.endsWith('.mkv') || url.toLowerCase().includes('.mp4') || url.toLowerCase().includes('video');
+              };
+              if (checkUrl(post.mediaUrl) || checkUrl(post.mediaURL)) return true;
+              if (Array.isArray(post.mediaUrls) && post.mediaUrls.some((u: any) => checkUrl(u))) return true;
+              if (Array.isArray(post.mediaItems) && post.mediaItems.some((item: any) => item?.type === 'video' || checkUrl(item?.url))) return true;
+              return false;
+            };
+
+            const videoPosts = (posts || []).filter(p => p && !p.isArchived).filter(p => isPostVideo(p));
             if (videoPosts.length > 0) {
               return videoPosts.map(post => {
                 if (!post) return null;
