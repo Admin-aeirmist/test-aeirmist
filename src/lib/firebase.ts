@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import {
   getAuth,
   setPersistence,
@@ -37,6 +38,30 @@ const app =
   getApps().length > 0
     ? getApp()
     : initializeApp(activeConfig);
+
+
+
+// Initialize Firebase App Check safely
+let appCheck;
+if (typeof window !== 'undefined') {
+  const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LcIm9EtAAAAADzAlaECvnGsifEw38S9OOs0Tbe6';
+  
+  // Enable debug mode automatically on localhost
+  if (window.location.hostname === 'localhost' || import.meta.env.DEV) {
+    (window as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    console.log('[AppCheck] Running in debug mode for localhost');
+  }
+
+  try {
+    appCheck = initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(recaptchaSiteKey),
+      isTokenAutoRefreshEnabled: true
+    });
+    console.log('[AppCheck] Initialized successfully');
+  } catch (error) {
+    console.error('[AppCheck] Failed to initialize:', error);
+  }
+}
 
 export const auth = getAuth(app);
 
