@@ -89,7 +89,18 @@ export const PrivacyFolder = ({
                                     {item.type === 'image' ? (
                                         <img src={item.url} alt={item.name} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
                                     ) : (
-                                        <div className="flex items-center justify-center h-full text-white/30"><Video size={20} /></div>
+                                        <div className="relative w-full h-full">
+                                            {item.thumbnail ? (
+                                                <img src={item.thumbnail} alt={item.name} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                                            ) : (
+                                                <video src={`${item.url}#t=0.5`} className="w-full h-full object-cover transition-transform group-hover:scale-105" muted preload="metadata" playsInline />
+                                            )}
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 pointer-events-none">
+                                                <div className="w-6 h-6 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center">
+                                                    <Video size={12} className="text-white" />
+                                                </div>
+                                            </div>
+                                        </div>
                                     )}
                                 </div>
                             ))}

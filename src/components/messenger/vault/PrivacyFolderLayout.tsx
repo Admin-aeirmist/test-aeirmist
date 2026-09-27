@@ -375,9 +375,15 @@ export const PrivacyFolderLayout = ({
                                                 <img src={item.url} loading="lazy" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                                             ) : (
                                                 <div className="relative w-full h-full">
-                                                    <img src={item.thumbnail || item.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                                                    <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                                                        <Video size={24} className="text-white drop-shadow-lg" />
+                                                    {item.thumbnail ? (
+                                                        <img src={item.thumbnail} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt="" />
+                                                    ) : (
+                                                        <video src={`${item.url}#t=0.5`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" muted preload="metadata" playsInline />
+                                                    )}
+                                                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 pointer-events-none">
+                                                        <div className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center">
+                                                            <Video size={16} className="text-white drop-shadow-lg" />
+                                                        </div>
                                                     </div>
                                                 </div>
                                             )}

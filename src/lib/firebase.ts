@@ -52,6 +52,10 @@ if (typeof window !== 'undefined') {
     console.log('[AppCheck] Running in debug mode for localhost');
   }
 
+  // TEMPORARILY DISABLED: While waiting for Google reCAPTCHA domain propagation,
+  // sending an invalid token causes Firebase Auth to reject the request even in Unenforced mode.
+  // Uncomment this once the reCAPTCHA domain is fully propagated.
+  /*
   try {
     appCheck = initializeAppCheck(app, {
       provider: new ReCaptchaV3Provider(recaptchaSiteKey),
@@ -61,6 +65,7 @@ if (typeof window !== 'undefined') {
   } catch (error) {
     console.error('[AppCheck] Failed to initialize:', error);
   }
+  */
 }
 
 export const auth = getAuth(app);

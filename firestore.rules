@@ -475,12 +475,14 @@ service cloud.firestore {
       allow read, update, delete: if isSignedIn() && (
         resource.data.userId == request.auth.uid ||
         resource.data.userId == ('profile_' + request.auth.uid) ||
-        resource.data.ownerUid == request.auth.uid
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.ownerUid == ('profile_' + request.auth.uid)
       );
       allow create: if isSignedIn() && (
         request.resource.data.userId == request.auth.uid ||
         request.resource.data.userId == ('profile_' + request.auth.uid) ||
-        request.resource.data.ownerUid == request.auth.uid
+        request.resource.data.ownerUid == request.auth.uid ||
+        request.resource.data.ownerUid == ('profile_' + request.auth.uid)
       );
     }
 
@@ -489,12 +491,14 @@ service cloud.firestore {
       allow read, update, delete: if isSignedIn() && (
         resource.data.userId == request.auth.uid ||
         resource.data.userId == ('profile_' + request.auth.uid) ||
-        resource.data.ownerUid == request.auth.uid
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.ownerUid == ('profile_' + request.auth.uid)
       );
       allow create: if isSignedIn() && (
         request.resource.data.userId == request.auth.uid ||
         request.resource.data.userId == ('profile_' + request.auth.uid) ||
-        request.resource.data.ownerUid == request.auth.uid
+        request.resource.data.ownerUid == request.auth.uid ||
+        request.resource.data.ownerUid == ('profile_' + request.auth.uid)
       );
     }
 
