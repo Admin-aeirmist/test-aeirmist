@@ -1,5 +1,4 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import {
   getAuth,
   setPersistence,
@@ -38,24 +37,6 @@ const app =
   getApps().length > 0
     ? getApp()
     : initializeApp(activeConfig);
-
-// Initialize Firebase App Check
-// To get the key: Firebase Console -> App Check -> Apps -> Web -> Register -> Create reCAPTCHA v3 key
-let appCheck;
-if (typeof window !== 'undefined') {
-  // Use VITE_RECAPTCHA_SITE_KEY if available, else use the real key provided by user
-  const recaptchaKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LcIm9EtAAAAADzAlaECvnGsifEw38S9OOs0Tbe6'; 
-  
-  if (import.meta.env.DEV) {
-    // Allows testing on localhost
-    (window as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
-  }
-  
-  appCheck = initializeAppCheck(app, {
-    provider: new ReCaptchaV3Provider(recaptchaKey),
-    isTokenAutoRefreshEnabled: true
-  });
-}
 
 export const auth = getAuth(app);
 
