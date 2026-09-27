@@ -2389,11 +2389,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               </motion.div>
             </div>
           )}
- />
-            </div>
-          )}
 
           {/* Creator Studio Dashboard Overlay */}
+
           {creatorStudioOpen && (
             <div className="fixed inset-0 z-[110] flex flex-col p-2 md:p-4 bg-[#01050a]/95 backdrop-blur-3xl overflow-y-auto">
               <div className="flex justify-end p-2 relative z-[120]">
