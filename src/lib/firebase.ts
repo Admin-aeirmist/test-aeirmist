@@ -43,8 +43,8 @@ const app =
 // To get the key: Firebase Console -> App Check -> Apps -> Web -> Register -> Create reCAPTCHA v3 key
 let appCheck;
 if (typeof window !== 'undefined') {
-  // Use VITE_RECAPTCHA_SITE_KEY if available, else a dummy (will fail gracefully but allow dev)
-  const recaptchaKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI'; // 6LeIx... is Google's testing key
+  // Use VITE_RECAPTCHA_SITE_KEY if available, else use the real key provided by user
+  const recaptchaKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LcIm9EtAAAAADFB2i2GL62oUMmEpqGsaJPaADs2'; 
   
   if (import.meta.env.DEV) {
     // Allows testing on localhost
