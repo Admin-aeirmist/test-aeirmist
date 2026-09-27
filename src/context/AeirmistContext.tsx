@@ -3445,7 +3445,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 resolvedUid = sUsersNorm.docs[0].id || uData.uid;
               }
             } else {
-              const qUsersRaw = query(collection(db, 'users'), where('username', '==', normalizedUsername), limit(1));
+              const exactUsername = input.replace(/^@+/, '').trim();
+              const qUsersRaw = query(collection(db, 'users'), where('username', '==', exactUsername), limit(1));
               const sUsersRaw = await getDocs(qUsersRaw);
               if (!sUsersRaw.empty) {
                 const uData = sUsersRaw.docs[0].data();
@@ -3457,7 +3458,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 }
               } else {
                 // Also check with leading '@' if stored with '@'
-                const qUsersAt = query(collection(db, 'users'), where('username', '==', `@${normalizedUsername}`), limit(1));
+                const qUsersAt = query(collection(db, 'users'), where('username', '==', `@${exactUsername}`), limit(1));
                 const sUsersAt = await getDocs(qUsersAt);
                 if (!sUsersAt.empty) {
                   const uData = sUsersAt.docs[0].data();
@@ -3484,7 +3485,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   resolvedUid = pData.uid || pData.ownerUid || sProfNorm.docs[0].id;
                 }
               } else {
-                const qProfRaw = query(collection(db, 'profiles'), where('username', '==', normalizedUsername), limit(1));
+                const exactUsername = input.replace(/^@+/, '').trim();
+                const qProfRaw = query(collection(db, 'profiles'), where('username', '==', exactUsername), limit(1));
                 const sProfRaw = await getDocs(qProfRaw);
                 if (!sProfRaw.empty) {
                   const pData = sProfRaw.docs[0].data();
@@ -3493,6 +3495,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   if (pEmail && pEmail.includes('@')) {
                     resolvedEmail = pEmail;
                     resolvedUid = pData.uid || pData.ownerUid || sProfRaw.docs[0].id;
+                  }
+                } else {
+                  // Also check with leading '@' if stored with '@'
+                  const qProfAt = query(collection(db, 'profiles'), where('username', '==', `@${exactUsername}`), limit(1));
+                  const sProfAt = await getDocs(qProfAt);
+                  if (!sProfAt.empty) {
+                    const pData = sProfAt.docs[0].data();
+                    resolvedProfileData = pData;
+                    const pEmail = (pData.email || pData.recoveryEmail || pData.personalEmail || '').trim();
+                    if (pEmail && pEmail.includes('@')) {
+                      resolvedEmail = pEmail;
+                      resolvedUid = pData.uid || pData.ownerUid || sProfAt.docs[0].id;
+                    }
                   }
                 }
               }
