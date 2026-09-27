@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppearance } from '../context/AppearanceContext';
 import { 
   Home, 
@@ -31,7 +31,14 @@ import {
   Scan,
   Fingerprint,
   Zap,
-  Download
+  Download,
+  Menu,
+  Moon,
+  Sun,
+  Image as ImageIcon,
+  AlertCircle,
+  ArrowLeft,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useAeirmist } from '../context/AeirmistContext';
@@ -39,6 +46,7 @@ import { getAvatarUrl } from '../lib/avatar';
 import { AeirmistLogo } from './ui/AeirmistLogo';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { InstallModal } from './pwa/InstallModal';
+import { AccountSwitcher } from './auth/AccountSwitcher';
 
 export type Tab = 'feed' | 'messenger' | 'discover' | 'profile' | 'settings' | 'videos' | 'dashboard' | 'notifications' | 'admin';
 
@@ -54,9 +62,50 @@ interface NavigationProps {
 }
 
 export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpanded, setIsExpanded, onNotificationsClick, onPreload, isRemoteView }: NavigationProps) => {
-  const { user, profile, isNavHidden, unreadMessagesCount, unreadNotificationsCount, localAvatarURL, featureFlags } = useAeirmist();
-  const { settings } = useAppearance();
+  const { user, profile, isNavHidden, unreadMessagesCount, unreadNotificationsCount, localAvatarURL, featureFlags, logout, addToast, uploadMedia } = useAeirmist();
+  const { settings, updateAppearanceSettings } = useAppearance();
   const isGlobalBgActive = settings.globalBgType !== 'none' && !!settings.globalBgValue;
+
+  // More Menu Popover State
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [moreSubView, setMoreSubView] = useState<'main' | 'appearance'>('main');
+  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setIsMoreMenuOpen(false);
+        setMoreSubView('main');
+      }
+    };
+    if (isMoreMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMoreMenuOpen]);
+
+  const handleWallpaperUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      let url = '';
+      if (uploadMedia) {
+        url = await uploadMedia(file, `wallpapers/${user?.uid || profile?.id || 'guest'}`);
+      }
+      if (!url) {
+        url = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      }
+      updateAppearanceSettings({ globalBgType: 'custom', globalBgValue: url });
+      addToast({ title: "Wallpaper Updated", message: "Custom background wallpaper set successfully.", type: "success" });
+    } catch (err: any) {
+      addToast({ title: "Upload Failed", message: err?.message || "Failed to set custom wallpaper", type: "warning" });
+    }
+  }, [uploadMedia, user?.uid, profile?.id, updateAppearanceSettings, addToast]);
 
   // Local hover state with beautiful, smart lock safety
   const [isHovered, setIsHovered] = React.useState(false);
@@ -223,9 +272,161 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
           )}
         </div>
 
-        {/* BOTTOM: Sticky user info profile card */}
-        <div className="mt-auto pt-3 shrink-0">
-          <div className="h-px bg-white/5 mb-3 relative">
+        {/* MORE MENU POPOVER */}
+        <AnimatePresence>
+          {isMoreMenuOpen && (
+            <motion.div
+              ref={moreMenuRef}
+              initial={{ opacity: 0, y: 10, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="absolute bottom-20 left-3 w-64 bg-[#141418]/95 border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.8)] backdrop-blur-2xl z-[200] p-1.5 overflow-hidden text-white"
+            >
+              {moreSubView === 'main' ? (
+                <div className="flex flex-col space-y-0.5">
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      onTabChange('settings');
+                    }}
+                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
+                  >
+                    <Settings size={17} className="text-white/70" />
+                    <span>Settings</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      onTabChange('dashboard');
+                    }}
+                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
+                  >
+                    <Activity size={17} className="text-white/70" />
+                    <span>Your activity</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      onTabChange('profile');
+                    }}
+                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
+                  >
+                    <Bookmark size={17} className="text-white/70" />
+                    <span>Saved</span>
+                  </button>
+
+                  <button
+                    onClick={() => setMoreSubView('appearance')}
+                    className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      {settings.themeMode === 'light' ? <Sun size={17} className="text-amber-400" /> : <Moon size={17} className="text-white/70" />}
+                      <span>Switch appearance</span>
+                    </div>
+                    <ChevronRight size={14} className="text-white/40" />
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      addToast({ title: "Report Sent", message: "Thank you for your feedback. Our team is investigating.", type: "info" });
+                    }}
+                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
+                  >
+                    <AlertCircle size={17} className="text-white/70" />
+                    <span>Report a problem</span>
+                  </button>
+
+                  <div className="h-px bg-white/10 my-1 mx-2" />
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setAccountSwitcherOpen(true);
+                    }}
+                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
+                  >
+                    <span>Switch accounts</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      logout();
+                    }}
+                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors w-full text-left"
+                  >
+                    <LogOut size={16} />
+                    <span>Log out</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col space-y-2 p-1">
+                  <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+                    <button
+                      onClick={() => setMoreSubView('main')}
+                      className="p-1 hover:bg-white/10 rounded-lg text-white/70 hover:text-white transition-colors"
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                    <span className="text-xs font-bold uppercase tracking-wider text-white">Switch appearance</span>
+                  </div>
+
+                  {/* Dark Mode Toggle */}
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-white/[0.03]">
+                    <span className="text-xs text-white/80">Dark mode</span>
+                    <button
+                      onClick={() => updateAppearanceSettings({ themeMode: settings.themeMode === 'dark' ? 'light' : 'dark' })}
+                      className={`w-10 h-6 rounded-full p-0.5 transition-colors ${settings.themeMode === 'dark' ? 'bg-aeirmist-cyan' : 'bg-white/20'}`}
+                    >
+                      <div className={`w-5 h-5 rounded-full bg-black shadow-md transition-transform ${settings.themeMode === 'dark' ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
+
+                  {/* Custom Wallpaper Upload */}
+                  <div className="space-y-1.5 px-1 pt-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Custom Wallpaper</span>
+                    <label className="flex items-center justify-center gap-2 w-full p-2.5 rounded-xl border border-dashed border-white/20 hover:border-aeirmist-cyan bg-white/[0.02] hover:bg-aeirmist-cyan/5 text-xs text-white/80 hover:text-aeirmist-cyan cursor-pointer transition-all">
+                      <ImageIcon size={16} />
+                      <span>Choose Wallpaper</span>
+                      <input
+                        type="file"
+                        accept="image/*,video/*"
+                        className="hidden"
+                        onChange={handleWallpaperUpload}
+                      />
+                    </label>
+
+                    {settings.globalBgType === 'custom' && settings.globalBgValue && (
+                      <button
+                        onClick={() => updateAppearanceSettings({ globalBgType: 'none', globalBgValue: '' })}
+                        className="flex items-center justify-center gap-1.5 w-full py-1.5 text-[10px] font-bold text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        <Trash2 size={12} /> Remove Wallpaper
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* BOTTOM: Sticky user info profile card + More button */}
+        <div className="mt-auto pt-2 shrink-0 space-y-1.5">
+          {/* More Menu Trigger Button */}
+          <NavItem 
+            icon={<Menu />} 
+            label="More" 
+            active={isMoreMenuOpen} 
+            isExpanded={isCurrentlyExpanded} 
+            onClick={() => setIsMoreMenuOpen(prev => !prev)} 
+          />
+
+          <div className="h-px bg-white/5 my-1 relative">
              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
           </div>
 
@@ -294,6 +495,15 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
           </motion.button>
         </div>
       </motion.nav>
+
+      <AccountSwitcher 
+        isOpen={accountSwitcherOpen} 
+        onClose={() => setAccountSwitcherOpen(false)} 
+        onAddAccount={() => { 
+          setAccountSwitcherOpen(false); 
+          logout(); 
+        }} 
+      />
 
       {/* Mobile Bottom Navigation Bar - FLUID DOCK */}
       <AnimatePresence>
