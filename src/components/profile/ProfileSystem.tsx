@@ -27,7 +27,7 @@ import { ProfileCompletionCard } from './ProfileCompletionCard';
 import { QuartCard } from './QuartCard';
 import { AeirmistCreatorStudio } from '../videos/AeirmistCreatorStudio';
 import { useNGL } from '../../hooks/useNGL';
-import { BarChart2, Sliders, Briefcase, Eye, BarChart3, Check } from 'lucide-react';
+import { BarChart2, Sliders, Briefcase, Eye, BarChart3, Check, Play } from 'lucide-react';
 import { usePostAnalytics } from '../../hooks/usePostAnalytics';
 import { postAnalytics } from '../../services/PostAnalyticsService';
 const InsightsDashboard = React.lazy(() => import('../analytics/InsightsDashboard').then(m => ({ default: m.InsightsDashboard })));
@@ -3289,36 +3289,46 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
   if (!post) return null;
   const hasMedia = (post.mediaUrls && post.mediaUrls.length > 0) || post.mediaURL || post.mediaUrl;
   
+  // Detect if post is a video
+  const isVideoPost = post.mediaType === 'video' || 
+    (post.mediaItems && post.mediaItems.some((item: any) => item?.type === 'video')) ||
+    (post.mediaUrl && post.mediaUrl.toString().toLowerCase().includes('.mp4')) ||
+    (post.mediaURL && post.mediaURL.toString().toLowerCase().includes('.mp4')) ||
+    (post.mediaUrls && post.mediaUrls.some((u: string) => u?.toString().toLowerCase().includes('.mp4') || u?.toString().toLowerCase().includes('video')));
+
   const type = (post.mediaUrls?.length || 0) > 1 ? 'collage' : ((post.mediaURL || post.mediaUrl) ? 'photo' : 'text');
   usePostAnalytics({ postId: post.id, type });
+
+  // Get the best thumbnail for video posts
+  const videoThumbnail = post.thumbnailUrl || post.thumbnailURL || post.videoThumbnail || post.coverUrl || post.coverURL || null;
+
+  const renderMediaItem = (url: string, className: string, key?: number) => {
+    const isVideoUrl = url?.toString().toLowerCase().includes('.mp4') || url?.toString().toLowerCase().includes('video');
+    
+    if (isVideoUrl) {
+      if (videoThumbnail) {
+        return <img key={key} src={videoThumbnail} className={className} alt="" referrerPolicy="no-referrer" />;
+      }
+      return <video key={key} src={`${url}#t=0.5`} className={className} muted preload="metadata" playsInline />;
+    }
+    return <img key={key} src={url} className={className} alt="" referrerPolicy="no-referrer" />;
+  };
 
   const renderCollage = () => {
     const urls = post.mediaUrls && post.mediaUrls.length > 0 ? post.mediaUrls : (post.mediaURL || post.mediaUrl ? [post.mediaURL || post.mediaUrl] : []);
     if (urls.length === 0) return null;
 
+    const itemClass = "w-full h-full object-cover transition-transform duration-[2s] group-hover:scale-110";
+    const itemClassSmall = "w-full h-full object-cover transition-transform duration-[2s] group-hover:scale-105";
+
     if (urls.length === 1) {
-      return (
-        <img 
-          src={urls[0]} 
-          className="w-full h-full object-cover transition-transform duration-[2s] group-hover:scale-110"
-          alt=""
-          referrerPolicy="no-referrer"
-        />
-      );
+      return renderMediaItem(urls[0], itemClass);
     }
 
     if (urls.length === 2) {
       return (
         <div className="grid grid-cols-2 gap-0.5 w-full h-full">
-          {urls.slice(0, 2).map((url: string, i: number) => (
-            <img 
-              key={i} 
-              src={url} 
-              className="w-full h-full object-cover transition-transform duration-[2s] group-hover:scale-105" 
-              alt=""
-              referrerPolicy="no-referrer"
-            />
-          ))}
+          {urls.slice(0, 2).map((url: string, i: number) => renderMediaItem(url, itemClassSmall, i))}
         </div>
       );
     }
@@ -3327,23 +3337,10 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
       return (
         <div className="grid grid-rows-[1.2fr_1fr] gap-0.5 w-full h-full">
           <div className="w-full h-full overflow-hidden">
-            <img 
-              src={urls[0]} 
-              className="w-full h-full object-cover transition-transform duration-[2s] group-hover:scale-105" 
-              alt=""
-              referrerPolicy="no-referrer"
-            />
+            {renderMediaItem(urls[0], itemClassSmall)}
           </div>
           <div className="grid grid-cols-2 gap-0.5 w-full h-full overflow-hidden">
-            {urls.slice(1, 3).map((url: string, i: number) => (
-              <img 
-                key={i} 
-                src={url} 
-                className="w-full h-full object-cover transition-transform duration-[2s] group-hover:scale-105" 
-                alt=""
-                referrerPolicy="no-referrer"
-              />
-            ))}
+            {urls.slice(1, 3).map((url: string, i: number) => renderMediaItem(url, itemClassSmall, i))}
           </div>
         </div>
       );
@@ -3354,12 +3351,7 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
       <div className="grid grid-cols-2 grid-rows-2 gap-0.5 w-full h-full relative">
         {urls.slice(0, 4).map((url: string, i: number) => (
           <div key={i} className="relative w-full h-full overflow-hidden">
-            <img 
-              src={url} 
-              className="w-full h-full object-cover transition-transform duration-[2s] group-hover:scale-105" 
-              alt=""
-              referrerPolicy="no-referrer"
-            />
+            {renderMediaItem(url, itemClassSmall, i)}
             {i === 3 && urls.length > 4 && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-[1px]">
                 <span className="text-white text-xs sm:text-sm font-black text-center">+{urls.length - 4}</span>
@@ -3391,6 +3383,14 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
             <span>Connections</span>
             <span className="text-aeirmist-cyan font-bold">Shared</span>
           </div>
+        </div>
+      )}
+
+      {/* Video Play Icon Overlay */}
+      {isVideoPost && hasMedia && (
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-1 bg-black/60 backdrop-blur-sm rounded-full px-2 py-1">
+          <Play size={12} className="text-white fill-white" />
+          <span className="text-[9px] font-bold text-white uppercase tracking-wider">Video</span>
         </div>
       )}
 

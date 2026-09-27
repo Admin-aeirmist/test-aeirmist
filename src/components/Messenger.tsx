@@ -2022,8 +2022,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                       </div>
                     </div>
 
-                    {/* Context Menu Action Button */}
-                    <div className="flex items-center shrink-0">
+                    {/* Context Menu Action Button - hidden on mobile */}
+                    <div className="hidden md:flex items-center shrink-0">
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();

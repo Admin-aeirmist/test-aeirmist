@@ -498,28 +498,28 @@ export const AeirmistCamera: React.FC<AeirmistCameraProps> = ({
         )}
       </div>
 
-      {/* Right Controls */}
-      <aside className="fixed right-6 top-1/2 -translate-y-1/2 flex flex-col gap-4 z-[1050]">
-        <div className="glass-panel p-2 flex flex-col gap-6 rounded-full border-white/5 backdrop-blur-3xl shadow-2xl">
+      {/* Right Controls - Compact phone camera style */}
+      <aside className="fixed right-3 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-[1050]">
+        <div className="bg-black/40 p-1.5 flex flex-col gap-3 rounded-2xl border border-white/10 backdrop-blur-xl shadow-2xl">
           <ControlButton 
-            icon={<Music size={18} />} 
+            icon={<Music size={16} />} 
             label="Add" 
             color="aeirmist-cyan" 
           />
           <ControlButton 
-            icon={<Sparkles size={18} />} 
+            icon={<Sparkles size={16} />} 
             label="Beauty" 
             color="aeirmist-magenta"
             active={isBeautyOn}
             onClick={() => setIsBeautyOn(!isBeautyOn)}
           />
           <ControlButton 
-            icon={<RefreshCcw size={18} />} 
+            icon={<RefreshCcw size={16} />} 
             label="Flip" 
             onClick={() => setIsFront(!isFront)}
           />
           <ControlButton 
-            icon={<Gauge size={18} />} 
+            icon={<Gauge size={16} />} 
             label="Speed" 
           />
         </div>
@@ -636,16 +636,16 @@ const ControlButton = React.memo(({ icon, label, color, active, onClick }: {
 }) => (
   <button 
     onClick={onClick}
-    className="flex flex-col items-center gap-1 group outline-none"
+    className="flex flex-col items-center gap-0.5 group outline-none"
   >
-    <div className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all border ${
+    <div className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all border ${
         active 
             ? `bg-${color}/20 border-${color}/40 text-${color} shadow-[0_0_15px_color-mix(in_srgb,var(--color-${color})_30%,transparent)]` 
             : `bg-white/5 border-white/5 text-white/60 group-hover:bg-white/10 group-hover:text-white`
     }`}>
       {icon}
     </div>
-    <span className={`text-[8px] uppercase tracking-widest transition-all ${active ? `text-${color}` : 'text-white/20 group-hover:text-white/40'}`}>
+    <span className={`text-[7px] uppercase tracking-wider transition-all ${active ? `text-${color}` : 'text-white/30 group-hover:text-white/40'}`}>
         {label}
     </span>
   </button>
