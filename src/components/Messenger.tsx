@@ -1082,23 +1082,15 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
   return (
     <div 
-      className={`flex w-full h-full overflow-hidden transition-[height] duration-300 relative ${
-        currentChat?.isVanishMode ? 'bg-black' : (hasActiveWallpaper ? 'bg-transparent' : 'bg-slate-100/60 dark:bg-aeirmist-bg')
+      className={`flex w-full h-full overflow-hidden relative ${
+        currentChat?.isVanishMode ? 'bg-black' : 'bg-slate-100/60 dark:bg-aeirmist-bg'
       }`}
     >
-      {/* Root Continuous Messenger Wallpaper Layer (Spans across sidebar and chat viewport) */}
-      <ChatWallpaperLayer 
-        chatThemeSettings={activeChatTheme}
-        globalThemeSettings={profile?.themeSettings?.chatWallpaper || (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined)}
+      {/* Dark Dim Overlay tied to Appearance Settings */}
+      <div 
+        className="aeirmist-dim-overlay absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 z-[1]" 
+        style={{ opacity: (settings?.globalBgOverlay ?? 45) / 100 }} 
       />
-
-      {/* Dark Dim Overlay tied to Appearance Settings - Only when NO custom chat wallpaper is active */}
-      {!activeChatTheme?.wallpaperURL && (
-        <div 
-          className="aeirmist-dim-overlay absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 z-[1]" 
-          style={{ opacity: (settings?.globalBgOverlay ?? 45) / 100 }} 
-        />
-      )}
 
       <AnimatePresence>
         {forwardingMessage && (
@@ -2102,7 +2094,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
               }}
             />
           ) : (
-            <div className="flex-1 flex flex-row overflow-hidden relative">
+            <div className="flex-1 flex flex-row h-full min-h-0 overflow-hidden relative">
               <ChatWindow 
                 key={currentChat.id}
                 chat={currentChat} 
@@ -3253,7 +3245,7 @@ const ChatWindow = ({
   }, [profile?.themeSettings?.perChatWallpapers, chat.id, chat.themeSettings]);
 
   return (
-    <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto overflow-hidden relative safe-top z-10 ${isVaultMode ? 'bg-[#030107]/98' : 'bg-transparent'}`}>
+    <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto h-full min-h-0 overflow-hidden relative z-10 ${isVaultMode ? 'bg-[#030107]/98' : 'bg-transparent'}`}>
       {/* Direct Scoped Chat Wallpaper Layer */}
       <ChatWallpaperLayer 
         chatThemeSettings={currentChatTheme}
@@ -3261,7 +3253,7 @@ const ChatWindow = ({
       />
 
       {/* Centered Column for Desktop */}
-      <div className="flex-1 flex flex-col w-full relative min-w-0 overflow-hidden z-10">
+      <div className="flex-1 flex flex-col w-full h-full min-h-0 relative min-w-0 overflow-hidden z-10">
         {/* Header */}
         <header className="flex-shrink-0 w-full px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] md:pt-3 pb-2 md:pb-3 md:px-6 border-b border-slate-200/80 dark:border-white/10 flex items-center justify-between bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-header-glass z-[40] relative min-h-0 min-h-[calc(4rem+env(safe-area-inset-top,0px))] md:h-[64px]">
         <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
@@ -3372,7 +3364,7 @@ const ChatWindow = ({
       {/* Messages */}
       <div 
         ref={scrollRef} 
-        className="flex-1 w-full max-w-full overflow-y-auto pt-6 space-y-1 overflow-x-hidden min-w-0 chat-messages-container"
+        className="flex-1 w-full max-w-full overflow-y-auto min-h-0 pt-6 space-y-1 overflow-x-hidden min-w-0 chat-messages-container"
       >
         <AnimatePresence>
           {chat.isVanishMode && (
