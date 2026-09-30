@@ -39,6 +39,7 @@ if (fs.existsSync(WEB_REPO)) {
   console.log(`📁 2. Syncing files to Web Repository (Aeirmist-webapp)...`);
   
   const itemsToSync = [
+    '.github',
     'src',
     'public',
     'scripts',

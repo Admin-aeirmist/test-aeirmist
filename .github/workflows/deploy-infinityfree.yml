@@ -1,0 +1,29 @@
+name: Deploy to InfinityFree via FTP
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  web-deploy:
+    name: Deploy to InfinityFree
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest code
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --force
+
+      - name: Deploy to InfinityFree
+        env:
+          INFINITYFREE_FTP_HOST: ftpupload.net
+          INFINITYFREE_FTP_USER: if0_42922540
+          INFINITYFREE_FTP_PASS: ${{ secrets.INFINITYFREE_FTP_PASSWORD || 'aeirmist1012' }}
+        run: node scripts/deploy-infinityfree.mjs
