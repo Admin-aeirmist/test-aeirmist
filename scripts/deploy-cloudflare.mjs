@@ -26,7 +26,7 @@ const env = {
 };
 
 const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const args = ['wrangler', 'pages', 'deploy', 'dist', '--project-name=aeirmist', '--commit-dirty=true'];
+const args = ['wrangler', 'pages', 'deploy', 'dist', '--project-name=aeirmist', '--branch=main', '--commit-dirty=true'];
 
 const child = spawn(npxCmd, args, {
   cwd: rootDir,
