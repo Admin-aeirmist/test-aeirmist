@@ -273,9 +273,9 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
 
   return (
     <div className="w-full">
-      {/* COVER BANNER HEIGHT 320px */}
+      {/* COVER BANNER - Responsive height to maintain natural aspect ratio without zoom distortion */}
       <div 
-        className="w-full h-80 rounded-t-2xl relative overflow-hidden bg-gradient-to-r from-slate-200 via-sky-100 to-indigo-100 dark:from-zinc-950 dark:via-[#120e2e] dark:to-black border border-slate-200/80 dark:border-white/5 shadow-2xl group/cover cursor-pointer"
+        className="w-full h-72 sm:h-80 md:h-[350px] lg:h-[400px] xl:h-[440px] rounded-t-2xl relative overflow-hidden bg-gradient-to-r from-slate-200 via-sky-100 to-indigo-100 dark:from-zinc-950 dark:via-[#120e2e] dark:to-black border border-slate-200/80 dark:border-white/5 shadow-2xl group/cover cursor-pointer"
         onDragOver={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -290,7 +290,9 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
           }
         }}
       >
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-aeirmist-cyan/10 blur-[80px] rounded-full pointer-events-none" />
+        {!(isOwnProfile && localCoverURL) && !displayUser?.coverURL && (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-aeirmist-cyan/10 blur-[80px] rounded-full pointer-events-none" />
+        )}
         
         {isDataLoading ? (
           <Skeleton className="w-full h-full opacity-10" />
@@ -299,10 +301,10 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
             src={(isOwnProfile && localCoverURL) ? localCoverURL : displayUser.coverURL} 
             alt="Cover" 
             loading="eager"
-            decoding="async"
+            decoding="sync"
             fetchPriority="high"
-            style={{ imageRendering: 'auto' }}
-            className="w-full h-full object-cover relative z-0 transition-opacity duration-300" 
+            style={{ imageRendering: '-webkit-optimize-contrast' }}
+            className="w-full h-full object-cover object-center relative z-0 transition-opacity duration-300" 
             referrerPolicy="no-referrer"
             onError={(e) => {
                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1614850523296-d8c1af93d400?q=80&w=2070&auto=format&fit=crop';
@@ -357,19 +359,19 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
       <div className="bg-white/95 dark:bg-[#04080e]/60 backdrop-blur-3xl border-x border-b border-slate-200/80 dark:border-white/5 rounded-b-2xl p-8 mb-8 shadow-2xl relative">
         <div className="flex flex-col lg:flex-row gap-8 items-center lg:items-start relative z-10">
           
-          {/* Overlapping Square Avatar (160x160px size) with crisp white border in light mode */}
+          {/* Overlapping Square Avatar (160x160px size) */}
           <div className="relative shrink-0 -mt-24">
-            <div className="relative group p-1.5 sm:p-2 bg-white dark:bg-[#07070a] rounded-[2.25rem] shadow-2xl ring-4 ring-white/95 dark:ring-[#07070a]/80 transition-all duration-300">
-              <div className={`absolute inset-0 blur-md rounded-[2.25rem] transition-opacity opacity-0 group-hover:opacity-100 ${isInfinity ? 'bg-aeirmist-magenta/40 opacity-100 animate-pulse' : 'bg-aeirmist-cyan/30'}`} />
+            <div className="relative group">
+              <div className={`absolute inset-0 blur-md rounded-3xl transition-opacity opacity-0 group-hover:opacity-100 ${isInfinity ? 'bg-aeirmist-magenta/40 opacity-100 animate-pulse' : 'bg-aeirmist-cyan/30'}`} />
               <Avatar
                 src={(isOwnProfile && localAvatarURL) ? localAvatarURL : getAvatarUrl(displayUser?.photoURL)}
                 alt={displayUser?.displayName || "User"}
-                sizeClassName="w-36 h-36 sm:w-40 sm:h-40"
-                roundedClassName="rounded-[1.85rem]"
-                innerRoundedClassName="rounded-[1.65rem]"
+                sizeClassName="w-40 h-40"
+                roundedClassName="rounded-3xl"
+                innerRoundedClassName="rounded-[1.75rem]"
                 showStoryRing={true}
                 userId={displayUser?.id}
-                className="shadow-md"
+                className="shadow-2xl"
               >
                 {profileUploadProgress > 0 && (
                   <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/50 backdrop-blur-sm">
