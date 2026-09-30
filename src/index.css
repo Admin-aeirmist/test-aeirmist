@@ -835,22 +835,31 @@
   filter: none !important;
 }
 
-/* Disable or neutralize holographic glows and blurs that cause blurring in light mode */
+/* Disable or neutralize holographic glows and filter blurs in light mode (without breaking backdrop-blur) */
 :root.light [class*="drop-shadow-"],
 :root.light [class*="shadow-glow"],
-:root.light [class*="blur-"],
+:root.light :not([class*="backdrop-blur"])[class*="blur-"],
 :root.light .shadow-glow,
 :root.light .drop-shadow-glow {
   filter: none !important;
   text-shadow: none !important;
 }
 
-/* Ambient glow orbs in light mode: never render as solid unblurred circles */
-:root.light [class*="rounded-full"][class*="blur-"],
-:root.light [class*="rounded-full"].blur-3xl,
-:root.light [class*="rounded-full"].blur-2xl,
-:root.light [class*="rounded-full"].blur-xl {
+/* Ambient glow orbs in light mode: never render as solid unblurred circles (strictly targets background orbs, never UI controls) */
+:root.light .pointer-events-none[class*="rounded-full"][class*="blur-"]:not([class*="backdrop-blur-"]):not(footer *):not(nav *):not(header *):not([data-input-system]):not([data-input-system] *),
+:root.light .pointer-events-none[class*="rounded-full"].blur-3xl,
+:root.light .pointer-events-none[class*="rounded-full"].blur-2xl,
+:root.light .pointer-events-none[class*="rounded-full"].blur-xl {
   display: none !important;
+}
+
+/* Always guarantee Messenger input system is visible and properly styled in light mode */
+:root.light [data-input-system] {
+  display: flex !important;
+}
+:root.light [data-input-system] textarea,
+:root.light [data-input-system] input {
+  display: block !important;
 }
 
 /* Fix for AEIRMIST Logo and hardcoded light-blue text */

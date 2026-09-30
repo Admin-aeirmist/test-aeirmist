@@ -3516,7 +3516,7 @@ const ChatWindow = ({
       </div>
 
       {/* Input Area - Docked at Bottom cleanly without artificial void gaps */}
-      <footer className="flex-shrink-0 sticky bottom-0 w-full px-2 sm:px-4 md:px-8 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] md:pb-4 z-30 transition-all duration-150">
+      <footer className="flex-shrink-0 w-full px-2 sm:px-4 md:px-8 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] md:pb-4 z-30 transition-all duration-150">
         <div className="w-full">
           {(() => {
             const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
@@ -3657,7 +3657,7 @@ const ChatWindow = ({
               );
             }
 
-            if (isOtherPrivate && !amFollowingOther) {
+            if (isOtherPrivate && !amFollowingOther && chat.status !== 'active') {
               return (
                 <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
                   <span className="text-white/40 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Connections Locked</span>

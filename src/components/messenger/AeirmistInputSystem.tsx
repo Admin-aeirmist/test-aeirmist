@@ -491,8 +491,11 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   };
 
   return (
-    <div className="relative w-full min-w-0">
-      <div className={`relative flex flex-col w-full bg-[#111318]/90 backdrop-blur-2xl border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.30)] transition-all duration-300 ${pendingMedia.length > 0 || replyingTo ? 'rounded-[24px]' : 'rounded-full'}`}>
+    <div className="relative w-full min-w-0" data-input-system-wrapper="true">
+      <div 
+        data-input-system="true"
+        className={`relative flex flex-col w-full bg-[#111318]/90 dark:bg-[#111318]/90 messenger-input-glass backdrop-blur-2xl border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.30)] transition-all duration-300 ${pendingMedia.length > 0 || replyingTo ? 'rounded-[24px]' : 'rounded-full'}`}
+      >
         <AnimatePresence>
           {pendingMedia.length > 0 && (
             <motion.div 
@@ -569,6 +572,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
           <div className="flex-1 min-w-0 relative">
             <textarea 
               ref={textareaRef}
+              data-input-textarea="true"
               value={inputText}
               onChange={(e) => {
                 setInputText(e.target.value);
