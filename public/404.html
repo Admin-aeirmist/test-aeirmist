@@ -4,17 +4,33 @@
     <meta charset="utf-8">
     <title>Aeirmist | Redirecting...</title>
     <script type="text/javascript">
-      // Single Page Apps for GitHub Pages
-      // MIT License https://github.com/rafgraph/spa-github-pages
-      var pathSegmentsToKeep = 1;
-      var l = window.location;
-      l.replace(
-        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
-        l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?/' +
-        l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~') +
-        (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
-        l.hash
-      );
+      (function() {
+        var l = window.location;
+        // Anti-loop safeguard: if already has ~and~ or ?/ in URL, break loop immediately
+        if (l.search && (l.search.indexOf('~and~') !== -1 || l.search.indexOf('?/') !== -1 || l.pathname.indexOf('~/') !== -1)) {
+          var cleanPath = l.pathname.replace(/\/+\?\/.*$/, '').replace(/~and~.*$/, '').replace(/\/+$/, '') || '/';
+          l.replace(l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') + cleanPath);
+          return;
+        }
+
+        // Custom domains (aeirmist.com) and Cloudflare Pages use root (pathSegmentsToKeep = 0)
+        // Only GitHub Pages user repo subpaths (e.g. junaedislamjim1012.github.io/Aeirmist) use 1
+        var isGithubSubpath = (l.hostname.indexOf('github.io') !== -1) && (l.pathname.toLowerCase().indexOf('/aeirmist') === 0);
+        var pathSegmentsToKeep = isGithubSubpath ? 1 : 0;
+
+        var basePath = l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/');
+        var routePath = l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~');
+        var queryStr = l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '';
+
+        var target = l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+          basePath + '/?/' + routePath +
+          queryStr +
+          l.hash;
+
+        if (target !== l.href) {
+          l.replace(target);
+        }
+      })();
     </script>
   </head>
   <body>

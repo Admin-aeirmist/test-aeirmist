@@ -1134,7 +1134,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       </AnimatePresence>
 
       {/* Sidebar / Chat List */}
-      <div className={`${isMobileList ? 'flex' : 'hidden md:flex'} ${vaultState.isOpen && !vaultState.activeVaultChatId ? 'w-full flex-1 border-r-0' : 'w-full md:w-72 lg:w-80 border-r border-slate-200/80 dark:border-white/10'} flex-col bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-sidebar-glass shrink-0 min-w-0 overflow-hidden h-full min-h-0 z-10 transition-colors`}>
+      <div className={`${(isMobileList || (vaultState.isOpen && !vaultState.activeVaultChatId)) ? 'flex' : 'hidden md:flex'} ${vaultState.isOpen && !vaultState.activeVaultChatId ? 'w-full flex-1 border-r-0' : 'w-full md:w-72 lg:w-80 border-r border-slate-200/80 dark:border-white/10'} flex-col bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-sidebar-glass shrink-0 min-w-0 overflow-hidden h-full min-h-0 z-10 transition-colors`}>
         {isSearchFocused ? (
           <div className="flex-1 flex flex-col h-full overflow-hidden">
             {/* Dedicated Search Header & Input */}
@@ -1686,6 +1686,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
             onClose={() => {
               setVaultState({ isOpen: false, isUnlocked: false, activeVaultChatId: null });
               setActiveChatId(null);
+              setIsMobileList(true);
             }}
             isUnlocked={vaultState.isUnlocked}
             setIsUnlocked={(val) => setVaultState(prev => ({ ...prev, isUnlocked: val }))}
@@ -1693,6 +1694,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
             onHome={() => {
               setVaultState(prev => ({ ...prev, activeVaultChatId: null }));
               setActiveChatId(null);
+              setIsMobileList(true);
             }}
           />
         ) : (
@@ -1764,7 +1766,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                           <button 
                             onClick={() => { 
                               setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: null }); 
-                              setIsMobileList(false); 
+                              setIsMobileList(true); 
                               setIsMoreMenuOpen(false); 
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/80 hover:text-white transition-all text-left group"
@@ -1912,7 +1914,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                 <button 
                   onClick={() => {
                     setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: null });
-                    setIsMobileList(false);
+                    setIsMobileList(true);
                   }}
                   className="px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5 border border-purple-500/30 text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 hover:border-purple-400"
                 >
@@ -3421,7 +3423,7 @@ const ChatWindow = ({
           </div>
         )}
 
-      <div className="flex flex-col gap-1.5 px-4 md:px-6 lg:px-8 w-full min-w-0 overflow-x-hidden">
+      <div className="flex flex-col gap-1 px-2.5 sm:px-3 md:px-6 w-full min-w-0 overflow-x-hidden">
           {groupedDisplayItems.filter(({ msg }) => {
             if (!messageFilter) return true;
             return msg.text?.toLowerCase().includes(messageFilter.toLowerCase());

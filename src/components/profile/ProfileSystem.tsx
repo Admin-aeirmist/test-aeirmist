@@ -1873,13 +1873,13 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
             {/* Horizontal DP & Stats Row */}
             <div className="flex items-center gap-6 justify-between px-4">
-              {/* Square DP with custom Neon Glow Border and crisp elevated white frame in light mode */}
+              {/* Square DP with custom Neon Glow Border */}
               <div className="relative group shrink-0">
-                <div className="absolute inset-0 bg-gradient-to-tr from-aeirmist-cyan to-aeirmist-magenta rounded-2xl blur px-[1px] opacity-35 animate-pulse" />
+                <div className="absolute inset-0 bg-gradient-to-tr from-aeirmist-cyan to-aeirmist-magenta rounded-2xl blur px-[1px] opacity-40 animate-pulse" />
                 
                 <div 
                   onClick={handleAvatarInteraction}
-                  className="relative z-10 w-20 h-20 rounded-2xl overflow-hidden border-2 border-white dark:border-aeirmist-cyan ring-4 ring-white/95 dark:ring-transparent shadow-xl cursor-pointer bg-white dark:bg-[#050a0f] flex items-center justify-center p-0.5"
+                  className="relative z-10 w-20 h-20 rounded-2xl overflow-hidden border border-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.6)] cursor-pointer bg-[#050a0f] flex items-center justify-center"
                 >
                   <img 
                     src={(isOwnProfile && localAvatarURL) ? localAvatarURL : (getAvatarUrl(displayUser?.photoURL) || undefined)} 
@@ -2354,9 +2354,6 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               )}
               {isOwnProfile && (
                 <TabButton active={activeTab === 'archive'} onClick={() => setActiveTab('archive')} icon={<Archive size={20} />} label="ARCHIVE" />
-              )}
-              {isOwnProfile && (
-                <TabButton active={activeTab === 'vault'} onClick={() => { setActiveTab('vault'); openVault(); }} icon={<Lock size={20} />} label="VAULT" />
               )}
             </div>
           </div>

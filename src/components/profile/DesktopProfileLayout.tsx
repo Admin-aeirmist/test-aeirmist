@@ -831,17 +831,12 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 { id: 'posts', label: 'PHOTOS', icon: <Grid size={20} /> },
                 { id: 'videos', label: 'VIDEOS', icon: <Video size={20} /> },
                 ...(isOwnProfile ? [{ id: 'saved', label: 'SAVED', icon: <Bookmark size={20} /> }] : []),
-                ...(isOwnProfile ? [{ id: 'archive', label: 'ARCHIVE', icon: <Archive size={20} /> }] : []),
-                ...(isOwnProfile ? [{ id: 'vault', label: 'VAULT', icon: <Lock size={20} /> }] : [])
+                ...(isOwnProfile ? [{ id: 'archive', label: 'ARCHIVE', icon: <Archive size={20} /> }] : [])
               ].map(tb => (
                 <button
                   key={tb.id}
                   onClick={() => {
-                    if (tb.id === 'vault') {
-                      openVault();
-                    } else {
-                      setActiveTab(tb.id);
-                    }
+                    setActiveTab(tb.id);
                   }}
                   role="tab"
                   aria-selected={activeTab === tb.id}

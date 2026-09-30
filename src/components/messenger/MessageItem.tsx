@@ -337,7 +337,7 @@ export const MessageItem = React.memo<{
     const timeDisplay = formatTimeOnly(message.timestampMs || message.timestamp);
 
     return (
-      <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} my-2.5 px-4 md:px-8 select-none`}>
+      <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} my-2 px-1 sm:px-2 select-none`}>
         <div 
           onClick={() => {
             if (conversationId && startCall) {
@@ -401,8 +401,8 @@ export const MessageItem = React.memo<{
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
       className={`group flex flex-col ${isMe ? 'items-end' : 'items-start'} mb-[2px] ${
-        message.metadata?.isNewSender ? 'mt-[12px]' : ''
-      } px-4 md:px-8 ${isMe ? 'md:pr-12' : 'md:pl-8'} relative`}
+        message.metadata?.isNewSender ? 'mt-2' : ''
+      } px-1 sm:px-2 relative`}
       onContextMenu={(e) => {
         e.preventDefault();
         setShowMenu(true);
@@ -422,7 +422,7 @@ export const MessageItem = React.memo<{
         </div>
       )}
       <div
-        className={`relative flex items-end gap-3 max-w-full ${isMe ? 'flex-row-reverse' : 'flex-row'} min-w-0`}
+        className={`relative flex items-end gap-2 max-w-full ${isMe ? 'flex-row-reverse' : 'flex-row'} min-w-0`}
         style={{
           transform: `translateX(${swipeX}px)`,
           transition: isSwiping ? 'none' : 'transform 200ms ease-out',

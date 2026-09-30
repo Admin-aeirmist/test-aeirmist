@@ -25,6 +25,16 @@ const env = {
   CLOUDFLARE_ACCOUNT_ID: accountId
 };
 
+import fs from 'fs';
+
+// Ensure dist/404.html is an exact copy of dist/index.html so Cloudflare Pages serves SPA on refresh
+const distIndex = path.join(rootDir, 'dist', 'index.html');
+const dist404 = path.join(rootDir, 'dist', '404.html');
+if (fs.existsSync(distIndex)) {
+  fs.copyFileSync(distIndex, dist404);
+  console.log('✅ Ensured dist/404.html mirrors dist/index.html for seamless SPA fallback on refresh.');
+}
+
 const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const args = ['wrangler', 'pages', 'deploy', 'dist', '--project-name=aeirmist', '--branch=main', '--commit-dirty=true'];
 
