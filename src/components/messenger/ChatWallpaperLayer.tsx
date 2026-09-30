@@ -110,7 +110,6 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
       filter: `blur(${config.blurLevel}px)${isLight && isImage && config.brightness < 0.85 ? ` brightness(${0.8 + config.brightness * 0.2})` : ''}`,
       opacity: effectiveOpacity,
       transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
-      zIndex: 0,
       transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
     };
 
@@ -238,8 +237,7 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
     <div 
       id="chat-wallpaper-system-layer" 
       data-wallpaper-layer="true"
-      className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden select-none" 
-      style={{ zIndex: 0 }}
+      className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden select-none z-0" 
     >
       {/* Background Underlay Color */}
       <div 
@@ -248,16 +246,12 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
             ? 'bg-transparent' 
             : (isLight ? 'bg-slate-100' : 'bg-aeirmist-bg')
         }`} 
-        style={{ zIndex: -2 }} 
       />
 
       {/* Main Wallpaper Image / Gradient */}
       <div 
-        className="absolute inset-0 transition-all duration-700" 
-        style={{
-          ...backgroundStyle,
-          zIndex: -1
-        }} 
+        className="absolute inset-0 transition-all duration-700 pointer-events-none" 
+        style={backgroundStyle} 
       />
 
       {/* Customizable Colored Overlay Tint */}
@@ -268,7 +262,6 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
           opacity: isLight 
             ? (config.brightness < 0.85 ? Math.max(0, (0.85 - config.brightness) * 0.35) : 0)
             : Math.max(0, 1 - config.brightness),
-          zIndex: -1
         }} 
       />
 

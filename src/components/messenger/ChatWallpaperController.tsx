@@ -33,6 +33,7 @@ interface ChatWallpaperControllerProps {
   chatId: string;
   chatThemeSettings?: ChatWallpaperConfig;
   onClose: () => void;
+  onSave?: (newConfig: ChatWallpaperConfig) => void;
 }
 
 const PRESET_WALLPAPERS = [
@@ -143,7 +144,8 @@ export const MESSENGER_THEMES: MessengerTheme[] = [
 export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = ({
   chatId,
   chatThemeSettings,
-  onClose
+  onClose,
+  onSave
 }) => {
   const { uploadMedia, updateConversationThemeSettings, updateProfile, profile, addToast } = useAeirmist();
   const [isLight, setIsLight] = useState(() => {
@@ -351,14 +353,14 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
         // Apply for Me: Save to personal user profile perChatWallpapers[chatId]
         const currentThemeSettings = profile?.themeSettings || {};
         const currentPerChat = currentThemeSettings.perChatWallpapers || {};
+        const updatedPerChat = {
+          ...currentPerChat,
+          [chatId]: resolvedConfig
+        };
         await updateProfile({
-          ...profile,
           themeSettings: {
             ...currentThemeSettings,
-            perChatWallpapers: {
-              ...currentPerChat,
-              [chatId]: resolvedConfig
-            }
+            perChatWallpapers: updatedPerChat
           }
         });
       } else {
@@ -371,7 +373,6 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
         if (currentPerChat[chatId]) {
           delete currentPerChat[chatId];
           await updateProfile({
-            ...profile,
             themeSettings: {
               ...currentThemeSettings,
               perChatWallpapers: currentPerChat
@@ -379,14 +380,21 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
           });
         }
       }
+
+      onSave?.(resolvedConfig);
+      addToast({
+        title: 'Wallpaper Saved',
+        message: 'Wallpaper applied to chat successfully!',
+        type: 'success'
+      });
       setSaveSuccess(true);
       setTimeout(() => {
         setSaveSuccess(false);
         onClose();
-      }, 1000);
+      }, 600);
     } catch (err) {
       logger.error('Failed saving wallpaper parameters', err);
-      addToast({ title: 'Save failed', message: 'Write request rejected. Check connection or quota restriction.', type: 'warning' });
+      addToast({ title: 'Save failed', message: 'Could not save wallpaper settings. Please try again.', type: 'warning' });
     } finally {
       setIsSaving(false);
     }

@@ -1077,24 +1077,28 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
   const currentTheme = (currentChat?.theme as keyof typeof themeStyles) || 'neural';
   const styles = themeStyles[currentTheme];
+  const activeChatTheme = currentChat ? (profile?.themeSettings?.perChatWallpapers?.[currentChat.id] || currentChat.themeSettings) : undefined;
+  const hasActiveWallpaper = Boolean(activeChatTheme?.wallpaperURL || profile?.themeSettings?.chatWallpaper?.wallpaperURL || settings?.globalBgValue);
 
   return (
     <div 
       className={`flex w-full h-full overflow-hidden transition-[height] duration-300 relative ${
-        currentChat?.isVanishMode ? 'bg-black' : 'bg-slate-100/60 dark:bg-aeirmist-bg'
+        currentChat?.isVanishMode ? 'bg-black' : (hasActiveWallpaper ? 'bg-transparent' : 'bg-slate-100/60 dark:bg-aeirmist-bg')
       }`}
     >
       {/* Root Continuous Messenger Wallpaper Layer (Spans across sidebar and chat viewport) */}
       <ChatWallpaperLayer 
-        chatThemeSettings={currentChat ? (profile?.themeSettings?.perChatWallpapers?.[currentChat.id] || currentChat.themeSettings) : undefined}
+        chatThemeSettings={activeChatTheme}
         globalThemeSettings={profile?.themeSettings?.chatWallpaper || (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined)}
       />
 
-      {/* Dark Dim Overlay tied to Appearance Settings */}
-      <div 
-        className="aeirmist-dim-overlay absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 z-[1]" 
-        style={{ opacity: (settings?.globalBgOverlay ?? 45) / 100 }} 
-      />
+      {/* Dark Dim Overlay tied to Appearance Settings - Only when NO custom chat wallpaper is active */}
+      {!activeChatTheme?.wallpaperURL && (
+        <div 
+          className="aeirmist-dim-overlay absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 z-[1]" 
+          style={{ opacity: (settings?.globalBgOverlay ?? 45) / 100 }} 
+        />
+      )}
 
       <AnimatePresence>
         {forwardingMessage && (
@@ -1112,8 +1116,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           />
         )}
       </AnimatePresence>
-      {/* Background Gradients */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      {/* Background Gradients - Dimmed when wallpaper is active to prevent clashing */}
+      <div className={`absolute inset-0 overflow-hidden pointer-events-none transition-opacity duration-500 ${activeChatTheme?.wallpaperURL ? 'opacity-10' : 'opacity-100'}`}>
         <div className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-white/5' : 'bg-aeirmist-cyan/10'} rounded-full blur-[120px]`} />
         <div className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-aeirmist-magenta/5' : 'bg-aeirmist-magenta/10'} rounded-full blur-[120px]`} />
       </div>
@@ -2356,6 +2360,7 @@ const ChatWindow = ({
     toggleFollow, 
     addToast
   } = useAeirmist();
+  const { settings } = useAppearance();
 
   const [messages, setMessages] = useState<any[]>([]);
   const [optimistic, setOptimistic] = useState<any[]>([]);
@@ -3249,8 +3254,14 @@ const ChatWindow = ({
 
   return (
     <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto overflow-hidden relative safe-top z-10 ${isVaultMode ? 'bg-[#030107]/98' : 'bg-transparent'}`}>
+      {/* Direct Scoped Chat Wallpaper Layer */}
+      <ChatWallpaperLayer 
+        chatThemeSettings={currentChatTheme}
+        globalThemeSettings={profile?.themeSettings?.chatWallpaper || (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined)}
+      />
+
       {/* Centered Column for Desktop */}
-      <div className="flex-1 flex flex-col w-full relative min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col w-full relative min-w-0 overflow-hidden z-10">
         {/* Header */}
         <header className="flex-shrink-0 w-full px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] md:pt-3 pb-2 md:pb-3 md:px-6 border-b border-slate-200/80 dark:border-white/10 flex items-center justify-between bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-header-glass z-[40] relative min-h-0 min-h-[calc(4rem+env(safe-area-inset-top,0px))] md:h-[64px]">
         <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
@@ -3695,6 +3706,12 @@ const ChatWindow = ({
             chatId={chat.id}
             chatThemeSettings={profile?.themeSettings?.perChatWallpapers?.[chat.id] || chat.themeSettings}
             onClose={() => setIsWallpaperCustomizerOpen(false)}
+            onSave={(newConfig) => {
+              onChatUpdate({
+                ...chat,
+                themeSettings: newConfig
+              });
+            }}
           />
         )}
       </AnimatePresence>
