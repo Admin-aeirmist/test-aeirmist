@@ -10,6 +10,7 @@ import { useAeirmist } from '../context/AeirmistContext';
 import { getAvatarUrl } from '../lib/avatar';
 import { aeirmistRingtone } from '../modules/calls/RingtoneService';
 import { aeirmistCall } from '../modules/calls/CallService';
+import { ensureCallPermissions } from '../modules/calls/CallPermissions';
 import { LiveParticipantName } from './Messenger';
 import { logger } from '@/src/utils/logger';
 
@@ -67,15 +68,19 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const hasInitiatedCall = useRef(false);
+  const isAcceptingRef = useRef(false);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Track availability helpers
-  const hasRemoteVideoTrack = Boolean(remoteStream && remoteStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live'));
-  const hasLocalVideoTrack = Boolean(callStream && callStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live'));
+  // Decoupled track availability helpers
+  const hasRemoteVideo = Boolean(remoteStream && remoteStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live'));
+  const hasLocalVideo = Boolean(callStream && callStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live')) && !isVideoOff;
+  const hasRemoteVideoTrack = hasRemoteVideo;
+  const hasLocalVideoTrack = hasLocalVideo;
+  const isVideoLayout = type === 'video' || hasRemoteVideo || hasLocalVideo;
 
-  // Dedicated Video Element Refs ensuring NO reset loops
+  // Dedicated Video Element Refs ensuring NO reset loops & strictly video-only playback
   const setLocalVideoNode = useCallback((el: HTMLVideoElement | null) => {
     localVideoRef.current = el;
     if (el) {
@@ -93,8 +98,11 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     remoteVideoRef.current = el;
     if (el) {
       el.muted = true;
-      if (remoteStream && el.srcObject !== remoteStream) {
-        el.srcObject = remoteStream;
+      if (remoteStream && remoteStream.getVideoTracks().length > 0) {
+        const videoOnly = new MediaStream(remoteStream.getVideoTracks());
+        if (!el.srcObject || (el.srcObject as MediaStream).getVideoTracks()[0]?.id !== videoOnly.getVideoTracks()[0]?.id) {
+          el.srcObject = videoOnly;
+        }
       }
       if (remoteStream && el.paused) {
         el.play().catch(() => {});
@@ -115,9 +123,11 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
   useEffect(() => {
     const el = remoteVideoRef.current;
-    if (el && remoteStream) {
-      if (el.srcObject !== remoteStream) {
-        el.srcObject = remoteStream;
+    if (el && remoteStream && remoteStream.getVideoTracks().length > 0) {
+      const currentTrackId = (el.srcObject as MediaStream)?.getVideoTracks()[0]?.id;
+      const newTrackId = remoteStream.getVideoTracks()[0]?.id;
+      if (currentTrackId !== newTrackId) {
+        el.srcObject = new MediaStream(remoteStream.getVideoTracks());
       }
       el.play().catch(() => {});
     }
@@ -223,10 +233,10 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           const currentTrackId = (v.srcObject as MediaStream)?.getVideoTracks()[0]?.id;
           const newTrackId = remoteStream?.getVideoTracks()[0]?.id;
           if (newTrackId && currentTrackId !== newTrackId) {
-            v.srcObject = remoteStream;
+            v.srcObject = new MediaStream(remoteStream.getVideoTracks());
             v.play().catch(() => {});
           } else if (!currentTrackId && remoteStream && remoteStream.getVideoTracks().length > 0) {
-            v.srcObject = remoteStream;
+            v.srcObject = new MediaStream(remoteStream.getVideoTracks());
             v.play().catch(() => {});
           }
         }
@@ -270,6 +280,20 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     }
   };
 
+  const handleToggleVideo = async (targetEnabled?: boolean) => {
+    const shouldEnable = targetEnabled !== undefined ? targetEnabled : isVideoOff;
+    try {
+      setIsVideoOff(!shouldEnable);
+      const updatedStream = await aeirmistCall.toggleVideo(shouldEnable);
+      if (updatedStream) {
+        setCallStream(updatedStream);
+      }
+    } catch (e: any) {
+      logger.error("[CallModal] Toggle video failed:", e);
+      setIsVideoOff(true);
+    }
+  };
+
   // Timer logic
   useEffect(() => {
     if (callStatus === 'connected') {
@@ -310,10 +334,10 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         if (!isIncomingCall && safeChat.id && !hasInitiatedCall.current) {
           hasInitiatedCall.current = true;
           unlockAudio();
-          if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
-            try {
-              await (window as any).Capacitor.Plugins?.NativeSettings?.requestAllPermissions?.();
-            } catch (e) {}
+          try {
+            await ensureCallPermissions(type);
+          } catch (permErr) {
+            logger.warn("[CallModal] Permission check on init:", permErr);
           }
           const targetUid = safeChat.otherParticipantUid || safeChat.participants?.find((id: string) => id !== profile?.id && id !== user?.uid && id !== ('profile_' + user?.uid));
           await startCall(safeChat.id, type, targetUid);
@@ -462,13 +486,15 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   };
 
   const handleAccept = async (asAudio = false) => {
-    if (!activeCall?.id) return;
+    if (!activeCall?.id || isAcceptingRef.current) return;
+    isAcceptingRef.current = true;
     unlockAudio();
     
-    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
-      try {
-        await (window as any).Capacitor.Plugins?.NativeSettings?.requestAllPermissions?.();
-      } catch (e) {}
+    const callType = asAudio ? 'audio' : type;
+    try {
+      await ensureCallPermissions(callType);
+    } catch (permErr) {
+      logger.warn("[CallModal] Permission check on accept:", permErr);
     }
 
     try {
@@ -478,6 +504,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       await acceptCall(activeCall.id, activeCall.conversationId);
     } catch (err: any) {
       logger.error("Call accept failed", err);
+      isAcceptingRef.current = false;
       setCallStatus('error');
       setErrorMessage(err.message || 'Could not connect audio/video stream. Please check camera & microphone permissions.');
     }
@@ -565,7 +592,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   };
 
   const displayPhoto = isIncomingCall ? (activeCall?.callerPhoto || safeChat.photo) : (activeCall?.receiverPhoto || safeChat.photo);
-  const isVideoMode = !isVideoOff;
+  const isVideoMode = isVideoLayout;
 
   // Add People Drawer Component
   const renderAddPeopleDrawer = () => (
@@ -845,7 +872,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
                   {isMuted ? <MicOff size={18} /> : <Mic size={18} />}
                 </button>
                 <button
-                  onClick={() => setIsVideoOff(!isVideoOff)}
+                  onClick={() => handleToggleVideo(!isVideoOff)}
                   className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                     isVideoOff ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/10 text-white'
                   }`}
@@ -918,7 +945,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
               {/* 3. Camera Toggle */}
               <button
-                onClick={() => setIsVideoOff(!isVideoOff)}
+                onClick={() => handleToggleVideo(!isVideoOff)}
                 className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all active:scale-90 shrink-0 ${
                   isVideoOff 
                     ? 'bg-red-500/20 text-red-400 border border-red-500/30' 
@@ -1073,7 +1100,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
               {/* 1. Camera Toggle */}
               <button
-                onClick={() => setIsVideoOff(!isVideoOff)}
+                onClick={() => handleToggleVideo(!isVideoOff)}
                 className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
                 title="Camera Toggle"
               >
@@ -1281,7 +1308,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
             {/* 3. Camera Toggle */}
             <button
-              onClick={() => setIsVideoOff(false)}
+              onClick={() => handleToggleVideo(true)}
               className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
               title="Enable Camera"
             >
@@ -1529,7 +1556,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
             <div className="w-full h-full grid grid-cols-2 gap-3">
               {/* Tile 1: Remote Participant */}
               <div className="relative rounded-xl bg-[#222327] border border-white/10 overflow-hidden flex items-center justify-center group shadow-xl">
-                {isVideoMode && hasRemoteVideoTrack ? (
+                {hasRemoteVideo ? (
                   <video ref={setRemoteVideoNode} className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline muted />
                 ) : (
                   <div className="flex flex-col items-center justify-center p-4">
@@ -1546,7 +1573,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
               {/* Tile 2: Local User */}
               <div className="relative rounded-xl bg-[#222327] border border-white/10 overflow-hidden flex items-center justify-center group shadow-xl">
-                {isVideoMode && hasLocalVideoTrack && !isVideoOff ? (
+                {hasLocalVideo ? (
                   <video ref={setLocalVideoNode} className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
                 ) : (
                   <div className="flex flex-col items-center justify-center p-4">
@@ -1567,13 +1594,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               {groupParticipants.slice(0, 4).map((p) => (
                 <div key={p.id} className="relative rounded-xl bg-[#222327] border border-white/10 overflow-hidden flex items-center justify-center group shadow-xl">
                   {p.isLocal ? (
-                    isVideoMode ? (
+                    hasLocalVideo ? (
                       <video className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
                     ) : (
                       <img src={p.photo} className="w-24 h-24 rounded-2xl object-cover border-2 border-white/15 shadow-2xl" referrerPolicy="no-referrer" />
                     )
                   ) : (
-                    isVideoMode && p.id === 'remote_1' ? (
+                    hasRemoteVideo && p.id === 'remote_1' ? (
                       <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline muted />
                     ) : (
                       <img src={p.photo} className="w-24 h-24 rounded-2xl object-cover border-2 border-white/15 shadow-2xl" referrerPolicy="no-referrer" />
@@ -1618,7 +1645,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
             {/* Video Toggle */}
             <button
-              onClick={() => setIsVideoOff(!isVideoOff)}
+              onClick={() => handleToggleVideo(!isVideoOff)}
               className="relative flex items-center justify-center w-11 h-11 cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
               title="Toggle Video"
             >

@@ -18,6 +18,7 @@ import android.os.Environment;
 import java.util.ArrayList;
 import java.util.List;
 import android.media.AudioManager;
+import android.media.AudioDeviceInfo;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -69,6 +70,59 @@ public class MainActivity extends BridgeActivity {
                 call.resolve();
             } catch (Exception ex) {
                 call.reject("Permission request error: " + ex.getMessage());
+            }
+        }
+
+        @PluginMethod
+        public void checkCallPermissions(PluginCall call) {
+            try {
+                String type = call.getString("type", "audio");
+                boolean hasMic = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+                boolean hasCam = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+
+                boolean granted = "video".equals(type) ? (hasMic && hasCam) : hasMic;
+
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("granted", granted);
+                ret.put("microphone", hasMic);
+                ret.put("camera", hasCam);
+                ret.put("type", type);
+                call.resolve(ret);
+            } catch (Exception ex) {
+                call.reject("Permission check error: " + ex.getMessage());
+            }
+        }
+
+        @PluginMethod
+        public void requestCallPermissions(PluginCall call) {
+            try {
+                String type = call.getString("type", "audio");
+                List<String> needed = new ArrayList<>();
+
+                // Always check microphone for calling
+                if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    needed.add(Manifest.permission.RECORD_AUDIO);
+                }
+
+                // ONLY check camera if this is a video call
+                if ("video".equals(type)) {
+                    if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        needed.add(Manifest.permission.CAMERA);
+                    }
+                }
+
+                if (!needed.isEmpty()) {
+                    ActivityCompat.requestPermissions(getActivity(), needed.toArray(new String[0]), ALL_PERMISSIONS_CODE);
+                }
+
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("alreadyGranted", needed.isEmpty());
+                ret.put("requestedCount", needed.size());
+                ret.put("type", type);
+                ret.put("success", true);
+                call.resolve(ret);
+            } catch (Exception ex) {
+                call.reject("Call permission request error: " + ex.getMessage());
             }
         }
 
@@ -291,10 +345,32 @@ public class MainActivity extends BridgeActivity {
                 if (am != null) {
                     if ("communication".equals(mode)) {
                         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                        am.setSpeakerphoneOn(speaker);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
+                            AudioDeviceInfo targetDevice = null;
+                            for (AudioDeviceInfo d : devices) {
+                                if (speaker && d.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                                    targetDevice = d;
+                                    break;
+                                } else if (!speaker && (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE || d.getType() == AudioDeviceInfo.TYPE_WIRED_HEADSET || d.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO)) {
+                                    targetDevice = d;
+                                    break;
+                                }
+                            }
+                            if (targetDevice != null) {
+                                am.setCommunicationDevice(targetDevice);
+                            } else {
+                                am.setSpeakerphoneOn(speaker);
+                            }
+                        } else {
+                            am.setSpeakerphoneOn(speaker);
+                        }
                     } else {
-                        am.setMode(AudioManager.MODE_NORMAL);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            am.clearCommunicationDevice();
+                        }
                         am.setSpeakerphoneOn(false);
+                        am.setMode(AudioManager.MODE_NORMAL);
                     }
                 }
                 call.resolve();
@@ -310,20 +386,6 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeSettingsPlugin.class);
         super.onCreate(savedInstanceState);
-
-        // Proactively ensure Camera & Microphone permissions are requested so calls never get blocked
-        try {
-            List<String> startupPerms = new ArrayList<>();
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                startupPerms.add(Manifest.permission.CAMERA);
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                startupPerms.add(Manifest.permission.RECORD_AUDIO);
-            }
-            if (!startupPerms.isEmpty()) {
-                ActivityCompat.requestPermissions(this, startupPerms.toArray(new String[0]), ALL_PERMISSIONS_CODE);
-            }
-        } catch (Exception ignored) {}
 
         try {
             if (this.bridge != null && this.bridge.getWebView() != null) {
@@ -406,7 +468,23 @@ public class MainActivity extends BridgeActivity {
         if (requestCode == ALL_PERMISSIONS_CODE && pendingPermissionRequest != null) {
             runOnUiThread(() -> {
                 try {
-                    pendingPermissionRequest.grant(pendingPermissionRequest.getResources());
+                    List<String> grantedResources = new ArrayList<>();
+                    for (String res : pendingPermissionRequest.getResources()) {
+                        if (android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res)) {
+                            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                grantedResources.add(res);
+                            }
+                        } else if (android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res)) {
+                            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                grantedResources.add(res);
+                            }
+                        }
+                    }
+                    if (!grantedResources.isEmpty()) {
+                        pendingPermissionRequest.grant(grantedResources.toArray(new String[0]));
+                    } else {
+                        pendingPermissionRequest.deny();
+                    }
                 } catch (Exception ignored) {
                     try {
                         pendingPermissionRequest.deny();

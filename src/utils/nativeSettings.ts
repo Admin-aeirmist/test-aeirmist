@@ -5,6 +5,9 @@ interface NativeSettingsPlugin {
   openNotificationSettings(): Promise<void>;
   requestNotificationPermission(): Promise<void>;
   requestAllPermissions(): Promise<{ requestedCount?: number; success: boolean }>;
+  checkCallPermissions(options: { type: 'audio' | 'video' }): Promise<{ granted: boolean; microphone: boolean; camera: boolean; type: string }>;
+  requestCallPermissions(options: { type: 'audio' | 'video' }): Promise<{ alreadyGranted: boolean; requestedCount: number; type: string; success: boolean }>;
+  setAudioMode(options: { mode: 'communication' | 'normal'; speaker?: boolean }): Promise<void>;
   saveMediaToDevice(options: { url: string; filename?: string }): Promise<{ success: boolean; filename?: string; message?: string }>;
 }
 

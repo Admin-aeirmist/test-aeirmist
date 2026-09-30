@@ -89,12 +89,16 @@ export const usePermissions = () => {
     setPermissions(prev => ({ ...prev, [type]: { ...prev[type], status: 'checking' } }));
     logger.info(`[Permissions] Requesting ${type}...`);
     
-    // Proactively invoke native Android OS permissions dialog if on Android APK
+    // Proactively invoke native Android OS permissions dialog if on Android APK for the specific resource
     if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
       try {
         const plugins = (window as any).Capacitor.Plugins;
-        if (plugins?.NativeSettings?.requestAllPermissions) {
-          await plugins.NativeSettings.requestAllPermissions();
+        if (plugins?.NativeSettings?.requestCallPermissions) {
+          if (type === 'microphone') {
+            await plugins.NativeSettings.requestCallPermissions({ type: 'audio' });
+          } else if (type === 'camera') {
+            await plugins.NativeSettings.requestCallPermissions({ type: 'video' });
+          }
         }
       } catch (e) {
         logger.warn("Native permission check in usePermissions ignored", e);

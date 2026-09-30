@@ -1,5 +1,6 @@
 import { logger } from '@/src/utils/logger';
 import { getEffectiveIceServers as fetchIceServers, DEFAULT_STUN_SERVERS } from './IceServerConfig';
+import { ensureCallPermissions, checkCallPermissionState } from './CallPermissions';
 import { 
   collection, 
   doc, 
@@ -60,6 +61,12 @@ class CallService {
   public setSafeMode(enabled: boolean) {
     this.isSafeMode = enabled;
   }
+  private audioTransceiver: RTCRtpTransceiver | null = null;
+  private videoTransceiver: RTCRtpTransceiver | null = null;
+  private renegotiationUnsub: (() => void) | null = null;
+  private makingOffer: boolean = false;
+  private isSettingRemoteAnswerPending: boolean = false;
+  private lastStatsAudioLevel: number = 0;
   private audioContext: AudioContext | null = null;
   private localAudioSource: MediaStreamAudioSourceNode | null = null;
   private remoteAudioSource: MediaStreamAudioSourceNode | null = null;
@@ -121,23 +128,23 @@ class CallService {
         throw new Error("Media access (camera/microphone) is not supported in this browser or requires a secure HTTPS connection.");
       }
 
-      // Proactively trigger native Android OS permissions dialog if on Android APK
-      if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
-        try {
-          const plugins = (window as any).Capacitor.Plugins;
-          if (plugins?.NativeSettings?.requestAllPermissions) {
-            await plugins.NativeSettings.requestAllPermissions();
-          }
-        } catch (e) {
-          logger.warn("Native permission check in CallService ignored", e);
-        }
-      }
+      // Check and request permissions idempotently for this specific call type
+      // NOTE: Audio calls NEVER request camera permission!
+      await ensureCallPermissions(type);
 
       const audioConstraints: MediaTrackConstraints = {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
+        echoCancellation: { ideal: true },
+        noiseSuppression: { ideal: true },
+        autoGainControl: { ideal: true },
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 }
       };
+      // Chromium & Android WebView hardware AEC / DSP optimization
+      (audioConstraints as any).googEchoCancellation = true;
+      (audioConstraints as any).googAutoGainControl = true;
+      (audioConstraints as any).googNoiseSuppression = true;
+      (audioConstraints as any).googHighpassFilter = true;
+      (audioConstraints as any).googTypingNoiseDetection = true;
 
       if (type === 'video') {
         try {
@@ -160,7 +167,7 @@ class CallService {
             this.hasLocalVideo = true;
           } catch (basicErr: any) {
             logger.warn("[CallService] Video stream failed completely, falling back to audio stream", basicErr);
-            this.lastMediaError = basicErr?.message || "Camera access failed";
+            this.classifyMediaError(basicErr, 'video');
             this.localStream = await navigator.mediaDevices.getUserMedia({
               audio: audioConstraints
             });
@@ -177,8 +184,24 @@ class CallService {
       return this.localStream;
     } catch (e: any) {
       logger.error("Failed to get local stream", e);
-      this.lastMediaError = e?.message || "Failed to access microphone/camera";
+      this.classifyMediaError(e, type);
       throw e;
+    }
+  }
+
+  private classifyMediaError(err: any, type: 'audio' | 'video') {
+    if (!err) return;
+    const name = err.name || '';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      this.lastMediaError = `${type === 'video' ? 'Camera' : 'Microphone'} permission was denied. Please allow access in settings.`;
+    } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      this.lastMediaError = `No ${type === 'video' ? 'camera' : 'microphone'} hardware found on this device.`;
+    } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+      this.lastMediaError = `${type === 'video' ? 'Camera' : 'Microphone'} is currently in use by another app.`;
+    } else if (name === 'OverconstrainedError') {
+      this.lastMediaError = `Requested ${type} hardware constraints are not supported.`;
+    } else {
+      this.lastMediaError = err.message || `Could not access ${type} device.`;
     }
   }
 
@@ -241,6 +264,109 @@ class CallService {
     }
   }
 
+  private optimizeOpusSdp(sdp: string): string {
+    if (!sdp) return sdp;
+    // Inject Opus FEC (Forward Error Correction), DTX, and mono speech parameters
+    return sdp.replace(/a=rtpmap:(\d+)\s+opus\/48000\/2/gi, (match, pt) => {
+      const fmtpRegex = new RegExp(`a=fmtp:${pt}\\s+([^\\r\\n]*)`, 'i');
+      if (fmtpRegex.test(sdp)) {
+        return match;
+      }
+      return `${match}\r\na=fmtp:${pt} minptime=10;useinbandfec=1;usedtx=1;stereo=0;sprop-stereo=0;maxaveragebitrate=40000`;
+    }).replace(/(a=fmtp:(\d+)\s+)([^\\r\\n]*)/gi, (match, prefix, pt, params) => {
+      if (sdp.includes(`a=rtpmap:${pt} opus/48000/2`)) {
+        let p = params;
+        if (!p.includes('useinbandfec=1')) p += ';useinbandfec=1';
+        if (!p.includes('usedtx=1')) p += ';usedtx=1';
+        if (!p.includes('stereo=0')) p += ';stereo=0';
+        if (!p.includes('sprop-stereo=0')) p += ';sprop-stereo=0';
+        if (!p.includes('maxaveragebitrate=')) p += ';maxaveragebitrate=40000';
+        return `${prefix}${p}`;
+      }
+      return match;
+    });
+  }
+
+  private setupNegotiationListener(db: any) {
+    if (!this.peerConnection || !this.callId) return;
+
+    this.peerConnection.onnegotiationneeded = async () => {
+      try {
+        if (!this.callId || !this.peerConnection) return;
+        if (this.peerConnection.signalingState !== 'stable') return;
+        this.makingOffer = true;
+        const offer = await this.peerConnection.createOffer();
+        if (this.peerConnection.signalingState !== 'stable') return;
+        const optimizedOffer = {
+          type: offer.type,
+          sdp: this.optimizeOpusSdp(offer.sdp || '')
+        };
+        await this.peerConnection.setLocalDescription(optimizedOffer);
+
+        const sigDoc = doc(db, 'calls', this.callId, 'signaling', 'renegotiation');
+        await setDoc(sigDoc, {
+          offer: optimizedOffer,
+          from: this.role,
+          version: Date.now()
+        }, { merge: true });
+      } catch (err) {
+        logger.warn("[WebRTC Renegotiation] onnegotiationneeded error:", err);
+      } finally {
+        this.makingOffer = false;
+      }
+    };
+
+    // Listen to renegotiation signals
+    const sigDoc = doc(db, 'calls', this.callId, 'signaling', 'renegotiation');
+    this.renegotiationUnsub = onSnapshot(sigDoc, async (snap) => {
+      if (!snap.exists() || !this.peerConnection) return;
+      const data = snap.data();
+      if (!data || data.from === this.role) return;
+
+      if (data.offer && !data.answer) {
+        const offerCollision = this.makingOffer || this.peerConnection.signalingState !== 'stable';
+        const isPolite = this.role === 'receiver';
+
+        if (offerCollision) {
+          if (!isPolite) {
+            logger.info("[WebRTC Renegotiation] Impolite collision: ignoring remote offer");
+            return;
+          }
+          logger.info("[WebRTC Renegotiation] Polite collision: rolling back local description");
+          try {
+            await this.peerConnection.setLocalDescription({ type: 'rollback' });
+          } catch (e) {}
+        }
+
+        try {
+          await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await this.peerConnection.createAnswer();
+          const optimizedAnswer = {
+            type: answer.type,
+            sdp: this.optimizeOpusSdp(answer.sdp || '')
+          };
+          await this.peerConnection.setLocalDescription(optimizedAnswer);
+
+          await updateDoc(sigDoc, {
+            answer: optimizedAnswer,
+            answerFrom: this.role,
+            answeredAt: Date.now()
+          });
+        } catch (err) {
+          logger.error("[WebRTC Renegotiation] Error processing remote offer:", err);
+        }
+      } else if (data.answer && data.answerFrom !== this.role) {
+        if (this.peerConnection.signalingState === 'have-local-offer') {
+          try {
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+          } catch (err) {
+            logger.error("[WebRTC Renegotiation] Error applying remote answer:", err);
+          }
+        }
+      }
+    });
+  }
+
   private setupPeerConnection(db: any, iceServers: RTCIceServer[], onRemoteStream: (stream: MediaStream) => void) {
     if (this.peerConnection) {
       try { this.peerConnection.close(); } catch (e) {}
@@ -253,6 +379,32 @@ class CallService {
     });
     this.onRemoteStreamCallback = onRemoteStream;
     this.remoteStream = new MediaStream();
+
+    // Pre-negotiate both audio and video transceivers so that camera toggling does not fail
+    const audioTrack = this.localStream?.getAudioTracks()[0] || null;
+    const videoTrack = this.localStream?.getVideoTracks()[0] || null;
+
+    if (audioTrack) {
+      this.audioTransceiver = this.peerConnection.addTransceiver(audioTrack, {
+        direction: 'sendrecv',
+        streams: this.localStream ? [this.localStream] : []
+      });
+    } else {
+      this.audioTransceiver = this.peerConnection.addTransceiver('audio', {
+        direction: 'sendrecv'
+      });
+    }
+
+    if (videoTrack) {
+      this.videoTransceiver = this.peerConnection.addTransceiver(videoTrack, {
+        direction: 'sendrecv',
+        streams: this.localStream ? [this.localStream] : []
+      });
+    } else {
+      this.videoTransceiver = this.peerConnection.addTransceiver('video', {
+        direction: 'sendrecv'
+      });
+    }
 
     this.peerConnection.ontrack = (event) => {
       logger.info("[WebRTC] Remote track received:", event.track.kind, event.track.id);
@@ -424,14 +576,15 @@ class CallService {
     const iceServers = await this.getEffectiveIceServers();
     this.setupPeerConnection(db, iceServers, onRemoteStream);
 
-    this.localStream?.getTracks().forEach(track => {
-      this.peerConnection?.addTrack(track, this.localStream!);
+    const rawOffer = await this.peerConnection!.createOffer({
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: true
     });
 
-    const offer = await this.peerConnection!.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: type === 'video'
-    });
+    const offer = {
+      type: rawOffer.type,
+      sdp: this.optimizeOpusSdp(rawOffer.sdp || '')
+    };
 
     const callRef = doc(db, 'calls', this.callId);
     await setDoc(callRef, {
@@ -455,6 +608,7 @@ class CallService {
 
     this.startCandidateListener(db);
     this.startCallListener(db);
+    this.setupNegotiationListener(db);
 
     await this.peerConnection!.setLocalDescription(offer);
     await this.flushCandidates(db);
@@ -481,17 +635,18 @@ class CallService {
     const iceServers = await this.getEffectiveIceServers();
     this.setupPeerConnection(db, iceServers, onRemoteStream);
 
-    this.localStream?.getTracks().forEach(track => {
-      this.peerConnection?.addTrack(track, this.localStream!);
-    });
-
     this.startCandidateListener(db);
     this.startCallListener(db);
+    this.setupNegotiationListener(db);
 
     await this.peerConnection!.setRemoteDescription(new RTCSessionDescription(data.offer!));
     await this.processBufferedCandidates();
 
-    const answer = await this.peerConnection!.createAnswer();
+    const rawAnswer = await this.peerConnection!.createAnswer();
+    const answer = {
+      type: rawAnswer.type,
+      sdp: this.optimizeOpusSdp(rawAnswer.sdp || '')
+    };
     await this.peerConnection!.setLocalDescription(answer);
 
     await updateDoc(callRef, {
@@ -682,6 +837,12 @@ class CallService {
   public cleanup() {
     this.candidateUnsub?.();
     this.callUnsub?.();
+    this.renegotiationUnsub?.();
+    this.renegotiationUnsub = null;
+    this.audioTransceiver = null;
+    this.videoTransceiver = null;
+    this.makingOffer = false;
+    this.isSettingRemoteAnswerPending = false;
     this.candidateBuffer = [];
     this.processedCandidateKeys.clear();
     
@@ -841,9 +1002,13 @@ class CallService {
     const newVideoTrack = newStream.getVideoTracks()[0];
     if (!newVideoTrack) return;
 
-    const sender = this.peerConnection?.getSenders().find(s => s.track?.kind === 'video');
-    if (sender) {
-      await sender.replaceTrack(newVideoTrack);
+    if (this.videoTransceiver?.sender) {
+      await this.videoTransceiver.sender.replaceTrack(newVideoTrack);
+    } else {
+      const sender = this.peerConnection?.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) {
+        await sender.replaceTrack(newVideoTrack);
+      }
     }
 
     this.localStream.removeTrack(videoTrack);
@@ -853,32 +1018,66 @@ class CallService {
     return new MediaStream(this.localStream.getTracks());
   }
 
-  async toggleVideo(enabled: boolean) {
-    if (!this.localStream) return;
+  async toggleVideo(enabled: boolean): Promise<MediaStream | null> {
+    if (!this.localStream) return null;
     const videoTracks = this.localStream.getVideoTracks();
-    if (enabled && videoTracks.length === 0) {
-      try {
-        const vStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
-        });
-        const track = vStream.getVideoTracks()[0];
-        if (track) {
-          this.localStream.addTrack(track);
-          if (this.peerConnection) {
-            const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
-            if (sender) {
-              sender.replaceTrack(track);
-            } else {
-              this.peerConnection.addTrack(track, this.localStream);
+
+    if (enabled) {
+      let track = videoTracks[0];
+      if (!track || track.readyState === 'ended') {
+        try {
+          await ensureCallPermissions('video');
+          const vStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: this.facingMode,
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 }
             }
+          });
+          track = vStream.getVideoTracks()[0];
+          if (videoTracks[0]) {
+            this.localStream.removeTrack(videoTracks[0]);
+            videoTracks[0].stop();
           }
+          this.localStream.addTrack(track);
+        } catch (e: any) {
+          logger.error("Failed to acquire camera track on toggle", e);
+          this.classifyMediaError(e, 'video');
+          return null;
         }
-      } catch (e) {
-        logger.error("Failed to acquire camera track on toggle", e);
+      } else {
+        track.enabled = true;
+      }
+
+      this.hasLocalVideo = true;
+      if (this.videoTransceiver?.sender) {
+        await this.videoTransceiver.sender.replaceTrack(track);
+        this.videoTransceiver.direction = 'sendrecv';
+      } else if (this.peerConnection) {
+        const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(track);
+        } else {
+          this.peerConnection.addTrack(track, this.localStream);
+        }
       }
     } else {
-      videoTracks.forEach(t => t.enabled = enabled);
+      videoTracks.forEach(t => {
+        t.stop();
+        this.localStream?.removeTrack(t);
+      });
+      this.hasLocalVideo = false;
+      if (this.videoTransceiver?.sender) {
+        await this.videoTransceiver.sender.replaceTrack(null);
+      } else if (this.peerConnection) {
+        const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(null);
+        }
+      }
     }
+
+    return new MediaStream(this.localStream.getTracks());
   }
 
   toggleAudio(enabled: boolean) {
@@ -914,6 +1113,53 @@ class CallService {
         await sender.replaceTrack(cameraTrack);
       }
     }
+  }
+
+  public async getDiagnostics() {
+    let statsData: any = {};
+    if (this.peerConnection) {
+      try {
+        const report = await this.peerConnection.getStats();
+        report.forEach((stat: any) => {
+          if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+            statsData.audioPacketsReceived = stat.packetsReceived;
+            statsData.audioPacketsLost = stat.packetsLost;
+            statsData.audioJitter = stat.jitter;
+            statsData.audioLevel = stat.audioLevel;
+          } else if (stat.type === 'inbound-rtp' && stat.kind === 'video') {
+            statsData.videoPacketsReceived = stat.packetsReceived;
+            statsData.videoPacketsLost = stat.packetsLost;
+            statsData.videoFramesDecoded = stat.framesDecoded;
+          } else if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
+            statsData.currentRoundTripTime = stat.currentRoundTripTime;
+            statsData.selectedCandidatePairId = stat.id;
+          }
+        });
+      } catch (e) {}
+    }
+
+    return {
+      callId: this.callId,
+      role: this.role,
+      connectionState: this.getConnectionState(),
+      signalingState: this.peerConnection?.signalingState || 'none',
+      iceConnectionState: this.peerConnection?.iceConnectionState || 'none',
+      senders: this.peerConnection?.getSenders().map(s => ({
+        kind: s.track?.kind || 'empty',
+        enabled: s.track?.enabled,
+        readyState: s.track?.readyState
+      })) || [],
+      receivers: this.peerConnection?.getReceivers().map(r => ({
+        kind: r.track?.kind || 'empty',
+        enabled: r.track?.enabled,
+        readyState: r.track?.readyState
+      })) || [],
+      localAudioTrack: this.localStream?.getAudioTracks().map(t => ({ id: t.id, readyState: t.readyState, enabled: t.enabled })) || [],
+      localVideoTrack: this.localStream?.getVideoTracks().map(t => ({ id: t.id, readyState: t.readyState, enabled: t.enabled })) || [],
+      remoteAudioTrack: this.remoteStream?.getAudioTracks().map(t => ({ id: t.id, readyState: t.readyState, enabled: t.enabled })) || [],
+      remoteVideoTrack: this.remoteStream?.getVideoTracks().map(t => ({ id: t.id, readyState: t.readyState, enabled: t.enabled })) || [],
+      stats: statsData
+    };
   }
 
   getStreams() {
