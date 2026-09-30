@@ -184,7 +184,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       const newTrackId = remoteStream.getAudioTracks()[0]?.id;
 
       // Only assign if the audio track ID actually changed, preventing decoder reset
-      if (!currentSrcObject || currentTrackId !== newTrackId) {
+      if (!currentSrcObject || (newTrackId && currentTrackId !== newTrackId)) {
         audio.srcObject = remoteStream;
       }
       
@@ -205,7 +205,12 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       const localVideos = document.querySelectorAll('.aeirmist-local-video') as NodeListOf<HTMLVideoElement>;
       localVideos.forEach(v => {
         v.muted = true;
-        if (callStream && v.srcObject !== callStream) {
+        const currentTrackId = (v.srcObject as MediaStream)?.getVideoTracks()[0]?.id;
+        const newTrackId = callStream?.getVideoTracks()[0]?.id;
+        if (newTrackId && currentTrackId !== newTrackId) {
+          v.srcObject = callStream;
+          v.play().catch(() => {});
+        } else if (!currentTrackId && callStream && callStream.getVideoTracks().length > 0) {
           v.srcObject = callStream;
           v.play().catch(() => {});
         }
@@ -215,7 +220,12 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       remoteVideos.forEach(v => {
         if (v instanceof HTMLVideoElement) {
           v.muted = true;
-          if (remoteStream && v.srcObject !== remoteStream) {
+          const currentTrackId = (v.srcObject as MediaStream)?.getVideoTracks()[0]?.id;
+          const newTrackId = remoteStream?.getVideoTracks()[0]?.id;
+          if (newTrackId && currentTrackId !== newTrackId) {
+            v.srcObject = remoteStream;
+            v.play().catch(() => {});
+          } else if (!currentTrackId && remoteStream && remoteStream.getVideoTracks().length > 0) {
             v.srcObject = remoteStream;
             v.play().catch(() => {});
           }
@@ -231,7 +241,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         const currentTrackId = currentSrcObject?.getAudioTracks()[0]?.id;
         const newTrackId = remoteStream.getAudioTracks()[0]?.id;
 
-        if (!currentSrcObject || currentTrackId !== newTrackId) {
+        if (!currentSrcObject || (newTrackId && currentTrackId !== newTrackId)) {
           a.srcObject = remoteStream;
         }
         if (a.paused && isSpeaker && !isAutoplayBlocked) {
@@ -358,11 +368,9 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   // Sync state transitions from Firestore signaling
   useEffect(() => {
     let closeTimer: any = null;
-    if (activeCall?.status === 'accepted') {
-      setCallStatus(prev => (prev === 'connected' ? 'connected' : 'connecting'));
-      aeirmistRingtone.stop();
-    } else if (activeCall?.status === 'ongoing') {
-      setCallStatus('connected');
+    if (activeCall?.status === 'accepted' || activeCall?.status === 'ongoing') {
+      const isActuallyConnected = aeirmistCall.getConnectionState() === 'connected';
+      setCallStatus(isActuallyConnected ? 'connected' : 'connecting');
       aeirmistRingtone.stop();
     } else if (activeCall?.status === 'reconnecting') {
       setCallStatus('reconnecting');
@@ -387,6 +395,12 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       aeirmistCall.acquireWakeLock();
       aeirmistCall.setupMediaSession(safeChat.name, handleEnd);
       aeirmistCall.startHeartbeat(db);
+
+      if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+        try {
+          (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'communication', speaker: isSpeaker });
+        } catch (e) {}
+      }
 
       const handleVisibilityChange = () => {
         if (document.visibilityState === 'visible') {
@@ -424,10 +438,20 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       aeirmistCall.releaseWakeLock();
       aeirmistCall.endMediaSession();
       aeirmistCall.stopHeartbeat();
+      if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+        try {
+          (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'normal', speaker: false });
+        } catch (e) {}
+      }
     }
   }, [callStatus, isSpeaker, safeChat.name]);
 
   const handleEnd = () => {
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+      try {
+        (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'normal', speaker: false });
+      } catch (e) {}
+    }
     if (activeCall?.id) {
        aeirmistCall.updateStatus(db, activeCall.id, 'ended');
        endCall(activeCall.id, activeCall.conversationId);
@@ -669,53 +693,41 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   );
 
   // Minimized Widget View
-  if (isMinimized) {
-    return (
-      <>
-        {/* High-fidelity persistent remote audio playback element */}
-        <audio 
-          ref={remoteAudioRef}
-          autoPlay 
-          playsInline 
-          className="aeirmist-remote-audio"
-          style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
-        />
-        <motion.div
-          drag
-          dragConstraints={{ left: -1000, right: 0, top: -1000, bottom: 0 }}
-          onClick={() => {
-            unlockAudio();
-            setIsMinimized(false);
-          }}
-          className="fixed bottom-6 right-6 z-[250] w-36 h-52 rounded-2xl bg-black border border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.8)] overflow-hidden cursor-pointer flex flex-col justify-between p-2.5 group touch-none select-none"
-        >
-          <div className="relative w-full h-full rounded-xl overflow-hidden bg-zinc-900 flex items-center justify-center">
-            {isVideoMode ? (
-              <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline />
-            ) : (
-              <img src={displayPhoto} className="w-14 h-14 rounded-2xl object-cover border border-white/20 shadow-md" referrerPolicy="no-referrer" />
-            )}
-            <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-all flex items-center justify-center">
-              <Maximize2 size={20} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
-            </div>
-          </div>
+  const renderMinimizedWidget = () => (
+    <motion.div
+      drag
+      dragConstraints={{ left: -1000, right: 0, top: -1000, bottom: 0 }}
+      onClick={() => {
+        unlockAudio();
+        setIsMinimized(false);
+      }}
+      className="fixed bottom-6 right-6 z-[250] w-36 h-52 rounded-2xl bg-black border border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.8)] overflow-hidden cursor-pointer flex flex-col justify-between p-2.5 group touch-none select-none"
+    >
+      <div className="relative w-full h-full rounded-xl overflow-hidden bg-zinc-900 flex items-center justify-center">
+        {isVideoMode ? (
+          <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline muted />
+        ) : (
+          <img src={displayPhoto} className="w-14 h-14 rounded-2xl object-cover border border-white/20 shadow-md" referrerPolicy="no-referrer" />
+        )}
+        <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-all flex items-center justify-center">
+          <Maximize2 size={20} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+        </div>
+      </div>
 
-          <div className="flex items-center justify-between pt-2 px-1">
-            <span className="text-[9px] font-mono font-bold text-emerald-400">{formatDuration(duration)}</span>
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEnd();
-              }}
-              className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-white"
-            >
-              <PhoneOff size={12} />
-            </button>
-          </div>
-        </motion.div>
-      </>
-    );
-  }
+      <div className="flex items-center justify-between pt-2 px-1">
+        <span className="text-[9px] font-mono font-bold text-emerald-400">{formatDuration(duration)}</span>
+        <button 
+          onClick={(e) => {
+            e.stopPropagation();
+            handleEnd();
+          }}
+          className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-white"
+        >
+          <PhoneOff size={12} />
+        </button>
+      </div>
+    </motion.div>
+  );
 
   // Render Inner Content Phone Layout
   function renderPhoneCallContent() {
@@ -1757,44 +1769,48 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         autoPlay 
         playsInline 
         className="aeirmist-remote-audio"
-        style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+        style={{ position: 'fixed', width: '1px', height: '1px', opacity: 0.001, pointerEvents: 'none', top: 0, left: 0 }}
       />
-      <AnimatePresence mode="wait">
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={unlockAudio}
-          onTouchStart={unlockAudio}
-          className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-2xl overflow-hidden flex items-center justify-center p-0 md:p-6"
-        >
-          {/* Floating Autoplay Unblock Chip if browser deferred audio */}
-          {isAutoplayBlocked && (
-            <motion.button
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                unlockAudio();
-              }}
-              className="absolute top-5 left-1/2 -translate-x-1/2 z-[260] px-5 py-2.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black text-xs uppercase tracking-widest flex items-center gap-2.5 shadow-[0_0_30px_rgba(245,158,11,0.85)] cursor-pointer active:scale-95 transition-all border border-amber-300 animate-pulse select-none"
-            >
-              <Volume2 size={16} className="stroke-[2.5]" /> Tap anywhere to unmute sound 🔊
-            </motion.button>
-          )}
+      {isMinimized ? (
+        renderMinimizedWidget()
+      ) : (
+        <AnimatePresence mode="wait">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={unlockAudio}
+            onTouchStart={unlockAudio}
+            className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-2xl overflow-hidden flex items-center justify-center p-0 md:p-6"
+          >
+            {/* Floating Autoplay Unblock Chip if browser deferred audio */}
+            {isAutoplayBlocked && (
+              <motion.button
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  unlockAudio();
+                }}
+                className="absolute top-5 left-1/2 -translate-x-1/2 z-[260] px-5 py-2.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black text-xs uppercase tracking-widest flex items-center gap-2.5 shadow-[0_0_30px_rgba(245,158,11,0.85)] cursor-pointer active:scale-95 transition-all border border-amber-300 animate-pulse select-none"
+              >
+                <Volume2 size={16} className="stroke-[2.5]" /> Tap anywhere to unmute sound 🔊
+              </motion.button>
+            )}
 
-          {/* Mobile Phone Frame View */}
-          <div className="flex md:hidden w-full h-full overflow-hidden bg-black relative flex-col justify-between">
-            {renderPhoneCallContent()}
-          </div>
+            {/* Mobile Phone Frame View */}
+            <div className="flex md:hidden w-full h-full overflow-hidden bg-black relative flex-col justify-between">
+              {renderPhoneCallContent()}
+            </div>
 
-          {/* Desktop Meeting Window Frame View */}
-          <div className="hidden md:flex w-full max-w-6xl h-[88vh] max-h-[820px] rounded-2xl border border-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] overflow-hidden bg-[#121316] relative flex-col justify-between p-4 gap-3">
-            {renderDesktopCallContent()}
-          </div>
-        </motion.div>
-      </AnimatePresence>
+            {/* Desktop Meeting Window Frame View */}
+            <div className="hidden md:flex w-full max-w-6xl h-[88vh] max-h-[820px] rounded-2xl border border-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] overflow-hidden bg-[#121316] relative flex-col justify-between p-4 gap-3">
+              {renderDesktopCallContent()}
+            </div>
+          </motion.div>
+        </AnimatePresence>
+      )}
     </>
   );
 };

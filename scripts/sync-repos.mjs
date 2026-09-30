@@ -43,6 +43,7 @@ if (fs.existsSync(WEB_REPO)) {
     'src',
     'public',
     'scripts',
+    'functions',
     'server.ts',
     'package.json',
     'vite.config.ts',

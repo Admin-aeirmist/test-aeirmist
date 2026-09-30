@@ -1,4 +1,5 @@
 import { logger } from '@/src/utils/logger';
+import { getEffectiveIceServers as fetchIceServers, DEFAULT_STUN_SERVERS } from './IceServerConfig';
 import { 
   collection, 
   doc, 
@@ -39,18 +40,7 @@ interface CallData {
   conversationId?: string;
 }
 
-export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
-  { 
-    urls: [
-      'stun:stun.l.google.com:19302', 
-      'stun:stun1.l.google.com:19302', 
-      'stun:stun2.l.google.com:19302',
-      'stun:stun3.l.google.com:19302',
-      'stun:stun4.l.google.com:19302',
-      'stun:stun.cloudflare.com:3478'
-    ] 
-  }
-];
+export const DEFAULT_ICE_SERVERS: RTCIceServer[] = DEFAULT_STUN_SERVERS;
 
 export const ICE_SERVERS: RTCIceServer[] = DEFAULT_ICE_SERVERS;
 
@@ -98,6 +88,17 @@ class CallService {
     };
   }
 
+  public getConnectionState(): WebRTCConnectionState {
+    const pcState = this.peerConnection?.connectionState;
+    const iceState = this.peerConnection?.iceConnectionState;
+    if (pcState === 'connected' || iceState === 'connected' || iceState === 'completed') return 'connected';
+    if (pcState === 'connecting' || iceState === 'checking') return 'connecting';
+    if (pcState === 'failed' || iceState === 'failed') return 'failed';
+    if (pcState === 'disconnected' || iceState === 'disconnected') return 'reconnecting';
+    if (pcState === 'closed') return 'ended';
+    return 'connecting';
+  }
+
   private notifyConnectionState(state: WebRTCConnectionState, detail?: string) {
     this.connectionStateListeners.forEach(l => {
       try { l(state, detail); } catch (e) {}
@@ -108,26 +109,9 @@ class CallService {
     if (this.cachedIceServers && this.cachedIceServers.length > 0) {
       return this.cachedIceServers;
     }
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch('/api/webrtc/ice-servers', { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.iceServers && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
-          logger.info(`[WebRTC] Successfully fetched ${data.iceServers.length} ICE server configs (TURN active: ${!!data.hasTurn})`);
-          this.cachedIceServers = data.iceServers;
-          return this.cachedIceServers;
-        }
-      }
-    } catch (e) {
-      logger.info("[WebRTC] Fetch ICE servers deferred, falling back to STUN");
-    }
-
-    this.cachedIceServers = DEFAULT_ICE_SERVERS;
-    return this.cachedIceServers;
+    const servers = await fetchIceServers();
+    this.cachedIceServers = servers;
+    return servers;
   }
 
   async initLocalStream(type: 'audio' | 'video') {
@@ -473,6 +457,7 @@ class CallService {
     this.startCallListener(db);
 
     await this.peerConnection!.setLocalDescription(offer);
+    await this.flushCandidates(db);
 
     return { callId: this.callId, stream: this.localStream };
   }
@@ -500,6 +485,9 @@ class CallService {
       this.peerConnection?.addTrack(track, this.localStream!);
     });
 
+    this.startCandidateListener(db);
+    this.startCallListener(db);
+
     await this.peerConnection!.setRemoteDescription(new RTCSessionDescription(data.offer!));
     await this.processBufferedCandidates();
 
@@ -512,8 +500,7 @@ class CallService {
       updatedAt: serverTimestamp()
     });
 
-    this.startCandidateListener(db);
-    this.startCallListener(db);
+    await this.flushCandidates(db);
 
     return this.localStream;
   }
@@ -594,8 +581,14 @@ class CallService {
       if (!data) return;
 
       if (this.role === 'caller' && (data.status === 'accepted' || data.status === 'ongoing') && data.answer && !this.peerConnection?.remoteDescription) {
-        await this.peerConnection?.setRemoteDescription(new RTCSessionDescription(data.answer));
-        await this.processBufferedCandidates();
+        try {
+          if (this.peerConnection.signalingState === 'have-local-offer') {
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+            await this.processBufferedCandidates();
+          }
+        } catch (err) {
+          logger.error("[WebRTC] Error setting remote answer description:", err);
+        }
       }
 
       if (['ended', 'rejected', 'missed', 'busy'].includes(data.status)) {
@@ -743,6 +736,11 @@ class CallService {
     if (this.networkOfflineTimer) {
       clearTimeout(this.networkOfflineTimer);
       this.networkOfflineTimer = null;
+    }
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+      try {
+        (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'normal', speaker: false });
+      } catch (e) {}
     }
     this.callId = null;
     this.role = null;

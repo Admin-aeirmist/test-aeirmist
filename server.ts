@@ -510,7 +510,39 @@ async function startServer() {
         }
       ];
 
-      // 1. Environment TURN credentials (UDP, TCP, TLS)
+      // 1. Cloudflare Calls TURN integration (Direct Anycast Relay)
+      const cfTurnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID || "2098002d525676751626b65d0215cfac";
+      const cfTurnKeySecret = process.env.CLOUDFLARE_TURN_KEY_SECRET || "dfd391fd4e863d115a19d527167151c4364f999e8d073f5b7f0cd63447fd2225";
+      if (cfTurnKeyId && cfTurnKeySecret) {
+        try {
+          const cfResp = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${cfTurnKeyId}/credentials/generate`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${cfTurnKeySecret}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ ttl: 86400 })
+          });
+          if (cfResp.ok) {
+            const cfData = await cfResp.json() as any;
+            if (cfData?.iceServers?.username && cfData?.iceServers?.credential) {
+              iceServers.push({
+                urls: [
+                  "turn:turn.cloudflare.com:3478?transport=udp",
+                  "turn:turn.cloudflare.com:3478?transport=tcp",
+                  "turns:turn.cloudflare.com:5349?transport=tcp"
+                ],
+                username: cfData.iceServers.username,
+                credential: cfData.iceServers.credential
+              });
+            }
+          }
+        } catch (cfErr) {
+          console.warn("[WebRTC] Cloudflare TURN credential generation deferred:", cfErr);
+        }
+      }
+
+      // 2. Environment TURN credentials (UDP, TCP, TLS)
       const turnUrls = process.env.TURN_URLS || process.env.TURN_URL;
       const turnUsername = process.env.TURN_USERNAME;
       const turnCredential = process.env.TURN_CREDENTIAL || process.env.TURN_PASSWORD;
@@ -524,7 +556,7 @@ async function startServer() {
         });
       }
 
-      // 2. Metered TURN integration (if API Key provided)
+      // 3. Metered TURN integration (if API Key provided)
       const meteredApiKey = process.env.METERED_API_KEY;
       const meteredAppDomain = process.env.METERED_DOMAIN;
       if (meteredApiKey && meteredAppDomain) {

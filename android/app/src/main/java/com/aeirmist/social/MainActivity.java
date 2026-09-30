@@ -17,6 +17,7 @@ import android.content.Context;
 import android.os.Environment;
 import java.util.ArrayList;
 import java.util.List;
+import android.media.AudioManager;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -278,6 +279,27 @@ public class MainActivity extends BridgeActivity {
                 call.resolve();
             } catch (Exception e) {
                 call.reject("Failed to reset download path: " + e.getMessage());
+            }
+        }
+
+        @PluginMethod
+        public void setAudioMode(PluginCall call) {
+            try {
+                String mode = call.getString("mode", "normal");
+                boolean speaker = call.getBoolean("speaker", true);
+                AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+                if (am != null) {
+                    if ("communication".equals(mode)) {
+                        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                        am.setSpeakerphoneOn(speaker);
+                    } else {
+                        am.setMode(AudioManager.MODE_NORMAL);
+                        am.setSpeakerphoneOn(false);
+                    }
+                }
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Failed to set audio mode: " + e.getMessage());
             }
         }
     }
