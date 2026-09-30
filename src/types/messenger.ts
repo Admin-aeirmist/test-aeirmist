@@ -4,7 +4,7 @@ export interface Message {
   senderId: string;
   timestamp: string;
   timestampMs?: number;
-  type: 'text' | 'image' | 'video' | 'voice' | 'media' | 'post' | 'system' | 'file' | 'location' | 'contact' | 'sticker';
+  type: 'text' | 'image' | 'video' | 'voice' | 'media' | 'post' | 'system' | 'file' | 'location' | 'contact' | 'sticker' | 'call_history';
   mediaUrl?: string;
   fileName?: string;
   fileSize?: number;

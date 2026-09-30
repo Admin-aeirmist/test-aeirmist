@@ -248,7 +248,7 @@ interface AeirmistContextType {
   startCall: (conversationId: string, type: 'audio' | 'video', targetUid?: string) => Promise<void>;
   acceptCall: (callId: string, conversationId: string) => Promise<void>;
   rejectCall: (callId: string, conversationId: string) => Promise<void>;
-  endCall: (callId: string, conversationId: string) => Promise<void>;
+  endCall: (callId: string, conversationId: string, duration?: number) => Promise<void>;
   createNotification: (targetUserId: string, type: any, message: string, metadata?: any) => Promise<void>;
   submitReport: (params: { targetType: 'post' | 'user' | 'comment' | 'message' | 'story' | 'conversation'; targetId: string; reason: string; description?: string; }) => Promise<boolean>;
   toggleNotification: (type: 'mute' | 'pin' | 'archive', targetId: string) => Promise<void>;
@@ -843,6 +843,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [db, isSafeMode]);
   const [activeCall, setActiveCall] = useState<any | null>(null);
+  const recentlyEndedCallIds = useRef<Set<string>>(new Set());
   const [callStream, setCallStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [cameraConfig, setCameraConfig] = useState<{ isOpen: boolean; mode: 'STORY' | 'VIDEO' | 'PHOTO'; onCapture?: (file: File) => void } | null>(null);
@@ -1437,29 +1438,33 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const rejectCall = useCallback(async (callId: string, conversationId: string) => {
     if (!db || !profile || !canWrite(`reject_${callId}`, 5000)) return;
     try {
+      if (callId) recentlyEndedCallIds.current.add(callId);
       await aeirmistCall.updateStatus(db, callId, 'rejected');
       if (conversationId) {
         await updateDoc(doc(db, 'conversations', conversationId), {
           'activeCall.status': 'ended',
           'activeCall.endedAt': serverTimestamp()
-        });
+        }).catch(() => {});
       }
     } catch (e) {}
+    aeirmistCall.cleanup();
     setCallStream(null);
     setRemoteStream(null);
     setActiveCall(null);
   }, [db]);
 
-  const endCall = useCallback(async (callId: string, conversationId: string) => {
+  const endCall = useCallback(async (callId: string, conversationId: string, duration?: number) => {
     if (!db || !profile || !canWrite(`end_${callId}`, 3000)) return;
     try {
-      if (callId) await aeirmistCall.updateStatus(db, callId, 'ended');
+      if (callId) recentlyEndedCallIds.current.add(callId);
+      if (callId) await aeirmistCall.updateStatus(db, callId, 'ended', duration);
       if (conversationId) {
         await updateDoc(doc(db, 'conversations', conversationId), {
           activeCall: null
-        });
+        }).catch(() => {});
       }
     } catch (e) {}
+    aeirmistCall.cleanup();
     setCallStream(null);
     setRemoteStream(null);
     setActiveCall(null);
@@ -3079,7 +3084,40 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 
     const unsubCalls = onSnapshot(callsQ, (snap) => {
-      const activeDocs = snap.docs.filter(d => ['calling', 'ongoing', 'reconnecting', 'accepted'].includes(d.data().status));
+      // 1. Terminal status check: If our active call has transitioned to ended/rejected/missed/busy, immediately terminate
+      if (activeCallRef.current?.id) {
+        const currentCallId = activeCallRef.current.id;
+        const currentDoc = snap.docs.find(d => d.id === currentCallId);
+
+        if (currentDoc) {
+          const status = currentDoc.data()?.status;
+          if (['ended', 'rejected', 'missed', 'busy'].includes(status)) {
+            logger.info(`[AeirmistContext] Active call ${currentCallId} has ended (status: ${status}). Terminating call session on this side.`);
+            recentlyEndedCallIds.current.add(currentCallId);
+            setActiveCall(null);
+            setCallStream(null);
+            setRemoteStream(null);
+            aeirmistCall.cleanup();
+            return;
+          }
+        } else if (!snap.metadata.hasPendingWrites) {
+          // The call document was deleted from Firestore
+          logger.info(`[AeirmistContext] Active call ${currentCallId} no longer exists in Firestore. Terminating.`);
+          recentlyEndedCallIds.current.add(currentCallId);
+          setActiveCall(null);
+          setCallStream(null);
+          setRemoteStream(null);
+          aeirmistCall.cleanup();
+          return;
+        }
+      }
+
+      // 2. Filter valid active calls (excluding any recently ended to prevent resurrection)
+      const activeDocs = snap.docs.filter(d => 
+        ['calling', 'ongoing', 'reconnecting', 'accepted'].includes(d.data().status) &&
+        !recentlyEndedCallIds.current.has(d.id)
+      );
+
       if (activeDocs.length > 0) {
         const callDoc = activeDocs[0].data();
         const callId = activeDocs[0].id;
@@ -3096,15 +3134,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
            const now = Date.now();
            if (now - createdAt > 45000) { // 45 seconds timeout
              aeirmistCall.updateStatus(db, callId, 'missed');
-             
-             // Initiator logs the missed call message to the chat
-             if (callDoc.callerUid === user?.uid && callDoc.conversationId) {
-               sendMessage(callDoc.conversationId, `Missed ${callDoc.type} call`, 'system', undefined, { 
-                 type: 'missed_call',
-                 callType: callDoc.type,
-                 callId: callId
-               }).catch(e => logger.error("Failed to log missed call message", e));
-             }
              return;
            }
         }
@@ -3130,7 +3159,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (isTarget) {
           setActiveCall((prev: any) => {
              // Only update if it's different to prevent unnecessary renders and flashing
-             // We use a deep compare for critical fields
              if (prev && 
                  prev.id === callId && 
                  prev.status === callDoc.status && 
@@ -3145,9 +3173,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
         }
       } else {
-        // Protect ongoing active call from being prematurely wiped by temporary query flicker
-        if (!activeCallRef.current || !['ongoing', 'accepted', 'connected'].includes(activeCallRef.current.status)) {
+        // No active calls remaining in Firestore for this user
+        if (activeCallRef.current) {
+          logger.info("[AeirmistContext] No active calls remaining in Firestore. Cleaning up activeCall.");
           setActiveCall(null);
+          setCallStream(null);
+          setRemoteStream(null);
+          aeirmistCall.cleanup();
         }
       }
     });

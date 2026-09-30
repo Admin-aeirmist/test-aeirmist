@@ -87,6 +87,7 @@ class CallService {
   private networkOfflineTimer: any = null;
   private handleOffline: (() => void) | null = null;
   private handleOnline: (() => void) | null = null;
+  private handleUnload: (() => void) | null = null;
 
   public onConnectionStateChange(listener: (state: WebRTCConnectionState, detail?: string) => void) {
     this.connectionStateListeners.add(listener);
@@ -133,13 +134,13 @@ class CallService {
       await ensureCallPermissions(type);
 
       const audioConstraints: MediaTrackConstraints = {
-        echoCancellation: { ideal: true },
-        noiseSuppression: { ideal: true },
-        autoGainControl: { ideal: true },
-        channelCount: { ideal: 1 },
-        sampleRate: { ideal: 48000 }
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000
       };
-      // Chromium & Android WebView hardware AEC / DSP optimization
+      // Chromium & Android WebView hardware AEC / DSP optimization flags
       (audioConstraints as any).googEchoCancellation = true;
       (audioConstraints as any).googAutoGainControl = true;
       (audioConstraints as any).googNoiseSuppression = true;
@@ -152,17 +153,20 @@ class CallService {
             audio: audioConstraints,
             video: {
               facingMode: 'user',
-              width: { ideal: 1280, max: 1920 },
-              height: { ideal: 720, max: 1080 }
+              width: { ideal: 960, max: 1280 },
+              height: { ideal: 540, max: 720 },
+              frameRate: { ideal: 24, max: 30 }
             }
           });
           this.hasLocalVideo = true;
         } catch (videoErr: any) {
-          logger.warn("[CallService] Preferred 720p user video constraints failed, trying basic video constraints", videoErr);
+          logger.warn("[CallService] Preferred mobile video constraints failed, trying basic video constraints", videoErr);
           try {
             this.localStream = await navigator.mediaDevices.getUserMedia({
               audio: audioConstraints,
-              video: true
+              video: {
+                facingMode: 'user'
+              }
             });
             this.hasLocalVideo = true;
           } catch (basicErr: any) {
@@ -556,6 +560,14 @@ class CallService {
 
     window.addEventListener('offline', this.handleOffline);
     window.addEventListener('online', this.handleOnline);
+
+    if (this.handleUnload) window.removeEventListener('beforeunload', this.handleUnload);
+    this.handleUnload = () => {
+      if (this.callId && db) {
+        updateDoc(doc(db, 'calls', this.callId), { status: 'ended', updatedAt: serverTimestamp() }).catch(() => {});
+      }
+    };
+    window.addEventListener('beforeunload', this.handleUnload);
   }
 
   async createCall(db: any, callerProfile: any, receiverProfile: any, conversationId: string, type: 'audio' | 'video', onRemoteStream: (stream: MediaStream) => void) {
@@ -750,6 +762,8 @@ class CallService {
         if (this.role === 'caller') {
           this.logHistory(db, data);
         }
+        // Write call history entry to conversation chat
+        this.logCallToChat(db, data, data.duration || 0, data.status);
         
         if (this.callId && this.role === 'caller') {
           const cid = this.callId;
@@ -758,7 +772,7 @@ class CallService {
             deleteDoc(doc(db, 'calls', cid, 'candidates', 'receiver')).catch(() => {});
             deleteDoc(doc(db, 'calls', cid, 'candidates', 'signaling')).catch(() => {});
             deleteDoc(doc(db, 'calls', cid)).catch(() => {});
-          }, 5000);
+          }, 8000);
         }
         this.notifyConnectionState('ended');
         this.cleanup();
@@ -766,13 +780,154 @@ class CallService {
     });
   }
 
-  async updateStatus(db: any, callId: string, status: CallStatus) {
+  async updateStatus(db: any, callId: string, status: CallStatus, duration?: number) {
     if (this.isSafeMode && status !== 'ended') return; // Only allow ending calls in safe mode
     const callRef = doc(db, 'calls', callId);
-    await updateDoc(callRef, { 
+    const updatePayload: any = { 
       status,
       updatedAt: serverTimestamp()
+    };
+    if (duration !== undefined && duration !== null) {
+      updatePayload.duration = duration;
+    }
+    if (['ended', 'rejected', 'missed', 'busy'].includes(status)) {
+      updatePayload.endedAt = serverTimestamp();
+      updatePayload.endedBy = this.role || 'unknown';
+    }
+    await updateDoc(callRef, updatePayload).catch(err => {
+      logger.warn("[CallService] updateStatus failed:", err);
     });
+
+    if (['ended', 'rejected', 'missed', 'busy'].includes(status)) {
+      try {
+        const snap = await getDoc(callRef);
+        if (snap.exists()) {
+          const data = snap.data() as CallData;
+          await this.logCallToChat(db, data, duration !== undefined ? duration : (data.duration || 0), status);
+        }
+      } catch (e) {
+        logger.warn("[CallService] Error fetching call data for chat log:", e);
+      }
+    }
+  }
+
+  public async logCallToChat(db: any, data: CallData, duration: number = 0, finalStatus: CallStatus = 'ended') {
+    if (!db || !data || !data.id) return;
+    
+    // Determine the conversation ID
+    let convId = data.conversationId;
+    if (!convId && data.callerId && data.receiverId) {
+      convId = [data.callerId, data.receiverId].sort().join('_');
+    }
+    if (!convId) return;
+
+    try {
+      const callDurationSecs = duration || data.duration || 0;
+      const formatTime = (secs: number) => {
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+      };
+
+      let textSummary = '';
+      const isVideo = data.type === 'video';
+      const callTypeLabel = isVideo ? 'Video call' : 'Audio call';
+      
+      if (finalStatus === 'missed') {
+        textSummary = `Missed ${callTypeLabel.toLowerCase()}`;
+      } else if (finalStatus === 'rejected' || finalStatus === 'busy') {
+        textSummary = `${callTypeLabel} declined`;
+      } else {
+        textSummary = callDurationSecs > 0 
+          ? `${callTypeLabel} (${formatTime(callDurationSecs)})` 
+          : `${callTypeLabel} ended`;
+      }
+
+      const messageDocId = `call_${data.id}`;
+      const msgRef = doc(db, 'conversations', convId, 'messages', messageDocId);
+
+      // Check if message already exists with this exact deterministic doc ID
+      const msgSnap = await getDoc(msgRef);
+      if (msgSnap.exists()) {
+        const existingData = msgSnap.data();
+        if ((existingData.callDetails?.duration || 0) < callDurationSecs || existingData.callDetails?.status !== finalStatus) {
+          await updateDoc(msgRef, {
+            text: textSummary,
+            'metadata.duration': callDurationSecs,
+            'metadata.status': finalStatus,
+            'callDetails.duration': callDurationSecs,
+            'callDetails.status': finalStatus,
+            duration: callDurationSecs
+          }).catch(() => {});
+        }
+        return;
+      }
+
+      const messagePayload = {
+        id: messageDocId,
+        text: textSummary,
+        senderId: data.callerId,
+        type: 'call_history',
+        status: 'sent',
+        duration: callDurationSecs,
+        callDetails: {
+          callId: data.id,
+          type: data.type,
+          status: finalStatus,
+          duration: callDurationSecs,
+          callerId: data.callerId,
+          receiverId: data.receiverId,
+          endedBy: this.role || 'unknown'
+        },
+        metadata: {
+          type: 'call_history',
+          callId: data.id,
+          callType: data.type,
+          status: finalStatus,
+          duration: callDurationSecs,
+          callerId: data.callerId,
+          receiverId: data.receiverId,
+          callerName: data.callerName || '',
+          receiverName: data.receiverName || ''
+        },
+        deliveredTo: [data.callerId, data.receiverId].filter(Boolean),
+        seenBy: [data.callerId].filter(Boolean),
+        timestamp: serverTimestamp(),
+        timestampMs: Date.now(),
+        createdAt: serverTimestamp()
+      };
+
+      await setDoc(msgRef, messagePayload, { merge: true });
+
+      // Update conversation's preview and timestamp
+      const convRef = doc(db, 'conversations', convId);
+      await updateDoc(convRef, {
+        latestMessageAt: serverTimestamp(),
+        latestMessageAtMs: Date.now(),
+        latestMessageId: messageDocId,
+        latestMessageSenderId: data.callerId,
+        latestMessagePreview: textSummary,
+        lastMessage: {
+          text: textSummary,
+          senderId: data.callerId,
+          type: 'call_history',
+          timestamp: serverTimestamp(),
+          timestampMs: Date.now(),
+          metadata: {
+            type: 'call_history',
+            callType: data.type,
+            status: finalStatus,
+            duration: callDurationSecs
+          }
+        }
+      }).catch(err => {
+        logger.warn("[CallService] Error updating conversation preview for call log:", err);
+      });
+      
+      logger.info(`[CallService] Call history logged to conversation ${convId}: ${textSummary}`);
+    } catch (err) {
+      logger.error("[CallService] Failed to log call history to chat:", err);
+    }
   }
 
   private async flushCandidates(db: any) {
@@ -894,6 +1049,10 @@ class CallService {
       window.removeEventListener('online', this.handleOnline);
       this.handleOnline = null;
     }
+    if (this.handleUnload) {
+      window.removeEventListener('beforeunload', this.handleUnload);
+      this.handleUnload = null;
+    }
     if (this.networkOfflineTimer) {
       clearTimeout(this.networkOfflineTimer);
       this.networkOfflineTimer = null;
@@ -981,29 +1140,141 @@ class CallService {
 
   private facingMode: 'user' | 'environment' = 'user';
 
-  async switchCamera() {
-    if (!this.localStream) return;
-    const videoTrack = this.localStream.getVideoTracks()[0];
-    if (!videoTrack) return;
+  async switchCamera(): Promise<MediaStream | null> {
+    if (!this.localStream) return null;
+    const currentVideoTrack = this.localStream.getVideoTracks()[0];
+    if (!currentVideoTrack) return null;
 
-    this.facingMode = this.facingMode === 'user' ? 'environment' : 'user';
+    const targetFacing: 'user' | 'environment' = this.facingMode === 'user' ? 'environment' : 'user';
+    logger.info(`[CallService] Switching camera from ${this.facingMode} to ${targetFacing}`);
 
-    let newStream: MediaStream;
+    let devices: MediaDeviceInfo[] = [];
     try {
-      newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { exact: this.facingMode } }
-      });
-    } catch {
-      newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: this.facingMode }
-      });
+      if (navigator.mediaDevices?.enumerateDevices) {
+        devices = await navigator.mediaDevices.enumerateDevices();
+      }
+    } catch (e) {
+      logger.warn("[CallService] enumerateDevices error:", e);
     }
 
-    const newVideoTrack = newStream.getVideoTracks()[0];
-    if (!newVideoTrack) return;
+    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+    const candidateConstraints: MediaTrackConstraints[] = [];
 
+    if (targetFacing === 'environment') {
+      const rearDevice = videoDevices.find(d => /back|rear|environment/i.test(d.label));
+      if (rearDevice && rearDevice.deviceId) {
+        candidateConstraints.push({
+          deviceId: { exact: rearDevice.deviceId },
+          width: { ideal: 960, max: 1280 },
+          height: { ideal: 540, max: 720 },
+          frameRate: { ideal: 24, max: 30 }
+        });
+      }
+      candidateConstraints.push({
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 540, max: 720 },
+        frameRate: { ideal: 24, max: 30 }
+      });
+      candidateConstraints.push({
+        facingMode: 'environment',
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 540, max: 720 }
+      });
+    } else {
+      const frontDevice = videoDevices.find(d => /front|user|facing/i.test(d.label));
+      if (frontDevice && frontDevice.deviceId) {
+        candidateConstraints.push({
+          deviceId: { exact: frontDevice.deviceId },
+          width: { ideal: 960, max: 1280 },
+          height: { ideal: 540, max: 720 },
+          frameRate: { ideal: 24, max: 30 }
+        });
+      }
+      candidateConstraints.push({
+        facingMode: { ideal: 'user' },
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 540, max: 720 },
+        frameRate: { ideal: 24, max: 30 }
+      });
+      candidateConstraints.push({
+        facingMode: 'user',
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 540, max: 720 }
+      });
+    }
+    candidateConstraints.push({ video: true } as any);
+
+    let newStream: MediaStream | null = null;
+    let newVideoTrack: MediaStreamTrack | null = null;
+
+    // Phase 1: Attempt concurrent acquisition while keeping old track alive
+    for (const constraints of candidateConstraints) {
+      try {
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: constraints
+        });
+        const track = newStream.getVideoTracks()[0];
+        if (track && track.readyState === 'live') {
+          newVideoTrack = track;
+          break;
+        }
+      } catch (err: any) {
+        logger.warn("[CallService] Camera switch candidate failed:", constraints, err?.name || err);
+      }
+    }
+
+    // Phase 2: If concurrent acquisition was locked by Android camera hardware, stop old track and retry
+    if (!newVideoTrack) {
+      logger.info("[CallService] Concurrent camera access locked, stopping previous track before retry...");
+      currentVideoTrack.stop();
+      for (const constraints of candidateConstraints) {
+        try {
+          newStream = await navigator.mediaDevices.getUserMedia({
+            video: constraints
+          });
+          const track = newStream.getVideoTracks()[0];
+          if (track && track.readyState === 'live') {
+            newVideoTrack = track;
+            break;
+          }
+        } catch (err: any) {
+          logger.warn("[CallService] Sequential camera candidate failed:", constraints, err?.name || err);
+        }
+      }
+    }
+
+    // Phase 3: Fallback recovery — if target camera failed, attempt restoring original camera
+    if (!newVideoTrack) {
+      logger.error("[CallService] Could not switch to target camera. Restoring original camera orientation...");
+      try {
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: this.facingMode }
+        });
+        newVideoTrack = fallbackStream.getVideoTracks()[0] || null;
+      } catch (fallbackErr) {
+        logger.error("[CallService] Camera restore failed:", fallbackErr);
+      }
+    }
+
+    if (!newVideoTrack) {
+      logger.error("[CallService] All camera acquisition attempts exhausted.");
+      return new MediaStream(this.localStream.getTracks());
+    }
+
+    // Successfully acquired new track! Update facingMode state
+    this.facingMode = targetFacing;
+
+    // Transceiver / sender update
     if (this.videoTransceiver?.sender) {
       await this.videoTransceiver.sender.replaceTrack(newVideoTrack);
+      try {
+        const params = this.videoTransceiver.sender.getParameters();
+        if (params.encodings && params.encodings.length > 0) {
+          params.encodings[0].maxBitrate = 1200000;
+          await this.videoTransceiver.sender.setParameters(params);
+        }
+      } catch (e) {}
     } else {
       const sender = this.peerConnection?.getSenders().find(s => s.track?.kind === 'video');
       if (sender) {
@@ -1011,10 +1282,16 @@ class CallService {
       }
     }
 
-    this.localStream.removeTrack(videoTrack);
-    videoTrack.stop();
-    this.localStream.addTrack(newVideoTrack);
+    // Clean up old track and attach new track
+    if (currentVideoTrack !== newVideoTrack) {
+      this.localStream.removeTrack(currentVideoTrack);
+      currentVideoTrack.stop();
+    }
+    if (!this.localStream.getVideoTracks().some(t => t.id === newVideoTrack!.id)) {
+      this.localStream.addTrack(newVideoTrack);
+    }
     
+    logger.info(`[CallService] Camera switch successfully completed to ${this.facingMode}`);
     return new MediaStream(this.localStream.getTracks());
   }
 
@@ -1030,8 +1307,9 @@ class CallService {
           const vStream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: this.facingMode,
-              width: { ideal: 1280, max: 1920 },
-              height: { ideal: 720, max: 1080 }
+              width: { ideal: 960, max: 1280 },
+              height: { ideal: 540, max: 720 },
+              frameRate: { ideal: 24, max: 30 }
             }
           });
           track = vStream.getVideoTracks()[0];
@@ -1053,6 +1331,13 @@ class CallService {
       if (this.videoTransceiver?.sender) {
         await this.videoTransceiver.sender.replaceTrack(track);
         this.videoTransceiver.direction = 'sendrecv';
+        try {
+          const params = this.videoTransceiver.sender.getParameters();
+          if (params.encodings && params.encodings.length > 0) {
+            params.encodings[0].maxBitrate = 1200000;
+            await this.videoTransceiver.sender.setParameters(params);
+          }
+        } catch (e) {}
       } else if (this.peerConnection) {
         const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
         if (sender) {

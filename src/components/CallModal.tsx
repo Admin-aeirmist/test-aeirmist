@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Phone, Video as VideoIcon, X, Mic, MicOff, VideoOff, PhoneOff, 
-  Check, RefreshCw, Volume2, VolumeX, ShieldCheck, ChevronDown,
+  Check, RefreshCw, Volume2, Volume1, VolumeX, Smartphone, ShieldCheck, ChevronDown,
   Sparkles, Wand2, Palette, Users, UserPlus, Image, Search, Share2,
   Maximize2, Hand, LayoutGrid, MoreHorizontal, Smile, Monitor
 } from 'lucide-react';
@@ -137,8 +137,8 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   const unlockAudio = useCallback(() => {
     const audio = remoteAudioRef.current;
     if (audio) {
-      audio.muted = !isSpeaker;
-      audio.volume = isSpeaker ? 1.0 : 0.0;
+      audio.muted = false;
+      audio.volume = 1.0;
       audio.play().then(() => {
         setIsAutoplayBlocked(false);
       }).catch(err => {
@@ -146,7 +146,19 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       });
     }
     aeirmistCall.resumeAudioContext();
-  }, [isSpeaker]);
+  }, []);
+
+  const handleToggleSpeaker = useCallback(() => {
+    setIsSpeaker(prev => {
+      const next = !prev;
+      if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+        try {
+          (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'communication', speaker: next });
+        } catch (e) {}
+      }
+      return next;
+    });
+  }, []);
 
   // Fallback chat details
   const safeChat = chat || {
@@ -181,12 +193,12 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     }
   }, [remoteStream]);
 
-  // Synchronise remote audio playback, volume, and speaker state without interrupting active streams
+  // Synchronise remote audio playback without muting audio element (routing handled via native communication mode)
   useEffect(() => {
     const audio = remoteAudioRef.current;
     if (!audio) return;
-    audio.muted = !isSpeaker;
-    audio.volume = isSpeaker ? 1.0 : 0.0;
+    audio.muted = false;
+    audio.volume = 1.0;
 
     if (remoteStream && remoteStream.getAudioTracks().length > 0) {
       const currentSrcObject = audio.srcObject as MediaStream | null;
@@ -198,16 +210,14 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         audio.srcObject = remoteStream;
       }
       
-      if (isSpeaker) {
-        audio.play().then(() => {
-          setIsAutoplayBlocked(false);
-        }).catch(e => {
-          logger.warn("Remote audio play deferred by browser autoplay policy", e);
-          setIsAutoplayBlocked(true);
-        });
-      }
+      audio.play().then(() => {
+        setIsAutoplayBlocked(false);
+      }).catch(e => {
+        logger.warn("Remote audio play deferred by browser autoplay policy", e);
+        setIsAutoplayBlocked(true);
+      });
     }
-  }, [remoteStream, isSpeaker, callStatus]);
+  }, [remoteStream, callStatus]);
 
   // Bind WebRTC media streams safely across all active rendering video tags without reset loops
   useEffect(() => {
@@ -244,8 +254,8 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
       if (remoteAudioRef.current && remoteStream && remoteStream.getAudioTracks().length > 0) {
         const a = remoteAudioRef.current;
-        a.muted = !isSpeaker;
-        a.volume = isSpeaker ? 1.0 : 0.0;
+        a.muted = false;
+        a.volume = 1.0;
         
         const currentSrcObject = a.srcObject as MediaStream | null;
         const currentTrackId = currentSrcObject?.getAudioTracks()[0]?.id;
@@ -254,7 +264,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         if (!currentSrcObject || (newTrackId && currentTrackId !== newTrackId)) {
           a.srcObject = remoteStream;
         }
-        if (a.paused && isSpeaker && !isAutoplayBlocked) {
+        if (a.paused && !isAutoplayBlocked) {
           a.play().then(() => {
             setIsAutoplayBlocked(false);
           }).catch(() => {
@@ -267,7 +277,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     bindStreams();
     const interval = setInterval(bindStreams, 1000);
     return () => clearInterval(interval);
-  }, [callStream, remoteStream, callStatus, isVideoOff, isMinimized, isSpeaker, isAutoplayBlocked]);
+  }, [callStream, remoteStream, callStatus, isVideoOff, isMinimized, isAutoplayBlocked]);
 
   const handleSwitchCamera = async () => {
     try {
@@ -429,7 +439,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       const handleVisibilityChange = () => {
         if (document.visibilityState === 'visible') {
           aeirmistCall.acquireWakeLock();
-          if (remoteAudioRef.current && isSpeaker && remoteAudioRef.current.paused) {
+          if (remoteAudioRef.current && remoteAudioRef.current.paused) {
             remoteAudioRef.current.play().catch(() => {});
           }
         }
@@ -439,7 +449,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       const audio = remoteAudioRef.current;
       const handleStall = () => {
         logger.warn("[WebRTC Audio] Buffer underrun / stall detected, auto-resuming playback...");
-        if (audio && isSpeaker) {
+        if (audio) {
           audio.play().catch(() => {});
         }
       };
@@ -477,12 +487,12 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       } catch (e) {}
     }
     if (activeCall?.id) {
-       aeirmistCall.updateStatus(db, activeCall.id, 'ended');
-       endCall(activeCall.id, activeCall.conversationId);
+       aeirmistCall.updateStatus(db, activeCall.id, 'ended', duration);
+       endCall(activeCall.id, activeCall.conversationId, duration);
     }
     aeirmistRingtone.stop();
     setCallStatus('ended');
-    setTimeout(onClose, 1000);
+    setTimeout(onClose, 800);
   };
 
   const handleAccept = async (asAudio = false) => {
@@ -854,13 +864,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               {/* Core quick controls for incoming call */}
               <div className="flex items-center justify-center gap-3 bg-[#08090d]/80 backdrop-blur-xl border border-white/10 px-4 py-2.5 rounded-2xl">
                 <button
-                  onClick={() => setIsSpeaker(!isSpeaker)}
+                  onClick={handleToggleSpeaker}
                   className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                     !isSpeaker ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/10 text-white'
                   }`}
-                  title="Speaker Toggle"
+                  title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
                 >
-                  {isSpeaker ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                  {isSpeaker ? <Volume2 size={18} /> : <Volume1 size={18} />}
                 </button>
                 <button
                   onClick={() => setIsMuted(!isMuted)}
@@ -921,13 +931,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
             <div className="relative z-10 w-full bg-[#08090d]/95 backdrop-blur-2xl border-t border-white/10 px-3 py-3.5 flex items-center justify-evenly gap-2 shrink-0">
               {/* 1. Speaker / Audio */}
               <button
-                onClick={() => setIsSpeaker(!isSpeaker)}
+                onClick={handleToggleSpeaker}
                 className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all active:scale-90 shrink-0 ${
                   !isSpeaker ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/10 text-white hover:bg-white/20'
                 }`}
-                title="Speaker Toggle"
+                title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
               >
-                {isSpeaker ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                {isSpeaker ? <Volume2 size={20} /> : <Volume1 size={20} />}
               </button>
 
               {/* 2. Microphone Toggle */}
@@ -1136,9 +1146,9 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
               {/* 3. Speaker Toggle */}
               <button
-                onClick={() => setIsSpeaker(!isSpeaker)}
+                onClick={handleToggleSpeaker}
                 className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
-                title="Toggle Speaker"
+                title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
               >
                 <div className={`w-full h-full rounded-xl flex items-center justify-center transition-all duration-300 border relative overflow-hidden ${
                   !isSpeaker 
@@ -1147,7 +1157,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
                 }`}>
                   <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
                   <div className="relative z-10">
-                    {isSpeaker ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                    {isSpeaker ? <Volume2 size={18} /> : <Volume1 size={18} />}
                   </div>
                 </div>
               </button>
@@ -1272,9 +1282,9 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
             {/* 1. Speaker / Audio */}
             <button
-              onClick={() => setIsSpeaker(!isSpeaker)}
+              onClick={handleToggleSpeaker}
               className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
-              title="Speaker Toggle"
+              title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
             >
               <div className={`w-full h-full rounded-xl flex items-center justify-center transition-all duration-300 border relative overflow-hidden ${
                 !isSpeaker 
@@ -1283,7 +1293,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               }`}>
                 <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
                 <div className="relative z-10">
-                  {isSpeaker ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                  {isSpeaker ? <Volume2 size={18} /> : <Volume1 size={18} />}
                 </div>
               </div>
             </button>
@@ -1663,9 +1673,9 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
             {/* Speaker Toggle */}
             <button
-              onClick={() => setIsSpeaker(!isSpeaker)}
+              onClick={handleToggleSpeaker}
               className="relative flex items-center justify-center w-11 h-11 cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
-              title="Toggle Speaker"
+              title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
             >
               <div className={`w-full h-full rounded-xl flex items-center justify-center transition-all duration-300 border relative overflow-hidden ${
                 !isSpeaker 
@@ -1674,7 +1684,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               }`}>
                 <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
                 <div className="relative z-10">
-                  {isSpeaker ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                  {isSpeaker ? <Volume2 size={18} /> : <Volume1 size={18} />}
                 </div>
               </div>
             </button>

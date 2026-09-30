@@ -1,7 +1,7 @@
 import React, { useState, useRef, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
-import { Reply, Forward, Edit2, Trash2, Heart, Copy, Smile, Loader2, Sparkles, Zap, MoreVertical, Pin, Bookmark, Languages, Info, Download, FileText, Music, MapPin, UserPlus } from 'lucide-react';
+import { Reply, Forward, Edit2, Trash2, Heart, Copy, Smile, Loader2, Sparkles, Zap, MoreVertical, Pin, Bookmark, Languages, Info, Download, FileText, Music, MapPin, UserPlus, Phone, Video as VideoIcon, PhoneIncoming, PhoneOutgoing, PhoneMissed } from 'lucide-react';
 import { Message } from '../../types/messenger';
 import { VoicePlayback } from './VoicePlayback';
 import { Check, CheckCheck, Eye, EyeOff } from 'lucide-react';
@@ -61,7 +61,7 @@ export const MessageItem = React.memo<{
   isFirstInSequence,
   isLastInSequence
 }) => {
-  const { addReaction: syncReaction, deleteMessage, removeReaction, profile, addToast } = useAeirmist();
+  const { addReaction: syncReaction, deleteMessage, removeReaction, profile, addToast, startCall } = useAeirmist();
   const [showMenu, setShowMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -303,6 +303,94 @@ export const MessageItem = React.memo<{
         <span className="text-[11px] font-semibold tracking-wide px-3.5 py-1.5 rounded-full bg-white/10 text-white/80 border border-white/10 backdrop-blur-md shadow-sm text-center">
           {message.text}
         </span>
+      </div>
+    );
+  }
+
+  if (message.type === 'call_history' || message.metadata?.type === 'call_history') {
+    const callType: 'audio' | 'video' = message.metadata?.callType || (message as any).callDetails?.type || 'audio';
+    const status = message.metadata?.status || (message as any).callDetails?.status || 'ended';
+    const callDuration = message.duration || message.metadata?.duration || (message as any).callDetails?.duration || 0;
+    const isMissed = status === 'missed';
+    const isDeclined = status === 'rejected' || status === 'busy';
+    const isVideo = callType === 'video';
+
+    const formatCallDuration = (secs: number) => {
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
+    let title = isVideo ? 'Video Call' : 'Voice Call';
+    let subtitle = '';
+    if (isMissed) {
+      subtitle = isMe ? 'Cancelled call' : 'Missed call';
+    } else if (isDeclined) {
+      subtitle = 'Call declined';
+    } else if (callDuration > 0) {
+      subtitle = `${isMe ? 'Outgoing' : 'Incoming'} • ${formatCallDuration(callDuration)}`;
+    } else {
+      subtitle = isMe ? 'Outgoing call' : 'Incoming call';
+    }
+
+    const isFailureState = isMissed || isDeclined;
+    const timeDisplay = formatTimeOnly(message.timestampMs || message.timestamp);
+
+    return (
+      <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} my-2.5 px-4 md:px-8 select-none`}>
+        <div 
+          onClick={() => {
+            if (conversationId && startCall) {
+              startCall(conversationId, callType);
+            }
+          }}
+          className={`flex items-center gap-3 px-4 py-3 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] border backdrop-blur-xl shadow-lg max-w-[280px] group ${
+            isMe 
+              ? 'bg-[#12131a]/80 border-white/15 text-white hover:border-white/25' 
+              : 'bg-[#0f1015]/80 border-white/10 text-white hover:border-white/20'
+          }`}
+          title="Tap to call back"
+        >
+          {/* Status Indicator Icon */}
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border transition-transform group-hover:scale-105 ${
+            isFailureState
+              ? 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+              : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+          }`}>
+            {isVideo ? (
+              <VideoIcon size={19} />
+            ) : isMissed ? (
+              <PhoneMissed size={19} />
+            ) : isMe ? (
+              <PhoneOutgoing size={19} />
+            ) : (
+              <PhoneIncoming size={19} />
+            )}
+          </div>
+
+          {/* Details */}
+          <div className="flex flex-col min-w-0 flex-1">
+            <span className="text-xs font-bold tracking-tight text-white/90 truncate">
+              {title}
+            </span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`text-[11px] font-medium tracking-tight ${
+                isFailureState ? 'text-rose-400' : 'text-white/60'
+              }`}>
+                {subtitle}
+              </span>
+              <span className="text-[10px] text-white/30">•</span>
+              <span className="text-[10px] text-white/40 font-mono">
+                {timeDisplay}
+              </span>
+            </div>
+          </div>
+
+          {/* Call Back Button */}
+          <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-white/50 group-hover:text-emerald-400 group-hover:bg-emerald-500/10 group-hover:border-emerald-500/30 transition-all shrink-0">
+            {isVideo ? <VideoIcon size={15} /> : <Phone size={15} />}
+          </div>
+        </div>
       </div>
     );
   }
