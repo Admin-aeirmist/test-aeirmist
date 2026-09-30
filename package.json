@@ -13,7 +13,8 @@
     "cap:open:ios": "npx cap open ios",
     "sync": "node scripts/sync-repos.mjs",
     "deploy:infinityfree": "node scripts/deploy-infinityfree.mjs",
-    "deploy:cloudflare": "vite build && wrangler pages deploy dist",
+    "deploy:cloudflare": "npm run build && node scripts/deploy-cloudflare.mjs",
+    "deploy": "npm run build && node scripts/deploy-cloudflare.mjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
