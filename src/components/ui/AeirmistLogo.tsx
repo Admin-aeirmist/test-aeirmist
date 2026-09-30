@@ -108,15 +108,15 @@ export const AeirmistLogo: React.FC<AeirmistLogoProps> = ({
 
   const textGlowStyles = glow 
     ? glowStrength === 'strong'
-      ? { textShadow: '0 0 15px rgba(0, 191, 255, 0.9), 0 0 30px rgba(0, 191, 255, 0.4)' }
+      ? { textShadow: '0 0 8px rgba(0, 242, 255, 0.6)' }
       : glowStrength === 'weak'
-        ? { textShadow: '0 0 5px rgba(0, 191, 255, 0.4)' }
-        : { textShadow: '0 0 8px rgba(0, 191, 255, 0.7), 0 0 15px rgba(0, 191, 255, 0.2)' }
+        ? { textShadow: '0 0 3px rgba(0, 242, 255, 0.3)' }
+        : { textShadow: '0 0 5px rgba(0, 242, 255, 0.45)' }
     : undefined;
 
-  const AeirmistText = (style: React.CSSProperties) => (
+  const AeirmistText = (style?: React.CSSProperties) => (
     <span
-      className={`font-display tracking-[0.25em] font-normal text-base sm:text-lg uppercase whitespace-nowrap text-[#ccebff] ${colorClass}`}
+      className={`font-display tracking-[0.25em] font-black text-base sm:text-lg uppercase whitespace-nowrap antialiased text-[#ccebff] ${colorClass}`}
       style={{ ...style, ...textGlowStyles }}
     >
       ΛEIRMIST
@@ -126,7 +126,7 @@ export const AeirmistLogo: React.FC<AeirmistLogoProps> = ({
   if (variant === 'text-only') {
     return (
       <div className={`${className} flex items-center justify-center`}>
-        {AeirmistText(glowStyles || {})}
+        {AeirmistText()}
       </div>
     );
   }
@@ -155,7 +155,7 @@ export const AeirmistLogo: React.FC<AeirmistLogoProps> = ({
         />
       </div>
       <div className="flex items-center">
-        {AeirmistText(glowStyles || {})}
+        {AeirmistText()}
       </div>
     </div>
   );

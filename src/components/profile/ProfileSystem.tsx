@@ -1765,7 +1765,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
             
             {/* Mid/Branding: centered logo */}
             <div className="flex-1 flex items-center justify-center select-none pointer-events-none z-0 min-w-0 px-2">
-              <AeirmistLogo variant="text-only" className="scale-[0.80] sm:scale-[0.90] shrink-0" glow={true} glowStrength="normal" />
+              <AeirmistLogo variant="text-only" className="shrink-0" glow={false} />
             </div>
             
             {/* Actions on the Right - Dynamic Custom Layout */}

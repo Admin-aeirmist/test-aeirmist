@@ -406,7 +406,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
         {/* Mobile Header with Marketplace Link */}
         <div 
           role="banner"
-          className={`sticky top-0 z-[100] ${isGlobalBgActive ? 'bg-transparent' : 'bg-[#050505]/95'} backdrop-blur-xl flex md:hidden items-center justify-between pb-2.5 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] mb-1 px-4 border-b border-white/5`}
+          className={`sticky top-0 z-[100] ${isGlobalBgActive ? 'bg-transparent' : 'bg-[#050505]/95'} backdrop-blur-md flex md:hidden items-center justify-between pb-2.5 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] mb-1 px-4 border-b border-white/5`}
         >
            <div className="flex items-center justify-start gap-1.5 w-24 shrink-0">
              <button 
@@ -422,18 +422,20 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
            </button>
            </div>
            <div className="flex-1 flex items-center justify-center z-0 pointer-events-none min-w-0 px-2">
-             <h1 className="text-xl font-display font-black uppercase tracking-[0.2em] flex items-center gap-2 relative group">
-              <div className="relative pt-1 flex items-center">
-                <AeirmistLogo variant="text-only" className="scale-[0.85]" glow={true} glowStrength="normal" colorClass="text-aeirmist-cyan" />
-                {/* Decorative holographic underlines */}
-                <div className="absolute -bottom-1 left-0 w-full h-[1.5px] bg-gradient-to-r from-aeirmist-cyan/0 via-aeirmist-cyan/50 to-aeirmist-cyan/0" />
-                 <motion.div 
-                   animate={{ x: [-20, 100], opacity: [0, 1, 0] }}
-                   transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                   className="absolute -bottom-1 left-0 w-1/3 h-[1.5px] bg-white blur-sm"
-                 />
-               </div>
-             </h1>
+             <div className="relative pt-1 flex items-center justify-center">
+               <AeirmistLogo 
+                 variant="text-only" 
+                 glow={false} 
+                 colorClass="text-aeirmist-cyan font-black text-lg tracking-[0.25em]" 
+               />
+               {/* Decorative holographic hairline underline */}
+               <div className="absolute -bottom-1 left-0 w-full h-[1.5px] bg-gradient-to-r from-transparent via-aeirmist-cyan/50 to-transparent" />
+               <motion.div 
+                 animate={{ x: [-20, 100], opacity: [0, 0.8, 0] }}
+                 transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                 className="absolute -bottom-1 left-0 w-1/3 h-[1.5px] bg-gradient-to-r from-transparent via-white to-transparent"
+               />
+             </div>
            </div>
            <div className="flex items-center justify-end gap-2 w-24 shrink-0">
              <button 
