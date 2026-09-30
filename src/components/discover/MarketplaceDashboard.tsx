@@ -72,7 +72,7 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
   onViewStore,
   onOpenCreateShop
 }) => {
-  const { db, profile, addToast, earnPoints, uploadMedia } = useAeirmist();
+  const { db, profile, user, addToast, earnPoints, uploadMedia } = useAeirmist();
 
   // Screen level states
   const [myStores, setMyStores] = useState<StoreType[]>([]);
@@ -422,10 +422,14 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
     const priceNum = parseFloat(prodPrice);
     const discountNum = prodDiscount ? parseFloat(prodDiscount) : undefined;
 
+    const sellerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
     const payload = {
       storeId: activeStore.id,
       storeName: activeStore.name,
       storeLogo: activeStore.logo,
+      sellerUid: sellerUid,
+      sellerId: profile.id,
+      ownerUid: sellerUid,
       name: prodName.trim(),
       description: prodDesc.trim(),
       price: priceNum,

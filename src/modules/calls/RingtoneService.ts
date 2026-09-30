@@ -2,6 +2,7 @@ class RingtoneService {
   private audioContext: AudioContext | null = null;
   private isPlaying: boolean = false;
   private activeNodes: AudioNode[] = [];
+  private activeTimeouts: any[] = [];
 
   private init() {
     if (!this.audioContext) {
@@ -62,14 +63,15 @@ class RingtoneService {
     const playLoop = () => {
       if (!this.isPlaying || !this.audioContext) return;
       
-      const now = this.audioContext.currentTime;
       sequence.forEach((freq, i) => {
-        setTimeout(() => {
+        const t = setTimeout(() => {
           if (this.isPlaying) this.createSynthVoice(freq, type);
         }, i * 150);
+        this.activeTimeouts.push(t);
       });
 
-      setTimeout(playLoop, 2500);
+      const nextLoop = setTimeout(playLoop, 2500);
+      this.activeTimeouts.push(nextLoop);
     };
 
     playLoop();
@@ -105,7 +107,8 @@ class RingtoneService {
       osc.stop(now + 0.8);
 
       this.activeNodes.push(osc, gain);
-      setTimeout(playMessage, 1500);
+      const nextTone = setTimeout(playMessage, 1500);
+      this.activeTimeouts.push(nextTone);
     };
 
     playMessage();
@@ -113,7 +116,8 @@ class RingtoneService {
 
   stop() {
     this.isPlaying = false;
-    // We let active voices finish their tails naturaly or we can force disconnect
+    this.activeTimeouts.forEach(t => clearTimeout(t));
+    this.activeTimeouts = [];
     this.activeNodes.forEach(node => {
       try {
         node.disconnect();

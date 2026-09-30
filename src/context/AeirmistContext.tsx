@@ -233,7 +233,7 @@ interface AeirmistContextType {
   archivePost: (postId: string, archive: boolean) => Promise<void>;
   editVideo: (videoId: string, caption: string) => Promise<void>;
   deleteVideo: (videoId: string, videoURL: string, thumbnailURL?: string) => Promise<void>;
-  sendMessage: (conversationId: string, text: string, type?: 'text' | 'media' | 'video' | 'post' | 'voice' | 'image' | 'system', mediaUrl?: string, metadata?: any) => Promise<string | undefined>;
+  sendMessage: (conversationId: string, text: string, type?: 'text' | 'media' | 'video' | 'post' | 'voice' | 'image' | 'system' | 'file' | 'location' | 'contact' | 'sticker' | string, mediaUrl?: string, metadata?: any) => Promise<string | undefined>;
   markAsRead: (conversationId: string) => Promise<void>;
   markAsUnread: (conversationId: string) => Promise<void>;
   updateSeenStatus: (conversationId: string) => Promise<void>;
@@ -243,6 +243,7 @@ interface AeirmistContextType {
   onlineUsers: Set<string>;
   activeCall: any | null;
   callStream: MediaStream | null;
+  setCallStream: (stream: MediaStream | null) => void;
   remoteStream: MediaStream | null;
   startCall: (conversationId: string, type: 'audio' | 'video', targetUid?: string) => Promise<void>;
   acceptCall: (callId: string, conversationId: string) => Promise<void>;
@@ -1111,6 +1112,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const storyDoc = {
       userId: user.uid,
+      authorUid: user.uid,
+      authorId: profile.id,
       userName: profile.displayName || profile.username || 'Aeirmist User',
       userAvatar: profile.photoURL || '',
       mediaUrl: previewUrl || storyData.url || '',
@@ -1367,10 +1370,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
          // We could add a toast here, but for now let's just log it.
       }
 
+      const resolvedOtherUid = otherProfileData?.ownerUid || otherProfileData?.uid || otherProfileData?.userId || otherParticipantUid || finalOtherProfileId;
+
       const otherProfile = { 
         id: finalOtherProfileId, 
         ...otherProfileData,
-        ownerUid: otherProfileData?.ownerUid || otherProfileData?.uid || otherParticipantUid
+        ownerUid: resolvedOtherUid
       } as any;
 
       if (!otherProfile.ownerUid) {
@@ -1400,10 +1405,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             startTime: serverTimestamp(),
           },
           updatedAt: serverTimestamp()
-        });
+        }).catch(err => logger.warn("Failed to update conversation activeCall", err));
       }
     } catch (e) {
       logger.error("Call initiation failed", e);
+      throw e;
     }
   }, [db, profile, user]);
 
@@ -1420,10 +1426,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           'activeCall.status': 'accepted',
           'activeCall.acceptedAt': serverTimestamp(),
           updatedAt: serverTimestamp()
-        });
+        }).catch(err => logger.warn("Failed to update conversation activeCall on accept", err));
       }
     } catch (e) {
       logger.error("Accept call failed", e);
+      throw e;
     }
   }, [db, profile]);
 
@@ -2420,7 +2427,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             needsUsername: !isMainAdmin,
             email: u.email || "",
             displayName: isMainAdmin ? "Junaed Islam Jim" : (u.displayName || 'Aeirmist User'),
-            photoURL: u.photoURL || BLANK_DP,
+            photoURL: BLANK_DP,  // Never auto-use Google/provider photo — user must set their own DP
             bio: isMainAdmin ? "Founder & Lead Architect at Aeirmist" : "Aeirmist Account Active",
             tagline: "",
             followersCount: 0,
@@ -2448,7 +2455,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               username: newProfile.username,
               usernameNormalized: newProfile.usernameNormalized,
               displayName: newProfile.displayName,
-              photoURL: u.photoURL || "",
+              photoURL: "",  // Never auto-use Google/provider photo
               isAdmin: isMainAdmin ? true : false,
               role: isMainAdmin ? 'admin' : 'user',
               lastLogin: serverTimestamp()
@@ -2474,50 +2481,40 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         let foundProfiles = await fetchProfilesForUser(effectiveUser);
         foundProfiles = deduplicateProfiles(foundProfiles);
 
-        // Ensure admin account junaed_islam_jim9 always has full admin rights and correct handle
+        // Ensure admin account always has full admin rights
         const isMainAdminAccount = effectiveUser.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || effectiveUser.uid === 'iFqvwxqejCSte6K24gJe5ZE4NTo1' || effectiveUser.uid === 'doViFWfMXcOoas976z6MO216YNg1';
         if (isMainAdminAccount) {
           foundProfiles = foundProfiles.map((p: any) => {
+            const adminHandle = (p.username && p.username !== 'junaed_islam_jim9') 
+              ? p.username 
+              : (p.username || effectiveUser.email?.split('@')[0] || 'junaed_islam_jim');
             const updated = {
               ...p,
-              username: 'junaed_islam_jim9',
-              usernameNormalized: 'junaed_islam_jim9',
-              displayName: 'Junaed Islam Jim',
-              fullName: 'Junaed Islam Jim',
-              name: 'Junaed Islam Jim',
-              email: 'junaedislamjim180@gmail.com',
+              username: adminHandle,
+              usernameNormalized: normalizeUsername(adminHandle),
+              displayName: p.displayName || 'Junaed Islam Jim',
+              fullName: p.fullName || 'Junaed Islam Jim',
+              name: p.name || 'Junaed Islam Jim',
+              email: effectiveUser.email || 'junaedislamjim180@gmail.com',
               isAdmin: true,
               role: 'admin',
               isVerified: true
             };
             try {
               setDoc(doc(db, 'profiles', p.id), {
-                username: 'junaed_islam_jim9',
-                usernameNormalized: 'junaed_islam_jim9',
-                displayName: 'Junaed Islam Jim',
-                fullName: 'Junaed Islam Jim',
-                name: 'Junaed Islam Jim',
-                email: 'junaedislamjim180@gmail.com',
+                username: adminHandle,
+                usernameNormalized: normalizeUsername(adminHandle),
+                displayName: updated.displayName,
                 isAdmin: true,
                 role: 'admin',
                 isVerified: true
               }, { merge: true }).catch(() => {});
               setDoc(doc(db, 'users', effectiveUser.uid), {
-                username: 'junaed_islam_jim9',
-                usernameNormalized: 'junaed_islam_jim9',
-                displayName: 'Junaed Islam Jim',
-                fullName: 'Junaed Islam Jim',
-                name: 'Junaed Islam Jim',
-                email: 'junaedislamjim180@gmail.com',
+                username: adminHandle,
+                usernameNormalized: normalizeUsername(adminHandle),
+                displayName: updated.displayName,
                 isAdmin: true,
                 role: 'admin'
-              }, { merge: true }).catch(() => {});
-              setDoc(doc(db, 'usernames', 'junaed_islam_jim9'), {
-                uid: effectiveUser.uid,
-                ownerUid: effectiveUser.uid,
-                username: 'junaed_islam_jim9',
-                email: 'junaedislamjim180@gmail.com',
-                displayName: 'Junaed Islam Jim'
               }, { merge: true }).catch(() => {});
             } catch (e) {}
             return updated;
@@ -3078,7 +3075,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const callsQ = query(
       collection(db, 'calls'),
       where('participants', 'array-contains', user.uid),
-      limit(5)
+      limit(30)
     );
 
     const unsubCalls = onSnapshot(callsQ, (snap) => {
@@ -3148,7 +3145,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
         }
       } else {
-        setActiveCall(null);
+        // Protect ongoing active call from being prematurely wiped by temporary query flicker
+        if (!activeCallRef.current || !['ongoing', 'accepted', 'connected'].includes(activeCallRef.current.status)) {
+          setActiveCall(null);
+        }
       }
     });
 
@@ -3614,9 +3614,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeProfile.role = 'admin';
         activeProfile.isVerified = true;
         activeProfile.aeirmistLevel = 9999;
-        activeProfile.username = 'junaed_islam_jim9';
-        activeProfile.usernameNormalized = 'junaed_islam_jim9';
-        activeProfile.displayName = 'Junaed Islam Jim';
+        if (!activeProfile.username || activeProfile.username === 'junaed_islam_jim9') {
+          activeProfile.username = 'junaed_islam_jim';
+          activeProfile.usernameNormalized = 'junaed_islam_jim';
+        }
+        if (!activeProfile.displayName) {
+          activeProfile.displayName = 'Junaed Islam Jim';
+        }
       }
 
       const sessionUser: any = {
@@ -3842,17 +3846,18 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     
     try {
-      // 2. Avatar Process (optional)
-      let photoURL = presetPhotoURL || null;
+      // 2. Avatar Process (optional — only if user explicitly selected a file)
+      // NEVER auto-use photoURL from Google/provider — user must set their own DP
+      let photoURL = (presetPhotoURL && presetPhotoURL !== newUser.photoURL) ? presetPhotoURL : null;
       if (avatarFile) {
         photoURL = await uploadMedia(avatarFile, `profiles/${newUser.uid}`, undefined, MediaQuality.PROFILE);
       }
       
-      // 3. Register Identity
+      // 3. Register Identity — ATOMIC: if this fails we delete the Auth user
       await registerUsername(
         username,
         {
-          photoURL,
+          photoURL: photoURL || "",  // Empty string = blank DP, never auto-populate from provider
           displayName: fullName,
           onboardingStep: 2,
           onboardingCompleted: false
@@ -3862,10 +3867,15 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       
       return newUser;
     } catch (error) {
-      logger.error("Post-Auth registration failed", error);
-      // Even if profile fails, user was created. 
-      // The global state will eventually show UsernameSelection if profile is missing.
-      return newUser;
+      logger.error("Post-Auth registration failed — deleting orphaned Auth user to maintain atomicity", error);
+      // ATOMIC CLEANUP: Delete the Firebase Auth user so the account doesn't exist without a Firestore record
+      try {
+        await newUser.delete();
+        logger.info("[Atomic Signup] Auth user deleted successfully after failed profile write.");
+      } catch (deleteErr) {
+        logger.warn("[Atomic Signup] Could not delete orphaned Auth user:", deleteErr);
+      }
+      throw new Error("Account creation failed: could not save your profile. Please try again.");
     }
   };
 
@@ -5687,7 +5697,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         usernameNormalized: norm,
         email: activeUser?.email || data.email || data.personalEmail || '',
         displayName: data.displayName || activeUser?.displayName || cleanRawUsername,
-        photoURL: data.photoURL || activeUser?.photoURL || BLANK_DP,
+        photoURL: data.photoURL || BLANK_DP,  // Only user-provided photo, never auto-pull from provider
         bio: data.bio || "",
         tagline: data.tagline || "",
         followersCount: 0,
@@ -5724,7 +5734,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       usernameNormalized: norm,
       email: activeUser.email || data.email || data.personalEmail || '',
       displayName: data.displayName || activeUser.displayName || cleanRawUsername,
-      photoURL: data.photoURL || activeUser.photoURL || "",
+      photoURL: data.photoURL || "",  // Only user-provided photo, never auto-pull from provider
       createdLocation: data.createdLocation || data.signupLocation || "",
       signupLocation: data.signupLocation || data.createdLocation || "",
       lastLoginLocation: data.lastLoginLocation || data.createdLocation || "",
@@ -5746,7 +5756,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       usernameNormalized: norm,
       email: activeUser.email || data.email || data.personalEmail || '',
       displayName: data.displayName || activeUser.displayName || cleanRawUsername,
-      photoURL: data.photoURL || activeUser.photoURL || "",
+      photoURL: data.photoURL || "",  // Only user-provided photo, never auto-pull from provider
       bio: data.bio || "",
       tagline: data.tagline || "",
       relationshipStatus: data.relationshipStatus || null,
@@ -5830,7 +5840,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         usernameNormalized: norm,
         email: activeUser.email || data.email || data.personalEmail || '',
         displayName: data.displayName || activeUser.displayName || cleanRawUsername,
-        photoURL: data.photoURL || activeUser.photoURL || "",
+        photoURL: data.photoURL || "",  // Only user-provided photo
         onboardingStep: data.onboardingStep || 2,
         onboardingCompleted: data.onboardingCompleted ?? false,
         isActive: true
@@ -6190,14 +6200,37 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const trimmed = text.trim();
     if (!trimmed) return [];
     
-    const resultsMap = new Map<string, any>();
+    // Normalize: strip leading '@' if user typed "@username"
+    const cleanText = trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
+    if (!cleanText) return [];
+    const cleanLower = cleanText.toLowerCase();
 
-    // 1. Check if it's a direct document ID match
+    const resultsMap = new Map<string, any>();
+    const blockedIds = new Set(profile?.social?.blocked || []);
+
+    const addProfileIfValid = (docId: string, data: any) => {
+      if (!data) return;
+      const pid = docId || data.id;
+      if (blockedIds.has(pid)) return;
+      if (data.scheduledForPurge || data.status === 'scheduled_for_deletion' || data.isBanned) return;
+      const uname = (data.username || '').trim().toLowerCase();
+      if (!uname || uname === 'user' || uname === 'null' || uname === 'undefined' || uname.length < 2) return;
+      const dname = (data.displayName || data.name || data.fullName || '').trim();
+      if (!dname) return;
+
+      resultsMap.set(pid, { id: pid, ...data });
+    };
+
+    // 1. Check if it's a direct document ID match or profile_ID
     try {
-      const directDocRef = doc(db, 'profiles', trimmed);
-      const directSnap = await getDoc(directDocRef);
-      if (directSnap.exists()) {
-        resultsMap.set(directSnap.id, { id: directSnap.id, ...directSnap.data() });
+      const candidates = [trimmed, cleanText, `profile_${cleanText}`];
+      for (const cid of candidates) {
+        if (!cid) continue;
+        const directDocRef = doc(db, 'profiles', cid);
+        const directSnap = await getDoc(directDocRef);
+        if (directSnap.exists()) {
+          addProfileIfValid(directSnap.id, directSnap.data());
+        }
       }
     } catch (e) {
       logger.warn("Direct ID lookup bypassed:", e);
@@ -6207,36 +6240,84 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       const q1 = query(
         collection(db, 'profiles'),
-        where('username', '>=', trimmed.toLowerCase()),
-        where('username', '<=', trimmed.toLowerCase() + '\uf8ff'),
-        limit(20)
+        where('username', '>=', cleanLower),
+        where('username', '<=', cleanLower + '\uf8ff'),
+        limit(25)
       );
       const snap1 = await getDocs(q1);
-      snap1.forEach(doc => {
-        resultsMap.set(doc.id, { id: doc.id, ...doc.data() });
+      snap1.forEach(docSnap => {
+        addProfileIfValid(docSnap.id, docSnap.data());
       });
     } catch (e) {
       logger.warn("Username query bypassed:", e);
     }
 
-    // 3. Query by displayName prefix
+    // 3. Query by usernameNormalized if populated
+    try {
+      const qNorm = query(
+        collection(db, 'profiles'),
+        where('usernameNormalized', '>=', cleanLower),
+        where('usernameNormalized', '<=', cleanLower + '\uf8ff'),
+        limit(25)
+      );
+      const snapNorm = await getDocs(qNorm);
+      snapNorm.forEach(docSnap => {
+        addProfileIfValid(docSnap.id, docSnap.data());
+      });
+    } catch (e) {}
+
+    // 4. Query by displayName prefix (as typed)
     try {
       const q2 = query(
         collection(db, 'profiles'),
-        where('displayName', '>=', trimmed),
-        where('displayName', '<=', trimmed + '\uf8ff'),
-        limit(20)
+        where('displayName', '>=', cleanText),
+        where('displayName', '<=', cleanText + '\uf8ff'),
+        limit(25)
       );
       const snap2 = await getDocs(q2);
-      snap2.forEach(doc => {
-        resultsMap.set(doc.id, { id: doc.id, ...doc.data() });
+      snap2.forEach(docSnap => {
+        addProfileIfValid(docSnap.id, docSnap.data());
       });
     } catch (e) {
       logger.warn("Display name query bypassed:", e);
     }
 
-    // Filter out items with undefined/missing fields
-    return Array.from(resultsMap.values());
+    // 5. Query by displayName in TitleCase (e.g. "junaed" -> "Junaed")
+    const titleCase = cleanLower.charAt(0).toUpperCase() + cleanLower.slice(1);
+    if (titleCase !== cleanText) {
+      try {
+        const qTitle = query(
+          collection(db, 'profiles'),
+          where('displayName', '>=', titleCase),
+          where('displayName', '<=', titleCase + '\uf8ff'),
+          limit(25)
+        );
+        const snapTitle = await getDocs(qTitle);
+        snapTitle.forEach(docSnap => {
+          addProfileIfValid(docSnap.id, docSnap.data());
+        });
+      } catch (e) {}
+    }
+
+    // 6. Rank results: exact username > username prefix > display name exact/prefix
+    const list = Array.from(resultsMap.values());
+    list.sort((a, b) => {
+      const aU = (a.username || '').toLowerCase();
+      const bU = (b.username || '').toLowerCase();
+      const aD = (a.displayName || a.name || a.fullName || '').toLowerCase();
+      const bD = (b.displayName || b.name || b.fullName || '').toLowerCase();
+
+      const aExactU = aU === cleanLower ? 100 : (aU.startsWith(cleanLower) ? 50 : 0);
+      const bExactU = bU === cleanLower ? 100 : (bU.startsWith(cleanLower) ? 50 : 0);
+      const aExactD = aD === cleanLower ? 80 : (aD.startsWith(cleanLower) ? 40 : 0);
+      const bExactD = bD === cleanLower ? 80 : (bD.startsWith(cleanLower) ? 40 : 0);
+
+      const scoreA = aExactU + aExactD;
+      const scoreB = bExactU + bExactD;
+      return scoreB - scoreA;
+    });
+
+    return list;
   };
 
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -6273,10 +6354,14 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!trimmed) return { users: [], posts: [], stories: [], notes: [], products: [], videos: [], groups: [], pages: [], shops: [], messages: [] };
 
     // Check Cache
-    const cached = searchCache[trimmed.toLowerCase()];
-    if (cached && (Date.now() - cached.timestamp < 300000)) { // 5 minute cache
+    const cacheKey = trimmed.toLowerCase();
+    const cached = searchCache[cacheKey];
+    if (cached && (Date.now() - cached.timestamp < 180000)) { // 3 minute cache
       return cached.results;
     }
+
+    const cleanText = trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
+    const titleCase = cleanText.charAt(0).toUpperCase() + cleanText.slice(1).toLowerCase();
 
     const queries = [
       // Users
@@ -6291,7 +6376,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // Posts (Tags)
       (async () => {
         try {
-          const q = query(collection(db, 'posts'), where('tags', 'array-contains', trimmed.toLowerCase()), limit(10));
+          const q = query(collection(db, 'posts'), where('tags', 'array-contains', cleanText.toLowerCase()), limit(10));
           const snap = await getDocs(q);
           return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         } catch (e: any) {
@@ -6345,32 +6430,57 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           return [];
         }
       })(),
-      // Products (Name)
+      // Products (Name query with TitleCase fallback)
       (async () => {
         try {
-          const q = query(
+          const pMap = new Map();
+          const q1 = query(
             collection(db, 'products'),
             where('name', '>=', trimmed),
             where('name', '<=', trimmed + '\uf8ff'),
             limit(10)
           );
-          const snap = await getDocs(q);
-          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const snap1 = await getDocs(q1);
+          snap1.docs.forEach(d => pMap.set(d.id, { id: d.id, ...d.data() }));
+
+          if (titleCase !== trimmed) {
+            const q2 = query(
+              collection(db, 'products'),
+              where('name', '>=', titleCase),
+              where('name', '<=', titleCase + '\uf8ff'),
+              limit(10)
+            );
+            const snap2 = await getDocs(q2);
+            snap2.docs.forEach(d => pMap.set(d.id, { id: d.id, ...d.data() }));
+          }
+          return Array.from(pMap.values());
         } catch (e: any) {
           return [];
         }
       })(),
-      // Videos
+      // Videos (Caption + Title)
       (async () => {
         try {
-          const q = query(
+          const vMap = new Map();
+          const q1 = query(
             collection(db, 'videos'),
             where('caption', '>=', trimmed),
             where('caption', '<=', trimmed + '\uf8ff'),
             limit(10)
           );
-          const snap = await getDocs(q);
-          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const snap1 = await getDocs(q1);
+          snap1.docs.forEach(d => vMap.set(d.id, { id: d.id, ...d.data() }));
+
+          const q2 = query(
+            collection(db, 'videos'),
+            where('title', '>=', trimmed),
+            where('title', '<=', trimmed + '\uf8ff'),
+            limit(10)
+          );
+          const snap2 = await getDocs(q2);
+          snap2.docs.forEach(d => vMap.set(d.id, { id: d.id, ...d.data() }));
+
+          return Array.from(vMap.values());
         } catch (e: any) {
           return [];
         }
@@ -6477,10 +6587,15 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       messages
     };
 
-    setSearchCache(prev => ({
-      ...prev,
-      [trimmed.toLowerCase()]: { results, timestamp: Date.now() }
-    }));
+    const totalCount = users.length + postMap.size + stories.length + notes.length + products.length + videos.length + groups.length + pages.length + shops.length + messages.length;
+
+    // Only cache if we got positive results or checked valid collections
+    if (totalCount > 0) {
+      setSearchCache(prev => ({
+        ...prev,
+        [cacheKey]: { results, timestamp: Date.now() }
+      }));
+    }
 
     return results;
   };
@@ -6572,7 +6687,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const toggleLike = async (postId: string, isLiked: boolean, postAuthorId?: string) => {
-    if (!db || !profile || !canWrite(`like_${postId}`, 5000)) return;
+    if (!db || !profile || !canWrite(`like_${postId}`, 600)) return;
     try {
       await updateDoc(doc(db, 'posts', postId), {
         likesCount: increment(isLiked ? -1 : 1),
@@ -6609,7 +6724,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const toggleBookmark = async (postId: string, isBookmarked: boolean) => {
-    if (!db || !profile || !canWrite(`bookmark_${postId}`, 5000)) return;
+    if (!db || !profile || !canWrite(`bookmark_${postId}`, 600)) return;
     try {
       await updateDoc(doc(db, 'posts', postId), {
         savedBy: isBookmarked ? arrayRemove(profile.id) : arrayUnion(profile.id),
@@ -6802,6 +6917,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     onlineUsers,
     activeCall,
     callStream,
+    setCallStream,
     remoteStream,
     startCall,
     acceptCall,

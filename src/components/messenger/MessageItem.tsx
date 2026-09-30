@@ -1,7 +1,7 @@
 import React, { useState, useRef, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
-import { Reply, Forward, Edit2, Trash2, Heart, Copy, Smile, Loader2, Sparkles, Zap, MoreVertical, Pin, Bookmark, Languages, Info, Download } from 'lucide-react';
+import { Reply, Forward, Edit2, Trash2, Heart, Copy, Smile, Loader2, Sparkles, Zap, MoreVertical, Pin, Bookmark, Languages, Info, Download, FileText, Music, MapPin, UserPlus } from 'lucide-react';
 import { Message } from '../../types/messenger';
 import { VoicePlayback } from './VoicePlayback';
 import { Check, CheckCheck, Eye, EyeOff } from 'lucide-react';
@@ -22,6 +22,7 @@ export const MessageItem = React.memo<{
   message: Message, 
   isMe: boolean, 
   theme?: string, 
+  bubbleGradient?: string,
   onRetry?: () => void, 
   senderPhoto?: string, 
   conversationId?: string, 
@@ -42,6 +43,7 @@ export const MessageItem = React.memo<{
   message, 
   isMe, 
   theme = 'neural', 
+  bubbleGradient,
   onRetry, 
   senderPhoto, 
   conversationId, 
@@ -259,7 +261,17 @@ export const MessageItem = React.memo<{
         isFailed: message.isFailed
       }));
     }
-    if (message.mediaUrl && (message.type === 'image' || message.type === 'media' || message.type === 'video')) {
+    const isImageOrVideo = (
+      message.type === 'image' || 
+      message.type === 'video' || 
+      (message.type === 'media' && 
+        !message.metadata?.fileName && 
+        !message.metadata?.isAudioMusic && 
+        !message.fileName &&
+        (message.metadata?.mediaType === 'image' || message.metadata?.mediaType === 'video' || /\.(jpe?g|png|webp|gif|mp4|webm|mov)($|\?)/i.test(message.mediaUrl || '')))
+    );
+
+    if (message.mediaUrl && isImageOrVideo) {
       return [{
         id: message.id,
         url: message.mediaUrl,
@@ -273,8 +285,10 @@ export const MessageItem = React.memo<{
     return [];
   }, [albumItems, message]);
 
+  const isSticker = message.type === 'sticker';
+  const isSpecialCard = message.type === 'file' || message.type === 'location' || message.type === 'contact' || Boolean(message.metadata?.isAudioMusic);
   const isPlaceholder = isAutoMediaPlaceholder(message.text);
-  const hasRealText = Boolean(message.text && !isPlaceholder);
+  const hasRealText = Boolean(message.text && !isPlaceholder && !isSticker && !isSpecialCard);
   const isMediaOnly = !hasRealText && effectiveAlbum.length > 0;
 
   const sequenceRadiusClass = isFirstInSequence === undefined ? 'rounded-[18px]' : (
@@ -340,13 +354,16 @@ export const MessageItem = React.memo<{
           <motion.div 
             whileHover={{ y: -1, scale: 1.01 }}
             onClick={handleBubbleClick}
+            style={{
+              background: (isMe && bubbleGradient && !isMediaOnly && !isSticker) ? bubbleGradient : undefined
+            }}
             className={`${
-              isMediaOnly
+              isMediaOnly || isSticker
                 ? 'p-0 bg-transparent border-0 shadow-none'
                 : `${sequenceRadiusClass} backdrop-blur-xl border ${
                     isMe 
-                      ? 'bg-gradient-to-br from-[#6E7BF2]/50 via-[#8B5FBF]/45 to-[#5B6EE8]/50 border-white/15 shadow-[0_4px_20px_rgba(80,90,240,0.25)] text-white' 
-                      : 'bg-white/10 border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.2)] text-white/95'
+                      ? 'chat-bubble-me keep-white bg-gradient-to-br from-[#4F46E5] via-[#6366F1] to-[#8B5CF6] border-white/20 shadow-[0_4px_20px_rgba(79,70,229,0.35)] text-white' 
+                      : 'bg-white/85 dark:bg-white/10 border-white/60 dark:border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_16px_rgba(0,0,0,0.2)] text-slate-900 dark:text-white/95'
                   } ${effectiveAlbum.length > 0 ? 'p-1.5' : 'px-3.5 py-2.5'}`
             } transition-all duration-300 relative overflow-hidden w-fit min-w-[64px] max-w-[85vw] md:max-w-[420px]`}
           >
@@ -413,19 +430,31 @@ export const MessageItem = React.memo<{
                       }
 
                       return (
-                        <div className="mb-2 p-2 bg-white/5 rounded-xl border-l-2 border-[#00F2FF]/70 text-left text-[11px] leading-normal opacity-90 select-none max-w-[320px] min-w-[140px]">
-                          <p className="font-semibold text-[#00F2FF] text-[10px] mb-0.5">
+                        <div className={`mb-2 p-2 rounded-xl border-l-2 text-left text-[11px] leading-normal select-none max-w-[320px] min-w-[140px] ${
+                          isMe 
+                            ? 'bg-black/20 border-white/80 text-white keep-white' 
+                            : 'bg-slate-100/90 dark:bg-white/5 border-aeirmist-cyan text-slate-800 dark:text-white'
+                        }`}>
+                          <p className={`font-semibold text-[10px] mb-0.5 ${
+                            isMe ? 'text-white keep-white' : 'text-aeirmist-cyan dark:text-aeirmist-cyan'
+                          }`}>
                             {cleanSender}
                           </p>
-                          <p className="truncate text-white/50 text-[10.5px] font-medium">{cleanText}</p>
+                          <p className={`truncate text-[10.5px] font-medium ${
+                            isMe ? 'text-white/80 keep-white' : 'text-slate-600 dark:text-white/50'
+                          }`}>{cleanText}</p>
                         </div>
                       );
                     })()}
                     <div className="relative flex flex-wrap gap-x-1.5 items-end">
-                      <p className="text-[14.5px] leading-[1.4] font-normal tracking-normal whitespace-pre-wrap break-words text-white" style={{ fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', fontWeight: 400 }}>
+                      <p className={`text-[14.5px] leading-[1.4] font-normal tracking-normal whitespace-pre-wrap break-words ${
+                        isMe ? 'text-white keep-white' : 'text-slate-900 dark:text-white'
+                      }`} style={{ fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', fontWeight: 400 }}>
                         {message.text}
                       </p>
-                    <div className="flex items-center gap-1 text-[10px] opacity-60 flex-shrink-0">
+                    <div className={`flex items-center gap-1 text-[10px] flex-shrink-0 ${
+                      isMe ? 'text-white/80 keep-white' : 'text-slate-500 dark:text-white/60'
+                    }`}>
                       {message.metadata?.edited && (
                         <span className="text-[9px] font-bold">Edited</span>
                       )}
@@ -456,7 +485,7 @@ export const MessageItem = React.memo<{
             {Object.entries(reactions).length > 0 && (
               <div className="flex gap-1 mt-1">
                 {Object.entries(reactions).map(([emoji, count]) => (
-                  <span key={emoji} className="text-xs bg-black/60 backdrop-blur-md border border-white/10 rounded-full px-2 py-0.5 shadow-md text-white">
+                  <span key={emoji} className="text-xs bg-white/90 dark:bg-black/60 backdrop-blur-md border border-slate-200 dark:border-white/10 rounded-full px-2 py-0.5 shadow-md text-slate-800 dark:text-white">
                     {emoji} {count > 1 ? count : ''}
                   </span>
                 ))}
@@ -465,6 +494,133 @@ export const MessageItem = React.memo<{
 
             {message.type === 'voice' && message.mediaUrl && (
               <VoicePlayback url={message.mediaUrl} isMe={isMe} />
+            )}
+
+            {/* 1. Document / File Attachment Card */}
+            {(message.type === 'file' || Boolean(message.metadata?.fileName && message.type !== 'voice' && !message.metadata?.isAudioMusic)) && (
+              <div className="flex items-center gap-3 p-2.5 my-1 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 transition-all min-w-[220px] max-w-[320px]">
+                <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-lime-500/20 to-emerald-500/20 border border-lime-500/30 flex items-center justify-center text-lime-400 shrink-0">
+                  <FileText size={22} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-semibold text-white truncate leading-tight">
+                    {message.fileName || message.metadata?.fileName || message.text || 'Document'}
+                  </p>
+                  <p className="text-[10px] text-white/50 mt-0.5 font-mono">
+                    {message.fileSize ? `${(message.fileSize / (1024 * 1024)).toFixed(2)} MB` : (message.metadata?.fileSize ? `${(message.metadata.fileSize / (1024 * 1024)).toFixed(2)} MB` : 'File')}
+                  </p>
+                </div>
+                {message.mediaUrl && (
+                  <a 
+                    href={message.mediaUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    download={message.fileName || message.metadata?.fileName || 'document'}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80 hover:text-white transition-colors shrink-0"
+                    title="Download file"
+                  >
+                    <Download size={15} />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* 2. Music / Audio Attachment Card */}
+            {Boolean(message.metadata?.isAudioMusic || (message.type === 'media' && message.metadata?.fileType?.startsWith('audio/'))) && (
+              <div className="flex flex-col gap-2 p-2.5 my-1 bg-white/5 rounded-2xl border border-white/10 min-w-[240px] max-w-[320px]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                    <Music size={20} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[12px] font-bold text-white truncate">
+                      {message.fileName || message.metadata?.audioName || message.metadata?.fileName || 'Audio Track'}
+                    </p>
+                    <p className="text-[10px] text-white/40 font-mono">
+                      {message.fileSize ? `${(message.fileSize / (1024 * 1024)).toFixed(2)} MB` : 'Audio'}
+                    </p>
+                  </div>
+                </div>
+                {message.mediaUrl && (
+                  <audio controls src={message.mediaUrl} className="w-full h-8 mt-1 rounded-lg" preload="metadata" />
+                )}
+              </div>
+            )}
+
+            {/* 3. Location Attachment Card */}
+            {message.type === 'location' && (
+              <div className="flex flex-col gap-2.5 p-2.5 my-1 bg-white/5 rounded-2xl border border-white/10 min-w-[220px] max-w-[280px]">
+                <div className="flex items-center gap-2.5 text-red-400">
+                  <div className="w-9 h-9 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
+                    <MapPin size={18} />
+                  </div>
+                  <div>
+                    <p className="text-[12px] font-bold text-white">Live Location</p>
+                    <p className="text-[10px] text-white/50 font-mono">
+                      {message.metadata?.latitude && message.metadata?.longitude 
+                        ? `${Number(message.metadata.latitude).toFixed(4)}°, ${Number(message.metadata.longitude).toFixed(4)}°`
+                        : 'Coordinates'}
+                    </p>
+                  </div>
+                </div>
+                {message.metadata?.mapUrl && (
+                  <a 
+                    href={message.metadata.mapUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full py-1.5 px-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-white text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <MapPin size={13} /> Open in Google Maps
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* 4. Contact Attachment Card */}
+            {message.type === 'contact' && (
+              <div className="flex items-center gap-3 p-2.5 my-1 bg-white/5 rounded-2xl border border-white/10 min-w-[220px] max-w-[280px]">
+                <div className="w-11 h-11 rounded-xl overflow-hidden bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                  {message.metadata?.contactPhoto ? (
+                    <img src={message.metadata.contactPhoto} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <UserPlus size={22} />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-bold text-white truncate">
+                    {message.metadata?.contactName || message.text?.replace('👤 Contact: ', '') || 'Contact'}
+                  </p>
+                  {message.metadata?.contactHandle && (
+                    <p className="text-[11px] text-[#00F2FF] font-medium truncate">
+                      @{message.metadata.contactHandle.replace(/^@/, '')}
+                    </p>
+                  )}
+                  {message.metadata?.contactPhone && (
+                    <p className="text-[10px] text-white/50 truncate font-mono">
+                      {message.metadata.contactPhone}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 5. Sticker Attachment */}
+            {message.type === 'sticker' && (
+              <div className="p-1 select-none">
+                {message.mediaUrl?.startsWith('data:image') || message.mediaUrl?.startsWith('http') ? (
+                  <img 
+                    src={message.mediaUrl} 
+                    alt={message.metadata?.stickerName || 'sticker'} 
+                    className="w-28 h-28 sm:w-32 sm:h-32 object-contain drop-shadow-[0_8px_20px_rgba(0,0,0,0.5)] hover:scale-105 transition-transform" 
+                  />
+                ) : (
+                  <span className="text-6xl sm:text-7xl block p-2 drop-shadow-lg select-none">
+                    {message.metadata?.stickerEmoji || message.text || '✨'}
+                  </span>
+                )}
+              </div>
             )}
 
 

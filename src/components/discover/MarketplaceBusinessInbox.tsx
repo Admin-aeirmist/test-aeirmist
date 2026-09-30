@@ -46,7 +46,7 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
   onBack,
   overrideActiveChat 
 }) => {
-  const { db, profile, addToast } = useAeirmist();
+  const { db, profile, user, addToast } = useAeirmist();
   
   // Tabs for Inbox Category
   const [activeCategory, setActiveCategory] = useState<'store' | 'personal' | 'support' | 'orders'>('store');
@@ -64,60 +64,95 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
   useEffect(() => {
     if (!db || !profile) return;
 
-    // We query where customerId == profile.id OR storeOwnerId == profile.id
-    // But Firestore does not support OR queries across different field filters cleanly without composite indexes.
-    // So we can listen to ALL store_chats and do a client-side filter for owner or customer.
-    // This is robust, secure, fast, and does not require complex index setup!
     const chatsRef = collection(db, 'store_chats');
-    const q = query(chatsRef, orderBy('lastMessageAt', 'desc'));
+    const userKeys = Array.from(new Set([profile.id, user?.uid, profile?.uid, profile?.ownerUid].filter(Boolean)));
     
-    const unsub = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => {
-        const d = doc.data();
-        return { id: doc.id, ...d } as StoreChat;
+    // Listen for customer chats and owner chats with rule-compliant queries
+    const qCustomer = query(chatsRef, where('customerId', '==', profile.id));
+    const qOwner = query(chatsRef, where('storeOwnerId', '==', profile.id));
+
+    let customerDocs: StoreChat[] = [];
+    let ownerDocs: StoreChat[] = [];
+
+    const mergeAndSetChats = () => {
+      const chatMap = new Map<string, StoreChat>();
+      [...customerDocs, ...ownerDocs].forEach(c => chatMap.set(c.id, c));
+      const merged = Array.from(chatMap.values());
+      merged.sort((a, b) => {
+        const timeA = (a.lastMessageAt as any)?.toMillis ? (a.lastMessageAt as any).toMillis() : new Date(a.lastMessageAt || 0).getTime();
+        const timeB = (b.lastMessageAt as any)?.toMillis ? (b.lastMessageAt as any).toMillis() : new Date(b.lastMessageAt || 0).getTime();
+        return timeB - timeA;
       });
-      
-      // Filter client-side
-      const userChats = docs.filter(chat => {
-        // Safe check
-        const isCustomer = chat.customerId === profile.id;
-        // Let's assume storeOwnerId is present, or load all stores owned by this user
-        // But to make it robust, we can map either customer OR owner matching.
-        // We can check if owner owns the store
-        return isCustomer || (chat as any).storeOwnerId === profile.id;
-      });
-      
-      setChats(userChats);
+      setChats(merged);
+    };
+
+    const unsubCustomer = onSnapshot(qCustomer, (snapshot) => {
+      customerDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoreChat));
+      mergeAndSetChats();
     }, (err) => {
-      logger.info("Failed to sync store_chats:", err);
+      logger.info("Failed to sync customer store_chats:", err);
     });
 
-    return () => unsub();
-  }, [db, profile?.id]);
+    const unsubOwner = onSnapshot(qOwner, (snapshot) => {
+      ownerDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoreChat));
+      mergeAndSetChats();
+    }, (err) => {
+      logger.info("Failed to sync owner store_chats:", err);
+    });
 
-  // Sync list of orders
+    return () => {
+      unsubCustomer();
+      unsubOwner();
+    };
+  }, [db, profile?.id, user?.uid]);
+
+  // Sync list of orders with composite-index resilience
   useEffect(() => {
     if (!db || !profile) return;
 
     const ordersRef = collection(db, 'orders');
-    const q = query(
-      ordersRef, 
-      where('sellerUids', 'array-contains', profile.id),
-      orderBy('createdAt', 'desc')
-    );
+    const userKeys = Array.from(new Set([profile.id, user?.uid, profile?.uid, profile?.ownerUid].filter(Boolean)));
     
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(doc => ({
+    const processOrderDocs = (snapshot: any) => {
+      const list = snapshot.docs.map((doc: any) => ({
         id: doc.id,
         ...doc.data()
       } as any));
+      list.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
       setOrders(list);
+    };
+
+    const qPrimary = query(
+      ordersRef, 
+      where('sellerUids', 'array-contains-any', userKeys),
+      orderBy('createdAt', 'desc')
+    );
+    const qFallback = query(
+      ordersRef, 
+      where('sellerUids', 'array-contains-any', userKeys)
+    );
+    
+    let unsubFallback: (() => void) | null = null;
+    const unsub = onSnapshot(qPrimary, (snapshot) => {
+      processOrderDocs(snapshot);
     }, (err) => {
-      logger.info("Failed to sync orders:", err);
+      logger.info("Orders primary sync, switching to fallback:", err);
+      unsubFallback = onSnapshot(qFallback, (snapshot) => {
+        processOrderDocs(snapshot);
+      }, (fallbackErr) => {
+        logger.error("Failed to sync orders fallback:", fallbackErr);
+      });
     });
 
-    return () => unsub();
-  }, [db, profile?.id]);
+    return () => {
+      unsub();
+      if (unsubFallback) unsubFallback();
+    };
+  }, [db, profile?.id, user?.uid]);
 
   // Keep overrides in sync
   useEffect(() => {
@@ -475,8 +510,9 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                             trackingTimeline: updatedTimeline
                           });
                           addToast({ title: 'STATUS UPDATED', message: `Order advanced to ${status.label}.`, type: 'success' });
-                        } catch (err) {
+                        } catch (err: any) {
                           logger.error(err);
+                          addToast({ title: 'UPDATE FAILED', message: err?.message || 'Could not update order status.', type: 'warning' });
                         }
                       }}
                       className={`flex items-center justify-center gap-2 py-3 rounded-xl border text-[10px] font-bold uppercase transition-all ${
@@ -512,7 +548,10 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                             refundStatus: 'approved'
                           });
                           addToast({ title: 'REFUND APPROVED', message: 'Refund request processed successfully.', type: 'success' });
-                        } catch (err) { logger.error(err); }
+                        } catch (err: any) { 
+                          logger.error(err); 
+                          addToast({ title: 'APPROVAL FAILED', message: err?.message || 'Could not approve refund.', type: 'warning' });
+                        }
                       }}
                       className="flex-1 py-3 bg-cyan-500 text-black rounded-xl text-[10px] font-bold uppercase hover:bg-cyan-400 transition-all flex items-center justify-center gap-1.5"
                     >
@@ -526,7 +565,10 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                             refundStatus: 'rejected'
                           });
                           addToast({ title: 'REFUND REJECTED', message: 'Refund request has been declined.', type: 'info' });
-                        } catch (err) { logger.error(err); }
+                        } catch (err: any) { 
+                          logger.error(err); 
+                          addToast({ title: 'REJECTION FAILED', message: err?.message || 'Could not decline refund.', type: 'warning' });
+                        }
                       }}
                       className="flex-1 py-3 bg-red-500 text-white rounded-xl text-[10px] font-bold uppercase hover:bg-red-400 transition-all flex items-center justify-center gap-1.5"
                     >

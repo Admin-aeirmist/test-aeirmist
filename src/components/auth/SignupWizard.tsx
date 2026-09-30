@@ -192,9 +192,11 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
 
   // STEP 2 FIELDS (Photos)
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [avatarPreview, setAvatarPreview] = useState<string | null>(profile?.photoURL || DEFAULT_AVATAR);
+  // IMPORTANT: never auto-populate from profile.photoURL (which may be Google/provider photo)
+  // DP starts blank — user must explicitly upload their own
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(DEFAULT_AVATAR);
   const [coverFile, setCoverFile] = useState<File | null>(null);
-  const [coverPreview, setCoverPreview] = useState<string | null>(profile?.coverURL || profile?.bannerURL || DEFAULT_COVER);
+  const [coverPreview, setCoverPreview] = useState<string | null>(DEFAULT_COVER);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -519,8 +521,10 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
       const activeUser = user || auth.currentUser;
       const targetUid = activeUser?.uid || 'guest';
 
-      let photoURLToSave = profile?.photoURL || DEFAULT_AVATAR;
-      let coverURLToSave = profile?.coverURL || profile?.bannerURL || DEFAULT_COVER;
+      // Never use profile.photoURL here — it may be a Google/provider photo
+      // DP stays blank (DEFAULT_AVATAR) until user explicitly uploads one
+      let photoURLToSave = DEFAULT_AVATAR;
+      let coverURLToSave = DEFAULT_COVER;
 
       if (skip) {
         photoURLToSave = photoURLToSave || DEFAULT_AVATAR;

@@ -226,7 +226,7 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     mediaQuery.addEventListener('change', handleSystemChange);
 
     // 2. Accent Color Map
-    const colorMap = {
+    const colorMap: Record<string, string> = {
       cyan: '#00f2ff',
       blue: '#3b82f6',
       purple: '#a855f7',
@@ -236,7 +236,9 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
     const hex = colorMap[settings.accentColor] || '#00f2ff';
     root.style.setProperty('--color-aeirmist-cyan', hex);
-    root.style.setProperty('--color-aeirmist-cyan', hex);
+    root.style.setProperty('--color-aura-cyan', hex);
+    root.style.setProperty('--accent-color', hex);
+    root.style.setProperty('--color-accent', hex);
 
     // 3. Layout Density Class
     root.classList.remove('density-comfortable', 'density-compact', 'density-spacious');
@@ -325,15 +327,31 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     // Render transparent alpha values based on theme mode
     const isLight = rootIsLight();
+    const colorMap: Record<string, string> = {
+      cyan: '#00f2ff',
+      blue: '#3b82f6',
+      purple: '#a855f7',
+      emerald: '#10b981',
+      orange: '#f97316',
+      red: '#ef4444',
+    };
+    const hex = colorMap[settings.accentColor] || '#00f2ff';
     const glassBgBase = isLight ? '255, 255, 255' : '15, 15, 25';
     const glassTransparencyVal = (settings.enableGlassEffect && !settings.performanceMode) 
-      ? (settings.backgroundTransparency / 100) 
+      ? Math.max(0.04, Math.min(1, (settings.backgroundTransparency ?? 15) / 100)) 
       : 0.95; // solid backup
+    const glassBlurVal = settings.enableGlassEffect && !settings.performanceMode ? (settings.cardBlur ?? 16) : 0;
+    const darkOverlayOpacity = Math.max(0, Math.min(0.85, (settings.globalBgOverlay ?? 45) / 100));
 
     styleTag.innerHTML = `
       :root {
-        --glass-blur: ${settings.enableGlassEffect && !settings.performanceMode ? settings.cardBlur : 0}px;
-        --glass-bg: rgba(${glassBgBase}, ${glassTransparencyVal});
+        --color-aeirmist-cyan: ${hex} !important;
+        --color-aura-cyan: ${hex} !important;
+        --accent-color: ${hex} !important;
+        --glass-blur: ${glassBlurVal}px !important;
+        --glass-bg: rgba(${glassBgBase}, ${glassTransparencyVal}) !important;
+        --panel-opacity: ${glassTransparencyVal} !important;
+        --global-dim-opacity: ${darkOverlayOpacity} !important;
         ${settings.compactSidebar ? '--sidebar-w: 72px !important; --sidebar-w-collapsed: 72px !important;' : ''}
       }
 
@@ -408,11 +426,20 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         border-radius: 8px !important;
       }
 
-      /* Glass panel dynamic configuration */
-      .glass-panel, .glass-card, [class*="glass-"] {
+      /* Glass panel and messenger dynamic configuration */
+      .messenger-sidebar-glass,
+      .messenger-header-glass,
+      .nav-sidebar-glass,
+      .glass-panel, 
+      .glass-card, 
+      [class*="glass-"] {
         backdrop-filter: blur(var(--glass-blur)) !important;
         -webkit-backdrop-filter: blur(var(--glass-blur)) !important;
         background-color: var(--glass-bg) !important;
+      }
+
+      .aeirmist-dim-overlay {
+        opacity: var(--global-dim-opacity) !important;
       }
 
       /* Motion Reduction overrides */

@@ -29,25 +29,42 @@ export default function AppearanceSettings() {
     updateAppearanceSettings({ [key]: value });
   };
 
-  const solidColors = useMemo(() => [
+  const solidColors = useMemo(() => isLight ? [
+    { hex: '#f8fafc', name: 'Alabaster' },
+    { hex: '#f1f5f9', name: 'Slate Light' },
+    { hex: '#e2e8f0', name: 'Mist' },
+    { hex: '#ffffff', name: 'Pure White' },
+    { hex: '#0a0a0f', name: 'Space' },
+    { hex: '#0f172a', name: 'Slate' }
+  ] : [
     { hex: '#0a0a0f', name: 'Space' },
     { hex: '#0f172a', name: 'Slate' },
     { hex: '#111827', name: 'Coal' },
     { hex: '#171717', name: 'Onyx' }
-  ], []);
+  ], [isLight]);
 
-  const gradientColors = useMemo(() => [
+  const gradientColors = useMemo(() => isLight ? [
+    { grad: 'linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%)', name: 'Morning Breeze' },
+    { grad: 'linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%)', name: 'Pastel Lilac' },
+    { grad: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)', name: 'Silver Sky' },
+    { grad: 'linear-gradient(135deg, #09090e 0%, #170d24 100%)', name: 'Twilight' }
+  ] : [
     { grad: 'linear-gradient(135deg, #09090e 0%, #170d24 100%)', name: 'Twilight' },
     { grad: 'linear-gradient(135deg, #020617 0%, #0c1a30 100%)', name: 'Abyss' },
     { grad: 'linear-gradient(135deg, #0a1108 0%, #051a1c 100%)', name: 'Jade' }
-  ], []);
+  ], [isLight]);
 
-  const defaultWallpapers = useMemo(() => [
+  const defaultWallpapers = useMemo(() => isLight ? [
+    { url: 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?q=80&w=640&auto=format&fit=crop', name: 'Pastel Aura' },
+    { url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=640&auto=format&fit=crop', name: 'Ocean Mist' },
+    { url: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?q=80&w=640&auto=format&fit=crop', name: 'Deep Twilight' },
+    { url: 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?q=80&w=640&auto=format&fit=crop', name: 'Neon City' }
+  ] : [
     { url: 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=640&auto=format&fit=crop', name: 'Cosmic Dust' },
     { url: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?q=80&w=640&auto=format&fit=crop', name: 'Deep Twilight' },
     { url: 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?q=80&w=640&auto=format&fit=crop', name: 'Neon City' },
     { url: 'https://images.unsplash.com/photo-1483168527879-c66136b56105?q=80&w=640&auto=format&fit=crop', name: 'Aurora Glow' }
-  ], []);
+  ], [isLight]);
 
   const handleBgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -462,9 +479,11 @@ export default function AppearanceSettings() {
                     <h3 className={`text-xs font-bold uppercase tracking-widest ${isLight ? 'text-slate-900' : 'text-white'}`}>Background Wallpaper</h3>
                   </div>
                   
-                  <div className="flex flex-col sm:flex-row items-center gap-4 bg-white/[0.02] border border-white/5 p-3 rounded-2xl">
+                  <div className={`flex flex-col sm:flex-row items-center gap-4 p-3 rounded-2xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-white/[0.02] border-white/5'}`}>
                     <div 
-                      className="w-full sm:w-24 h-16 rounded-lg relative overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center shrink-0"
+                      className={`w-full sm:w-24 h-16 rounded-lg relative overflow-hidden border flex items-center justify-center shrink-0 ${
+                        isLight ? 'bg-slate-200/60 border-slate-300' : 'bg-black/40 border-white/10'
+                      }`}
                       style={{ 
                         background: settings.globalBgType === 'gradient' ? settings.globalBgValue : settings.globalBgType === 'solid' ? settings.globalBgValue : undefined,
                         backgroundImage: settings.globalBgType === 'custom' ? `url(${settings.globalBgValue})` : undefined,
@@ -473,17 +492,27 @@ export default function AppearanceSettings() {
                       }}
                     >
                       {settings.globalBgType === 'none' && (
-                        <span className="text-[7px] font-black uppercase tracking-widest text-white/30">Default Grid</span>
+                        <span className={`text-[7px] font-black uppercase tracking-widest ${isLight ? 'text-slate-400' : 'text-white/30'}`}>Default Grid</span>
                       )}
                       {settings.globalBgType !== 'none' && (
-                        <div className="absolute inset-0 bg-black" style={{ opacity: settings.globalBgOverlay / 100 }} />
+                        <div 
+                          className="absolute inset-0" 
+                          style={{ 
+                            backgroundColor: isLight ? '#ffffff' : '#000000',
+                            opacity: (settings.globalBgOverlay / 100) * (isLight ? 0.3 : 1)
+                          }} 
+                        />
                       )}
                     </div>
                     <div className="flex flex-wrap items-center justify-center gap-2 w-full sm:w-auto">
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="h-8 px-3 rounded-xl bg-white/5 border border-white/10 hover:border-aeirmist-cyan hover:bg-aeirmist-cyan/5 text-white text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5"
+                        className={`h-8 px-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5 ${
+                          isLight 
+                            ? 'bg-white border-slate-200 text-slate-700 hover:border-aeirmist-cyan hover:bg-aeirmist-cyan/5 shadow-sm' 
+                            : 'bg-white/5 border-white/10 hover:border-aeirmist-cyan hover:bg-aeirmist-cyan/5 text-white'
+                        }`}
                       >
                         <Upload size={11} className="text-aeirmist-cyan" />
                         Replace
@@ -492,9 +521,13 @@ export default function AppearanceSettings() {
                         <button
                           type="button"
                           onClick={handleRemoveWallpaper}
-                          className="h-8 px-3 rounded-xl bg-white/5 border border-white/10 hover:border-aeirmist-magenta hover:bg-aeirmist-magenta/5 text-white/80 hover:text-white text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5"
+                          className={`h-8 px-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isLight
+                              ? 'bg-white border-slate-200 text-red-600 hover:border-red-400 hover:bg-red-50 shadow-sm'
+                              : 'bg-white/5 border-white/10 hover:border-aeirmist-magenta hover:bg-aeirmist-magenta/5 text-white/80 hover:text-white'
+                          }`}
                         >
-                          <Trash2 size={11} className="text-aeirmist-magenta" />
+                          <Trash2 size={11} className={isLight ? 'text-red-500' : 'text-aeirmist-magenta'} />
                           Remove
                         </button>
                       )}

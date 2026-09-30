@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Phone, Video as VideoIcon, X, Mic, MicOff, VideoOff, PhoneOff, 
@@ -29,7 +29,7 @@ interface CallModalProps {
 export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isIncoming = false }) => {
   const { 
     activeCall, startCall, acceptCall, rejectCall, endCall, 
-    profile, user, callStream, remoteStream, _requestPermission, db, allProfiles
+    profile, user, callStream, setCallStream, remoteStream, _requestPermission, db, allProfiles
   } = useAeirmist();
   
   // Determine if incoming call
@@ -41,10 +41,11 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   const [isVideoOff, setIsVideoOff] = useState(type === 'audio');
   const [isSpeaker, setIsSpeaker] = useState(true);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [callStatus, setCallStatus] = useState<'ringing' | 'connected' | 'reconnecting' | 'ended' | 'error'>('ringing');
+  const [callStatus, setCallStatus] = useState<'ringing' | 'connecting' | 'connected' | 'reconnecting' | 'ended' | 'error'>('ringing');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [remoteAudioLevel, setRemoteAudioLevel] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isAutoplayBlocked, setIsAutoplayBlocked] = useState(false);
 
   // Local camera effects state
   const [isSparklesOn, setIsSparklesOn] = useState(false);
@@ -66,6 +67,76 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const hasInitiatedCall = useRef(false);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Track availability helpers
+  const hasRemoteVideoTrack = Boolean(remoteStream && remoteStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live'));
+  const hasLocalVideoTrack = Boolean(callStream && callStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live'));
+
+  // Dedicated Video Element Refs ensuring NO reset loops
+  const setLocalVideoNode = useCallback((el: HTMLVideoElement | null) => {
+    localVideoRef.current = el;
+    if (el) {
+      el.muted = true;
+      if (callStream && el.srcObject !== callStream) {
+        el.srcObject = callStream;
+      }
+      if (callStream && el.paused) {
+        el.play().catch(() => {});
+      }
+    }
+  }, [callStream]);
+
+  const setRemoteVideoNode = useCallback((el: HTMLVideoElement | null) => {
+    remoteVideoRef.current = el;
+    if (el) {
+      el.muted = true;
+      if (remoteStream && el.srcObject !== remoteStream) {
+        el.srcObject = remoteStream;
+      }
+      if (remoteStream && el.paused) {
+        el.play().catch(() => {});
+      }
+    }
+  }, [remoteStream]);
+
+  // Keep video elements updated whenever stream references change
+  useEffect(() => {
+    const el = localVideoRef.current;
+    if (el && callStream) {
+      if (el.srcObject !== callStream) {
+        el.srcObject = callStream;
+      }
+      el.play().catch(() => {});
+    }
+  }, [callStream]);
+
+  useEffect(() => {
+    const el = remoteVideoRef.current;
+    if (el && remoteStream) {
+      if (el.srcObject !== remoteStream) {
+        el.srcObject = remoteStream;
+      }
+      el.play().catch(() => {});
+    }
+  }, [remoteStream]);
+
+  // Direct user-gesture audio unlock helper
+  const unlockAudio = useCallback(() => {
+    const audio = remoteAudioRef.current;
+    if (audio) {
+      audio.muted = !isSpeaker;
+      audio.volume = isSpeaker ? 1.0 : 0.0;
+      audio.play().then(() => {
+        setIsAutoplayBlocked(false);
+      }).catch(err => {
+        logger.warn("Audio unlock attempt deferred:", err);
+      });
+    }
+    aeirmistCall.resumeAudioContext();
+  }, [isSpeaker]);
 
   // Fallback chat details
   const safeChat = chat || {
@@ -76,7 +147,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     otherParticipantUid: activeCall?.callerUid || ''
   };
 
-  const participantId = safeChat.participants?.find((uid: string) => uid !== user?.uid) || safeChat.otherParticipantUid || '';
+  const participantId = safeChat.participants?.find((id: string) => id !== profile?.id && id !== user?.uid && id !== ('profile_' + user?.uid)) || safeChat.otherParticipantUid || '';
 
   // Synchronise toggle state with WebRTC streams
   useEffect(() => {
@@ -87,41 +158,103 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     aeirmistCall.toggleVideo(!isVideoOff);
   }, [isVideoOff]);
 
+  // Safe one-time audio monitoring registration per stream
   useEffect(() => {
-    const remoteVideos = document.querySelectorAll('.aeirmist-remote-video') as NodeListOf<HTMLMediaElement>;
-    remoteVideos.forEach(v => {
-      v.volume = isSpeaker ? 1.0 : 0.15;
-    });
-  }, [isSpeaker]);
+    if (callStream && callStream.getAudioTracks().length > 0) {
+      aeirmistCall.setupAudioMonitoring(callStream, 'local');
+    }
+  }, [callStream]);
 
-  // Bind WebRTC media streams directly to all rendering HTML tags via CSS selectors
+  useEffect(() => {
+    if (remoteStream && remoteStream.getAudioTracks().length > 0) {
+      aeirmistCall.setupAudioMonitoring(remoteStream, 'remote');
+    }
+  }, [remoteStream]);
+
+  // Synchronise remote audio playback, volume, and speaker state without interrupting active streams
+  useEffect(() => {
+    const audio = remoteAudioRef.current;
+    if (!audio) return;
+    audio.muted = !isSpeaker;
+    audio.volume = isSpeaker ? 1.0 : 0.0;
+
+    if (remoteStream && remoteStream.getAudioTracks().length > 0) {
+      const currentSrcObject = audio.srcObject as MediaStream | null;
+      const currentTrackId = currentSrcObject?.getAudioTracks()[0]?.id;
+      const newTrackId = remoteStream.getAudioTracks()[0]?.id;
+
+      // Only assign if the audio track ID actually changed, preventing decoder reset
+      if (!currentSrcObject || currentTrackId !== newTrackId) {
+        audio.srcObject = remoteStream;
+      }
+      
+      if (isSpeaker) {
+        audio.play().then(() => {
+          setIsAutoplayBlocked(false);
+        }).catch(e => {
+          logger.warn("Remote audio play deferred by browser autoplay policy", e);
+          setIsAutoplayBlocked(true);
+        });
+      }
+    }
+  }, [remoteStream, isSpeaker, callStatus]);
+
+  // Bind WebRTC media streams safely across all active rendering video tags without reset loops
   useEffect(() => {
     const bindStreams = () => {
       const localVideos = document.querySelectorAll('.aeirmist-local-video') as NodeListOf<HTMLVideoElement>;
       localVideos.forEach(v => {
+        v.muted = true;
         if (callStream && v.srcObject !== callStream) {
           v.srcObject = callStream;
-          aeirmistCall.setupAudioMonitoring(callStream, 'local');
+          v.play().catch(() => {});
         }
       });
 
       const remoteVideos = document.querySelectorAll('.aeirmist-remote-video') as NodeListOf<HTMLMediaElement>;
       remoteVideos.forEach(v => {
-        if (remoteStream && v.srcObject !== remoteStream) {
-          v.srcObject = remoteStream;
-          aeirmistCall.setupAudioMonitoring(remoteStream, 'remote');
+        if (v instanceof HTMLVideoElement) {
+          v.muted = true;
+          if (remoteStream && v.srcObject !== remoteStream) {
+            v.srcObject = remoteStream;
+            v.play().catch(() => {});
+          }
         }
       });
+
+      if (remoteAudioRef.current && remoteStream && remoteStream.getAudioTracks().length > 0) {
+        const a = remoteAudioRef.current;
+        a.muted = !isSpeaker;
+        a.volume = isSpeaker ? 1.0 : 0.0;
+        
+        const currentSrcObject = a.srcObject as MediaStream | null;
+        const currentTrackId = currentSrcObject?.getAudioTracks()[0]?.id;
+        const newTrackId = remoteStream.getAudioTracks()[0]?.id;
+
+        if (!currentSrcObject || currentTrackId !== newTrackId) {
+          a.srcObject = remoteStream;
+        }
+        if (a.paused && isSpeaker && !isAutoplayBlocked) {
+          a.play().then(() => {
+            setIsAutoplayBlocked(false);
+          }).catch(() => {
+            setIsAutoplayBlocked(true);
+          });
+        }
+      }
     };
 
     bindStreams();
-    const interval = setInterval(bindStreams, 500);
+    const interval = setInterval(bindStreams, 1000);
     return () => clearInterval(interval);
-  }, [callStream, remoteStream, callStatus, isVideoOff, isMinimized]);
+  }, [callStream, remoteStream, callStatus, isVideoOff, isMinimized, isSpeaker, isAutoplayBlocked]);
 
   const handleSwitchCamera = async () => {
     try {
-      await aeirmistCall.switchCamera();
+      const updatedStream = await aeirmistCall.switchCamera();
+      if (updatedStream) {
+        setCallStream(updatedStream);
+      }
     } catch (e) {
       logger.error("Camera switch failed", e);
     }
@@ -166,13 +299,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       try {
         if (!isIncomingCall && safeChat.id && !hasInitiatedCall.current) {
           hasInitiatedCall.current = true;
-          const granted = await _requestPermission(type === 'video' ? 'camera' : 'microphone');
-          if (!granted) {
-            setCallStatus('error');
-            setErrorMessage(`Please allow ${type === 'video' ? 'Camera' : 'Microphone'} access to start the call.`);
-            return;
+          unlockAudio();
+          if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+            try {
+              await (window as any).Capacitor.Plugins?.NativeSettings?.requestAllPermissions?.();
+            } catch (e) {}
           }
-          const targetUid = safeChat.participants?.find((uid: string) => uid !== user?.uid) || safeChat.otherParticipantUid;
+          const targetUid = safeChat.otherParticipantUid || safeChat.participants?.find((id: string) => id !== profile?.id && id !== user?.uid && id !== ('profile_' + user?.uid));
           await startCall(safeChat.id, type, targetUid);
           aeirmistRingtone.playDialTone();
         }
@@ -197,9 +330,38 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     };
   }, [isIncomingCall]);
 
-  // Sync state transitions from context
+  // Listen to low-level WebRTC peer connection states
   useEffect(() => {
-    if (activeCall?.status === 'accepted' || activeCall?.status === 'ongoing') {
+    const unsub = aeirmistCall.onConnectionStateChange((state, detail) => {
+      logger.info("[CallModal] WebRTC connectionState update:", state, detail);
+      if (state === 'connected') {
+        setCallStatus('connected');
+        aeirmistRingtone.stop();
+      } else if (state === 'connecting') {
+        setCallStatus(prev => (prev === 'ringing' || prev === 'connecting' ? 'connecting' : prev));
+        aeirmistRingtone.stop();
+      } else if (state === 'reconnecting') {
+        setCallStatus('reconnecting');
+      } else if (state === 'failed') {
+        setCallStatus('error');
+        setErrorMessage(detail || "WebRTC encrypted media connection failed between devices. Please check network.");
+      } else if (state === 'ended') {
+        setCallStatus('ended');
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // Sync state transitions from Firestore signaling
+  useEffect(() => {
+    let closeTimer: any = null;
+    if (activeCall?.status === 'accepted') {
+      setCallStatus(prev => (prev === 'connected' ? 'connected' : 'connecting'));
+      aeirmistRingtone.stop();
+    } else if (activeCall?.status === 'ongoing') {
       setCallStatus('connected');
       aeirmistRingtone.stop();
     } else if (activeCall?.status === 'reconnecting') {
@@ -210,11 +372,60 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
        if (activeCall?.status === 'missed') {
          setErrorMessage("Call missed. No response from recipient.");
        }
-       setTimeout(onClose, 2000);
-    } else if (!activeCall && callStatus !== 'ringing') {
+       closeTimer = setTimeout(onClose, 2000);
+    } else if (!activeCall && callStatus !== 'ringing' && callStatus !== 'connecting' && callStatus !== 'connected' && callStatus !== 'reconnecting') {
       onClose();
     }
-  }, [activeCall, callStatus]);
+    return () => {
+      if (closeTimer) clearTimeout(closeTimer);
+    };
+  }, [activeCall, callStatus, onClose]);
+
+  // Long-call reliability: Screen WakeLock, MediaSession background persistence, and auto-resume audio stall
+  useEffect(() => {
+    if (callStatus === 'connected') {
+      aeirmistCall.acquireWakeLock();
+      aeirmistCall.setupMediaSession(safeChat.name, handleEnd);
+      aeirmistCall.startHeartbeat(db);
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          aeirmistCall.acquireWakeLock();
+          if (remoteAudioRef.current && isSpeaker && remoteAudioRef.current.paused) {
+            remoteAudioRef.current.play().catch(() => {});
+          }
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      const audio = remoteAudioRef.current;
+      const handleStall = () => {
+        logger.warn("[WebRTC Audio] Buffer underrun / stall detected, auto-resuming playback...");
+        if (audio && isSpeaker) {
+          audio.play().catch(() => {});
+        }
+      };
+
+      if (audio) {
+        audio.addEventListener('waiting', handleStall);
+        audio.addEventListener('stalled', handleStall);
+        audio.addEventListener('pause', handleStall);
+      }
+
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        if (audio) {
+          audio.removeEventListener('waiting', handleStall);
+          audio.removeEventListener('stalled', handleStall);
+          audio.removeEventListener('pause', handleStall);
+        }
+      };
+    } else {
+      aeirmistCall.releaseWakeLock();
+      aeirmistCall.endMediaSession();
+      aeirmistCall.stopHeartbeat();
+    }
+  }, [callStatus, isSpeaker, safeChat.name]);
 
   const handleEnd = () => {
     if (activeCall?.id) {
@@ -228,19 +439,24 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
   const handleAccept = async (asAudio = false) => {
     if (!activeCall?.id) return;
+    unlockAudio();
     
-    const requestedType = asAudio ? 'audio' : activeCall.type;
-    const granted = await _requestPermission(requestedType === 'video' ? 'camera' : 'microphone');
-    if (!granted) {
-      setCallStatus('error');
-      setErrorMessage(`Permissions required for call.`);
-      return;
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+      try {
+        await (window as any).Capacitor.Plugins?.NativeSettings?.requestAllPermissions?.();
+      } catch (e) {}
     }
 
-    acceptCall(activeCall.id, activeCall.conversationId);
-    if (asAudio) setIsVideoOff(true);
-    aeirmistRingtone.stop();
-    setCallStatus('connected');
+    try {
+      setCallStatus('connecting');
+      aeirmistRingtone.stop();
+      if (asAudio) setIsVideoOff(true);
+      await acceptCall(activeCall.id, activeCall.conversationId);
+    } catch (err: any) {
+      logger.error("Call accept failed", err);
+      setCallStatus('error');
+      setErrorMessage(err.message || 'Could not connect audio/video stream. Please check camera & microphone permissions.');
+    }
   };
 
   const handleReject = () => {
@@ -276,6 +492,15 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         screenStreamRef.current = null;
       }
       setIsScreenSharing(false);
+      await aeirmistCall.stopScreenShare();
+      // Restore local preview to camera
+      const localVideos = document.querySelectorAll('.aeirmist-local-video') as NodeListOf<HTMLVideoElement>;
+      localVideos.forEach(v => {
+        if (callStream) {
+          v.srcObject = callStream;
+          v.play().catch(() => {});
+        }
+      });
       setSharedMediaToast("Screen sharing stopped");
       setTimeout(() => setSharedMediaToast(null), 3000);
     } else {
@@ -284,19 +509,33 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
           screenStreamRef.current = stream;
           setIsScreenSharing(true);
+          await aeirmistCall.startScreenShare(stream);
+          // Show screen stream in local video tile
+          const localVideos = document.querySelectorAll('.aeirmist-local-video') as NodeListOf<HTMLVideoElement>;
+          localVideos.forEach(v => {
+            v.srcObject = stream;
+            v.play().catch(() => {});
+          });
           setSharedMediaToast("Screen sharing active 🖥️");
           setTimeout(() => setSharedMediaToast(null), 3000);
           
-          stream.getVideoTracks()[0].onended = () => {
+          stream.getVideoTracks()[0].onended = async () => {
             setIsScreenSharing(false);
             screenStreamRef.current = null;
+            await aeirmistCall.stopScreenShare();
+            const lVideos = document.querySelectorAll('.aeirmist-local-video') as NodeListOf<HTMLVideoElement>;
+            lVideos.forEach(v => {
+              if (callStream) {
+                v.srcObject = callStream;
+                v.play().catch(() => {});
+              }
+            });
           };
         } else {
           setIsMediaShareOpen(true);
         }
       } catch (err) {
         console.warn("Screen share cancelled:", err);
-        setIsMediaShareOpen(true);
       }
     }
   };
@@ -432,36 +671,49 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   // Minimized Widget View
   if (isMinimized) {
     return (
-      <motion.div
-        drag
-        dragConstraints={{ left: -1000, right: 0, top: -1000, bottom: 0 }}
-        onClick={() => setIsMinimized(false)}
-        className="fixed bottom-6 right-6 z-[250] w-36 h-52 rounded-2xl bg-black border border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.8)] overflow-hidden cursor-pointer flex flex-col justify-between p-2.5 group touch-none select-none"
-      >
-        <div className="relative w-full h-full rounded-xl overflow-hidden bg-zinc-900 flex items-center justify-center">
-          {isVideoMode ? (
-            <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline />
-          ) : (
-            <img src={displayPhoto} className="w-14 h-14 rounded-2xl object-cover border border-white/20 shadow-md" referrerPolicy="no-referrer" />
-          )}
-          <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-all flex items-center justify-center">
-            <Maximize2 size={20} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+      <>
+        {/* High-fidelity persistent remote audio playback element */}
+        <audio 
+          ref={remoteAudioRef}
+          autoPlay 
+          playsInline 
+          className="aeirmist-remote-audio"
+          style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+        />
+        <motion.div
+          drag
+          dragConstraints={{ left: -1000, right: 0, top: -1000, bottom: 0 }}
+          onClick={() => {
+            unlockAudio();
+            setIsMinimized(false);
+          }}
+          className="fixed bottom-6 right-6 z-[250] w-36 h-52 rounded-2xl bg-black border border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.8)] overflow-hidden cursor-pointer flex flex-col justify-between p-2.5 group touch-none select-none"
+        >
+          <div className="relative w-full h-full rounded-xl overflow-hidden bg-zinc-900 flex items-center justify-center">
+            {isVideoMode ? (
+              <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline />
+            ) : (
+              <img src={displayPhoto} className="w-14 h-14 rounded-2xl object-cover border border-white/20 shadow-md" referrerPolicy="no-referrer" />
+            )}
+            <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-all flex items-center justify-center">
+              <Maximize2 size={20} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+            </div>
           </div>
-        </div>
 
-        <div className="flex items-center justify-between pt-2 px-1">
-          <span className="text-[9px] font-mono font-bold text-emerald-400">{formatDuration(duration)}</span>
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              handleEnd();
-            }}
-            className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-white"
-          >
-            <PhoneOff size={12} />
-          </button>
-        </div>
-      </motion.div>
+          <div className="flex items-center justify-between pt-2 px-1">
+            <span className="text-[9px] font-mono font-bold text-emerald-400">{formatDuration(duration)}</span>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEnd();
+              }}
+              className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-white"
+            >
+              <PhoneOff size={12} />
+            </button>
+          </div>
+        </motion.div>
+      </>
     );
   }
 
@@ -705,11 +957,17 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
           {/* TOP HALF: REMOTE PARTICIPANT VIDEO */}
           <div className="relative flex-1 bg-zinc-950 overflow-hidden flex items-center justify-center min-h-0">
-            <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline />
+            <video 
+              ref={setRemoteVideoNode}
+              className="aeirmist-remote-video w-full h-full object-cover" 
+              autoPlay 
+              playsInline 
+              muted 
+            />
             
             {/* Fallback / Ringing / Connecting overlay on top half */}
-            {(callStatus === 'ringing' || callStatus === 'reconnecting') && (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md text-center p-4">
+            {(callStatus === 'ringing' || callStatus === 'connecting' || callStatus === 'reconnecting' || !hasRemoteVideoTrack) && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/75 backdrop-blur-md text-center p-4">
                 <div className="relative mb-3">
                   <motion.div
                     animate={{ scale: [1, 1.25, 1], opacity: [0.4, 0, 0.4] }}
@@ -725,7 +983,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
                   className="text-lg font-bold text-white block drop-shadow-md"
                 />
                 <span className="text-[11px] font-mono text-cyan-400 font-semibold block mt-1.5 tracking-widest uppercase animate-pulse">
-                  {callStatus === 'ringing' ? (isIncomingCall ? 'Incoming Video Call...' : 'Connecting...') : 'Reconnecting...'}
+                  {callStatus === 'ringing' 
+                    ? (isIncomingCall ? 'Incoming Video Call...' : 'Calling...') 
+                    : callStatus === 'connecting' 
+                    ? 'Connecting Video Link...' 
+                    : callStatus === 'reconnecting' 
+                    ? 'Reconnecting...' 
+                    : 'Camera is off'}
                 </span>
               </div>
             )}
@@ -740,8 +1004,8 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               </button>
 
               <div className="px-3.5 py-1 rounded-full bg-black/50 backdrop-blur-md border border-white/10 text-[11px] font-mono font-bold text-white tracking-widest shadow-md flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                {formatDuration(duration)}
+                <span className={`w-2 h-2 rounded-full ${callStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
+                {callStatus === 'connected' ? formatDuration(duration) : 'Connecting'}
               </div>
 
               <button 
@@ -756,12 +1020,20 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           {/* BOTTOM HALF: LOCAL USER CAMERA FEED */}
           <div className="relative flex-1 bg-black overflow-hidden border-t border-white/10 shadow-2xl min-h-0">
             <video 
+              ref={setLocalVideoNode}
               className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" 
               autoPlay 
               playsInline 
               muted 
               style={{ filter: getLocalFilterCss() }}
             />
+
+            {(!hasLocalVideoTrack || isVideoOff) && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-zinc-900/90 text-center p-4">
+                <img src={getAvatarUrl(profile?.photoURL, profile?.id)} className="w-16 h-16 rounded-2xl object-cover border border-white/10 mb-2 shadow-lg" referrerPolicy="no-referrer" />
+                <span className="text-xs text-white/50 font-mono tracking-wider">Your camera is off</span>
+              </div>
+            )}
 
             {/* Sparkles Particle Animation Overlay */}
             {isSparklesOn && (
@@ -823,7 +1095,25 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
                 </div>
               </button>
 
-              {/* 3. Screen Share */}
+              {/* 3. Speaker Toggle */}
+              <button
+                onClick={() => setIsSpeaker(!isSpeaker)}
+                className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
+                title="Toggle Speaker"
+              >
+                <div className={`w-full h-full rounded-xl flex items-center justify-center transition-all duration-300 border relative overflow-hidden ${
+                  !isSpeaker 
+                    ? 'bg-amber-500/20 border-amber-500/35 text-amber-400' 
+                    : 'bg-white/10 border-white/25 text-white shadow-sm'
+                }`}>
+                  <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
+                  <div className="relative z-10">
+                    {isSpeaker ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                  </div>
+                </div>
+              </button>
+
+              {/* 4. Screen Share */}
               <button
                 onClick={handleToggleScreenShare}
                 className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none rounded-xl active:scale-95 transition-transform"
@@ -885,8 +1175,6 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     // CONNECTED AUDIO CALL MODE
     return (
       <div className="w-full h-full flex flex-col justify-between bg-black relative overflow-hidden select-none">
-        <audio className="aeirmist-remote-video hidden" autoPlay playsInline />
-
         {/* Blurred Background */}
         <div className="absolute inset-0 z-0">
           <img src={displayPhoto} className="w-full h-full object-cover blur-[80px] brightness-[0.25] scale-125" referrerPolicy="no-referrer" />
@@ -1213,7 +1501,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               {safeChat.name || 'Design Discussion'}
             </div>
             <div className="px-3.5 py-1.5 rounded-lg bg-[#25262a] border border-white/10 text-xs font-mono font-bold text-white/90 shadow-md">
-              {formatDuration(duration)}
+              {callStatus === 'connected' ? formatDuration(duration) : 'Connecting'}
             </div>
             <div className="px-3 py-1.5 rounded-lg bg-[#25262a] border border-white/10 text-xs font-bold text-white/90 shadow-md flex items-center gap-1.5">
               <Users size={14} className="text-cyan-400" />
@@ -1229,10 +1517,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
             <div className="w-full h-full grid grid-cols-2 gap-3">
               {/* Tile 1: Remote Participant */}
               <div className="relative rounded-xl bg-[#222327] border border-white/10 overflow-hidden flex items-center justify-center group shadow-xl">
-                {isVideoMode ? (
-                  <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline />
+                {isVideoMode && hasRemoteVideoTrack ? (
+                  <video ref={setRemoteVideoNode} className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline muted />
                 ) : (
-                  <img src={displayPhoto} className="w-28 h-28 rounded-2xl object-cover border-2 border-white/15 shadow-2xl" referrerPolicy="no-referrer" />
+                  <div className="flex flex-col items-center justify-center p-4">
+                    <img src={displayPhoto} className="w-28 h-28 rounded-2xl object-cover border-2 border-white/15 shadow-2xl mb-2" referrerPolicy="no-referrer" />
+                    <span className="text-xs text-white/50 font-mono">{callStatus === 'connecting' ? 'Connecting Video...' : 'Camera is off'}</span>
+                  </div>
                 )}
                 {/* Participant Name Tag at Bottom Left */}
                 <div className="absolute bottom-3 left-3 px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 flex items-center gap-2 text-xs font-bold text-white shadow-md">
@@ -1243,10 +1534,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
               {/* Tile 2: Local User */}
               <div className="relative rounded-xl bg-[#222327] border border-white/10 overflow-hidden flex items-center justify-center group shadow-xl">
-                {isVideoMode ? (
-                  <video className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
+                {isVideoMode && hasLocalVideoTrack && !isVideoOff ? (
+                  <video ref={setLocalVideoNode} className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
                 ) : (
-                  <img src={getAvatarUrl(profile?.photoURL, profile?.id)} className="w-28 h-28 rounded-2xl object-cover border-2 border-white/15 shadow-2xl" referrerPolicy="no-referrer" />
+                  <div className="flex flex-col items-center justify-center p-4">
+                    <img src={getAvatarUrl(profile?.photoURL, profile?.id)} className="w-28 h-28 rounded-2xl object-cover border-2 border-white/15 shadow-2xl mb-2" referrerPolicy="no-referrer" />
+                    <span className="text-xs text-white/50 font-mono">Your camera is off</span>
+                  </div>
                 )}
                 {/* Participant Name Tag at Bottom Left */}
                 <div className="absolute bottom-3 left-3 px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 flex items-center gap-2 text-xs font-bold text-white shadow-md">
@@ -1268,7 +1562,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
                     )
                   ) : (
                     isVideoMode && p.id === 'remote_1' ? (
-                      <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline />
+                      <video className="aeirmist-remote-video w-full h-full object-cover" autoPlay playsInline muted />
                     ) : (
                       <img src={p.photo} className="w-24 h-24 rounded-2xl object-cover border-2 border-white/15 shadow-2xl" referrerPolicy="no-referrer" />
                     )
@@ -1456,23 +1750,51 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   }
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-2xl overflow-hidden flex items-center justify-center p-0 md:p-6"
-      >
-        {/* Mobile Phone Frame View */}
-        <div className="flex md:hidden w-full h-full overflow-hidden bg-black relative flex-col justify-between">
-          {renderPhoneCallContent()}
-        </div>
+    <>
+      {/* High-fidelity persistent remote audio playback element */}
+      <audio 
+        ref={remoteAudioRef}
+        autoPlay 
+        playsInline 
+        className="aeirmist-remote-audio"
+        style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+      />
+      <AnimatePresence mode="wait">
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={unlockAudio}
+          onTouchStart={unlockAudio}
+          className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-2xl overflow-hidden flex items-center justify-center p-0 md:p-6"
+        >
+          {/* Floating Autoplay Unblock Chip if browser deferred audio */}
+          {isAutoplayBlocked && (
+            <motion.button
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                unlockAudio();
+              }}
+              className="absolute top-5 left-1/2 -translate-x-1/2 z-[260] px-5 py-2.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black text-xs uppercase tracking-widest flex items-center gap-2.5 shadow-[0_0_30px_rgba(245,158,11,0.85)] cursor-pointer active:scale-95 transition-all border border-amber-300 animate-pulse select-none"
+            >
+              <Volume2 size={16} className="stroke-[2.5]" /> Tap anywhere to unmute sound 🔊
+            </motion.button>
+          )}
 
-        {/* Desktop Meeting Window Frame View */}
-        <div className="hidden md:flex w-full max-w-6xl h-[88vh] max-h-[820px] rounded-2xl border border-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] overflow-hidden bg-[#121316] relative flex-col justify-between p-4 gap-3">
-          {renderDesktopCallContent()}
-        </div>
-      </motion.div>
-    </AnimatePresence>
+          {/* Mobile Phone Frame View */}
+          <div className="flex md:hidden w-full h-full overflow-hidden bg-black relative flex-col justify-between">
+            {renderPhoneCallContent()}
+          </div>
+
+          {/* Desktop Meeting Window Frame View */}
+          <div className="hidden md:flex w-full max-w-6xl h-[88vh] max-h-[820px] rounded-2xl border border-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] overflow-hidden bg-[#121316] relative flex-col justify-between p-4 gap-3">
+            {renderDesktopCallContent()}
+          </div>
+        </motion.div>
+      </AnimatePresence>
+    </>
   );
 };

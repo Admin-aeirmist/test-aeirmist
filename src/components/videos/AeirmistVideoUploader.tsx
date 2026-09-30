@@ -378,6 +378,10 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
       const finalVideoRecord = {
         id,
         creatorId: profile?.id || 'guest_creator',
+        creatorUid: user?.uid || profile?.ownerUid || profile?.uid || profile?.id,
+        authorUid: user?.uid || profile?.ownerUid || profile?.uid || profile?.id,
+        authorId: profile?.id || user?.uid,
+        userId: user?.uid || profile?.ownerUid || profile?.uid || profile?.id,
         creatorName: profile?.displayName || profile?.username || 'Guest',
         creatorAvatar: getAvatarUrl(profile?.photoURL, profile?.id),
         videoURL: finalVideoUrl,

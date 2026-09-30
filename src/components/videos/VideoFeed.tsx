@@ -118,13 +118,46 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
     });
 
     if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      list = list.filter(v => 
-        (v.title || v.caption || '').toLowerCase().includes(term) ||
-        (v.creatorName || '').toLowerCase().includes(term) ||
-        (v.category || '').toLowerCase().includes(term) ||
-        (v.tags && v.tags.some(t => t.toLowerCase().includes(term)))
-      );
+      const rawTerm = searchTerm.trim().toLowerCase();
+      // Strip leading @ for creator handle queries
+      const term = rawTerm.startsWith('@') ? rawTerm.slice(1).trim() : rawTerm;
+      const tokens = term.split(/\s+/).filter(Boolean);
+
+      list = list.filter(v => {
+        const title = (v.title || '').toLowerCase();
+        const caption = (v.caption || '').toLowerCase();
+        const creatorName = (v.creatorName || (v as any).authorName || (v as any).author?.displayName || (v as any).author?.name || '').toLowerCase();
+        const creatorUsername = ((v as any).creatorUsername || (v as any).username || (v as any).author?.username || '').toLowerCase();
+        const category = (v.category || '').toLowerCase();
+        
+        let tagsStr = '';
+        if (Array.isArray(v.tags)) {
+          tagsStr = v.tags.filter(t => typeof t === 'string').join(' ').toLowerCase();
+        } else if (typeof v.tags === 'string') {
+          tagsStr = (v.tags as string).toLowerCase();
+        }
+
+        const searchableText = `${title} ${caption} ${creatorName} ${creatorUsername} ${category} ${tagsStr}`;
+
+        // 1. Direct substring match on any key field
+        if (
+          title.includes(term) ||
+          caption.includes(term) ||
+          creatorName.includes(term) ||
+          creatorUsername.includes(term) ||
+          category.includes(term) ||
+          tagsStr.includes(term)
+        ) {
+          return true;
+        }
+
+        // 2. Multi-token match: all words present
+        if (tokens.length > 1 && tokens.every(tok => searchableText.includes(tok))) {
+          return true;
+        }
+
+        return false;
+      });
     }
     if (selectedCategory !== 'All') {
       list = list.filter(v => v.category === selectedCategory);
@@ -210,18 +243,18 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
         {/* Desktop Video Search */}
         <div className="flex-1 max-w-md mx-4 hidden md:block">
            <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" size={16} />
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30" size={16} />
               <input 
                 type="text" 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search videos, creators, or topics..." 
-                className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/50 transition-all font-medium"
+                className="w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/50 transition-all font-medium"
               />
               {searchTerm && (
                 <button 
                   onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/40 hover:text-slate-900 dark:hover:text-white"
                 >
                   <X size={14} />
                 </button>
@@ -273,18 +306,18 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
       {/* Mobile Search Bar */}
       <div className="px-3.5 pt-2.5 pb-0 md:hidden w-full max-w-full">
          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" size={15} />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30" size={15} />
             <input 
               type="text" 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search videos, creators, or topics..." 
-              className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-9 pr-8 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/50 transition-all font-medium"
+              className="w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl py-2 pl-9 pr-8 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/50 transition-all font-medium"
             />
             {searchTerm && (
               <button 
                 onClick={() => setSearchTerm('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/40 hover:text-slate-900 dark:hover:text-white"
               >
                 <X size={14} />
               </button>

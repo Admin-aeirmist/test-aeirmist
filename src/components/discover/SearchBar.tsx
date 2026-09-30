@@ -78,6 +78,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onFocusChange, o
   const [isSearching, setIsSearching] = useState(false);
   const [typoSuggestion, setTypoSuggestion] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeRequestIdRef = useRef<number>(0);
 
   const placeholders = [
     "Search creators, reels, artifacts...",
@@ -100,69 +101,80 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onFocusChange, o
   }, [isFocused, onFocusChange]);
 
   useEffect(() => {
-    const performSearch = async () => {
-      if (query && query.trim().length > 0) {
-        setIsSearching(true);
-        try {
-          const [results, typo] = await Promise.all([
-            globalSearch(query),
-            query.trim().length > 2 ? writingAssistant.checkTypo(query) : Promise.resolve(null)
-          ]);
+    const currentRequestId = ++activeRequestIdRef.current;
+    const trimmed = query.trim();
 
-          setSearchResults(results || { 
-            users: [], 
-            posts: [], 
-            stories: [], 
-            notes: [], 
-            products: [],
-            videos: [],
-            groups: [],
-            pages: [],
-            shops: [],
-            messages: []
-          });
+    if (!trimmed) {
+      setSearchResults({ 
+        users: [], 
+        posts: [], 
+        stories: [], 
+        notes: [], 
+        products: [],
+        videos: [], 
+        groups: [], 
+        pages: [], 
+        shops: [], 
+        messages: [] 
+      });
+      setTypoSuggestion(null);
+      setIsSearching(false);
+      return;
+    }
 
-          if (typo && typo.corrected && typo.corrected.toLowerCase() !== query.trim().toLowerCase()) {
-            setTypoSuggestion(typo.corrected);
-          } else {
-            setTypoSuggestion(null);
-          }
-        } catch (e) {
-          logger.error(e);
-          setSearchResults({ 
-            users: [], 
-            posts: [], 
-            stories: [], 
-            notes: [], 
-            products: [],
-            videos: [],
-            groups: [],
-            pages: [],
-            shops: [],
-            messages: []
-          });
+    setIsSearching(true);
+
+    const timer = setTimeout(async () => {
+      if (currentRequestId !== activeRequestIdRef.current) return;
+      try {
+        const [results, typo] = await Promise.all([
+          globalSearch(trimmed),
+          trimmed.length > 2 ? writingAssistant.checkTypo(trimmed) : Promise.resolve(null)
+        ]);
+
+        if (currentRequestId !== activeRequestIdRef.current) return;
+
+        setSearchResults(results || { 
+          users: [], 
+          posts: [], 
+          stories: [], 
+          notes: [], 
+          products: [],
+          videos: [], 
+          groups: [], 
+          pages: [], 
+          shops: [], 
+          messages: [] 
+        });
+
+        if (typo && typo.corrected && typo.corrected.toLowerCase() !== trimmed.toLowerCase()) {
+          setTypoSuggestion(typo.corrected);
+        } else {
           setTypoSuggestion(null);
-        } finally {
-          setIsSearching(false);
         }
-      } else {
+      } catch (e) {
+        if (currentRequestId !== activeRequestIdRef.current) return;
+        logger.error(e);
         setSearchResults({ 
           users: [], 
           posts: [], 
           stories: [], 
           notes: [], 
           products: [],
-          videos: [],
-          groups: [],
-          pages: [],
-          shops: [],
-          messages: []
+          videos: [], 
+          groups: [], 
+          pages: [], 
+          shops: [], 
+          messages: [] 
         });
         setTypoSuggestion(null);
+      } finally {
+        if (currentRequestId === activeRequestIdRef.current) {
+          setIsSearching(false);
+        }
       }
-    };
+    }, 250);
 
-    const timer = setTimeout(performSearch, 300);
     return () => clearTimeout(timer);
   }, [query, globalSearch]);
 
@@ -210,10 +222,12 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onFocusChange, o
 
       <form 
         onSubmit={handleSearchSubmit}
-        className={`relative glass-panel rounded-2xl border transition-all duration-500 flex items-center px-6 py-3.5 bg-black/40 ${
-        isFocused ? 'border-aeirmist-cyan shadow-[0_0_40px_rgba(0,242,255,0.15)] bg-black/60' : 'border-white/5 hover:border-white/10'
+        className={`relative glass-panel rounded-2xl border transition-all duration-500 flex items-center px-6 py-3.5 ${
+        isFocused 
+          ? 'border-aeirmist-cyan shadow-[0_0_40px_rgba(0,242,255,0.15)] bg-white dark:bg-black/60' 
+          : 'bg-slate-100/90 dark:bg-black/40 border-slate-200 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/10'
       }`}>
-        <Search className={`mr-4 transition-colors duration-500 ${isFocused ? 'text-aeirmist-cyan' : 'text-white/20'}`} size={18} />
+        <Search className={`mr-4 transition-colors duration-500 ${isFocused ? 'text-aeirmist-cyan' : 'text-slate-400 dark:text-white/20'}`} size={18} />
         
         <input 
           ref={inputRef}
@@ -222,13 +236,13 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onFocusChange, o
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => setIsFocused(true)}
           placeholder="Search creators, hashtags, artifacts..."
-          className="flex-1 bg-transparent outline-none text-white text-sm font-medium placeholder:text-white/20 tracking-tight"
+          className="flex-1 bg-transparent outline-none text-slate-900 dark:text-white text-sm font-medium placeholder:text-slate-400 dark:placeholder:text-white/20 tracking-tight"
         />
 
         <div className="flex items-center gap-4">
           {isSearching && <Loader2 size={16} className="text-aeirmist-cyan animate-spin" />}
           {query && (
-            <button type="button" onClick={handleClear} className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/40 hover:text-white transition-all border border-white/5">
+            <button type="button" onClick={handleClear} className="w-8 h-8 rounded-full bg-slate-200 dark:bg-white/5 flex items-center justify-center text-slate-500 dark:text-white/40 hover:text-slate-900 dark:hover:text-white transition-all border border-slate-300 dark:border-white/5">
               <X size={14} />
             </button>
           )}
@@ -242,7 +256,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onFocusChange, o
             initial={{ opacity: 0, y: 20, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.98 }}
-            className="absolute top-full left-0 right-0 mt-6 p-8 glass-panel rounded-[3.5rem] border border-white/10 bg-black/90 backdrop-blur-3xl shadow-[0_50px_120px_rgba(0,0,0,0.9)] overflow-y-auto max-h-[75vh] no-scrollbar active:scale-[0.99] transition-transform"
+            className="absolute top-full left-0 right-0 mt-6 p-8 glass-panel rounded-[3.5rem] border border-slate-200 dark:border-white/10 bg-white/95 dark:bg-black/90 backdrop-blur-3xl shadow-[0_50px_120px_rgba(0,0,0,0.12)] dark:shadow-[0_50px_120px_rgba(0,0,0,0.9)] overflow-y-auto max-h-[75vh] no-scrollbar active:scale-[0.99] transition-transform text-slate-900 dark:text-white"
           >
             {/* SEARCH TABS / PILLS */}
             {query.length > 0 && (

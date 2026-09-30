@@ -68,7 +68,7 @@ export const MarketplaceCart: React.FC<MarketplaceCartProps> = ({
   addresses = [],
   stores
 }) => {
-  const { db } = useAeirmist();
+  const { db, user, addToast } = useAeirmist();
   // Stepper state: 'cart' | 'shipping' | 'payment' | 'success'
   const [step, setStep] = useState<'cart' | 'shipping' | 'payment' | 'success'>('cart');
   
@@ -256,7 +256,9 @@ export const MarketplaceCart: React.FC<MarketplaceCartProps> = ({
           { status: 'delivered', label: 'Delivered', date: '', desc: 'Handed over securely to destination receiver.', active: false }
         ],
         currentStatus: 'processing',
-        buyerId: userProfile.id,
+        buyerUid: user?.uid || userProfile?.uid || userProfile?.ownerUid || userProfile?.id,
+        buyerId: userProfile?.id || user?.uid,
+        sellerUid: sellerUids[0] || '',
         sellerUids,
         refundStatus: 'none'
       };
@@ -270,8 +272,13 @@ export const MarketplaceCart: React.FC<MarketplaceCartProps> = ({
       onAddOrderToTracking(finalOrder);
       setStep('success');
       onClearCart();
-    } catch (error) {
+    } catch (error: any) {
       logger.error("Checkout error:", error);
+      addToast?.({
+        title: "Order Failed",
+        message: error?.message || "Could not complete transaction. Please try again.",
+        type: "warning"
+      });
     } finally {
       setPaymentLoading(false);
     }

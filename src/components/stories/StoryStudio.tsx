@@ -1505,10 +1505,19 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
   const startCamera = async () => {
     try {
       stopCamera();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode },
-        audio: true
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode },
+          audio: true
+        });
+      } catch (audioErr) {
+        // Fallback to video-only stream if mic is absent or denied
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode },
+          audio: false
+        });
+      }
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -1521,6 +1530,13 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
   };
 
   const stopCamera = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        logger.warn("[StoryStudio] Error stopping media recorder:", e);
+      }
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;

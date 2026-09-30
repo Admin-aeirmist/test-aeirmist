@@ -551,7 +551,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
           </div>
 
 
-          <div className={`p-3 md:p-4 space-y-4 ${activeTab !== null ? 'hidden lg:block' : 'block'}`}>
+          <div className={`p-3 md:p-4 space-y-4 pb-28 lg:pb-6 ${activeTab !== null ? 'hidden lg:block' : 'block'}`}>
             {searchQuery.trim() !== '' ? (
               <div className="space-y-2">
                 <div className="px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-white/30 select-none">
@@ -812,7 +812,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
         {editingImage && (
           <DigitalImageEditor 
             imageSrc={editingImage.src}
-            aspectRatio={editingImage.type === 'avatar' ? 1 : 2.5}
+            aspectRatio={editingImage.type === 'avatar' ? 1 : 3}
             onSave={handleSaveEditedImage}
             onCancel={() => setEditingImage(null)}
           />

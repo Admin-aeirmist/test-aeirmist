@@ -6,15 +6,26 @@ export const GlobalAppBackground: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLDivElement>(null);
   const [isClient, setIsClient] = useState(false);
+  const [isLight, setIsLight] = useState(() => {
+    return typeof document !== 'undefined' && document.documentElement.classList.contains('light');
+  });
 
   useEffect(() => {
     setIsClient(true);
+    const checkTheme = () => {
+      setIsLight(document.documentElement.classList.contains('light'));
+    };
+    checkTheme();
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
   }, []);
 
   // Performance-mode override calculations
   const performanceMode = settings.performanceMode;
   const isCustom = settings.globalBgType === 'custom' && settings.globalBgValue;
   const opacity = settings.globalBgOpacity / 100;
+  const effectiveOpacity = isLight ? Math.max(0.85, opacity) : opacity;
   const blur = performanceMode ? 0 : settings.globalBgBlur;
   const darkOverlayOpacity = settings.globalBgOverlay / 100;
   const enableParallax = settings.globalBgMotion && !performanceMode;
@@ -120,6 +131,7 @@ export const GlobalAppBackground: React.FC = () => {
     <div 
       ref={containerRef}
       id="aeirmist-global-app-background"
+      data-wallpaper-layer="true"
       className="fixed inset-0 pointer-events-none overflow-hidden select-none"
       style={{ zIndex: -20 }}
     >
@@ -144,7 +156,7 @@ export const GlobalAppBackground: React.FC = () => {
           ref={mediaRef}
           className="absolute inset-0 w-full h-full transition-all duration-500 origin-center"
           style={{
-            opacity: opacity,
+            opacity: effectiveOpacity,
             filter: blur > 0 ? `blur(${blur}px)` : undefined,
             transform: enableParallax ? 'scale(1.08)' : blurScale,
             willChange: 'transform, filter, opacity',
@@ -175,11 +187,14 @@ export const GlobalAppBackground: React.FC = () => {
         </div>
       )}
 
-      {/* 3. DARK READABILITY OVERLAY TINT */}
+      {/* 3. ADAPTIVE READABILITY OVERLAY TINT */}
       {darkOverlayOpacity > 0 && (
         <div 
-          className="absolute inset-0 w-full h-full bg-black transition-opacity duration-300 pointer-events-none"
-          style={{ opacity: darkOverlayOpacity }}
+          className="absolute inset-0 w-full h-full global-bg-overlay transition-opacity duration-300 pointer-events-none"
+          style={{ 
+            backgroundColor: isLight ? '#ffffff' : '#000000',
+            opacity: isLight ? Math.min(0.2, darkOverlayOpacity * 0.25) : darkOverlayOpacity 
+          }}
         />
       )}
     </div>

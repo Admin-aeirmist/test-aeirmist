@@ -33,7 +33,8 @@ import {
   Users,
   ShieldCheck,
   Settings,
-  UserX
+  UserX,
+  ShieldAlert
 } from 'lucide-react';
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
 import { CallModal } from './CallModal';
@@ -49,6 +50,8 @@ import { ChatInfoPanel } from './messenger/ChatInfoPanel';
 import { Vault } from './messenger/Vault';
 import { MessageItem } from './messenger/MessageItem';
 import { CallHistorySection } from './messenger/CallHistorySection';
+import { RestrictedSection } from './messenger/RestrictedSection';
+import { BlockedSection } from './messenger/BlockedSection';
 import { AeirmistInputSystem } from './messenger/AeirmistInputSystem';
 import { ImageViewerModal } from './messenger/ImageViewerModal';
 import { TelegramMediaAlbum, AlbumItem, isAutoMediaPlaceholder } from './messenger/TelegramMediaAlbum';
@@ -84,6 +87,7 @@ import {
   extractTimestampMs
 } from '../lib/date';
 import { useAeirmist } from '../context/AeirmistContext';
+import { useAppearance } from '../context/AppearanceContext';
 import { aeirmistCache } from '../services/CacheService';
 import { mediaService, MediaQuality } from '../services/MediaService';
 import { messagingService } from '../modules/messaging/MessagingService';
@@ -347,6 +351,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     deleteConversation,
     addToast
   } = useAeirmist();
+  const { settings } = useAppearance();
   const [chats, setChats] = useState<Chat[]>([]);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -415,7 +420,14 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
   // Handle temporary chats separate from derived list
   const [tempChat, setTempChat] = useState<Chat | null>(null);
   
-  const currentChat = activeChat || tempChat;
+  const currentChat = useMemo(() => {
+    if (activeChatId) {
+      const found = chats.find(c => c.id === activeChatId);
+      if (found) return found;
+      if (tempChat && tempChat.id === activeChatId) return tempChat;
+    }
+    return tempChat || null;
+  }, [chats, activeChatId, tempChat]);
 
   // Manage Nav Visibility
   useEffect(() => {
@@ -462,7 +474,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     return ids;
   }, [chats, profile?.id]);
 
-  const [view, setView] = useState<'chats' | 'requests' | 'history'>('chats');
+  const [view, setView] = useState<'chats' | 'requests' | 'history' | 'restricted' | 'blocked'>('chats');
   const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'personal' | 'marketplace' | 'groups' | 'archived' | 'requests'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
@@ -649,10 +661,15 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     };
   }, [isMobileList]);
 
-  // Instant chat open logic
+  // Instant chat open logic (guarded to only trigger once per distinct recipient to prevent focus hijacking on profile/points updates)
+  const processedInitialRecipientRef = useRef<string | null>(null);
   useEffect(() => {
     if (initialRecipient && user && profile) {
-      handleUserClick(initialRecipient);
+      const recipientKey = initialRecipient.id || initialRecipient.uid || initialRecipient.username || JSON.stringify(initialRecipient);
+      if (processedInitialRecipientRef.current !== recipientKey) {
+        processedInitialRecipientRef.current = recipientKey;
+        handleUserClick(initialRecipient);
+      }
     }
   }, [initialRecipient, user, profile]);
 
@@ -921,7 +938,13 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
   const handleChatSelect = (chat: Chat) => {
     setActiveChatId(chat.id);
-    setTempChat(null);
+    if (!chats.some(c => c.id === chat.id)) {
+      setTempChat(chat);
+    } else {
+      setTempChat(null);
+    }
+    setMessageSearchQuery('');
+    setIsInfoOpen(false);
     setIsMobileList(false);
   };
 
@@ -1055,69 +1078,30 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
   const currentTheme = (currentChat?.theme as keyof typeof themeStyles) || 'neural';
   const styles = themeStyles[currentTheme];
 
-  if (view === 'requests') {
-    return (
-      <div className="flex h-screen w-full bg-aeirmist-bg">
-        <div className="w-full md:w-80 lg:w-96 border-r border-white/10">
-          <RequestsSection 
-            chats={requestChats} 
-            onBack={() => setView('chats')} 
-            onUserClick={onUserClick} 
-            onChatSelect={(id) => {
-              setView('chats');
-              setActiveChatId(id);
-              setIsMobileList(false);
-            }}
-          />
-        </div>
-        <div className="hidden md:flex flex-1 items-center justify-center bg-aeirmist-bg/40">
-          <div className="text-center space-y-4">
-            <div className="w-20 h-20 rounded-full bg-white/5 border border-dashed border-white/10 mx-auto flex items-center justify-center">
-              <Shield size={32} className="text-white/20" />
-            </div>
-            <p className="text-xs text-white/40 uppercase tracking-widest font-bold font-display italic">Signal Requests Area</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (view === 'history') {
-    return (
-      <div className="flex h-screen w-full bg-aeirmist-bg">
-        <div className="w-full md:w-80 lg:w-96 border-r border-white/10">
-          <CallHistorySection 
-             onBack={() => setView('chats')} 
-             onRedial={async (pid, type) => {
-                const profileDoc = await getDoc(doc(db, 'profiles', pid));
-                if (profileDoc.exists()) {
-                   handleUserClick({ id: pid, ...profileDoc.data() }, type);
-                }
-             }}
-          />
-        </div>
-        <div className="hidden md:flex flex-1 items-center justify-center bg-aeirmist-bg/40">
-          <div className="text-center space-y-4">
-            <div className="w-20 h-20 rounded-full bg-white/5 border border-dashed border-white/10 mx-auto flex items-center justify-center">
-              <Zap size={32} className="text-white/20" />
-            </div>
-            <p className="text-xs text-white/40 uppercase tracking-widest font-bold font-display italic">Call Logs History</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div 
-      className={`flex w-full h-full overflow-hidden transition-[height] duration-300 ${currentChat?.isVanishMode ? 'bg-black' : 'bg-[#E5E7EB]'}`}
+      className={`flex w-full h-full overflow-hidden transition-[height] duration-300 relative ${
+        currentChat?.isVanishMode ? 'bg-black' : 'bg-slate-100/60 dark:bg-aeirmist-bg'
+      }`}
     >
+      {/* Root Continuous Messenger Wallpaper Layer (Spans across sidebar and chat viewport) */}
+      <ChatWallpaperLayer 
+        chatThemeSettings={currentChat ? (profile?.themeSettings?.perChatWallpapers?.[currentChat.id] || currentChat.themeSettings) : undefined}
+        globalThemeSettings={profile?.themeSettings?.chatWallpaper || (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined)}
+      />
+
+      {/* Dark Dim Overlay tied to Appearance Settings */}
+      <div 
+        className="aeirmist-dim-overlay absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 z-[1]" 
+        style={{ opacity: (settings?.globalBgOverlay ?? 45) / 100 }} 
+      />
+
       <AnimatePresence>
         {forwardingMessage && (
           <ForwardModal 
              onClose={() => setForwardingMessage(null)} 
              onForward={confirmForward} 
-             chats={chats}
+             chats={chats} 
           />
         )}
         {isGroupCreationOpen && (
@@ -1154,7 +1138,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       </AnimatePresence>
 
       {/* Sidebar / Chat List */}
-      <div className={`${isMobileList ? 'flex' : 'hidden md:flex'} ${vaultState.isOpen && !vaultState.activeVaultChatId ? 'w-full flex-1 border-r-0' : 'w-full md:w-72 lg:w-80 border-r border-white/10'} flex-col bg-aeirmist-bg shrink-0 min-w-0 overflow-hidden h-full min-h-0`}>
+      <div className={`${isMobileList ? 'flex' : 'hidden md:flex'} ${vaultState.isOpen && !vaultState.activeVaultChatId ? 'w-full flex-1 border-r-0' : 'w-full md:w-72 lg:w-80 border-r border-slate-200/80 dark:border-white/10'} flex-col bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-sidebar-glass shrink-0 min-w-0 overflow-hidden h-full min-h-0 z-10 transition-colors`}>
         {isSearchFocused ? (
           <div className="flex-1 flex flex-col h-full overflow-hidden">
             {/* Dedicated Search Header & Input */}
@@ -1178,7 +1162,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     autoFocus
-                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-11 pr-8 text-xs font-medium text-white/95 outline-none focus:border-aeirmist-cyan/40 focus:bg-white/[0.08] transition-all placeholder:text-white/30 animate-fade-in"
+                    className="w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl py-2.5 pl-11 pr-8 text-xs font-medium text-slate-800 dark:text-white/95 outline-none focus:border-aeirmist-cyan/40 dark:focus:bg-white/[0.08] focus:bg-slate-200/80 transition-all placeholder:text-slate-400 dark:placeholder:text-white/30 animate-fade-in"
                   />
                   {searchQuery && (
                     <button 
@@ -1200,7 +1184,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                     className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border capitalize ${
                       searchTab === tab 
                         ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.2)]' 
-                        : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                        : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                     }`}
                   >
                     {tab}
@@ -1210,7 +1194,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
             </div>
 
             {/* Search Screen Content (Scrollable) */}
-            <div className="flex-1 overflow-y-auto px-4 md:px-6 py-2 space-y-6">
+            <div className="flex-1 overflow-y-auto px-4 md:px-6 py-2 space-y-6 pb-24 md:pb-6">
               {/* If Search Query is EMPTY */}
               {!searchQuery.trim() ? (
                 <>
@@ -1737,13 +1721,13 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                 <div className="flex items-center gap-2 flex-shrink-0 relative">
                   <button 
                     onClick={() => setIsGroupCreationOpen(true)}
-                    className="w-10 h-10 rounded-xl flex items-center justify-center transition-all border bg-[#0f0f13]/85 border-white/10 text-white/40 hover:border-white/20 hover:text-aeirmist-cyan"
+                    className="w-10 h-10 rounded-xl flex items-center justify-center transition-all border bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/10 text-slate-500 dark:text-white/40 hover:border-slate-400 dark:hover:border-white/20 hover:text-aeirmist-cyan"
                   >
                     <Users size={16} />
                   </button>
                   <button 
                     onClick={() => setIsSettingsOpen(true)}
-                    className="w-10 h-10 rounded-xl flex items-center justify-center transition-all border bg-[#0f0f13]/85 border-white/10 text-white/40 hover:border-white/20 hover:text-aeirmist-cyan"
+                    className="w-10 h-10 rounded-xl flex items-center justify-center transition-all border bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/10 text-slate-500 dark:text-white/40 hover:border-slate-400 dark:hover:border-white/20 hover:text-aeirmist-cyan"
                     title="Inbox Settings"
                   >
                     <Settings size={16} />
@@ -1779,62 +1763,64 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                           <div className="px-3 py-2 border-b border-white/5 mb-1.5">
                             <p className="text-[8px] font-black uppercase text-white/30 tracking-widest">Connections Options</p>
                           </div>
-                                       <button 
-                            onClick={() => {
-                              setView('requests');
-                              setIsMoreMenuOpen(false);
+
+                          {/* 0. Secret Encrypted Vault */}
+                          <button 
+                            onClick={() => { 
+                              setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: null }); 
+                              setIsMobileList(false); 
+                              setIsMoreMenuOpen(false); 
                             }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/80 hover:text-white transition-all text-left group"
                           >
-                            <MessageSquare size={16} className="text-aeirmist-magenta" />
-                            <div className="flex-1">
-                              <p className="text-xs font-bold">Signal Requests</p>
-                              <p className="text-[8px] text-white/30 uppercase font-black tracking-widest">{requestChats.length} holding</p>
+                            <Lock size={16} className="text-purple-400 group-hover:scale-110 transition-transform shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs font-bold text-white">Vault</p>
+                                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">PIN</span>
+                              </div>
+                              <p className="text-[10px] text-white/40 truncate">Hidden & encrypted chats</p>
                             </div>
                           </button>
 
                           <button 
-                            onClick={() => {
-                              addToast({ title: 'Open a chat first', message: 'Select a conversation to send a photo.', type: 'info' });
-                              setIsMoreMenuOpen(false);
-                            }}
+                            onClick={() => { setView('requests'); setIsMobileList(false); setIsMoreMenuOpen(false); }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
                           >
-                            <Camera size={16} className="text-aeirmist-cyan" />
-                            <p className="text-xs font-bold">Digital Camera</p>
+                            <MessageSquare size={16} className="text-aeirmist-magenta" />
+                            <div className="flex-1">
+                              <p className="text-xs font-bold">Message Requests</p>
+                            </div>
                           </button>
 
                           <button 
-                            onClick={() => {
-                              setView((prev: any) => prev === 'history' ? 'chats' : 'history');
-                              setIsMoreMenuOpen(false);
-                            }}
+                            onClick={() => { setView('restricted'); setIsMobileList(false); setIsMoreMenuOpen(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
+                          >
+                            <Ghost size={16} className="text-[#00F2FF]" />
+                            <div className="flex-1">
+                              <p className="text-xs font-bold">Restrictions</p>
+                            </div>
+                          </button>
+
+                          <button 
+                            onClick={() => { setView('blocked'); setIsMobileList(false); setIsMoreMenuOpen(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
+                          >
+                            <ShieldAlert size={16} className="text-red-400" />
+                            <div className="flex-1">
+                              <p className="text-xs font-bold">Block Accounts</p>
+                            </div>
+                          </button>
+
+                          <button 
+                            onClick={() => { setView('history'); setIsMobileList(false); setIsMoreMenuOpen(false); }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
                           >
                             <Phone size={16} className="text-aeirmist-lime" />
-                            <p className="text-xs font-bold">Call History Logs</p>
-                          </button>
-
-                          <button 
-                            onClick={() => {
-                              setVaultState(prev => ({ ...prev, isOpen: true }));
-                              setIsMoreMenuOpen(false);
-                            }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
-                          >
-                            <Lock size={16} className="text-[#c77dff]" />
-                            <p className="text-xs font-bold text-[#e2afff]">Aeirmist Vault</p>
-                          </button>
-
-                          <button 
-                            onClick={() => {
-                              setIsAccountSwitcherOpen(true);
-                              setIsMoreMenuOpen(false);
-                            }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left border-t border-white/5 mt-1.5 pt-2"
-                          >
-                            <Plus size={16} className="text-white/40" />
-                            <p className="text-xs font-bold">Switch Identity</p>
+                            <div className="flex-1">
+                              <p className="text-xs font-bold">Call History</p>
+                            </div>
                           </button>
                         </motion.div>
                       </motion.div>
@@ -1851,7 +1837,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setIsSearchFocused(true)}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-11 pr-8 text-xs font-medium text-white/90 outline-none focus:border-aeirmist-cyan/40 focus:bg-white/[0.08] transition-all placeholder:text-white/30"
+                  className="w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl py-3 pl-11 pr-8 text-xs font-medium text-slate-800 dark:text-white/90 outline-none focus:border-aeirmist-cyan/40 dark:focus:bg-white/[0.08] focus:bg-slate-200/80 transition-all placeholder:text-slate-400 dark:placeholder:text-white/30"
                 />
               </div>
 
@@ -1862,7 +1848,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border ${
                     activeFilter === 'all' 
                       ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
                   All
@@ -1872,7 +1858,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5 border ${
                     activeFilter === 'unread' 
                       ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
                   Unread {chats.some(c => c.unread) && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-magenta shadow-[0_0_6px_rgba(255,0,234,0.8)] animate-pulse" />}
@@ -1882,7 +1868,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border ${
                     activeFilter === 'personal' 
                       ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
                   Personal
@@ -1892,7 +1878,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border ${
                     activeFilter === 'marketplace' 
                       ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
                   Marketplace
@@ -1902,7 +1888,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border ${
                     activeFilter === 'groups' 
                       ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
                   Groups
@@ -1912,7 +1898,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border ${
                     activeFilter === 'archived' 
                       ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
                   Archived
@@ -1922,16 +1908,26 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5 border ${
                     activeFilter === 'requests' 
                       ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-[#0f0f13]/85 border-white/5 text-white/40 hover:text-white hover:border-white/15'
+                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
                   Requests {requestChats.length > 0 && <span className="bg-aeirmist-magenta text-white text-[7px] font-black px-1.5 py-0.5 rounded-full animate-pulse">{requestChats.length}</span>}
+                </button>
+                <button 
+                  onClick={() => {
+                    setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: null });
+                    setIsMobileList(false);
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5 border border-purple-500/30 text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 hover:border-purple-400"
+                >
+                  <Lock size={10} className="text-purple-400" />
+                  <span>Vault</span>
                 </button>
               </div>
             </div>
 
             {/* Note/Active and Chat lists */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto pb-24 md:pb-4">
               {activeFilter === 'all' && (
                 <NotesSystem 
                   chats={chats} 
@@ -1942,6 +1938,10 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                       authorName.toLowerCase() !== 'unknown user';
                     const cleanAuthor = isAuthorValid ? authorName.trim() : 'User';
                     setActiveChatId(chatId);
+                    setTempChat(null);
+                    setIsMobileList(false);
+                    setMessageSearchQuery('');
+                    setIsInfoOpen(false);
                     setPendingNoteReply({
                       chatId,
                       text: `${cleanAuthor}'s Note: "${noteText}"`,
@@ -1993,7 +1993,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                       {/* Top Row: Name + Pin badge + Meta timestamp */}
                       <div className="flex items-center justify-between gap-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <h3 className={`text-[13px] md:text-[14px] font-bold truncate ${chat.unread ? 'text-white' : 'text-white/90'}`}>
+                          <h3 className={`text-[13px] md:text-[14px] font-bold truncate ${chat.unread ? 'text-slate-900 dark:text-white' : 'text-slate-700 dark:text-white/90'}`}>
                             {chat.isGroup || chat.type === 'group' ? (chat.name || chat.groupName || 'Group Chat') : (chat.otherParticipantId === profile?.id ? 'My Space' : <LiveParticipantName participantId={chat.otherParticipantId} fallbackName={chat.name} chatId={chat.id} />)}
                           </h3>
                           {chat.isPinned && (
@@ -2001,7 +2001,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                           )}
                         </div>
                         {metaTime ? (
-                          <span className={`text-[10px] md:text-[11px] shrink-0 font-medium text-right whitespace-nowrap pl-1 ${chat.unread ? 'text-aeirmist-cyan font-bold' : 'text-white/40'}`}>
+                          <span className={`text-[10px] md:text-[11px] shrink-0 font-medium text-right whitespace-nowrap pl-1 ${chat.unread ? 'text-aeirmist-cyan font-bold' : 'text-slate-400 dark:text-white/40'}`}>
                             {metaTime}
                           </span>
                         ) : null}
@@ -2009,7 +2009,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
                       {/* Bottom Row: Last message preview + Unread badge */}
                       <div className="flex items-center justify-between gap-2 min-w-0 mt-0.5">
-                        <p className={`text-[12px] truncate flex-1 min-w-0 ${chat.unread ? 'text-white font-semibold' : 'text-white/50'}`}>
+                        <p className={`text-[12px] truncate flex-1 min-w-0 ${chat.unread ? 'text-slate-800 dark:text-white font-semibold' : 'text-slate-400 dark:text-white/50'}`}>
                           {chat.lastMessage || 'No messages yet'}
                         </p>
                         {chat.unread && (
@@ -2027,7 +2027,50 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
       {/* Chat Window */}
       <div className={`${isMobileList ? 'hidden md:flex' : 'flex'} ${vaultState.isOpen && !vaultState.activeVaultChatId ? 'hidden md:hidden' : 'flex-1'} flex-col bg-aeirmist-bg relative min-w-0 w-full max-w-full overflow-hidden`}>
-        {currentChat ? (
+        {view === 'restricted' ? (
+          <div className="flex-1 h-full overflow-hidden">
+            <RestrictedSection 
+              onBack={() => { setView('chats'); setIsMobileList(true); }} 
+              onUserClick={onUserClick}
+            />
+          </div>
+        ) : view === 'blocked' ? (
+          <div className="flex-1 h-full overflow-hidden">
+            <BlockedSection 
+              onBack={() => { setView('chats'); setIsMobileList(true); }} 
+              onUserClick={onUserClick}
+            />
+          </div>
+        ) : view === 'history' ? (
+          <div className="flex-1 h-full overflow-hidden">
+            <CallHistorySection 
+              onBack={() => { setView('chats'); setIsMobileList(true); }} 
+              onRedial={async (pid, type) => {
+                const profileDoc = await getDoc(doc(db, 'profiles', pid));
+                if (profileDoc.exists()) {
+                  handleUserClick({ id: pid, ...profileDoc.data() }, type);
+                }
+              }}
+              onUserClick={onUserClick}
+            />
+          </div>
+        ) : view === 'requests' ? (
+          <div className="flex-1 h-full overflow-hidden">
+            <RequestsSection 
+              chats={requestChats} 
+              onBack={() => { setView('chats'); setIsMobileList(true); }} 
+              onUserClick={onUserClick} 
+              onChatSelect={(id) => {
+                setView('chats');
+                setActiveChatId(id);
+                setTempChat(null);
+                setMessageSearchQuery('');
+                setIsInfoOpen(false);
+                setIsMobileList(false);
+              }}
+            />
+          </div>
+        ) : currentChat ? (
           (currentChat.isVaulted?.[profile?.id || ''] === true && !vaultState.isUnlocked) ? (
             <Vault 
               db={db}
@@ -2036,6 +2079,9 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
               onSelectChat={(chatId) => {
                 setVaultState(prev => ({ ...prev, activeVaultChatId: chatId, isUnlocked: true }));
                 setActiveChatId(chatId);
+                setTempChat(null);
+                setMessageSearchQuery('');
+                setIsInfoOpen(false);
                 setIsMobileList(false);
               }}
               onClose={() => {
@@ -2054,6 +2100,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           ) : (
             <div className="flex-1 flex flex-row overflow-hidden relative">
               <ChatWindow 
+                key={currentChat.id}
                 chat={currentChat} 
                 isVaultMode={currentChat.isVaulted?.[profile?.id || ''] === true}
                 onBack={() => setIsMobileList(true)} 
@@ -2111,64 +2158,53 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
             </div>
           )
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-aeirmist-bg relative overflow-hidden">
-            {/* Ambient Background */}
-            <div className="absolute inset-0 pointer-events-none">
-              <motion.div 
-                animate={{ 
-                  scale: [1, 1.2, 1],
-                  opacity: [0.1, 0.2, 0.1]
-                }}
-                transition={{ duration: 10, repeat: Infinity }}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[80%] bg-aeirmist-cyan/20 rounded-full blur-[120px]"
-              />
+          <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-12 text-center bg-transparent relative overflow-hidden select-none min-h-0 w-full animate-fade-in">
+            {/* Subtle Ambient Glow */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] h-[320px] bg-aeirmist-cyan/10 rounded-full blur-[100px]" />
             </div>
 
-            <div className="relative z-10 space-y-8">
-              <div className="relative w-32 h-32 mx-auto">
-                <motion.div 
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-                  className="absolute inset-0 border border-dashed border-aeirmist-cyan/30 rounded-full"
-                />
-                <motion.div 
-                  animate={{ rotate: -360 }}
-                  transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                  className="absolute inset-4 border border-dashed border-aeirmist-magenta/20 rounded-full"
-                />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <motion.div
-                    animate={{ 
-                      scale: [0.8, 1.1, 0.8],
-                      opacity: [0.5, 1, 0.5]
-                    }}
-                    transition={{ duration: 4, repeat: Infinity }}
-                  >
-                    <Zap size={48} className="text-aeirmist-cyan" />
-                  </motion.div>
+            <div className="relative z-10 max-w-sm mx-auto flex flex-col items-center">
+              {/* Premium Minimal Message Icon */}
+              <div className="relative mb-5">
+                <div className="w-16 h-16 rounded-2xl bg-white/[0.04] dark:bg-white/[0.03] border border-white/10 backdrop-blur-xl flex items-center justify-center shadow-[0_8px_32px_rgba(0,0,0,0.25)] relative group transition-transform hover:scale-105 duration-300">
+                  <MessageSquare size={26} className="text-aeirmist-cyan drop-shadow-[0_0_12px_var(--color-aeirmist-cyan)]" />
+                  <div className="absolute -bottom-1.5 -right-1.5 p-1 rounded-lg bg-black/80 border border-white/10 text-white/70 shadow-sm">
+                    <Lock size={11} className="text-aeirmist-cyan" />
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <h2 className="text-xl sm:text-2xl font-display font-black tracking-[0.15em] uppercase text-white/90">Your Messages</h2>
-                <div className="flex items-center justify-center gap-3">
-                  <motion.div 
-                    animate={{ scaleX: [0, 1, 0] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                    className="w-12 h-[1px] bg-gradient-to-r from-transparent to-aeirmist-cyan"
-                  />
-                  <p className="text-[10px] text-aeirmist-cyan uppercase tracking-[0.25em] font-bold">End-to-end Encrypted</p>
-                  <motion.div 
-                    animate={{ scaleX: [0, 1, 0] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                    className="w-12 h-[1px] bg-gradient-to-l from-transparent to-aeirmist-cyan"
-                  />
-                </div>
-              </div>
-
-              <p className="text-xs text-white/40 max-w-xs mx-auto leading-relaxed">
-                Select a conversation from the left sidebar or search for a user to start chatting.
+              {/* Title & Description */}
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white/95">
+                Your messages
+              </h2>
+              <p className="text-xs sm:text-sm text-white/45 mt-2 leading-relaxed max-w-xs">
+                Select a conversation or search for someone to start chatting.
               </p>
+
+              {/* Action Button: Find People */}
+              <button
+                type="button"
+                onClick={() => {
+                  const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+                  if (searchInput) {
+                    searchInput.focus();
+                  } else {
+                    setIsMobileList(true);
+                  }
+                }}
+                className="mt-6 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-aeirmist-cyan/15 hover:bg-aeirmist-cyan/25 border border-aeirmist-cyan/35 text-aeirmist-cyan text-xs font-bold tracking-wide transition-all active:scale-95 shadow-[0_0_20px_rgba(0,242,255,0.15)] cursor-pointer"
+              >
+                <Search size={14} />
+                <span>Find people</span>
+              </button>
+
+              {/* Minimal Security Footnote */}
+              <div className="mt-8 flex items-center justify-center gap-1.5 text-[10px] text-white/30 uppercase tracking-[0.2em] font-semibold">
+                <ShieldCheck size={12} className="text-aeirmist-cyan/70" />
+                <span>End-to-end encrypted</span>
+              </div>
             </div>
           </div>
         )}
@@ -2328,11 +2364,11 @@ const ChatWindow = ({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    let maxVH = window.innerHeight;
     const checkKeyboard = () => {
-      if (window.visualViewport) {
-        const heightDiff = window.innerHeight - window.visualViewport.height;
-        setIsKeyboardOpen(heightDiff > 120);
-      }
+      if (window.innerHeight > maxVH) maxVH = window.innerHeight;
+      const heightDiff = maxVH - Math.min(window.innerHeight, window.visualViewport?.height || window.innerHeight);
+      setIsKeyboardOpen(heightDiff > 120);
     };
     window.visualViewport?.addEventListener('resize', checkKeyboard);
     window.visualViewport?.addEventListener('scroll', checkKeyboard);
@@ -2494,7 +2530,14 @@ const ChatWindow = ({
 
   const openCamera = async () => {
     const granted = await requestPermission('camera');
-    if (!granted) return;
+    if (!granted) {
+      addToast?.({
+        title: "Camera Blocked",
+        message: "Please allow camera access in your device/browser settings to capture photos.",
+        type: "warning"
+      });
+      return;
+    }
 
     setCameraConfig({
       isOpen: true,
@@ -2534,13 +2577,6 @@ const ChatWindow = ({
       });
       return;
     }
-    const micGranted = await requestPermission('microphone');
-    if (!micGranted) return;
-    
-    if (type === 'video') {
-      const camGranted = await requestPermission('camera');
-      if (!camGranted) return;
-    }
 
     setIsOutgoingCallLocally(true);
     setCallType(type);
@@ -2569,20 +2605,28 @@ const ChatWindow = ({
 
   // Message Listener
   useEffect(() => {
+    setMessages([]);
+    setOptimistic([]);
+    setLoading(true);
+
     if (!db || !chat.id || !user || !profile?.id || chat.id.startsWith('new_')) {
       setLoading(false);
-      setMessages([]);
       return;
     }
 
+    let isCurrent = true;
     // Subscribe once per chat.id
     const unsubscribe = messagingService.subscribeToMessages(db, chat.id, profile.id, chat, (fetchedMessages) => {
+      if (!isCurrent) return;
       setMessages(fetchedMessages);
       setLoading(false);
       requestAnimationFrame(() => scrollToBottom('auto'));
     });
 
-    return () => unsubscribe();
+    return () => {
+      isCurrent = false;
+      unsubscribe();
+    };
   }, [db, chat.id, user?.uid, profile?.id, scrollToBottom]);
 
   // Derive processed messages with live read/delivered status and guaranteed stable chronological order
@@ -2986,43 +3030,66 @@ const ChatWindow = ({
     }
   };
 
-  const handleSendMedia = async (file: File, requestedHD?: boolean) => {
+  const handleSendMedia = async (file: File, requestedHD?: boolean, replyToParam?: any) => {
     if (!db || !profile || !user || !chat.id) return;
 
     const useHD = requestedHD ?? isHDActive;
     const optimisticId = `opt_media_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
     try {
-      let type: 'image' | 'video' | 'voice' | 'media' = 'media';
+      let type: 'image' | 'video' | 'voice' | 'media' | 'file' = 'media';
+      const isLiveVoiceMemo = file.name.startsWith('voice_');
+
       if (file.type.startsWith('image/')) type = 'image';
       else if (file.type.startsWith('video/')) type = 'video';
-      else if (file.type.startsWith('audio/')) type = 'voice';
+      else if (file.type.startsWith('audio/')) {
+        type = isLiveVoiceMemo ? 'voice' : 'media';
+      } else {
+        type = 'file';
+      }
 
       // Optimistic media preview
       const localUrl = URL.createObjectURL(file);
-      const thumbnail = await mediaService.generateThumbnail(file);
+      let thumbnail = '';
+      if (type === 'image' || type === 'video') {
+        thumbnail = await mediaService.generateThumbnail(file);
+      }
 
       const optimisticMsg: any = {
         id: optimisticId,
-        text: useHD ? 'Sending Ultra HD Connections...' : `Sending ${type}...`,
+        text: type === 'file' ? file.name : (useHD ? 'Sending Ultra HD Connections...' : `Sending ${type}...`),
         senderId: profile.id,
-        type: type === 'voice' ? 'voice' : 'media',
+        type: type === 'voice' ? 'voice' : (type === 'file' ? 'file' : 'media'),
         mediaUrl: localUrl,
         thumbnail: thumbnail,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
         timestamp: 'Syncing...',
         timestampMs: Date.now(),
         isOptimistic: true,
         mediaType: type,
         isHD: useHD,
         progress: 0,
-        uploadStatus: 'PREPARING'
+        uploadStatus: 'PREPARING',
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          isAudioMusic: file.type.startsWith('audio/') && !isLiveVoiceMemo
+        }
       };
 
       messageOutboxService.enqueue(chat.id, {
         id: optimisticId,
-        text: `Sent a ${type}`,
+        text: type === 'file' ? file.name : `Sent a ${type}`,
         type,
-        mediaUrl: localUrl
+        mediaUrl: localUrl,
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type
+        }
       });
 
       setOptimistic(prev => [...prev, optimisticMsg]);
@@ -3044,8 +3111,12 @@ const ChatWindow = ({
         }
       }
 
-      const newId = await sendMessage(chat.id, `Sent a ${type}`, type === 'voice' ? 'voice' : 'media', mediaUrl, { 
+      const newId = await sendMessage(chat.id, type === 'file' ? file.name : `Sent a ${type}`, type === 'voice' ? 'voice' : (type === 'file' ? 'file' : 'media'), mediaUrl, { 
         mediaType: type,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        isAudioMusic: file.type.startsWith('audio/') && !isLiveVoiceMemo,
         optimisticId: optimisticId,
         recipientId: otherProfileId,
         senderUid: user.uid,
@@ -3053,7 +3124,13 @@ const ChatWindow = ({
         senderName: profile.displayName || profile.username,
         senderPhoto: profile.photoURL,
         thumbnail,
-        isHD: useHD
+        isHD: useHD,
+        replyTo: replyToParam || (replyingTo ? {
+          id: replyingTo.id,
+          text: replyingTo.text,
+          senderId: replyingTo.senderId || null,
+          senderName: replyingTo.senderId === profile?.id ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
+        } : null)
       });
       
       messageOutboxService.markDelivered(chat.id, optimisticId);
@@ -3077,24 +3154,105 @@ const ChatWindow = ({
     }
   };
 
+  const handleSendSpecialMessage = async (params: {
+    type: 'location' | 'contact' | 'sticker' | 'file';
+    text?: string;
+    mediaUrl?: string;
+    metadata?: any;
+    replyingTo?: any;
+  }) => {
+    if (!db || !profile || !user || !chat.id) return;
+    const { type, text = '', mediaUrl, metadata = {}, replyingTo: replyParam } = params;
+    const optimisticId = `opt_${type}_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const optimisticMsg: Message = {
+      id: optimisticId,
+      text: text || `Sent a ${type}`,
+      senderId: profile.id,
+      type,
+      mediaUrl,
+      timestamp: 'Sending...',
+      timestampMs: Date.now(),
+      isOptimistic: true,
+      metadata: { ...metadata }
+    };
+
+    messageOutboxService.enqueue(chat.id, {
+      id: optimisticId,
+      text: text || `Sent a ${type}`,
+      type,
+      mediaUrl,
+      metadata
+    });
+
+    setOptimistic(prev => [...prev, optimisticMsg]);
+    onMessageSent?.(chat.id, text || `Sent a ${type}`, chat);
+    requestAnimationFrame(() => scrollToBottom('auto'));
+
+    try {
+      const isNew = chat.id.startsWith('new_');
+      const targetProfileId = isNew ? chat.id.replace('new_', '') : null;
+      let otherUid = chat.otherParticipantUid || chat.participants?.find((uid: string) => uid !== user.uid);
+      if (!otherUid && targetProfileId && targetProfileId.startsWith('profile_')) {
+        const parts = targetProfileId.split('_');
+        if (parts.length >= 2) otherUid = parts[1];
+      }
+      const otherProfileId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile.id);
+
+      const newId = await sendMessage(chat.id, text || `Sent a ${type}`, type, mediaUrl, {
+        ...metadata,
+        recipientId: targetProfileId || otherProfileId,
+        senderUid: user.uid,
+        receiverUid: otherUid,
+        senderName: profile.displayName || profile.username,
+        senderPhoto: profile.photoURL,
+        optimisticId,
+        replyTo: replyParam || (replyingTo ? {
+          id: replyingTo.id,
+          text: replyingTo.text,
+          senderId: replyingTo.senderId || null,
+          senderName: replyingTo.senderId === profile?.id ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
+        } : null)
+      });
+
+      setReplyingTo(null);
+      messageOutboxService.markDelivered(chat.id, optimisticId);
+      setFailedMessages(prev => {
+        const next = new Set(prev);
+        next.delete(optimisticId);
+        return next;
+      });
+
+      if (chat.isTemporary && newId) {
+        onChatUpdate({
+          ...chat,
+          id: newId,
+          isTemporary: false
+        });
+      }
+    } catch (e: any) {
+      logger.error(`Special message (${type}) send failed`, e);
+      messageOutboxService.markFailed(chat.id, optimisticId, e?.message);
+      setFailedMessages(prev => new Set(prev).add(optimisticId));
+      setOptimistic(prev => prev.map(m => m.id === optimisticId ? { ...m, isFailed: true, isOptimistic: false, timestamp: 'Failed to send' } : m));
+    }
+  };
+
   const handleTyping = (typing: boolean) => {
     if (chat.id && !chat.id.startsWith('new_')) {
       setTypingStatus(chat.id, typing);
     }
   };
 
+  const currentChatTheme = useMemo(() => {
+    return profile?.themeSettings?.perChatWallpapers?.[chat.id] || chat.themeSettings;
+  }, [profile?.themeSettings?.perChatWallpapers, chat.id, chat.themeSettings]);
+
   return (
-    <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto overflow-hidden relative safe-top ${isVaultMode ? 'bg-[#030107]/98' : ''}`}>
+    <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto overflow-hidden relative safe-top z-10 ${isVaultMode ? 'bg-[#030107]/98' : 'bg-transparent'}`}>
       {/* Centered Column for Desktop */}
       <div className="flex-1 flex flex-col w-full relative min-w-0 overflow-hidden">
-        {/* Premium Futuristic Chat Wallpaper Background System Layers (GPU Optimized) */}
-        <ChatWallpaperLayer 
-          chatThemeSettings={profile?.themeSettings?.perChatWallpapers?.[chat.id] || chat.themeSettings}
-          globalThemeSettings={profile?.themeSettings?.chatWallpaper}
-        />
-
         {/* Header */}
-        <header className="flex-shrink-0 w-full px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] md:pt-3 pb-2 md:pb-3 md:px-6 border-b border-white/10 flex items-center justify-between glass-panel z-[40] relative min-h-0 min-h-[calc(4rem+env(safe-area-inset-top,0px))] md:h-[64px]">
+        <header className="flex-shrink-0 w-full px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] md:pt-3 pb-2 md:pb-3 md:px-6 border-b border-slate-200/80 dark:border-white/10 flex items-center justify-between bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-header-glass z-[40] relative min-h-0 min-h-[calc(4rem+env(safe-area-inset-top,0px))] md:h-[64px]">
         <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
           <button onClick={onBack} className="md:hidden p-1 -ml-1 text-white/60 hover:text-white transition-colors shrink-0">
             <ChevronLeft size={22} />
@@ -3249,6 +3407,15 @@ const ChatWindow = ({
           </div>
         )}
 
+        {loading && groupedDisplayItems.length === 0 && (
+          <div className="flex flex-col gap-3 px-4 md:px-8 py-6 opacity-40 animate-pulse">
+            <div className="w-44 h-10 bg-white/10 rounded-2xl self-start" />
+            <div className="w-60 h-12 bg-white/10 rounded-2xl self-end" />
+            <div className="w-36 h-10 bg-white/10 rounded-2xl self-start" />
+            <div className="w-52 h-10 bg-white/10 rounded-2xl self-end" />
+          </div>
+        )}
+
       <div className="flex flex-col gap-1.5 px-4 md:px-6 lg:px-8 w-full min-w-0 overflow-x-hidden">
           {groupedDisplayItems.filter(({ msg }) => {
             if (!messageFilter) return true;
@@ -3271,6 +3438,7 @@ const ChatWindow = ({
                   albumItems={albumItems}
                   isMe={msg.senderId === profile?.id} 
                   theme={chat.theme}
+                  bubbleGradient={currentChatTheme?.bubbleGradient}
                   senderPhoto={msg.senderId === profile?.id ? (localAvatarURL || profile?.photoURL) : (otherProfile?.photoURL || chat.photo)}
                   onRetry={() => handleRetry(msg)} 
                   conversationId={chat.id}
@@ -3342,12 +3510,8 @@ const ChatWindow = ({
         <div ref={messagesEndRef} className="h-4 w-full flex-shrink-0" />
       </div>
 
-      {/* Input Area - Docked at Bottom with Android navigation bar clearance */}
-      <footer className={`flex-shrink-0 w-full px-2 sm:px-4 md:px-8 ${
-        isKeyboardOpen 
-          ? 'pb-2 sm:pb-3 md:pb-8' 
-          : 'pb-[max(calc(0.75rem+env(safe-area-inset-bottom,0px)),3.25rem)] sm:pb-3 md:pb-8'
-      } z-30 transition-all duration-150`}>
+      {/* Input Area - Docked at Bottom cleanly without artificial void gaps */}
+      <footer className="flex-shrink-0 w-full px-2 sm:px-4 md:px-8 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] md:pb-6 z-30 transition-all duration-150">
         <div className="w-full">
           {(() => {
             const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
@@ -3504,6 +3668,7 @@ const ChatWindow = ({
                 chatId={chat.id}
                 onSendMessage={handleSendMessage} 
                 onSendMedia={handleSendMedia}
+                onSendSpecialMessage={handleSendSpecialMessage}
                 onTyping={handleTyping}
                 onOpenCamera={openCamera}
                 onCaptureRef={inputCaptureRef}
@@ -3521,7 +3686,6 @@ const ChatWindow = ({
             );
           })()}
         </div>
-        {isMobileList && <div className="h-2 md:hidden" />} {/* Extra spacing for dock ONLY in list view */}
       </footer>
 
       </div> {/* End of Centered Column */}

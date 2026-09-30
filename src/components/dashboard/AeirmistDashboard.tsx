@@ -44,6 +44,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
     db, 
     user, 
     profile, 
+    onlineUsers,
     toggleFollow, 
     isFollowing, 
     isFollowPending, 
@@ -53,6 +54,30 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
     isBlocked,
     addToast
   } = useAeirmist();
+
+  // Accurate real-time online presence verification
+  const isUserOnline = useCallback((targetProfile: any) => {
+    if (!targetProfile) return false;
+    if (targetProfile.messagingSettings?.onlineStatus === false) return false;
+    
+    const pid = targetProfile.id;
+    const puid = targetProfile.uid || targetProfile.ownerUid;
+    
+    // Check real-time active Set
+    if (onlineUsers?.has(pid) || (puid && onlineUsers?.has(puid))) {
+      return true;
+    }
+    
+    // Check heartbeat within last 75s
+    if (targetProfile.status === 'online') {
+      const rawTs = targetProfile.lastSeen || targetProfile.lastActiveAt;
+      const ms = rawTs?.toMillis ? rawTs.toMillis() : (rawTs?.seconds ? rawTs.seconds * 1000 : (typeof rawTs === 'number' ? rawTs : 0));
+      if (ms > 0 && (Date.now() - ms < 75000)) {
+        return true;
+      }
+    }
+    return false;
+  }, [onlineUsers]);
 
   // Core Connection States
   const [activeTab, setActiveTab] = useState<TabType>('for-you');
@@ -162,7 +187,25 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
     const unsubProfiles = onSnapshot(profilesColl, (snap) => {
       if (!isMounted) return;
       const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      const others = docs.filter((p: any) => p.id !== profile?.id && p.uid !== user?.uid);
+      const others = docs.filter((p: any) => {
+        // Exclude current user
+        if (p.id === profile?.id || p.uid === user?.uid || p.ownerUid === user?.uid) return false;
+
+        // Kick unregistered / incomplete accounts: Must have a valid username (not 'user', null, undefined, or empty)
+        const rawUname = (p.username || '').trim().toLowerCase();
+        if (!rawUname || rawUname === 'user' || rawUname === 'null' || rawUname === 'undefined' || rawUname.length < 2) {
+          return false;
+        }
+
+        // Must have a valid display name
+        const rawName = (p.displayName || p.name || '').trim();
+        if (!rawName) return false;
+
+        // Exclude accounts scheduled for deletion or purge or banned
+        if (p.scheduledForPurge || p.status === 'scheduled_for_deletion' || p.isBanned) return false;
+
+        return true;
+      });
       
       setProfiles(others);
       setLoadingProfiles(false);
@@ -411,24 +454,103 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
     }).sort((a, b) => b.suggestionsScore - a.suggestionsScore);
   }, [profiles, profile, dismissedIds, isBlocked, isFollowing, isFollowPending]);
 
+// Helper to score and filter profile search matches
+const matchAndScoreProfile = (p: any, rawQuery: string, currentUserId?: string, isUserBlocked?: boolean): { matched: boolean; score: number } => {
+  if (!p || isUserBlocked) return { matched: false, score: 0 };
+  const qClean = rawQuery.trim().toLowerCase();
+  if (!qClean) return { matched: false, score: 0 };
+
+  // Strip leading '@' if user typed "@username"
+  const qAt = qClean.startsWith('@') ? qClean.slice(1).trim() : qClean;
+
+  const username = (p.username || '').toLowerCase().trim();
+  const displayName = (p.displayName || p.name || p.fullName || '').toLowerCase().trim();
+  const bio = (p.bio || '').toLowerCase().trim();
+  const location = (p.location || '').toLowerCase().trim();
+  const storeCategory = (p.storeCategory || p.category || '').toLowerCase().trim();
+  const storeName = (p.storeName || '').toLowerCase().trim();
+  const interestsStr = Array.isArray(p.interests) ? p.interests.join(' ').toLowerCase() : '';
+
+  let score = 0;
+
+  // 1. Exact username match (highest priority)
+  if (username === qAt || username === qClean) {
+    score += 1000;
+  } else if (username.startsWith(qAt)) {
+    score += 500;
+  } else if (username.includes(qAt)) {
+    score += 200;
+  }
+
+  // 2. Exact or prefix display name match
+  if (displayName === qClean || displayName === qAt) {
+    score += 400;
+  } else if (displayName.startsWith(qClean) || displayName.startsWith(qAt)) {
+    score += 300;
+  } else if (displayName.includes(qClean) || displayName.includes(qAt)) {
+    score += 150;
+  }
+
+  // 3. Multi-token match across all fields
+  const tokens = qAt.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1) {
+    const fullText = `${username} ${displayName} ${bio} ${location} ${storeCategory} ${storeName} ${interestsStr}`;
+    if (tokens.every(t => fullText.includes(t))) {
+      score += 120;
+    }
+  }
+
+  // 4. Store name & category match
+  if (storeName && (storeName.includes(qClean) || storeName.includes(qAt))) {
+    score += 80;
+  }
+  if (storeCategory && storeCategory.includes(qClean)) {
+    score += 60;
+  }
+
+  // 5. Location match
+  if (location && location.includes(qClean)) {
+    score += 50;
+  }
+
+  // 6. Bio match
+  if (bio && bio.includes(qClean)) {
+    score += 40;
+  }
+
+  // 7. Interests match
+  if (interestsStr && interestsStr.includes(qClean)) {
+    score += 30;
+  }
+
+  return { matched: score > 0, score };
+};
+
   // Map other sub-tabs safely
   const activeTabProfiles = useMemo(() => {
     let list = [...profiles];
     
-    // Quick search query filter across all profiles if searchQuery is active
+    // Quick search query filter across profiles if searchQuery is active
     if (searchQuery.trim().length > 0) {
-      const q = searchQuery.toLowerCase().trim();
-      return list.filter(p => 
-        (p.displayName || '').toLowerCase().includes(q) ||
-        (p.username || '').toLowerCase().includes(q) ||
-        (p.location || '').toLowerCase().includes(q) ||
-        (p.bio || '').toLowerCase().includes(q) ||
-        (p.id || '').toLowerCase().includes(q) ||
-        (p.uid || '').toLowerCase().includes(q) ||
-        (p.ownerUid || '').toLowerCase().includes(q) ||
-        (p.storeCategory || '').toLowerCase().includes(q) ||
-        (Array.isArray(p.interests) && p.interests.join(' ').toLowerCase().includes(q))
-      );
+      const q = searchQuery.trim();
+      const scored: Array<{ profile: any; score: number }> = [];
+
+      for (const p of list) {
+        // Exclude blocked users from general search results
+        if (activeTab !== 'blocked' && isBlocked(p.id)) continue;
+        const { matched, score } = matchAndScoreProfile(
+          p, 
+          q, 
+          user?.uid, 
+          activeTab === 'blocked' ? false : isBlocked(p.id)
+        );
+        if (matched) {
+          scored.push({ profile: p, score });
+        }
+      }
+
+      // Return results ordered by relevance score descending
+      return scored.sort((a, b) => b.score - a.score).map(s => s.profile);
     }
 
     switch (activeTab) {
@@ -463,26 +585,23 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
       default:
         return list;
     }
-  }, [activeTab, profiles, suggestionData, searchQuery, followRequests, isFollowing, profile, isBlocked]);
+  }, [activeTab, profiles, suggestionData, searchQuery, followRequests, isFollowing, profile, isBlocked, user?.uid]);
 
   const matchingSuggestions = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    const q = searchQuery.toLowerCase().trim();
-    
-    let matches = profiles.filter(p => 
-      (p.displayName || '').toLowerCase().includes(q) ||
-      (p.username || '').toLowerCase().includes(q) ||
-      (p.bio || '').toLowerCase().includes(q) ||
-      (p.location || '').toLowerCase().includes(q) ||
-      (p.id || '').toLowerCase().includes(q) ||
-      (p.uid || '').toLowerCase().includes(q) ||
-      (p.ownerUid || '').toLowerCase().includes(q) ||
-      (p.storeCategory || '').toLowerCase().includes(q) ||
-      (Array.isArray(p.interests) && p.interests.join(' ').toLowerCase().includes(q))
-    ).slice(0, 8);
+    const q = searchQuery.trim();
+    const scored: Array<{ profile: any; score: number }> = [];
 
-    return matches;
-  }, [profiles, searchQuery, profile]);
+    for (const p of profiles) {
+      if (isBlocked(p.id)) continue;
+      const { matched, score } = matchAndScoreProfile(p, q, user?.uid, isBlocked(p.id));
+      if (matched) {
+        scored.push({ profile: p, score });
+      }
+    }
+
+    return scored.sort((a, b) => b.score - a.score).slice(0, 8).map(s => s.profile);
+  }, [profiles, searchQuery, user?.uid, isBlocked]);
 
   return (
     <div id="connections-dashboard-hub" className={`w-full h-full min-h-0 flex-1 flex flex-col ${isGlobalBgActive ? 'bg-[#030206]/40 backdrop-blur-xl' : 'bg-[#030206]'} text-white/90 relative select-none font-sans overflow-hidden`}>
@@ -577,17 +696,20 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                       addRecentSearch(searchQuery);
                       setIsSearchFocused(false);
                       (e.target as HTMLInputElement).blur();
+                    } else if (e.key === 'Escape') {
+                      setIsSearchFocused(false);
+                      (e.target as HTMLInputElement).blur();
                     }
                   }}
                   placeholder="Search Aeirmist IDs, names, bios, stores..."
-                  className={`w-full bg-[#0d0b12] border border-white/10 rounded-xl ${isGlobalBgActive ? 'pl-11' : 'pl-10'} pr-10 py-3 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-aeirmist-cyan/40 focus:ring-1 focus:ring-aeirmist-cyan/10 transition-all font-mono`}
+                  className={`w-full bg-slate-100 dark:bg-[#0d0b12] border border-slate-200 dark:border-white/10 rounded-xl ${isGlobalBgActive ? 'pl-11' : 'pl-10'} pr-10 py-3 text-[11px] text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-white/30 focus:outline-none focus:border-aeirmist-cyan/40 focus:ring-1 focus:ring-aeirmist-cyan/10 transition-all font-mono`}
                 />
                 {searchQuery && (
                   <button 
                     onClick={() => {
                       setSearchQuery('');
                     }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white transition-colors p-1"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30 hover:text-slate-900 dark:hover:text-white transition-colors p-1"
                   >
                     <X size={12} />
                   </button>
@@ -613,12 +735,12 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute left-0 right-0 top-full mt-2 bg-[#090710] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(3,2,6,0.9)] p-4 z-50 overflow-hidden font-sans"
+                      className="absolute left-0 right-0 top-full mt-2 bg-white dark:bg-[#090710] border border-slate-200 dark:border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(3,2,6,0.9)] p-4 z-50 overflow-hidden font-sans"
                     >
                       {/* Dynamic Search Matches / Recent Searches */}
                       {searchQuery.trim().length > 0 ? (
                         <div className="space-y-2.5">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-white/30 flex items-center gap-1.5 font-mono">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-white/30 flex items-center gap-1.5 font-mono">
                             <Sparkles size={11} className="text-aeirmist-cyan animate-pulse" />
                             Matching IDs, Pages & Shops
                           </span>
@@ -644,7 +766,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                         setPreviewProfile(item);
                                       }
                                     }}
-                                    className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] hover:bg-white/5 border border-white/[0.02] hover:border-white/10 text-white transition-all cursor-pointer group"
+                                    className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-white/[0.02] hover:bg-slate-100 dark:hover:bg-white/5 border border-slate-100 dark:border-white/[0.02] hover:border-slate-200 dark:hover:border-white/10 text-slate-800 dark:text-white transition-all cursor-pointer group"
                                   >
                                     <div className="flex items-center gap-2.5 min-w-0">
                                       <div className="relative">
@@ -652,22 +774,22 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                           src={getAvatarUrl(item.photoURL)} 
                                           alt={item.displayName}
                                           referrerPolicy="no-referrer"
-                                          className="w-8 h-8 rounded-xl border border-white/10 object-cover"
+                                          className="w-8 h-8 rounded-xl border border-slate-200 dark:border-white/10 object-cover"
                                         />
-                                        {item.status === 'online' && (
-                                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#090710]" />
+                                        {isUserOnline(item) && (
+                                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-[#090710] shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
                                         )}
                                       </div>
                                       <div className="text-left min-w-0">
                                         <div className="flex items-center gap-1.5">
-                                          <span className="text-[10px] font-bold text-white group-hover:text-aeirmist-cyan transition-colors truncate">
-                                            {item.displayName}
+                                          <span className="text-[10px] font-bold text-slate-900 dark:text-white group-hover:text-aeirmist-cyan transition-colors truncate">
+                                            {item.displayName || item.name}
                                           </span>
                                           {item.isVerified && (
                                             <ShieldCheck className="text-aeirmist-cyan shrink-0" size={10} />
                                           )}
                                         </div>
-                                        <span className="text-[9px] text-white/40 block font-mono truncate">
+                                        <span className="text-[9px] text-slate-500 dark:text-white/40 block font-mono truncate">
                                           @{item.username}
                                         </span>
                                       </div>
@@ -675,30 +797,30 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                     
                                     <div className="flex items-center gap-2 shrink-0">
                                       {isItemStore ? (
-                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-pink-500/10 border border-pink-500/25 text-pink-400">
+                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-pink-500/10 border border-pink-500/25 text-pink-500 dark:text-pink-400">
                                           Shop
                                         </span>
                                       ) : isItemService ? (
-                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-violet-500/10 border border-violet-500/25 text-violet-400">
+                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-violet-500/10 border border-violet-500/25 text-violet-500 dark:text-violet-400">
                                           Service
                                         </span>
                                       ) : isItemCreator ? (
-                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-aeirmist-cyan/10 border border-aeirmist-cyan/25 text-aeirmist-cyan">
+                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-aeirmist-cyan/10 border border-aeirmist-cyan/25 text-cyan-600 dark:text-aeirmist-cyan">
                                           Creator
                                         </span>
                                       ) : (
-                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-white/5 border border-white/10 text-white/40 font-mono">
+                                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-slate-200 dark:bg-white/5 border border-slate-300 dark:border-white/10 text-slate-600 dark:text-white/40 font-mono">
                                           Node
                                         </span>
                                       )}
-                                      <ChevronRight size={11} className="text-white/20 group-hover:text-white transition-colors" />
+                                      <ChevronRight size={11} className="text-slate-400 dark:text-white/20 group-hover:text-slate-900 dark:group-hover:text-white transition-colors" />
                                     </div>
                                   </div>
                                 );
                               })}
                             </div>
                           ) : (
-                            <div className="py-6 text-center text-white/30 text-[10px] font-mono">
+                            <div className="py-6 text-center text-slate-400 dark:text-white/30 text-[10px] font-mono">
                               No results found.
                             </div>
                           )}
@@ -706,7 +828,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                       ) : recentSearches.length > 0 ? (
                         <div className="space-y-2.5">
                           <div className="flex items-center justify-between">
-                            <span className="text-[9px] font-black uppercase tracking-widest text-white/30 flex items-center gap-1.5">
+                            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-white/30 flex items-center gap-1.5">
                               <Clock size={11} className="text-aeirmist-cyan" />
                               Recent Searches
                             </span>
@@ -732,7 +854,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                     addRecentSearch(displayText);
                                     setIsSearchFocused(false);
                                   }}
-                                  className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/[0.02] hover:bg-white/5 border border-white/[0.02] hover:border-white/5 text-[10px] text-white/80 hover:text-white transition-all cursor-pointer group"
+                                  className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/[0.02] hover:bg-slate-100 dark:hover:bg-white/5 border border-slate-100 dark:border-white/[0.02] text-[10px] text-slate-700 dark:text-white/80 hover:text-slate-900 dark:hover:text-white transition-all cursor-pointer group"
                                 >
                                   <span className="truncate whitespace-nowrap min-w-0 flex-1">{displayText}</span>
                                   <button
@@ -740,7 +862,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                       e.stopPropagation();
                                       removeRecentSearch(term);
                                     }}
-                                    className="text-white/20 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100 pointer-events-auto"
+                                    className="text-slate-400 dark:text-white/20 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100 pointer-events-auto"
                                   >
                                     <X size={10} />
                                   </button>
@@ -751,7 +873,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                         </div>
                       ) : (
                         <div className="space-y-3">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-white/30 flex items-center gap-1.5 font-mono">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-white/30 flex items-center gap-1.5 font-mono">
                             <Sparkles size={11} className="text-aeirmist-cyan animate-pulse" />
                             Discover Tags
                           </span>
@@ -764,7 +886,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                   addRecentSearch(tag);
                                   setIsSearchFocused(false);
                                 }}
-                                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-gradient-to-r hover:from-aeirmist-cyan/20 hover:to-[#ff00ea]/10 border border-white/5 hover:border-[#ff00ea]/30 text-[9.5px] uppercase font-bold tracking-wider text-white/50 hover:text-white cursor-pointer transition-all pointer-events-auto"
+                                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-gradient-to-r dark:hover:from-aeirmist-cyan/20 dark:hover:to-[#ff00ea]/10 border border-slate-200 dark:border-white/5 text-[9.5px] uppercase font-bold tracking-wider text-slate-600 dark:text-white/50 hover:text-slate-900 dark:hover:text-white cursor-pointer transition-all pointer-events-auto"
                               >
                                 #{tag.toLowerCase()}
                               </button>
@@ -893,6 +1015,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                               btn={getFollowButtonProperties(p.id)}
                               isFollowing={isFollowing(p.id)}
                               isFollowPending={isFollowPending(p.id)}
+                              isOnline={isUserOnline(p)}
                               onFollow={() => handleFollow(p.id, p.displayName)}
                               onDismiss={() => handleDismiss(p.id, p.displayName)}
                               onPreview={() => setPreviewProfile(p)}
@@ -925,6 +1048,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                               btn={getFollowButtonProperties(p.id)}
                               isFollowing={isFollowing(p.id)}
                               isFollowPending={isFollowPending(p.id)}
+                              isOnline={isUserOnline(p)}
                               onFollow={() => handleFollow(p.id, p.displayName)}
                               onDismiss={() => handleDismiss(p.id, p.displayName)}
                               onPreview={() => setPreviewProfile(p)}
@@ -957,6 +1081,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                               btn={getFollowButtonProperties(p.id)}
                               isFollowing={isFollowing(p.id)}
                               isFollowPending={isFollowPending(p.id)}
+                              isOnline={isUserOnline(p)}
                               onFollow={() => handleFollow(p.id, p.displayName)}
                               onDismiss={() => handleDismiss(p.id, p.displayName)}
                               onPreview={() => setPreviewProfile(p)}
@@ -1062,6 +1187,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                             btn={getFollowButtonProperties(p.id)}
                             isFollowing={isFollowing(p.id)}
                             isFollowPending={isFollowPending(p.id)}
+                            isOnline={isUserOnline(p)}
                             onFollow={() => handleFollow(p.id, p.displayName)}
                             onDismiss={() => handleDismiss(p.id, p.displayName)}
                             onPreview={() => setPreviewProfile(p)}
@@ -1120,15 +1246,18 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                     addRecentSearch(searchQuery);
                     setIsSearchFocused(false);
                     (e.target as HTMLInputElement).blur();
+                  } else if (e.key === 'Escape') {
+                    setIsSearchFocused(false);
+                    (e.target as HTMLInputElement).blur();
                   }
                 }}
                 placeholder="Search People, IDs, Stores..."
-                className={`w-full bg-[#110f17] border border-white/10 rounded-xl ${isGlobalBgActive ? 'pl-10' : 'pl-9'} pr-9 py-2 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-aeirmist-cyan/40 focus:ring-1 focus:ring-aeirmist-cyan/10 transition-all font-mono`}
+                className={`w-full bg-slate-100 dark:bg-[#110f17] border border-slate-200 dark:border-white/10 rounded-xl ${isGlobalBgActive ? 'pl-10' : 'pl-9'} pr-9 py-2 text-[11px] text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-white/30 focus:outline-none focus:border-aeirmist-cyan/40 focus:ring-1 focus:ring-aeirmist-cyan/10 transition-all font-mono`}
               />
               {searchQuery && (
                 <button 
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white transition-colors p-1"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30 hover:text-slate-900 dark:hover:text-white transition-colors p-1"
                 >
                   <X size={12} />
                 </button>
@@ -1154,12 +1283,12 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 8 }}
                     transition={{ duration: 0.15 }}
-                    className="absolute left-0 right-0 top-full mt-2 bg-[#090710] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(3,2,6,0.95)] p-4 z-50 overflow-hidden font-sans"
+                    className="absolute left-0 right-0 top-full mt-2 bg-white dark:bg-[#090710] border border-slate-200 dark:border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(3,2,6,0.95)] p-4 z-50 overflow-hidden font-sans"
                   >
                     {/* Dynamic Search Matches / Recent Searches */}
                     {searchQuery.trim().length > 0 ? (
                       <div className="space-y-2.5">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-white/30 flex items-center gap-1.5 font-mono">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-white/30 flex items-center gap-1.5 font-mono">
                           <Sparkles size={11} className="text-aeirmist-cyan animate-pulse" />
                           Matching IDs, Pages & Shops
                         </span>
@@ -1185,7 +1314,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                       setPreviewProfile(item);
                                     }
                                   }}
-                                  className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] hover:bg-white/5 border border-white/[0.02] hover:border-white/10 text-white transition-all cursor-pointer group"
+                                  className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-white/[0.02] hover:bg-slate-100 dark:hover:bg-white/5 border border-slate-100 dark:border-white/[0.02] hover:border-slate-200 dark:hover:border-white/10 text-slate-800 dark:text-white transition-all cursor-pointer group"
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0">
                                     <div className="relative">
@@ -1193,22 +1322,22 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                         src={getAvatarUrl(item.photoURL)} 
                                         alt={item.displayName}
                                         referrerPolicy="no-referrer"
-                                        className="w-8 h-8 rounded-xl border border-white/10 object-cover"
+                                        className="w-8 h-8 rounded-xl border border-slate-200 dark:border-white/10 object-cover"
                                       />
-                                      {item.status === 'online' && (
-                                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#090710]" />
+                                      {isUserOnline(item) && (
+                                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-[#090710] shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
                                       )}
                                     </div>
                                     <div className="text-left min-w-0 flex-1">
                                       <div className="flex items-center gap-1">
-                                        <span className="text-[10px] font-bold text-white group-hover:text-aeirmist-cyan transition-colors truncate">
-                                          {item.displayName}
+                                        <span className="text-[10px] font-bold text-slate-900 dark:text-white group-hover:text-aeirmist-cyan transition-colors truncate">
+                                          {item.displayName || item.name}
                                         </span>
                                         {item.isVerified && (
                                           <ShieldCheck className="text-aeirmist-cyan shrink-0" size={10} />
                                         )}
                                       </div>
-                                      <span className="text-[9px] text-white/40 block font-mono truncate">
+                                      <span className="text-[9px] text-slate-500 dark:text-white/40 block font-mono truncate">
                                         @{item.username}
                                       </span>
                                     </div>
@@ -1216,30 +1345,30 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                   
                                   <div className="flex items-center gap-1.5 shrink-0">
                                     {isItemStore ? (
-                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-pink-500/10 border border-pink-500/25 text-pink-400">
+                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-pink-500/10 border border-pink-500/25 text-pink-500 dark:text-pink-400">
                                         Shop
                                       </span>
                                     ) : isItemService ? (
-                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-violet-500/10 border border-violet-500/25 text-violet-400">
+                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-violet-500/10 border border-violet-500/25 text-violet-500 dark:text-violet-400">
                                         Service
                                       </span>
                                     ) : isItemCreator ? (
-                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-aeirmist-cyan/10 border border-aeirmist-cyan/25 text-aeirmist-cyan">
+                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-aeirmist-cyan/10 border border-aeirmist-cyan/25 text-cyan-600 dark:text-aeirmist-cyan">
                                         Creator
                                       </span>
                                     ) : (
-                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-white/5 border border-white/10 text-white/40 font-mono">
+                                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-slate-200 dark:bg-white/5 border border-slate-300 dark:border-white/10 text-slate-600 dark:text-white/40 font-mono">
                                         Node
                                       </span>
                                     )}
-                                    <ChevronRight size={11} className="text-white/20 group-hover:text-white transition-colors" />
+                                    <ChevronRight size={11} className="text-slate-400 dark:text-white/20 group-hover:text-slate-900 dark:group-hover:text-white transition-colors" />
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
                         ) : (
-                          <div className="py-6 text-center text-white/30 text-[10px] font-mono">
+                          <div className="py-6 text-center text-slate-400 dark:text-white/30 text-[10px] font-mono">
                             No results found.
                           </div>
                         )}
@@ -1247,7 +1376,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                     ) : recentSearches.length > 0 ? (
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-white/30 flex items-center gap-1.5">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-white/30 flex items-center gap-1.5">
                             <Clock size={11} className="text-aeirmist-cyan" />
                             Recent Searches
                           </span>
@@ -1273,7 +1402,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                   addRecentSearch(displayText);
                                   setIsSearchFocused(false);
                                 }}
-                                className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/[0.02] hover:bg-white/5 border border-white/[0.02] hover:border-white/5 text-[10px] text-white/80 hover:text-white transition-all cursor-pointer group"
+                                className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/[0.02] hover:bg-slate-100 dark:hover:bg-white/5 border border-slate-100 dark:border-white/[0.02] text-[10px] text-slate-700 dark:text-white/80 hover:text-slate-900 dark:hover:text-white transition-all cursor-pointer group"
                               >
                                 <span className="truncate">{displayText}</span>
                                 <button
@@ -1281,7 +1410,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                     e.stopPropagation();
                                     removeRecentSearch(term);
                                   }}
-                                  className="text-white/20 hover:text-red-400 p-1 rounded transition-colors"
+                                  className="text-slate-400 dark:text-white/20 hover:text-red-400 p-1 rounded transition-colors"
                                 >
                                   <X size={10} />
                                 </button>
@@ -1292,7 +1421,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-white/30 flex items-center gap-1.5 font-mono">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-white/30 flex items-center gap-1.5 font-mono">
                           <Sparkles size={11} className="text-aeirmist-cyan animate-pulse" />
                           Discover Tags
                         </span>
@@ -1305,7 +1434,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                                 addRecentSearch(tag);
                                 setIsSearchFocused(false);
                               }}
-                              className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-gradient-to-r hover:from-aeirmist-cyan/20 hover:to-[#ff00ea]/10 border border-white/5 hover:border-[#ff00ea]/30 text-[9.5px] uppercase font-bold tracking-wider text-white/50 hover:text-white cursor-pointer transition-all"
+                              className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-gradient-to-r dark:hover:from-aeirmist-cyan/20 dark:hover:to-[#ff00ea]/10 border border-slate-200 dark:border-white/5 text-[9.5px] uppercase font-bold tracking-wider text-slate-600 dark:text-white/50 hover:text-slate-900 dark:hover:text-white cursor-pointer transition-all"
                             >
                               #{tag.toLowerCase()}
                             </button>
@@ -1478,8 +1607,8 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                             className="w-10 h-10 rounded-xl object-cover border border-white/10"
                             referrerPolicy="no-referrer"
                           />
-                          {p.status === 'online' && (
-                            <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-aeirmist-lime rounded-full border border-black shadow-[0_0_5px_rgba(191,255,0,0.8)]" />
+                          {isUserOnline(p) && (
+                            <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-[#0c0a15] shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
                           )}
                         </div>
                         
@@ -1496,7 +1625,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
                             )}
                           </div>
                           <span className="text-[9.5px] font-mono font-bold tracking-wider text-[#00f2ff] block truncate pt-0.5">
-                            @{p.username || 'user'}
+                            @{p.username}
                           </span>
                           
                           {/* Compact Mutual follows or indicators layout details */}
@@ -1702,6 +1831,7 @@ interface DesktopSuggestionCardProps {
   btn: any;
   isFollowing: boolean;
   isFollowPending: boolean;
+  isOnline?: boolean;
   onFollow: () => void;
   onDismiss: () => void;
   onPreview: () => void;
@@ -1712,6 +1842,7 @@ const DesktopSuggestionCard: React.FC<DesktopSuggestionCardProps> = ({
   btn,
   isFollowing,
   isFollowPending,
+  isOnline = false,
   onFollow,
   onDismiss,
   onPreview
@@ -1737,8 +1868,8 @@ const DesktopSuggestionCard: React.FC<DesktopSuggestionCardProps> = ({
               className="w-11 h-11 rounded-xl object-cover border border-white/10"
               referrerPolicy="no-referrer"
             />
-            {p.status === 'online' && (
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-aeirmist-lime rounded-full border border-black shadow-[0_0_5px_rgba(191,255,0,0.8)]" />
+            {isOnline && (
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-[#0c0a15] shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
             )}
           </div>
           
@@ -1752,7 +1883,7 @@ const DesktopSuggestionCard: React.FC<DesktopSuggestionCardProps> = ({
               )}
             </div>
             <span className="text-[10px] font-mono font-bold tracking-wider text-[#00f2ff] truncate block">
-              @{p.username || 'user'}
+              @{p.username}
             </span>
             {(p.mutualCount || p.location) && (
               <span className="text-[8.5px] font-mono text-white/40 tracking-wider truncate block mt-0.5">

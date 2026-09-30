@@ -2,7 +2,7 @@ import React from 'react';
 import { Sparkles, TrendingUp, Users, X, ShieldCheck } from 'lucide-react';
 import { useAeirmist } from '../context/AeirmistContext';
 import { AeirmistRankBadge } from './profile/AeirmistRankBadge';
-import { getAvatarUrl } from '../lib/avatar';
+import { getAvatarUrl, getBlankDp } from '../lib/avatar';
 import { logger } from '@/src/utils/logger';
 
 
@@ -156,7 +156,14 @@ const UserItem = ({
     <div className="flex items-center gap-3 min-w-0 cursor-pointer" onClick={onClick}>
       <div className="relative shrink-0">
         <div className="w-12 h-12 md:w-[52px] md:h-[52px] rounded-2xl bg-gradient-to-tr from-white/5 to-white/10 border border-white/10 overflow-hidden transition-all duration-200 ease-in-out md:group-hover/card:scale-[1.03] md:group-hover/card:shadow-md active:scale-95">
-          <img src={getAvatarUrl(photo)} alt={name} className="w-full h-full object-cover rounded-xl" />
+          <img 
+            src={getAvatarUrl(photo, name || handle)} 
+            alt={name} 
+            className="w-full h-full object-cover rounded-xl"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = getBlankDp();
+            }}
+          />
         </div>
         {online && (
           <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-aeirmist-lime rounded-full border-2 border-[#0d0e15] z-10" />

@@ -120,16 +120,17 @@ export async function consolidateAndSyncUserProfiles(
     logger.info(`[AccountSync] Found ${allCandidateList.length} profile documents in database for user ${userUid}`);
 
     // Base info resolution
-    const baseUsername = isMainAdmin 
-      ? 'junaed_islam_jim9' 
-      : (userDocData?.username || allCandidateList.find(c => c.username)?.username || (userEmail ? userEmail.split('@')[0] : 'user'));
-    const normUsername = normalizeUsername(baseUsername);
-
     const existingCanonical = candidateDocsMap.get(canonicalProfileId) || {};
+
+    const baseUsername = existingCanonical.username 
+      || userDocData?.username 
+      || allCandidateList.find(c => c.username)?.username 
+      || (userEmail ? userEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') : (isMainAdmin ? 'junaedislamjim' : 'user'));
+    const normUsername = normalizeUsername(baseUsername);
     
     // Pick highest quality fields across all candidate profiles
-    let bestDisplayName = isMainAdmin ? 'Junaed Islam Jim' : '';
-    let bestUsername = isMainAdmin ? 'junaed_islam_jim9' : '';
+    let bestDisplayName = existingCanonical.displayName || activeUser.displayName || (isMainAdmin ? 'Junaed Islam Jim' : '');
+    let bestUsername = existingCanonical.username || userDocData?.username || allCandidateList.find(c => c.username)?.username || (userEmail ? userEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') : (isMainAdmin ? 'junaedislamjim' : ''));
     let bestPhotoURL = '';
     let bestCoverURL = '';
     let bestBio = existingCanonical.bio || (isMainAdmin ? 'Founder & Lead Architect at Aeirmist' : '');
@@ -253,12 +254,11 @@ export async function consolidateAndSyncUserProfiles(
     if (!bestDisplayName && activeUser.displayName) bestDisplayName = activeUser.displayName;
 
     // Fallbacks
-    if (isMainAdmin) {
-      bestDisplayName = 'Junaed Islam Jim';
-      bestUsername = 'junaed_islam_jim9';
-    } else {
-      if (!bestDisplayName) bestDisplayName = bestUsername || 'Aeirmist Member';
-      if (!bestUsername) bestUsername = normUsername;
+    if (!bestDisplayName) {
+      bestDisplayName = isMainAdmin ? 'Junaed Islam Jim' : (bestUsername || 'Aeirmist Member');
+    }
+    if (!bestUsername) {
+      bestUsername = normUsername || (userEmail ? userEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') : (isMainAdmin ? 'junaedislamjim' : 'member'));
     }
     if (!bestPhotoURL) bestPhotoURL = BLANK_DP;
     if (!bestBio) bestBio = isMainAdmin ? 'Founder & Lead Architect at Aeirmist' : 'Aeirmist Account Active';

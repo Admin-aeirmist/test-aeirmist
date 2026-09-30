@@ -4,7 +4,7 @@
  */
 
 import React, { useState, lazy, Suspense, useEffect, useRef, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, useNavigationType, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Navigation, Tab } from './components/Navigation';
 import { CreatePost } from './components/CreatePost';
@@ -210,6 +210,7 @@ const ComingSoonScreen = ({ sectorName, onHomeClick }: { sectorName: string; onH
 function AppContent() {
   const { settings, updateAppearanceSettings } = useAppearance();
   const location = useLocation();
+  const navigationType = useNavigationType();
   const navigate = useNavigate();
   const isGuidelinesPage = location.pathname === '/community-guidelines';
   const { 
@@ -252,7 +253,7 @@ function AppContent() {
 
   const [isPosting, setIsPosting] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('feed');
-  const isGlobalBgActive = settings?.globalBgType && settings.globalBgType !== 'none' && activeTab !== 'messenger';
+  const isGlobalBgActive = Boolean(settings?.globalBgType && settings.globalBgType !== 'none');
   const [viewingPostId, setViewingPostId] = useState<string | null>(null);
   const [viewingStoreId, setViewingStoreId] = useState<string | null>(null);
   const [viewingProductId, setViewingProductId] = useState<string | null>(null);
@@ -597,7 +598,7 @@ function AppContent() {
     vIsPosting: boolean = false
   ): string => {
     if (vPostId) return `/post/${vPostId}`;
-    if (vVideoId) return `/video/${vVideoId}`;
+    if (vVideoId) return `/videos/${vVideoId}`;
     if (vStoryUserId) return `/story/${vStoryUserId}`;
     if (vStoreId) return `/store/${vStoreId}`;
     if (vProductId) return `/product/${vProductId}`;
@@ -606,7 +607,7 @@ function AppContent() {
 
     if (tab === 'profile') {
       if (vProfile?.username) return `/@${vProfile.username}`;
-      if (vProfile?.id) return `/u/${vProfile.id}`;
+      if (vProfile?.id) return `/profile/${vProfile.id}`;
       return '/profile';
     }
 
@@ -617,13 +618,13 @@ function AppContent() {
 
     switch (tab) {
       case 'feed': return '/';
-      case 'discover': return '/explore';
+      case 'discover': return '/marketplace';
       case 'videos': return '/videos';
       case 'messenger': 
         if (vChatUid) return `/messages/${vChatUid}`;
         return '/messages';
       case 'admin': return '/admin';
-      case 'dashboard': return '/dashboard';
+      case 'dashboard': return '/connections';
       default: return `/${tab}`;
     }
   };
@@ -741,7 +742,7 @@ function AppContent() {
     if (lowerPath === '/admin-panel' || lowerPath === '/admin') {
       return { tab: 'admin' as Tab, notifs: false };
     }
-    if (lowerPath === '/dashboard' || lowerPath === '/stats' || lowerPath === '/analytics') {
+    if (lowerPath === '/connections' || lowerPath === '/network' || lowerPath === '/friends' || lowerPath === '/dashboard' || lowerPath === '/stats' || lowerPath === '/analytics') {
       return { tab: 'dashboard' as Tab, notifs: false };
     }
 
@@ -753,6 +754,11 @@ function AppContent() {
     // 13. Offline Sanctuary
     if (lowerPath === '/offline') {
       return { tab: 'feed' as Tab, notifs: false, isOfflineView: true };
+    }
+
+    // 14. Private Safe / Vault
+    if (lowerPath === '/vault' || lowerPath === '/safe' || lowerPath === '/private-safe') {
+      return { tab: 'messenger' as Tab, notifs: false, isVault: true };
     }
 
     return { tab: 'feed' as Tab, notifs: false };
@@ -829,6 +835,9 @@ function AppContent() {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('open-offline-sanctuary'));
       }, 100);
+    }
+    if ((pathInit as any).isVault) {
+      setIsVaultOpen(true);
     }
 
     if (!window.history.state || !window.history.state._appNav) {
@@ -1370,6 +1379,11 @@ function AppContent() {
         Skip to Main Content
       </a>
       <GlobalAppBackground />
+      {/* Dynamic Dark Dim Overlay tied to Appearance Settings */}
+      <div 
+        className="aeirmist-dim-overlay fixed inset-0 bg-black pointer-events-none transition-opacity duration-300" 
+        style={{ opacity: (settings?.globalBgOverlay ?? 45) / 100, zIndex: -14 }} 
+      />
       {/* Subtle Background Elements */}
       <div className={`fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-aeirmist-cyan/10 rounded-full blur-[120px] pointer-events-none ${isGlobalBgActive ? 'opacity-0' : 'opacity-100'}`} style={{ zIndex: -15 }} />
       <div className={`fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-aeirmist-magenta/10 rounded-full blur-[120px] pointer-events-none ${isGlobalBgActive ? 'opacity-0' : 'opacity-100'}`} style={{ zIndex: -15 }} />

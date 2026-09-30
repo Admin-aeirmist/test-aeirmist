@@ -20,7 +20,9 @@ import {
   RotateCcw,
   Check,
   AlertTriangle,
-  ShieldCheck
+  ShieldCheck,
+  ChevronRight,
+  ArrowLeft
 } from 'lucide-react';
 import { NotificationItem } from './NotificationItem';
 import type { Notification } from '../../types/notifications';
@@ -114,6 +116,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   
   const [searchQuery, setSearchQuery] = useState('');
   const [mutedUsernames, setMutedUsernames] = useState<string[]>([]);
+  const [showRequestsOnly, setShowRequestsOnly] = useState(false);
 
   useEffect(() => {
     if (!db || !profile?.id) return;
@@ -197,18 +200,16 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   useEffect(() => {
     if (!db || !user) return;
     
-    const q = query(
-      collection(db, 'notifications'),
-      where('userId', 'in', [profile?.id, user.uid].filter(Boolean)),
-      orderBy('createdAt', 'desc'),
-      limit(50)
-    );
+    let isCancelled = false;
+    let fallbackUnsub: (() => void) | null = null;
+    const targetUserIds = Array.from(new Set([profile?.id, user.uid].filter(Boolean)));
+    if (targetUserIds.length === 0) return;
 
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
+    const processDocs = async (docsList: any[]) => {
       // 1. Gather all sender IDs from non-system notifications
       const pendingSenderIds = new Set<string>();
 
-      snapshot.docs.forEach(docSnap => {
+      docsList.forEach(docSnap => {
         const d = docSnap.data();
         const type = String(d.type || '').toLowerCase();
         const isSystem = ['verification', 'system', 'system_verification', 'security'].some(t => type.includes(t)) ||
@@ -259,7 +260,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
       }
 
       // 3. Map and filter notifications
-      const mapped = snapshot.docs
+      const mapped = docsList
         .map(docSnap => {
           const d = docSnap.data();
           const type = String(d.type).toLowerCase();
@@ -318,13 +319,45 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         })
         .filter(Boolean) as any[];
 
-      setNotifications(mapped);
-    }, (error) => {
-      logger.warn("Notification center synced with offline mesh", error);
+      // Sort in-memory to guarantee correct descending timeline even if index is not ready
+      mapped.sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0));
+
+      if (!isCancelled) {
+        setNotifications(mapped);
+      }
+    };
+
+    const qPrimary = query(
+      collection(db, 'notifications'),
+      where('userId', 'in', targetUserIds),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const primaryUnsub = onSnapshot(qPrimary, (snapshot) => {
+      processDocs(snapshot.docs);
+    }, (error: any) => {
+      logger.warn("Notification center primary index query fallback triggered:", error);
+      if (!isCancelled) {
+        const qFallback = query(
+          collection(db, 'notifications'),
+          where('userId', 'in', targetUserIds),
+          limit(50)
+        );
+        fallbackUnsub = onSnapshot(qFallback, (fallbackSnap) => {
+          processDocs(fallbackSnap.docs);
+        }, (fallbackErr) => {
+          logger.warn("Notification center fallback sync failed:", fallbackErr);
+        });
+      }
     });
 
-    return () => unsubscribe();
-  }, [db, user?.uid]);
+    return () => {
+      isCancelled = true;
+      primaryUnsub();
+      if (fallbackUnsub) fallbackUnsub();
+    };
+  }, [db, user?.uid, profile?.id]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -379,6 +412,20 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   };
 
   const serialNotifications = getSerialNotifications();
+
+  const isPrivateAccount = Boolean(
+    profile?.isPrivate || 
+    profile?.privacySettings?.privateProfile || 
+    profile?.isProfileLocked || 
+    profile?.privacy === 'private'
+  );
+
+  const pendingRequests = notifications.filter(n => {
+    const t = String(n.type || '').toLowerCase();
+    return t === 'follow_request' || t === 'message_request' || t === 'follow_pending';
+  });
+
+  const displayNotifications = showRequestsOnly ? pendingRequests : serialNotifications;
 
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true, isRead: true })));
@@ -520,10 +567,60 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           </div>
         </header>
 
-        {/* Notifications Serial Scroll List (No Filter Bar, Pure Serial Flow) */}
-        <div className="flex-1 overflow-y-auto no-scrollbar p-2 sm:p-3 space-y-2 bg-[#121316]">
-          {serialNotifications.length > 0 ? (
-            serialNotifications.map((notif) => (
+        {/* Notifications Serial Scroll List (Pure Serial Flow with Top Pending Requests Row) */}
+        <div className="flex-1 overflow-y-auto no-scrollbar p-2 sm:p-3 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] md:pb-6 space-y-2 bg-[#121316]">
+          {/* Top Instagram-Style Pending Requests Row / Filter View */}
+          {showRequestsOnly ? (
+            <div className="flex items-center justify-between p-2.5 px-3 rounded-xl bg-[#18191C] border border-white/[0.08] mb-2 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setShowRequestsOnly(false)}
+                className="flex items-center gap-2 text-xs font-semibold text-[#4599FF] hover:text-[#70B4FF] transition-colors cursor-pointer"
+              >
+                <ArrowLeft size={16} />
+                <span>Back to all activity</span>
+              </button>
+              <span className="text-xs text-zinc-400 font-medium">
+                {pendingRequests.length} pending
+              </span>
+            </div>
+          ) : (
+            (isPrivateAccount || pendingRequests.length > 0) && (
+              <div 
+                onClick={() => setShowRequestsOnly(true)}
+                className="p-3 rounded-xl bg-[#18191C]/90 hover:bg-[#202126] border border-white/[0.08] flex items-center justify-between gap-3 cursor-pointer transition-all active:scale-[0.99] group shadow-sm mb-2"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600/20 to-cyan-600/20 border border-blue-500/30 flex items-center justify-center text-cyan-400 shrink-0 shadow-sm">
+                    <UserPlus size={20} />
+                    {pendingRequests.length > 0 && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#1877F2] text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[#121316]">
+                        {pendingRequests.length > 99 ? '99+' : pendingRequests.length}
+                      </span>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white truncate">Follow requests</span>
+                      {pendingRequests.length > 0 && (
+                        <span className="w-2 h-2 rounded-full bg-[#1877F2]" />
+                      )}
+                    </div>
+                    <p className="text-xs text-[#8A8D91] truncate">Approve or ignore requests</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-[#8A8D91] group-hover:text-white transition-colors shrink-0">
+                  {pendingRequests.length > 0 && (
+                    <span className="text-xs font-bold text-[#4599FF]">{pendingRequests.length}</span>
+                  )}
+                  <ChevronRight size={18} />
+                </div>
+              </div>
+            )
+          )}
+
+          {displayNotifications.length > 0 ? (
+            displayNotifications.map((notif) => (
               <NotificationItem 
                 key={notif.id} 
                 notification={notif} 
@@ -539,6 +636,23 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                 onFollowToggle={handleFollowToggle}
               />
             ))
+          ) : showRequestsOnly ? (
+            <div className="h-64 flex flex-col items-center justify-center text-center py-12 px-6">
+              <div className="w-14 h-14 rounded-xl bg-[#1E1F24] border border-white/10 flex items-center justify-center mb-3 text-cyan-400">
+                <CheckCircle2 size={26} />
+              </div>
+              <p className="text-base font-bold text-white mb-1">No pending requests</p>
+              <p className="text-xs text-[#8A8D91] max-w-xs leading-relaxed mb-4">
+                When people request to follow your private account, they will appear here.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowRequestsOnly(false)}
+                className="px-4 py-2 rounded-lg bg-[#2A2B30] hover:bg-[#3A3B40] text-xs font-semibold text-white transition-colors cursor-pointer"
+              >
+                View all notifications
+              </button>
+            </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-center py-24 px-6">
               <div className="w-16 h-16 rounded-full bg-[#1E1F24] border border-white/10 flex items-center justify-center mb-4 text-[#1877F2]">

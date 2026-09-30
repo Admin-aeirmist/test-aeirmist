@@ -89,6 +89,18 @@ export const usePermissions = () => {
     setPermissions(prev => ({ ...prev, [type]: { ...prev[type], status: 'checking' } }));
     logger.info(`[Permissions] Requesting ${type}...`);
     
+    // Proactively invoke native Android OS permissions dialog if on Android APK
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+      try {
+        const plugins = (window as any).Capacitor.Plugins;
+        if (plugins?.NativeSettings?.requestAllPermissions) {
+          await plugins.NativeSettings.requestAllPermissions();
+        }
+      } catch (e) {
+        logger.warn("Native permission check in usePermissions ignored", e);
+      }
+    }
+
     try {
       if (type === 'camera') {
         let stream: MediaStream | null = null;
@@ -100,9 +112,15 @@ export const usePermissions = () => {
             });
           }
         } catch (e) {
-          // Fallback to video only if audio is unavailable
-          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          try {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+              stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            }
+          } catch (e2) {
+            // Fallback to video only if audio is unavailable
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+              stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            }
           }
         }
 

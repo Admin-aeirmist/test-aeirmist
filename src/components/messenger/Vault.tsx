@@ -48,6 +48,7 @@ import { getAvatarUrl } from '../../lib/avatar';
 import { PrivacyFolderLayout } from './vault/PrivacyFolderLayout';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
+import { auth } from '../../lib/firebase';
 
 
 interface VaultProps {
@@ -202,7 +203,7 @@ export const Vault: React.FC<VaultProps> = ({
   allProfiles,
   onHome
 }) => {
-  const { addToast, uploadMedia } = useAeirmist();
+  const { user, addToast, uploadMedia } = useAeirmist();
   const [loading, setLoading] = useState(true);
   const [vaultConfigured, setVaultConfigured] = useState(false);
   const [view, setView] = useState<
@@ -638,7 +639,15 @@ export const Vault: React.FC<VaultProps> = ({
   useEffect(() => {
     if (!db || !profile?.id || !isUnlocked) return;
     
-    const userKeys = Array.from(new Set([profile.id, profile.uid].filter(Boolean)));
+    const userKeys = Array.from(new Set([
+      profile.id, 
+      profile.uid, 
+      profile.ownerUid, 
+      user?.uid, 
+      auth?.currentUser?.uid,
+      `profile_${auth?.currentUser?.uid}`,
+      `profile_${user?.uid}`
+    ].filter(Boolean)));
     const q = query(
       collection(db, 'vault_media'), 
       where('userId', 'in', userKeys)
@@ -652,20 +661,20 @@ export const Vault: React.FC<VaultProps> = ({
     });
 
     return () => unsubscribe();
-  }, [db, profile?.id, profile?.uid, isUnlocked]);
+  }, [db, profile?.id, profile?.uid, profile?.ownerUid, user?.uid, isUnlocked]);
 
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0 || !db || !profile?.id) return;
 
-    const authUid = user?.uid || profile.uid || profile.id;
+    const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile.id;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
         let mediaUrl = '';
         try {
           if (uploadMedia) {
-            mediaUrl = await uploadMedia(file, `vault/${authUid}`);
+            mediaUrl = await uploadMedia(file, `vault/${currentAuthUid}`);
           }
         } catch (uploadErr) {
           logger.warn("[Vault] Storage upload failed, falling back to data URL:", uploadErr);
@@ -681,8 +690,9 @@ export const Vault: React.FC<VaultProps> = ({
         }
 
         await addDoc(collection(db, 'vault_media'), {
-          userId: profile.id,
-          ownerUid: authUid,
+          userId: currentAuthUid,
+          ownerUid: currentAuthUid,
+          profileId: profile.id,
           url: mediaUrl,
           type: file.type.startsWith('video') ? 'video' : 'image',
           name: file.name,
@@ -715,6 +725,7 @@ export const Vault: React.FC<VaultProps> = ({
     if (!db) return;
     try {
       await deleteDoc(doc(db, 'vault_media', id));
+      addToast({ title: "Deleted", message: "Item removed from Vault.", type: "info" });
     } catch (e: any) { logger.error("Delete failed:", e); addToast({ title: "Failed", message: "Failed to delete vault item", type: "warning" }); }
   };
 
@@ -728,7 +739,9 @@ export const Vault: React.FC<VaultProps> = ({
       const hasMediaUrl = !!item.url;
 
       await addDoc(collection(db, 'posts'), {
-        userId: profile.id,
+        userId: user?.uid || profile.id,
+        authorUid: user?.uid || profile.id,
+        authorId: profile.id,
         userDisplayName: profile.displayName || profile.username,
         userPhoto: profile.photoURL || '',
         userRank: profile.aeirmistRank || 'IRON',

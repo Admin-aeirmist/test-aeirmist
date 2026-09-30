@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Palette, 
@@ -36,22 +36,108 @@ interface ChatWallpaperControllerProps {
 }
 
 const PRESET_WALLPAPERS = [
-  { id: 'preset-neural', name: 'Dark Fusion', value: 'linear-gradient(135deg, rgba(8, 7, 12, 1) 0%, rgba(20, 10, 32, 1) 50%, rgba(8, 14, 20, 1) 100%)', isGradient: true },
-  { id: 'preset-hologram', name: 'Hologram', value: 'linear-gradient(45deg, #121016 0%, #2a0845 50%, #6441a5 100%)', isGradient: true },
-  { id: 'preset-acid', name: 'Acid Liquid', value: 'linear-gradient(135deg, #00f2ff 0%, #ff00ea 100%)', isGradient: true },
-  { id: 'preset-emerald', name: 'Bioemerald', value: 'linear-gradient(180deg, #020f0b 0%, #051a14 50%, #00ffaa 100%)', isGradient: true },
-  { id: 'preset-carbon', name: 'Carbon Grid', value: 'radial-gradient(circle at center, #111115 0%, #050508 100%)', isGradient: true },
-  { id: 'preset-outfit', name: 'Night Skyline', value: 'https://images.unsplash.com/photo-1515621061946-eff1c2a352bd?q=80&w=600&auto=format&fit=crop', isGradient: false },
-  { id: 'preset-grid', name: 'Grid Street', value: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?q=80&w=600&auto=format&fit=crop', isGradient: false },
-  { id: 'preset-abstract', name: 'Abstract Wave', value: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=600&auto=format&fit=crop', isGradient: false },
+  { id: 'preset-dreamy-cloud', name: 'Dreamy Cloud', value: '/wallpapers/dreamy-cloud.jpg', isGradient: false },
+  { id: 'preset-pink-aesthetic', name: 'Pink Aesthetic', value: '/wallpapers/pink-aesthetic.jpg', isGradient: false },
+  { id: 'preset-sunset-romance', name: 'Sunset Romance', value: '/wallpapers/sunset-romance.jpg', isGradient: false },
+  { id: 'preset-cloud-teddy', name: 'Cloud Teddy', value: '/wallpapers/cloud-teddy.jpg', isGradient: false },
+  { id: 'preset-cozy-bear', name: 'Cozy Bear', value: '/wallpapers/cozy-bear.jpg', isGradient: false },
+  { id: 'preset-blue-vibes', name: 'Blue Pastel', value: '/wallpapers/blue-vibes.jpg', isGradient: false },
+  { id: 'preset-lavender-bunny', name: 'Lavender Bunny', value: '/wallpapers/lavender-bunny.jpg', isGradient: false },
+  { id: 'preset-mint-froggy', name: 'Mint Froggy', value: '/wallpapers/mint-froggy.jpg', isGradient: false },
 ];
 
-const PRESET_EFFECTS = [
-  { id: 'none', name: 'None', desc: 'Standard clean background' },
-  { id: 'cyber-grid', name: 'Grid Overlay', desc: 'Animated 3D grid mesh' },
-  { id: 'liquid-neon', name: 'Glowing Liquid', desc: 'Floating colored lights' },
-  { id: 'matrix-rain', name: 'Digital Rain', desc: 'Falling code characters' },
-  { id: 'neon-glow', name: 'Neon Border', desc: 'Glowing edge outline' },
+export interface MessengerTheme {
+  id: string;
+  name: string;
+  category: string;
+  bubbleGradient: string; // Used on message bubbles
+  previewColor: string; // Main color for swatch circle
+  bgGradientDark: string; // Thematic background for dark theme
+  bgGradientLight: string; // Thematic background for light theme
+  description: string;
+}
+
+export const MESSENGER_THEMES: MessengerTheme[] = [
+  {
+    id: 'ocean',
+    name: 'Ocean Blue',
+    category: 'Classic',
+    bubbleGradient: 'linear-gradient(135deg, #0084FF 0%, #00C6FF 100%)',
+    previewColor: '#0084FF',
+    bgGradientDark: 'linear-gradient(135deg, #030f1c 0%, #08213b 50%, #004e92 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 50%, #7dd3fc 100%)',
+    description: 'Classic azure & sky'
+  },
+  {
+    id: 'sunset',
+    name: 'Sunset Peach',
+    category: 'Vibrant',
+    bubbleGradient: 'linear-gradient(135deg, #FF512F 0%, #DD2476 100%)',
+    previewColor: '#FF512F',
+    bgGradientDark: 'linear-gradient(135deg, #1c0813 0%, #3a0d26 50%, #681534 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #ffedd5 0%, #fecdd3 50%, #fed7aa 100%)',
+    description: 'Amber & coral sunset'
+  },
+  {
+    id: 'cyberpunk',
+    name: 'Neon Cyber',
+    category: 'Electric',
+    bubbleGradient: 'linear-gradient(135deg, #00f2ff 0%, #ff00ea 100%)',
+    previewColor: '#00f2ff',
+    bgGradientDark: 'linear-gradient(135deg, #060814 0%, #170d2b 50%, #0c1a2e 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #ecfeff 0%, #fdf4ff 50%, #ede9fe 100%)',
+    description: 'Electric cyan & magenta'
+  },
+  {
+    id: 'lavender',
+    name: 'Lilac Dream',
+    category: 'Pastel',
+    bubbleGradient: 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)',
+    previewColor: '#8B5CF6',
+    bgGradientDark: 'linear-gradient(135deg, #130924 0%, #25103d 50%, #3e145e 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 50%, #e9d5ff 100%)',
+    description: 'Soft lavender & orchid'
+  },
+  {
+    id: 'emerald',
+    name: 'Emerald Mint',
+    category: 'Nature',
+    bubbleGradient: 'linear-gradient(135deg, #10B981 0%, #06B6D4 100%)',
+    previewColor: '#10B981',
+    bgGradientDark: 'linear-gradient(135deg, #02140e 0%, #062b1e 50%, #0b4532 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 50%, #a7f3d0 100%)',
+    description: 'Crisp botanical mint'
+  },
+  {
+    id: 'berry',
+    name: 'Berry Rose',
+    category: 'Romantic',
+    bubbleGradient: 'linear-gradient(135deg, #f43f5e 0%, #be123c 100%)',
+    previewColor: '#f43f5e',
+    bgGradientDark: 'linear-gradient(135deg, #1c050c 0%, #380a19 50%, #5c0f2a 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 50%, #fecdd3 100%)',
+    description: 'Velvet raspberry & ruby'
+  },
+  {
+    id: 'cotton_candy',
+    name: 'Cotton Candy',
+    category: 'Sweet',
+    bubbleGradient: 'linear-gradient(135deg, #ec4899 0%, #3b82f6 100%)',
+    previewColor: '#ec4899',
+    bgGradientDark: 'linear-gradient(135deg, #160a22 0%, #28123c 50%, #152244 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #fdf2f8 0%, #fce7f3 50%, #e0f2fe 100%)',
+    description: 'Playful pink & blue'
+  },
+  {
+    id: 'midnight',
+    name: 'Midnight Slate',
+    category: 'Minimal',
+    bubbleGradient: 'linear-gradient(135deg, #334155 0%, #0f172a 100%)',
+    previewColor: '#475569',
+    bgGradientDark: 'linear-gradient(135deg, #020617 0%, #0f172a 50%, #1e293b 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%)',
+    description: 'Minimal slate & obsidian'
+  }
 ];
 
 export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = ({
@@ -60,17 +146,39 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
   onClose
 }) => {
   const { uploadMedia, updateConversationThemeSettings, updateProfile, profile, addToast } = useAeirmist();
+  const [isLight, setIsLight] = useState(() => {
+    return typeof document !== 'undefined' && document.documentElement.classList.contains('light');
+  });
+
+  useEffect(() => {
+    const checkTheme = () => {
+      setIsLight(document.documentElement.classList.contains('light'));
+    };
+    checkTheme();
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
   
   const globalWallpaper = profile?.themeSettings?.chatWallpaper || {};
 
   // Form states initialized with existing per-chat configurations, or fallback to global configurations
-  const [currentWallpaper, setCurrentWallpaper] = useState(chatThemeSettings?.wallpaperURL || globalWallpaper.wallpaperURL || PRESET_WALLPAPERS[0].value);
+  const [currentWallpaper, setCurrentWallpaper] = useState(chatThemeSettings?.wallpaperURL || globalWallpaper.wallpaperURL || (isLight ? PRESET_WALLPAPERS[4].value : PRESET_WALLPAPERS[0].value));
   const [blurLevel, setBlurLevel] = useState(chatThemeSettings?.blurLevel !== undefined ? chatThemeSettings.blurLevel : (globalWallpaper.blurLevel !== undefined ? globalWallpaper.blurLevel : 0));
-  const [brightness, setBrightness] = useState(chatThemeSettings?.brightness !== undefined ? chatThemeSettings.brightness : (globalWallpaper.brightness !== undefined ? globalWallpaper.brightness : 0.65));
-  const [effectType, setEffectType] = useState(chatThemeSettings?.effectType || globalWallpaper.effectType || 'none');
+  const [brightness, setBrightness] = useState(chatThemeSettings?.brightness !== undefined ? chatThemeSettings.brightness : (globalWallpaper.brightness !== undefined ? globalWallpaper.brightness : (isLight ? 0.95 : 0.65)));
+  const [selectedThemeId, setSelectedThemeId] = useState<string>(chatThemeSettings?.themeId || globalWallpaper.themeId || 'ocean');
   const [cropPosition, setCropPosition] = useState(chatThemeSettings?.cropPosition || globalWallpaper.cropPosition || { x: 50, y: 50, zoom: 1 });
   const [parallaxEnabled, setParallaxEnabled] = useState(chatThemeSettings?.parallaxEnabled ?? globalWallpaper.parallaxEnabled ?? false);
   const [saveScope, setSaveScope] = useState<'me' | 'both'>('me'); // 'me' = single inbox for me, 'both' = both participants in this chat
+
+  const selectedTheme = useMemo(() => {
+    return MESSENGER_THEMES.find(t => t.id === selectedThemeId) || MESSENGER_THEMES[0];
+  }, [selectedThemeId]);
+
+  const handleSelectTheme = (theme: MessengerTheme) => {
+    setSelectedThemeId(theme.id);
+    setCurrentWallpaper(isLight ? theme.bgGradientLight : theme.bgGradientDark);
+  };
   
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -180,12 +288,12 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
     wallpaperURL: currentWallpaper,
     blurLevel,
     brightness,
-    effectType,
-    overlayColor: '#000000',
+    effectType: 'none',
+    overlayColor: isLight ? 'rgba(255, 255, 255, 0.1)' : '#000000',
     neonIntensity: 0.8,
     cropPosition,
     parallaxEnabled
-  }), [currentWallpaper, blurLevel, brightness, effectType, cropPosition, parallaxEnabled]);
+  }), [currentWallpaper, blurLevel, brightness, cropPosition, parallaxEnabled, isLight]);
 
   // Handle personal background upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -228,9 +336,11 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
       wallpaperURL: currentWallpaper,
       blurLevel,
       brightness,
-      effectType,
+      themeId: selectedThemeId,
+      bubbleGradient: selectedTheme?.bubbleGradient || MESSENGER_THEMES[0].bubbleGradient,
+      effectType: 'none',
       bubbleStyle: 'glass',
-      overlayColor: '#000000',
+      overlayColor: isLight ? 'rgba(255, 255, 255, 0.1)' : '#000000',
       neonIntensity: 0.8,
       cropPosition,
       parallaxEnabled
@@ -292,7 +402,7 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
-        className="relative w-full max-w-4xl bg-aeirmist-bg border border-white/10 rounded-[28px] overflow-hidden shadow-[0_0_50px_rgba(0,242,255,0.15)] flex flex-col md:grid md:grid-cols-2 h-[90vh] md:h-[600px]"
+        className="relative w-full max-w-4xl bg-white dark:bg-aeirmist-bg border border-slate-200 dark:border-white/10 rounded-[28px] overflow-hidden shadow-2xl flex flex-col md:grid md:grid-cols-2 h-[90vh] md:h-[600px]"
       >
         
         {/* Left Side: Real-time Live Preview Panel */}
@@ -302,21 +412,23 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
           onWheel={handleWheelZoom}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className={`relative border-b md:border-b-0 md:border-r border-white/10 bg-black/40 flex flex-col justify-between p-4 md:p-6 overflow-hidden min-h-[280px] md:min-h-[300px] flex-shrink-0 touch-none select-none ${
+          className={`relative border-b md:border-b-0 md:border-r border-slate-200 dark:border-white/10 ${
+            isLight ? 'bg-slate-100' : 'bg-black/40'
+          } flex flex-col justify-between p-4 md:p-6 overflow-hidden min-h-[280px] md:min-h-[300px] flex-shrink-0 touch-none select-none ${
             isImageWallpaper ? 'cursor-grab active:cursor-grabbing' : ''
           }`}
         >
           {/* Wallpaper Layer bound directly inside boundaries of preview panel for instant visual alignment */}
           <div className="absolute inset-0 md:rounded-l-[28px] overflow-hidden pointer-events-none">
             {/* Background color */}
-            <div className="absolute inset-0 bg-aeirmist-bg" />
+            <div className={`absolute inset-0 ${isLight ? 'bg-slate-100' : 'bg-aeirmist-bg'}`} />
             
             {/* Live custom background */}
             <div 
               className="absolute inset-0 transition-all duration-150 ease-out"
               style={{
                 filter: `blur(${blurLevel}px)`,
-                opacity: brightness,
+                opacity: isLight && isImageWallpaper ? 1 : brightness,
                 background: currentWallpaper.startsWith('linear-gradient') || currentWallpaper.startsWith('radial-gradient') 
                   ? currentWallpaper 
                   : `url(${currentWallpaper}) no-repeat`,
@@ -338,55 +450,19 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
 
             {/* Custom Overlay tint */}
             <div 
-              className="absolute inset-0 bg-black/40" 
-              style={{ opacity: Math.max(0, 1 - brightness) }}
+              className={`absolute inset-0 ${isLight ? 'bg-white/20' : 'bg-black/40'}`} 
+              style={{ opacity: isLight ? Math.max(0, (0.85 - brightness) * 0.25) : Math.max(0, 1 - brightness) }}
             />
 
-            {/* Dynamic visual effect previews in miniature */}
-            {effectType === 'cyber-grid' && (
-              <div 
-                className="absolute inset-0 opacity-20"
-                style={{
-                  backgroundImage: 'linear-gradient(to right, rgba(0, 242, 255, 0.15) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 242, 255, 0.15) 1px, transparent 1px)',
-                  backgroundSize: '20px 20px',
-                  transform: 'perspective(200px) rotateX(60deg) translateY(-20%)',
-                  transformOrigin: 'top center',
-                  height: '150%',
-                }}
-              />
-            )}
-            {effectType === 'liquid-neon' && (
-              <div className="absolute inset-0 opacity-25">
-                <div className="absolute -top-12 -left-12 w-32 h-32 rounded-full bg-aeirmist-cyan/30 blur-[40px]" />
-                <div className="absolute -bottom-12 -right-12 w-32 h-32 rounded-full bg-aeirmist-magenta/35 blur-[40px]" />
-              </div>
-            )}
-            {effectType === 'matrix-rain' && (
-              <div className="absolute inset-0 bg-black/10 opacity-20">
-                <div className="absolute top-0 inset-x-0 h-full flex justify-between text-aeirmist-lime font-mono text-[5px] select-none scale-y-75 leading-none">
-                  {Array.from({ length: 6 }).map((_, idx) => (
-                    <div key={idx} className="writing-mode-vertical" style={{ writingMode: 'vertical-rl' }}>
-                      {Array.from({ length: 15 }).map(() => String.fromCharCode(33 + Math.floor(Math.random() * 95))).join('')}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {effectType === 'neon-glow' && (
-              <div 
-                className="absolute inset-0 border border-aeirmist-cyan/30 rounded-[14px]"
-                style={{ boxShadow: 'inset 0 0 20px rgba(0, 242, 255, 0.3)' }}
-              />
-            )}
           </div>
 
           {/* Header Preview Bar & Direct Image Controls */}
           <div className="relative z-10 flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50 flex items-center gap-2 bg-black/50 px-2.5 py-1 rounded-full border border-white/10 backdrop-blur-md">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/90 keep-white flex items-center gap-2 bg-black/60 px-2.5 py-1 rounded-full border border-white/15 backdrop-blur-md" data-keep-white="true">
               <Eye size={12} className="text-aeirmist-cyan" />
               Preview {isImageWallpaper ? '• Drag/Pinch to Align' : ''}
             </span>
-            <button onClick={onClose} className="p-2 bg-black/40 hover:bg-black/60 rounded-full border border-white/5 transition-all text-white/50 hover:text-white md:hidden">
+            <button onClick={onClose} className="p-2 bg-black/40 hover:bg-black/60 rounded-full border border-white/10 transition-all text-white/70 hover:text-white md:hidden">
               <X size={14} />
             </button>
           </div>
@@ -395,17 +471,24 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
           <div className="relative z-10 flex-1 flex flex-col justify-end space-y-3 py-3 md:py-6 pointer-events-none">
             {/* Incoming Bubble */}
             <div className="flex gap-2.5 max-w-[80%] items-end">
-              <div className="w-6 h-6 rounded-lg bg-white/10 border border-white/10 flex-shrink-0" />
-              <div className="rounded-2xl p-2.5 bg-white/5 border border-white/10 text-[10px] text-white/80 leading-relaxed backdrop-blur-xl">
-                How does this background look?
+              <div className="w-6 h-6 rounded-lg bg-white/40 dark:bg-white/10 border border-white/20 flex-shrink-0" />
+              <div className="rounded-2xl p-2.5 bg-white/85 dark:bg-white/10 border border-white/60 dark:border-white/10 text-[10px] text-slate-800 dark:text-white/80 leading-relaxed backdrop-blur-xl shadow-sm">
+                How does this theme look?
               </div>
             </div>
 
             {/* Outgoing Bubble */}
             <div className="flex gap-2.5 max-w-[80%] items-end self-end flex-row-reverse">
-              <div className="w-6 h-6 rounded-lg bg-aeirmist-cyan/20 border border-aeirmist-cyan/20 flex-shrink-0" />
-              <div className="rounded-2xl p-2.5 bg-gradient-to-br from-aeirmist-cyan/20 to-aeirmist-magenta/20 border border-white/10 text-[10px] text-white backdrop-blur-xl text-right">
-                Looks perfect! Extreme clarity maintained automatically.
+              <div 
+                className="w-6 h-6 rounded-lg border border-white/30 flex-shrink-0 transition-all duration-300 shadow-sm"
+                style={{ background: selectedTheme?.bubbleGradient || 'linear-gradient(to right, #4F46E5, #7C3AED)' }}
+              />
+              <div 
+                className="rounded-2xl p-2.5 border border-white/20 text-[10px] text-white keep-white backdrop-blur-xl text-right shadow-md transition-all duration-300" 
+                data-keep-white="true"
+                style={{ background: selectedTheme?.bubbleGradient || 'linear-gradient(to right, #4F46E5, #7C3AED)' }}
+              >
+                {selectedTheme ? `${selectedTheme.name} theme is active!` : 'Looks perfect! Extreme clarity maintained automatically.'}
               </div>
             </div>
           </div>
@@ -476,22 +559,22 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
           <div className="space-y-6">
             
             {/* Title Block Header */}
-            <div className="flex items-center justify-between border-b border-white/5 pb-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/5 pb-4">
               <div>
-                <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
                   <Palette className="text-aeirmist-cyan" size={18} />
                   Chat appearance
                 </h2>
-                <div className="text-[10px] text-white/30 uppercase tracking-widest mt-1">Customize chat wallpaper</div>
+                <div className="text-[10px] text-slate-500 dark:text-white/30 uppercase tracking-widest mt-1">Customize chat wallpaper</div>
               </div>
-              <button onClick={onClose} className="p-2 bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all text-white/40 hover:text-white hidden md:block">
+              <button onClick={onClose} className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-white/5 dark:hover:bg-white/10 rounded-full border border-slate-200 dark:border-white/5 transition-all text-slate-500 hover:text-slate-800 dark:text-white/40 dark:hover:text-white hidden md:block">
                 <X size={16} />
               </button>
             </div>
 
             {/* preset wallpapers grid selector */}
             <div className="space-y-2.5">
-              <span className="text-[10px] font-black uppercase tracking-widest text-white/40 flex items-center gap-1.5">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-white/40 flex items-center gap-1.5">
                 <Palette size={12} className="text-aeirmist-cyan" />
                 Choose a Wallpaper
               </span>
@@ -503,7 +586,7 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                       key={wp.id}
                       onClick={() => setCurrentWallpaper(wp.value)}
                       className={`relative aspect-[3/4] rounded-xl overflow-hidden border transition-all ${
-                        isCurrent ? 'border-aeirmist-cyan scale-95 shadow-[0_0_15px_rgba(0,242,255,0.4)]' : 'border-white/10 hover:border-white/20 hover:scale-[1.03]'
+                        isCurrent ? 'border-aeirmist-cyan scale-95 shadow-[0_0_15px_rgba(0,242,255,0.4)]' : 'border-slate-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 hover:scale-[1.03]'
                       }`}
                       style={{
                         background: wp.isGradient ? wp.value : `url(${wp.value}) center / cover no-repeat`
@@ -515,7 +598,7 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                         </div>
                       )}
                       
-                      <div className="absolute bottom-0 inset-x-0 bg-black/70 py-1 text-[7px] font-bold text-center text-white/70 truncate px-0.5">
+                      <div className="absolute bottom-0 inset-x-0 bg-black/75 py-1 text-[7px] font-bold text-center text-white keep-white truncate px-0.5" data-keep-white="true">
                         {wp.name}
                       </div>
                     </button>
@@ -526,7 +609,7 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
 
             {/* Custom file background uploader with drag and drag input support */}
             <div className="space-y-2">
-              <span className="text-[10px] font-black uppercase tracking-widest text-white/40 flex items-center gap-1.5">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-white/40 flex items-center gap-1.5">
                 <Upload size={12} className="text-aeirmist-cyan" />
                 Upload Custom Picture
               </span>
@@ -540,7 +623,7 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
               <button
                 disabled={isUploading}
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full h-16 rounded-xl border border-dashed border-white/10 hover:border-aeirmist-cyan/30 bg-white/[0.02] flex items-center justify-center gap-3 transition-all cursor-pointer group active:scale-98"
+                className="w-full h-16 rounded-xl border border-dashed border-slate-300 dark:border-white/10 hover:border-aeirmist-cyan/40 bg-slate-50 dark:bg-white/[0.02] flex items-center justify-center gap-3 transition-all cursor-pointer group active:scale-98"
               >
                 {isUploading ? (
                   <>
@@ -549,12 +632,12 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                   </>
                 ) : (
                   <>
-                    <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-aeirmist-cyan/10 transition-colors">
-                      <Upload size={14} className="text-white/60 group-hover:text-aeirmist-cyan transition-colors" />
+                    <div className="w-8 h-8 rounded-lg bg-slate-200 dark:bg-white/5 flex items-center justify-center group-hover:bg-aeirmist-cyan/10 transition-colors">
+                      <Upload size={14} className="text-slate-600 dark:text-white/60 group-hover:text-aeirmist-cyan transition-colors" />
                     </div>
                     <div className="text-left">
-                      <div className="text-[10px] text-white/80 uppercase font-black tracking-widest">Upload custom image</div>
-                      <div className="text-[8px] text-white/30 uppercase mt-0.5 font-bold">JPG, PNG, WEBP. Under 5MB limit.</div>
+                      <div className="text-[10px] text-slate-800 dark:text-white/80 uppercase font-black tracking-widest">Upload custom image</div>
+                      <div className="text-[8px] text-slate-500 dark:text-white/30 uppercase mt-0.5 font-bold">JPG, PNG, WEBP. Under 5MB limit.</div>
                     </div>
                   </>
                 )}
@@ -563,16 +646,16 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
 
             {/* Picture Frame & Positioning Controls (When Image Wallpaper Active) */}
             {isImageWallpaper && (
-              <div className="space-y-3 bg-white/[0.02] border border-white/5 p-3.5 rounded-2xl">
-                <div className="flex justify-between items-center text-[10px] uppercase font-black tracking-widest border-b border-white/5 pb-2">
-                  <span className="text-white/80 flex items-center gap-1.5">
+              <div className="space-y-3 bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 p-3.5 rounded-2xl">
+                <div className="flex justify-between items-center text-[10px] uppercase font-black tracking-widest border-b border-slate-200 dark:border-white/5 pb-2">
+                  <span className="text-slate-800 dark:text-white/80 flex items-center gap-1.5">
                     <Move size={13} className="text-aeirmist-cyan" />
                     Picture Frame & Positioning
                   </span>
                   <button 
                     type="button"
                     onClick={resetCrop}
-                    className="text-[8px] text-white/40 hover:text-aeirmist-cyan uppercase font-bold flex items-center gap-1 transition-colors"
+                    className="text-[8px] text-slate-500 dark:text-white/40 hover:text-aeirmist-cyan uppercase font-bold flex items-center gap-1 transition-colors"
                   >
                     <RotateCcw size={10} />
                     Reset Frame
@@ -581,7 +664,7 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
 
                 {/* Zoom Scale */}
                 <div className="space-y-1">
-                  <div className="flex justify-between text-[9px] font-bold text-white/60 uppercase">
+                  <div className="flex justify-between text-[9px] font-bold text-slate-600 dark:text-white/60 uppercase">
                     <span>Zoom Scale</span>
                     <span className="text-aeirmist-cyan font-mono">{cropPosition.zoom.toFixed(2)}x</span>
                   </div>
@@ -592,13 +675,13 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                     step="0.05"
                     value={cropPosition.zoom} 
                     onChange={(e) => setCropPosition(prev => ({ ...prev, zoom: parseFloat(e.target.value) }))}
-                    className="w-full accent-aeirmist-cyan h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                    className="w-full accent-aeirmist-cyan h-1 bg-slate-200 dark:bg-white/10 rounded-full appearance-none cursor-pointer"
                   />
                 </div>
 
                 {/* Horizontal Position (X) */}
                 <div className="space-y-1">
-                  <div className="flex justify-between text-[9px] font-bold text-white/60 uppercase">
+                  <div className="flex justify-between text-[9px] font-bold text-slate-600 dark:text-white/60 uppercase">
                     <span>Horizontal Position (Left ↔ Right)</span>
                     <span className="text-aeirmist-cyan font-mono">{Math.round(cropPosition.x)}%</span>
                   </div>
@@ -609,13 +692,13 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                     step="1"
                     value={cropPosition.x} 
                     onChange={(e) => setCropPosition(prev => ({ ...prev, x: parseFloat(e.target.value) }))}
-                    className="w-full accent-aeirmist-cyan h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                    className="w-full accent-aeirmist-cyan h-1 bg-slate-200 dark:bg-white/10 rounded-full appearance-none cursor-pointer"
                   />
                 </div>
 
                 {/* Vertical Position (Y) */}
                 <div className="space-y-1">
-                  <div className="flex justify-between text-[9px] font-bold text-white/60 uppercase">
+                  <div className="flex justify-between text-[9px] font-bold text-slate-600 dark:text-white/60 uppercase">
                     <span>Vertical Position (Top ↕ Bottom)</span>
                     <span className="text-aeirmist-cyan font-mono">{Math.round(cropPosition.y)}%</span>
                   </div>
@@ -626,13 +709,13 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                     step="1"
                     value={cropPosition.y} 
                     onChange={(e) => setCropPosition(prev => ({ ...prev, y: parseFloat(e.target.value) }))}
-                    className="w-full accent-aeirmist-cyan h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                    className="w-full accent-aeirmist-cyan h-1 bg-slate-200 dark:bg-white/10 rounded-full appearance-none cursor-pointer"
                   />
                 </div>
 
                 {/* Quick Focus Alignment Presets */}
                 <div className="pt-1">
-                  <div className="text-[8px] font-black uppercase text-white/30 tracking-widest mb-1.5">Quick Framing Presets</div>
+                  <div className="text-[8px] font-black uppercase text-slate-500 dark:text-white/30 tracking-widest mb-1.5">Quick Framing Presets</div>
                   <div className="grid grid-cols-5 gap-1.5">
                     {[
                       { label: 'Center', x: 50, y: 50 },
@@ -645,7 +728,7 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                         key={preset.label}
                         type="button"
                         onClick={() => setCropPosition(prev => ({ ...prev, x: preset.x, y: preset.y }))}
-                        className="py-1.5 px-1 bg-white/5 hover:bg-aeirmist-cyan/10 hover:border-aeirmist-cyan/30 border border-white/5 rounded-lg text-[8px] font-bold uppercase text-white/60 hover:text-white transition-all text-center truncate"
+                        className="py-1.5 px-1 bg-slate-200/80 hover:bg-aeirmist-cyan/10 hover:border-aeirmist-cyan/30 dark:bg-white/5 border border-slate-300/60 dark:border-white/5 rounded-lg text-[8px] font-bold uppercase text-slate-700 hover:text-slate-900 dark:text-white/60 dark:hover:text-white transition-all text-center truncate"
                       >
                         {preset.label}
                       </button>
@@ -658,10 +741,10 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
             {/* range controls for blur & intensity (dim level) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Blur Level Slider */}
-              <div className="space-y-2 bg-white/[0.02] border border-white/5 p-3 rounded-2xl">
+              <div className="space-y-2 bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 p-3 rounded-2xl">
                 <div className="flex justify-between items-center text-[10px] uppercase font-black tracking-widest">
-                  <span className="text-white/40 flex items-center gap-1">
-                     <Sliders size={12} className="text-white/40" />
+                  <span className="text-slate-600 dark:text-white/40 flex items-center gap-1">
+                     <Sliders size={12} className="text-slate-500 dark:text-white/40" />
                      Blur Amount
                   </span>
                   <span className="text-aeirmist-cyan font-mono">{blurLevel}px</span>
@@ -672,16 +755,16 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                   max="20" 
                   value={blurLevel} 
                   onChange={(e) => setBlurLevel(parseInt(e.target.value))}
-                  className="w-full accent-aeirmist-cyan h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                  className="w-full accent-aeirmist-cyan h-1 bg-slate-200 dark:bg-white/10 rounded-full appearance-none cursor-pointer"
                 />
-                <div className="text-[8px] text-white/20 uppercase font-medium">Increase this to blur the wallpaper</div>
+                <div className="text-[8px] text-slate-500 dark:text-white/20 uppercase font-medium">Increase this to blur the wallpaper</div>
               </div>
 
               {/* brightness / Dim Level Slider */}
-              <div className="space-y-2 bg-white/[0.02] border border-white/5 p-3 rounded-2xl">
+              <div className="space-y-2 bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 p-3 rounded-2xl">
                 <div className="flex justify-between items-center text-[10px] uppercase font-black tracking-widest">
-                  <span className="text-white/40 flex items-center gap-1">
-                    <Eye size={12} className="text-white/40" />
+                  <span className="text-slate-600 dark:text-white/40 flex items-center gap-1">
+                    <Eye size={12} className="text-slate-500 dark:text-white/40" />
                     Wallpaper Brightness
                   </span>
                   <span className="text-aeirmist-cyan font-mono">{Math.round(brightness * 100)}%</span>
@@ -693,58 +776,80 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                   step="5"
                   value={brightness * 100} 
                   onChange={(e) => setBrightness(parseFloat(e.target.value) / 100)}
-                  className="w-full accent-aeirmist-cyan h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                  className="w-full accent-aeirmist-cyan h-1 bg-slate-200 dark:bg-white/10 rounded-full appearance-none cursor-pointer"
                 />
-                <div className="text-[8px] text-white/20 uppercase font-medium">Lower brightness makes chat text easier to read</div>
+                <div className="text-[8px] text-slate-500 dark:text-white/20 uppercase font-medium">Controls wallpaper clarity and contrast</div>
               </div>
             </div>
 
             {/* Parallax Toggle */}
-            <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 p-3 rounded-2xl">
+            <div className="flex items-center justify-between bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 p-3 rounded-2xl">
               <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${parallaxEnabled ? 'bg-aeirmist-cyan/10 text-aeirmist-cyan' : 'bg-white/5 text-white/30'}`}>
+                <div className={`p-2 rounded-lg ${parallaxEnabled ? 'bg-aeirmist-cyan/15 text-aeirmist-cyan' : 'bg-slate-200 dark:bg-white/5 text-slate-400 dark:text-white/30'}`}>
                   <Sparkles size={16} />
                 </div>
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-white/80">Parallax Effect</div>
-                  <div className="text-[8px] text-white/20 uppercase font-bold">Subtle motion based on movement</div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-800 dark:text-white/80">Parallax Effect</div>
+                  <div className="text-[8px] text-slate-500 dark:text-white/20 uppercase font-bold">Subtle motion based on movement</div>
                 </div>
               </div>
               <button
                 onClick={() => setParallaxEnabled(!parallaxEnabled)}
-                className={`w-10 h-5 rounded-full relative transition-all duration-300 ${parallaxEnabled ? 'bg-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.3)]' : 'bg-white/10'}`}
+                className={`w-10 h-5 rounded-full relative transition-all duration-300 ${parallaxEnabled ? 'bg-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.3)]' : 'bg-slate-300 dark:bg-white/10'}`}
               >
                 <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all duration-300 ${parallaxEnabled ? 'left-6' : 'left-1'}`} />
               </button>
             </div>
 
-            {/* futuristic animated visual effects */}
+            {/* Messenger Themes */}
             <div className="space-y-2.5">
-              <span className="text-[10px] font-black uppercase tracking-widest text-white/40 flex items-center gap-1.5">
-                <Sparkles size={12} className="text-aeirmist-cyan" />
-                Choose a Special Effect
-              </span>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {PRESET_EFFECTS.map((fx) => {
-                  const isCurrent = fx.id === effectType;
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-white/50 flex items-center gap-1.5">
+                  <Palette size={13} className="text-aeirmist-cyan" />
+                  Chat Themes & Bubble Gradients
+                </span>
+                <span className="text-[9px] font-bold text-slate-400 dark:text-white/30 uppercase tracking-wider">
+                  8 Presets
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {MESSENGER_THEMES.map((theme) => {
+                  const isCurrent = theme.id === selectedThemeId;
                   return (
                     <button
-                      key={fx.id}
-                      onClick={() => setEffectType(fx.id)}
-                      className={`p-3 rounded-xl border text-left transition-all ${
+                      key={theme.id}
+                      type="button"
+                      onClick={() => handleSelectTheme(theme)}
+                      className={`group p-2.5 rounded-2xl border text-left transition-all duration-200 relative overflow-hidden flex flex-col justify-between ${
                         isCurrent 
-                          ? 'border-aeirmist-cyan bg-aeirmist-cyan/5 shadow-[0_0_15px_rgba(0,242,255,0.06)]' 
-                          : 'border-white/5 bg-black/20 hover:border-white/10 hover:bg-black/30'
+                          ? 'border-aeirmist-cyan bg-aeirmist-cyan/10 dark:bg-aeirmist-cyan/15 shadow-[0_0_20px_rgba(0,242,255,0.15)] ring-2 ring-aeirmist-cyan/30 scale-[1.02]' 
+                          : 'border-slate-200 dark:border-white/10 bg-white dark:bg-white/[0.03] hover:border-slate-300 dark:hover:border-white/20 hover:scale-[1.01]'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className={`text-[10px] uppercase font-black tracking-widest ${isCurrent ? 'text-aeirmist-cyan' : 'text-white/70'}`}>
-                          {fx.name}
-                        </span>
-                        {isCurrent && <Check size={12} className="text-aeirmist-cyan" />}
+                      <div className="flex items-center justify-between mb-2">
+                        {/* Messenger Dual Gradient Theme Swatch */}
+                        <div 
+                          className="w-7 h-7 rounded-full shadow-md flex items-center justify-center p-[2px] border border-white/30 shrink-0"
+                          style={{ background: theme.bubbleGradient }}
+                        >
+                          <div 
+                            className="w-3.5 h-3.5 rounded-full" 
+                            style={{ background: isLight ? theme.bgGradientLight : theme.bgGradientDark }} 
+                          />
+                        </div>
+                        {isCurrent && (
+                          <div className="w-5 h-5 rounded-full bg-aeirmist-cyan text-black flex items-center justify-center shadow-sm shrink-0">
+                            <Check size={11} strokeWidth={3} />
+                          </div>
+                        )}
                       </div>
-                      <div className="text-[8px] text-white/30 uppercase mt-1 leading-relaxed font-bold">
-                        {fx.desc}
+                      <div>
+                        <div className={`text-[10px] font-bold truncate leading-tight ${isCurrent ? 'text-aeirmist-cyan' : 'text-slate-800 dark:text-white/90'}`}>
+                          {theme.name}
+                        </div>
+                        <div className="text-[8px] text-slate-400 dark:text-white/40 truncate mt-0.5 font-medium">
+                          {theme.description}
+                        </div>
                       </div>
                     </button>
                   );
@@ -753,8 +858,8 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
             </div>
 
             {/* scope selection */}
-            <div className="space-y-2 bg-black/20 border border-white/5 p-3 rounded-2xl">
-              <span className="text-[10px] font-black uppercase tracking-widest text-white/40 flex items-center gap-1">
+            <div className="space-y-2 bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 p-3 rounded-2xl">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-white/40 flex items-center gap-1">
                 <Info size={12} />
                 Apply changes to
               </span>
@@ -764,8 +869,8 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                   onClick={() => setSaveScope('me')}
                   className={`py-2.5 px-3 rounded-xl border font-bold uppercase text-[9px] tracking-widest transition-all ${
                     saveScope === 'me' 
-                      ? 'border-aeirmist-cyan text-white bg-aeirmist-cyan/10 shadow-[0_0_15px_rgba(0,242,255,0.15)]' 
-                      : 'border-white/5 text-white/40 hover:text-white/60 hover:border-white/10'
+                      ? 'border-aeirmist-cyan text-slate-900 dark:text-white bg-aeirmist-cyan/15 shadow-[0_0_15px_rgba(0,242,255,0.15)] font-black' 
+                      : 'border-slate-200 dark:border-white/5 text-slate-600 dark:text-white/40 hover:text-slate-900 dark:hover:text-white/60 hover:border-slate-300'
                   }`}
                 >
                   Apply for Me
@@ -775,14 +880,14 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
                   onClick={() => setSaveScope('both')}
                   className={`py-2.5 px-3 rounded-xl border font-bold uppercase text-[9px] tracking-widest transition-all ${
                     saveScope === 'both' 
-                      ? 'border-aeirmist-magenta text-white bg-aeirmist-magenta/10 shadow-[0_0_15px_rgba(255,0,234,0.15)]' 
-                      : 'border-white/5 text-white/40 hover:text-white/60 hover:border-white/10'
+                      ? 'border-aeirmist-magenta text-slate-900 dark:text-white bg-aeirmist-magenta/15 shadow-[0_0_15px_rgba(255,0,234,0.15)] font-black' 
+                      : 'border-slate-200 dark:border-white/5 text-slate-600 dark:text-white/40 hover:text-slate-900 dark:hover:text-white/60 hover:border-slate-300'
                   }`}
                 >
                   Apply for Both
                 </button>
               </div>
-              <div className="text-[8px] font-mono text-white/40 uppercase tracking-wide text-center mt-1">
+              <div className="text-[8px] font-mono text-slate-500 dark:text-white/40 uppercase tracking-wide text-center mt-1">
                 {saveScope === 'me' ? '* Visible in this inbox for you only' : '* Visible to both participants in this chat'}
               </div>
             </div>
@@ -790,10 +895,10 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
           </div>
 
           {/* Action button triggers */}
-          <div className="border-t border-white/5 pt-4 mt-6 flex gap-3">
+          <div className="border-t border-slate-200 dark:border-white/5 pt-4 mt-6 flex gap-3">
             <button
               onClick={onClose}
-              className="flex-1 py-3 border border-white/10 rounded-xl text-white/60 hover:text-white font-bold uppercase text-[10px] tracking-widest hover:border-white/20 transition-all active:scale-95"
+              className="flex-1 py-3 border border-slate-200 dark:border-white/10 rounded-xl text-slate-700 dark:text-white/60 hover:text-slate-900 dark:hover:text-white font-bold uppercase text-[10px] tracking-widest hover:border-slate-300 dark:hover:border-white/20 transition-all active:scale-95"
             >
               Cancel
             </button>

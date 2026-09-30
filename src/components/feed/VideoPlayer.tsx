@@ -84,6 +84,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [autoPlay]);
 
+  // Teardown on unmount to clear timers and stop lingering background video/audio
+  useEffect(() => {
+    return () => {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
+    };
+  }, []);
+
   const handlePlayPause = (e: React.MouseEvent) => {
     e.stopPropagation();
     const video = videoRef.current;

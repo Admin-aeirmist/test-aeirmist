@@ -8,7 +8,7 @@ import { useAeirmist } from '../context/AeirmistContext';
 import { useReport } from './reporting/ReportContext';
 import { REWARDS } from '../lib/aeirmistRanks';
 import { usePostAnalytics } from '../hooks/usePostAnalytics';
-import { getAvatarUrl, BLANK_DP } from '../lib/avatar';
+import { getAvatarUrl, BLANK_DP, getBlankDp } from '../lib/avatar';
 import { InsightsDashboard } from './analytics/InsightsDashboard';
 import { postAnalytics } from '../services/PostAnalyticsService';
 import { logger } from '@/src/utils/logger';
@@ -51,7 +51,7 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
   );
   const displayAuthorName = isDeletedAuthor ? 'Aeirmist User' : (post.authorName || 'Aeirmist User');
   const isOwnPost = Boolean(profile?.id && postAuthorId && (postAuthorId === profile.id || postAuthorId === profile.uid));
-  const authorPhoto = isDeletedAuthor ? BLANK_DP : (isOwnPost ? (localAvatarURL || profile.photoURL || post.authorPhoto) : post.authorPhoto);
+  const authorPhoto = isDeletedAuthor ? getBlankDp() : (isOwnPost ? (localAvatarURL || profile.photoURL || post.authorPhoto) : post.authorPhoto);
 
   const images = post.mediaUrls && post.mediaUrls.length > 0 
     ? post.mediaUrls 
@@ -128,10 +128,10 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
               <img 
                 src={getAvatarUrl(authorPhoto, displayAuthorName)} 
                 alt={displayAuthorName} 
-                className="w-full h-full object-cover bg-neutral-900" 
+                className="w-full h-full object-cover" 
                 referrerPolicy="no-referrer" 
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = BLANK_DP;
+                  (e.target as HTMLImageElement).src = getBlankDp();
                 }}
               />
             </div>

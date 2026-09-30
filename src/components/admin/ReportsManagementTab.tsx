@@ -12,6 +12,60 @@ export const ReportsManagementTab = ({ db, addToast }: { db: any; addToast: any 
   const [filter, setFilter] = useState<'pending' | 'resolved' | 'critical'>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
+  const [isSendingReply, setIsSendingReply] = useState(false);
+
+  const handleSendReply = async () => {
+    if (!db || !selectedReport || !replyMessage.trim() || isSendingReply) return;
+    setIsSendingReply(true);
+    try {
+      const targetUserId = selectedReport.reporterUid || selectedReport.reporterId || selectedReport.creatorId;
+      
+      // 1. Update report in Firestore with admin reply
+      const reportRef = doc(db, 'reports', selectedReport.id);
+      await updateDoc(reportRef, {
+        adminReply: replyMessage.trim(),
+        repliedAt: serverTimestamp(),
+        status: 'resolved',
+        updatedAt: serverTimestamp()
+      });
+
+      // 2. Deliver notification to user
+      if (targetUserId && targetUserId !== 'guest' && targetUserId !== 'anonymous') {
+        const notifRef = doc(collection(db, 'notifications'));
+        await setDoc(notifRef, {
+          recipientId: targetUserId,
+          userId: targetUserId,
+          fromUserId: 'aeirmist_system',
+          fromUserUid: 'aeirmist_system',
+          type: 'system',
+          title: `Admin Response: Report #${selectedReport.reportId || selectedReport.id.slice(0, 6)}`,
+          message: replyMessage.trim(),
+          reportId: selectedReport.reportId || selectedReport.id,
+          read: false,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      addToast({
+        title: 'Reply Sent',
+        message: 'Notification reply successfully delivered to the user.',
+        type: 'success'
+      });
+
+      setSelectedReport((prev: any) => prev ? { ...prev, adminReply: replyMessage.trim(), status: 'resolved' } : null);
+      setReplyMessage('');
+    } catch (err: any) {
+      logger.error('Error sending reply to report:', err);
+      addToast({
+        title: 'Reply Error',
+        message: err?.message || 'Failed to send reply notification.',
+        type: 'warning'
+      });
+    } finally {
+      setIsSendingReply(false);
+    }
+  };
 
   useEffect(() => {
     if (!db) return;
@@ -230,6 +284,47 @@ export const ReportsManagementTab = ({ db, addToast }: { db: any; addToast: any 
                       <p className="text-xs text-white/80 leading-relaxed">{selectedReport.description}</p>
                     </div>
                   )}
+                </div>
+
+                {/* Admin Reply & Resolution Section */}
+                <div className="p-4 rounded-xl bg-aeirmist-cyan/[0.03] border border-aeirmist-cyan/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-aeirmist-cyan flex items-center gap-1.5">
+                      <Mail size={13} /> Reply to User via Notification
+                    </span>
+                    {selectedReport.adminReply && (
+                      <span className="text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                        Replied
+                      </span>
+                    )}
+                  </div>
+
+                  {selectedReport.adminReply && (
+                    <div className="p-3 rounded-lg bg-black/40 border border-white/5 text-xs text-white/80 space-y-1">
+                      <span className="text-[9px] font-mono text-white/40 block">Last Sent Reply:</span>
+                      <p>{selectedReport.adminReply}</p>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <textarea
+                      value={replyMessage}
+                      onChange={(e) => setReplyMessage(e.target.value)}
+                      placeholder="Write reply message to user (this will be delivered to their Notification Alerts)..."
+                      rows={3}
+                      className="w-full p-3 rounded-xl bg-black/50 border border-white/10 focus:border-aeirmist-cyan text-xs text-white placeholder:text-white/30 outline-none resize-none transition-colors"
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSendReply}
+                        disabled={isSendingReply || !replyMessage.trim()}
+                        className="px-4 py-2 rounded-xl bg-aeirmist-cyan hover:brightness-110 active:scale-95 text-black font-black uppercase text-[10px] tracking-wider transition-all disabled:opacity-40 flex items-center gap-1.5 shadow-[0_0_15px_rgba(0,242,255,0.2)]"
+                      >
+                        <Mail size={12} />
+                        <span>{isSendingReply ? 'Sending...' : 'Send Reply & Notify'}</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {selectedReport.attachments && selectedReport.attachments.length > 0 && (

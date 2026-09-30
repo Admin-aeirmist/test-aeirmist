@@ -47,7 +47,7 @@ export const MarketplaceCreateShopModal: React.FC<CreateShopModalProps> = ({
   onClose,
   onShopCreated
 }) => {
-  const { db, profile, addToast, uploadMedia, earnPoints } = useAeirmist();
+  const { db, profile, user, addToast, uploadMedia, earnPoints } = useAeirmist();
 
   // Current Step: 1 to 5
   const [currentStep, setCurrentStep] = useState<number>(1);
@@ -184,8 +184,10 @@ export const MarketplaceCreateShopModal: React.FC<CreateShopModalProps> = ({
     const combinedLocation = compileLocation();
     const contactInfoString = [phone, email].filter(Boolean).join(' | ');
 
-    const newShopData: Omit<StoreType, 'id'> = {
+    const ownerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
+    const newShopData: any = {
       ownerId: profile.id,
+      ownerUid: ownerUid,
       name: name.trim(),
       username: generatedUsername,
       description: description.trim(),

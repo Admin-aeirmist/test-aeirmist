@@ -1,0 +1,67 @@
+﻿App_backup.tsx(9,33): error TS2307: Cannot find module './components/Navigation' or its corresponding type declarations.
+App_backup.tsx(10,28): error TS2307: Cannot find module './components/CreatePost' or its corresponding type declarations.
+App_backup.tsx(11,47): error TS2307: Cannot find module './context/AeirmistContext' or its corresponding type declarations.
+App_backup.tsx(12,30): error TS2307: Cannot find module './lib/avatar' or its corresponding type declarations.
+App_backup.tsx(13,41): error TS2307: Cannot find module './context/ThemeContext' or its corresponding type declarations.
+App_backup.tsx(14,51): error TS2307: Cannot find module './context/AppearanceContext' or its corresponding type declarations.
+App_backup.tsx(15,34): error TS2307: Cannot find module './components/ui/DynamicAesthetic' or its corresponding type declarations.
+App_backup.tsx(16,37): error TS2307: Cannot find module './components/ui/GlobalAppBackground' or its corresponding type declarations.
+App_backup.tsx(17,32): error TS2307: Cannot find module './components/ui/AdaptiveEngine' or its corresponding type declarations.
+App_backup.tsx(18,33): error TS2307: Cannot find module './components/ui/EmotionalEngine' or its corresponding type declarations.
+App_backup.tsx(19,28): error TS2307: Cannot find module './components/auth/AuthSystem' or its corresponding type declarations.
+App_backup.tsx(20,30): error TS2307: Cannot find module './components/auth/SignupWizard' or its corresponding type declarations.
+App_backup.tsx(21,31): error TS2307: Cannot find module './components/ErrorBoundary' or its corresponding type declarations.
+App_backup.tsx(23,30): error TS2307: Cannot find module './components/ui/AeirmistLogo' or its corresponding type declarations.
+App_backup.tsx(24,32): error TS2307: Cannot find module './components/reporting/ReportContext' or its corresponding type declarations.
+App_backup.tsx(26,32): error TS2307: Cannot find module './components/feed/PostDetailView' or its corresponding type declarations.
+App_backup.tsx(27,35): error TS2307: Cannot find module './components/ui/PermissionManager' or its corresponding type declarations.
+App_backup.tsx(28,25): error TS2307: Cannot find module './utils/backNavigation' or its corresponding type declarations.
+App_backup.tsx(29,34): error TS2307: Cannot find module './components/ResonanceTracker' or its corresponding type declarations.
+App_backup.tsx(30,21): error TS2307: Cannot find module './components/ui/SEO' or its corresponding type declarations.
+App_backup.tsx(31,27): error TS2307: Cannot find module './services/AnalyticsService' or its corresponding type declarations.
+App_backup.tsx(32,37): error TS2307: Cannot find module './services/FollowRecommendationService' or its corresponding type declarations.
+App_backup.tsx(33,39): error TS2307: Cannot find module './context/NetworkStatusContext' or its corresponding type declarations.
+App_backup.tsx(34,31): error TS2307: Cannot find module './components/ui/NetworkBanner' or its corresponding type declarations.
+App_backup.tsx(35,35): error TS2307: Cannot find module './components/notifications/ToastNotification' or its corresponding type declarations.
+App_backup.tsx(36,46): error TS2307: Cannot find module './components/profile/VerificationCelebrationModal' or its corresponding type declarations.
+App_backup.tsx(97,51): error TS2307: Cannot find module './components/feed/HomeFeedSystem' or its corresponding type declarations.
+App_backup.tsx(98,44): error TS2307: Cannot find module './components/Sidebar' or its corresponding type declarations.
+App_backup.tsx(99,46): error TS2307: Cannot find module './components/Messenger' or its corresponding type declarations.
+App_backup.tsx(100,50): error TS2307: Cannot find module './components/discover/ExploreSystem' or its corresponding type declarations.
+App_backup.tsx(101,54): error TS2307: Cannot find module './components/dashboard/AeirmistDashboard' or its corresponding type declarations.
+App_backup.tsx(102,51): error TS2307: Cannot find module './components/settings/SettingsSystem' or its corresponding type declarations.
+App_backup.tsx(103,55): error TS2307: Cannot find module './components/notifications/NotificationCenter' or its corresponding type declarations.
+App_backup.tsx(104,50): error TS2307: Cannot find module './components/profile/ProfileSystem' or its corresponding type declarations.
+App_backup.tsx(105,46): error TS2307: Cannot find module './components/videos/VideoFeed' or its corresponding type declarations.
+App_backup.tsx(106,47): error TS2307: Cannot find module './components/admin/AdminPanel' or its corresponding type declarations.
+App_backup.tsx(107,56): error TS2307: Cannot find module './components/legal/CommunityGuidelines' or its corresponding type declarations.
+App_backup.tsx(109,46): error TS2307: Cannot find module './components/CallModal' or its corresponding type declarations.
+App_backup.tsx(110,51): error TS2307: Cannot find module './components/ui/AeirmistCamera' or its corresponding type declarations.
+App_backup.tsx(111,50): error TS2307: Cannot find module './components/marketplace/PaymentResult' or its corresponding type declarations.
+App_backup.tsx(112,52): error TS2307: Cannot find module './components/auth/AccountSwitcher' or its corresponding type declarations.
+App_backup.tsx(113,62): error TS2307: Cannot find module './components/auth/CompleteYourAccountScreen' or its corresponding type declarations.
+App_backup.tsx(114,60): error TS2307: Cannot find module './components/auth/PasswordOnboardingModal' or its corresponding type declarations.
+App_backup.tsx(115,56): error TS2307: Cannot find module './components/auth/SetupScreens' or its corresponding type declarations.
+App_backup.tsx(116,56): error TS2307: Cannot find module './components/auth/SetupScreens' or its corresponding type declarations.
+App_backup.tsx(117,42): error TS2307: Cannot find module './components/messenger/Vault' or its corresponding type declarations.
+App_backup.tsx(118,48): error TS2307: Cannot find module './components/auth/SetupScreens' or its corresponding type declarations.
+App_backup.tsx(119,54): error TS2307: Cannot find module './components/auth/SetupScreens' or its corresponding type declarations.
+App_backup.tsx(120,49): error TS2307: Cannot find module './components/auth/BannedScreen' or its corresponding type declarations.
+App_backup.tsx(127,25): error TS2307: Cannot find module './components/feed/HomeFeedSystem' or its corresponding type declarations.
+App_backup.tsx(127,69): error TS2307: Cannot find module './components/Sidebar' or its corresponding type declarations.
+App_backup.tsx(128,30): error TS2307: Cannot find module './components/Messenger' or its corresponding type declarations.
+App_backup.tsx(129,29): error TS2307: Cannot find module './components/discover/ExploreSystem' or its corresponding type declarations.
+App_backup.tsx(130,28): error TS2307: Cannot find module './components/profile/ProfileSystem' or its corresponding type declarations.
+App_backup.tsx(131,29): error TS2307: Cannot find module './components/settings/SettingsSystem' or its corresponding type declarations.
+App_backup.tsx(132,27): error TS2307: Cannot find module './components/videos/VideoFeed' or its corresponding type declarations.
+App_backup.tsx(133,30): error TS2307: Cannot find module './components/dashboard/AeirmistDashboard' or its corresponding type declarations.
+App_backup.tsx(134,34): error TS2307: Cannot find module './components/notifications/NotificationCenter' or its corresponding type declarations.
+App_backup.tsx(135,26): error TS2307: Cannot find module './components/admin/AdminPanel' or its corresponding type declarations.
+src/components/CallModal.tsx(132,9): error TS2304: Cannot find name 'setCallStream'.
+src/components/ui/AeirmistCamera.tsx(107,9): error TS2322: Type '{ type: "file"; ref: RefObject<HTMLInputElement>; accept: string; capture: "environment"; className: string; onChange: (e: ChangeEvent<HTMLInputElement, Element>) => void; onCancel: () => void; }' is not assignable to type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'.
+  Property 'onCancel' does not exist on type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'.
+src/components/ui/AeirmistCamera.tsx(116,9): error TS2322: Type '{ type: "file"; ref: RefObject<HTMLInputElement>; accept: string; capture: "environment"; className: string; onChange: (e: ChangeEvent<HTMLInputElement, Element>) => void; onCancel: () => void; }' is not assignable to type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'.
+  Property 'onCancel' does not exist on type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'.
+src/components/ui/AeirmistCamera.tsx(124,9): error TS2322: Type '{ type: "file"; ref: RefObject<HTMLInputElement>; accept: string; className: string; onChange: (e: ChangeEvent<HTMLInputElement, Element>) => void; onCancel: () => void; }' is not assignable to type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'.
+  Property 'onCancel' does not exist on type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'.
+src/services/accountSyncService.ts(123,26): error TS2448: Block-scoped variable 'existingCanonical' used before its declaration.

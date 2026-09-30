@@ -792,9 +792,17 @@ export const NotesSystem = ({ chats, onChatSelect, onReplyNote }: { chats: any[]
           hiddenFrom: hiddenFromUserIds,
           createdAt: serverTimestamp()
         });
-      } catch (err) {}
+      } catch (err: any) {
+        addToast?.({ title: "Update Failed", message: err?.message || "Could not update note. Please try again.", type: "warning" });
+        return;
+      }
     } else {
-      await createNote(noteContent, audience, musicString, mediaUrl, mediaType, hiddenFromUserIds, musicData);
+      try {
+        await createNote(noteContent, audience, musicString, mediaUrl, mediaType, hiddenFromUserIds, musicData);
+      } catch (err: any) {
+        addToast?.({ title: "Share Failed", message: err?.message || "Could not share note. Please try again.", type: "warning" });
+        return;
+      }
     }
     
     setNoteContent('');

@@ -62,12 +62,12 @@ class MediaService {
         initialQuality = 0.60;
         break;
       case MediaQuality.HD:
-        maxWidthOrHeight = 1920;
-        initialQuality = 0.85;
+        maxWidthOrHeight = 2560;
+        initialQuality = 0.92;
         break;
       case MediaQuality.ULTRA:
-        maxWidthOrHeight = 2048;
-        initialQuality = 0.90;
+        maxWidthOrHeight = 2560;
+        initialQuality = 0.95;
         break;
       case MediaQuality.AUTO:
       default:
@@ -227,11 +227,17 @@ class MediaService {
     
     // Step 1: Pre-compression if image
     let uploadFile = file;
+    const isPreOptimizedCrop = file.name.startsWith('aeirmist_cover_') || file.name.startsWith('aeirmist_avatar_');
     if (file.type.startsWith('image/')) {
-      logger.info(`[MediaService] Image detected, compressing for max speed (Quality: ${task.quality})...`);
-      onProgress(5, 'Optimizing...');
-      uploadFile = await this.compressImage(file, task.quality);
-      logger.info(`[MediaService] Compression complete. New size: ${uploadFile.size} bytes`);
+      if (isPreOptimizedCrop) {
+        logger.info(`[MediaService] High-resolution pre-cropped asset detected (${file.name}), preserving pristine 1080p HD quality without duplicate compression.`);
+        onProgress(5, 'Preserving 1080p HD...');
+      } else {
+        logger.info(`[MediaService] Image detected, compressing for max speed (Quality: ${task.quality})...`);
+        onProgress(5, 'Optimizing...');
+        uploadFile = await this.compressImage(file, task.quality);
+        logger.info(`[MediaService] Compression complete. New size: ${uploadFile.size} bytes`);
+      }
     } else {
       logger.info(`[MediaService] No compression needed for ${file.type}`);
     }

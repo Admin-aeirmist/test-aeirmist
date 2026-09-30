@@ -9,6 +9,8 @@ export interface ChatWallpaperConfig {
   neonIntensity?: number; // scale factor
   bubbleStyle?: string; // 'solid' | 'outline' | 'glass' | 'none'
   effectType?: string; // 'none' | 'cyber-grid' | 'liquid-neon' | 'matrix-rain' | 'neon-glow'
+  themeId?: string; // Messenger-style theme identifier
+  bubbleGradient?: string; // Custom outgoing bubble gradient (e.g. Ocean Blue, Sunset, etc.)
   cropPosition?: { x: number; y: number; zoom: number }; // x/y are 0-100 (percent position), zoom is 1.0-2.5
   parallaxEnabled?: boolean;
 }
@@ -23,28 +25,47 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
   globalThemeSettings
 }) => {
   const [offset, setOffset] = React.useState({ x: 0, y: 0 });
+  const [isLight, setIsLight] = React.useState(() => {
+    return typeof document !== 'undefined' && document.documentElement.classList.contains('light');
+  });
+
+  React.useEffect(() => {
+    const checkTheme = () => {
+      setIsLight(document.documentElement.classList.contains('light'));
+    };
+    checkTheme();
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   // Merge or resolve which configuration to use (per-chat taking precedence over global)
   const config = useMemo(() => {
     const isChatConfigured = chatThemeSettings && (
       chatThemeSettings.wallpaperURL || 
       chatThemeSettings.effectType !== undefined ||
-      chatThemeSettings.overlayColor
+      chatThemeSettings.overlayColor ||
+      chatThemeSettings.themeId
     );
     const resolved = isChatConfigured ? chatThemeSettings : globalThemeSettings;
     
+    const defaultOverlay = isLight ? 'rgba(255, 255, 255, 0.1)' : '#000000';
+    const effectiveOverlay = (resolved?.overlayColor && resolved.overlayColor !== '#000000')
+      ? resolved.overlayColor
+      : defaultOverlay;
+
     return {
       wallpaperURL: resolved?.wallpaperURL || '',
       blurLevel: resolved?.blurLevel !== undefined ? resolved.blurLevel : 0,
-      brightness: resolved?.brightness !== undefined ? resolved.brightness : 0.65,
-      overlayColor: resolved?.overlayColor || '#000000',
+      brightness: resolved?.brightness !== undefined ? resolved.brightness : (isLight ? 0.95 : 0.65),
+      overlayColor: effectiveOverlay,
       neonIntensity: resolved?.neonIntensity !== undefined ? resolved.neonIntensity : 0.8,
       effectType: resolved?.effectType || 'none',
       bubbleStyle: resolved?.bubbleStyle || 'glass',
       cropPosition: resolved?.cropPosition || { x: 50, y: 50, zoom: 1 },
       parallaxEnabled: resolved?.parallaxEnabled || false,
     };
-  }, [chatThemeSettings, globalThemeSettings]);
+  }, [chatThemeSettings, globalThemeSettings, isLight]);
 
   React.useEffect(() => {
     if (!config.parallaxEnabled) {
@@ -78,10 +99,16 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
 
   const backgroundStyle = useMemo(() => {
     const isGradient = config.wallpaperURL.startsWith('linear-gradient') || config.wallpaperURL.startsWith('radial-gradient');
-    
+    const isImage = Boolean(config.wallpaperURL && !isGradient);
+
+    // In light mode, maintain vibrant photo clarity so it is recognizable and aesthetic
+    const effectiveOpacity = isLight 
+      ? (isImage ? 1 : Math.max(0.75, config.brightness))
+      : config.brightness;
+
     const style: React.CSSProperties = {
-      filter: `blur(${config.blurLevel}px)`,
-      opacity: config.brightness,
+      filter: `blur(${config.blurLevel}px)${isLight && isImage && config.brightness < 0.85 ? ` brightness(${0.8 + config.brightness * 0.2})` : ''}`,
+      opacity: effectiveOpacity,
       transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
       zIndex: 0,
       transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
@@ -95,12 +122,14 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
       style.backgroundSize = config.cropPosition.zoom === 1 ? 'cover' : `${config.cropPosition.zoom * 100}%`;
       style.backgroundRepeat = 'no-repeat';
     } else {
-      // Default cyberpunk neural abstract fallback background if none configured
-      style.background = 'linear-gradient(135deg, rgba(14, 12, 17, 1) 0%, rgba(20, 10, 30, 1) 50%, rgba(10, 20, 24, 1) 100%)';
+      // Default fallback background if none configured
+      style.background = isLight
+        ? 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 50%, #f1f5f9 100%)'
+        : 'linear-gradient(135deg, rgba(14, 12, 17, 1) 0%, rgba(20, 10, 32, 1) 50%, rgba(8, 14, 20, 1) 100%)';
     }
 
     return style;
-  }, [config.wallpaperURL, config.blurLevel, config.brightness, config.cropPosition, offset]);
+  }, [config.wallpaperURL, config.blurLevel, config.brightness, config.cropPosition, offset, isLight]);
 
   // Effect overlays render
   const renderEffect = () => {
@@ -206,10 +235,19 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
   };
 
   return (
-    <div id="chat-wallpaper-system-layer" className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden select-none" style={{ zIndex: 0 }}>
+    <div 
+      id="chat-wallpaper-system-layer" 
+      data-wallpaper-layer="true"
+      className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden select-none" 
+      style={{ zIndex: 0 }}
+    >
       {/* Background Underlay Color */}
       <div 
-        className="absolute inset-0 bg-aeirmist-bg transition-colors duration-500" 
+        className={`absolute inset-0 transition-colors duration-500 ${
+          config.wallpaperURL 
+            ? 'bg-transparent' 
+            : (isLight ? 'bg-slate-100' : 'bg-aeirmist-bg')
+        }`} 
         style={{ zIndex: -2 }} 
       />
 
@@ -224,10 +262,12 @@ export const ChatWallpaperLayer: React.FC<ChatWallpaperLayerProps> = React.memo(
 
       {/* Customizable Colored Overlay Tint */}
       <div 
-        className="absolute inset-0 transition-opacity duration-500" 
+        className="absolute inset-0 transition-opacity duration-500 pointer-events-none" 
         style={{
           backgroundColor: config.overlayColor,
-          opacity: Math.max(0, 1 - config.brightness), // Dim level maps directly to overlay visibility
+          opacity: isLight 
+            ? (config.brightness < 0.85 ? Math.max(0, (0.85 - config.brightness) * 0.35) : 0)
+            : Math.max(0, 1 - config.brightness),
           zIndex: -1
         }} 
       />

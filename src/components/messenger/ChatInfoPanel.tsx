@@ -30,6 +30,8 @@ import { collection, query, where, getDocs, limit, orderBy, doc, updateDoc, getD
 import { Chat } from '../../types/messenger';
 import { logger } from '@/src/utils/logger';
 import { DownloadManagerService } from '../../services/DownloadManagerService';
+import { useUserStoryState } from '../ui/Avatar';
+import { StoryViewer } from '../feed/StoriesSystem';
 
 
 export const ChatInfoPanel = ({ 
@@ -45,7 +47,24 @@ export const ChatInfoPanel = ({
   onOpenAppearance?: () => void,
   onUserClick?: (user: any) => void
 }) => {
-  const { db, profile, toggleNotification, deleteConversation, toggleBlockUser, toggleRestrictUser, toggleCloseFriend, isCloseFriend, setConversationTheme, toggleVanishMode, isBlocked: checkBlocked, isRestricted: checkRestricted, addToast } = useAeirmist();
+  const { 
+    db, 
+    user, 
+    profile, 
+    toggleNotification, 
+    deleteConversation, 
+    toggleBlockUser, 
+    toggleRestrictUser, 
+    toggleCloseFriend, 
+    isCloseFriend, 
+    setConversationTheme, 
+    toggleVanishMode, 
+    isBlocked: checkBlocked, 
+    isRestricted: checkRestricted, 
+    addToast,
+    stories,
+    optimisticStories
+  } = useAeirmist();
   const [sharedMedia, setSharedMedia] = useState<any[]>([]);
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [otherProfile, setOtherProfile] = useState<any>(null);
@@ -55,8 +74,41 @@ export const ChatInfoPanel = ({
   const [editValue, setEditValue] = useState<string>('');
   const [showPermissionsToggle, setShowPermissionsToggle] = useState(false);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState<number | null>(null);
+  const [activeStoryGroup, setActiveStoryGroup] = useState<any | null>(null);
 
   const otherId = chat.otherParticipantId || chat.profileIds?.find(id => id !== profile?.id);
+  const otherUid = otherProfile?.uid || otherProfile?.authorUid || (otherProfile?.id && otherProfile.id !== otherId ? otherProfile.id : undefined);
+
+  // Compute active user stories from memory/context
+  const userStories = React.useMemo(() => {
+    if (!otherId && !otherUid) return [];
+    const yesterdayMs = Date.now() - 24 * 60 * 60 * 1000;
+    const all = [...(stories || []), ...(optimisticStories || [])];
+    return all.filter((s: any) => {
+      if (!s) return false;
+      const isMatch = (
+        (otherId && (s.userId === otherId || s.authorUid === otherId || s.authorId === otherId)) ||
+        (otherUid && (s.userId === otherUid || s.authorUid === otherUid || s.authorId === otherUid))
+      );
+      if (!isMatch) return false;
+      const created = s.createdAt;
+      if (!created) return true;
+      const ms = typeof created.toMillis === 'function' ? created.toMillis() : new Date(created).getTime();
+      return !isNaN(ms) ? ms >= yesterdayMs : true;
+    });
+  }, [stories, optimisticStories, otherId, otherUid]);
+
+  // Real-time hook for Firestore story status
+  const autoStoryState = useUserStoryState(otherId, otherUid);
+  const hasStory = userStories.length > 0 || autoStoryState !== 'none';
+  const hasUnseenStory = React.useMemo(() => {
+    if (!hasStory) return false;
+    if (userStories.length > 0 && user?.uid) {
+      return userStories.some((s: any) => !s.viewers || !s.viewers.includes(user.uid));
+    }
+    return autoStoryState === 'active';
+  }, [hasStory, userStories, user?.uid, autoStoryState]);
+
   const [searchPopoverOpen, setSearchPopoverOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState('');
   
@@ -232,28 +284,64 @@ export const ChatInfoPanel = ({
     }
   };
 
+  const handleAvatarClick = () => {
+    if (hasStory) {
+      setActiveStoryGroup({
+        userId: otherId || otherUid,
+        userName: otherProfile?.displayName || chat.name,
+        userAvatar: otherProfile?.photoURL || chat.photo,
+        stories: userStories.length > 0 ? userStories : [{
+          id: 'story_' + (otherId || otherUid),
+          userId: otherId || otherUid,
+          userName: otherProfile?.displayName || chat.name,
+          userAvatar: otherProfile?.photoURL || chat.photo,
+          mediaUrl: otherProfile?.photoURL || chat.photo,
+          createdAt: new Date()
+        }]
+      });
+    } else {
+      handleVisitProfile();
+    }
+  };
+
   return (
     <motion.div
       initial={{ x: 300 }}
       animate={{ x: 0 }}
       exit={{ x: 300 }}
-      className="w-full md:w-80 h-full border-l border-white/10 bg-[#06111a]/95 backdrop-blur-3xl overflow-y-auto no-scrollbar shadow-[-20px_0_40px_rgba(0,0,0,0.5)] z-20 flex flex-col"
+      className="w-full md:w-80 h-full border-l border-slate-200 dark:border-white/10 bg-white/95 dark:bg-[#06111a]/95 backdrop-blur-3xl overflow-y-auto no-scrollbar shadow-[-20px_0_40px_rgba(0,0,0,0.5)] z-20 flex flex-col"
     >
-      <div className="flex-shrink-0 p-8 text-center border-b border-white/5 relative overflow-hidden flex flex-col items-center">
+      <div className="flex-shrink-0 p-8 text-center border-b border-slate-200/80 dark:border-white/5 relative overflow-hidden flex flex-col items-center">
         {/* Mobile Close Button */}
         <div className="md:hidden absolute top-4 left-4 z-50">
-          <button onClick={onClose} className="p-2 bg-white/5 rounded-full text-white/70 hover:text-white hover:bg-white/10 backdrop-blur border border-white/10">
+          <button onClick={onClose} className="p-2 bg-slate-100 dark:bg-white/5 rounded-full text-slate-600 dark:text-white/70 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/10 backdrop-blur border border-slate-200 dark:border-white/10">
              <ChevronLeft size={20} />
           </button>
         </div>
 
-        {/* Ambient background glow for info panel */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-40 h-40 bg-aeirmist-cyan/5 rounded-full blur-[60px] pointer-events-none" />
-
-        <div className="relative inline-block mb-4 cursor-pointer group" onClick={handleVisitProfile}>
-          <div className="w-24 h-24 rounded-3xl p-[2px] bg-gradient-to-tr from-aeirmist-cyan to-aeirmist-magenta relative z-10 group-hover:scale-105 transition-transform">
-            <div className="w-full h-full rounded-[22px] border-4 border-aeirmist-bg overflow-hidden relative">
-              <img src={getAvatarUrl(otherProfile?.photoURL || chat.photo)} alt={otherProfile?.displayName || chat.name} className="w-full h-full object-cover" />
+        <div 
+          className="relative inline-block mb-4 cursor-pointer group" 
+          onClick={handleAvatarClick}
+          title={hasStory ? (hasUnseenStory ? "View Story" : "Story viewed") : "View Profile"}
+        >
+          {/* Outer ring: only shown if user has an active or seen story */}
+          <div className={`w-24 h-24 rounded-3xl relative z-10 group-hover:scale-105 transition-all duration-300 ${
+            hasStory
+              ? hasUnseenStory
+                ? 'p-[2.5px] bg-gradient-to-tr from-aeirmist-cyan via-aeirmist-magenta to-aeirmist-cyan shadow-[0_0_16px_rgba(0,242,255,0.35)]'
+                : 'p-[2px] bg-slate-300 dark:bg-white/20 shadow-none'
+              : 'p-0 bg-transparent shadow-none'
+          }`}>
+            <div className={`w-full h-full overflow-hidden relative shadow-sm ${
+              hasStory
+                ? 'rounded-[21px] border-[3px] border-white dark:border-aeirmist-bg'
+                : 'rounded-3xl border-2 border-slate-200/90 dark:border-white/10'
+            }`}>
+              <img 
+                src={getAvatarUrl(otherProfile?.photoURL || chat.photo)} 
+                alt={otherProfile?.displayName || chat.name} 
+                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
+              />
               {/* Scanline Effect */}
               <div className="absolute inset-0 bg-gradient-to-b from-transparent via-aeirmist-cyan/10 to-transparent h-1/2 w-full animate-scan pointer-events-none" />
             </div>
@@ -262,13 +350,13 @@ export const ChatInfoPanel = ({
             <motion.div 
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
-              className="absolute bottom-1 right-1 w-4 h-4 bg-aeirmist-lime rounded-full border-2 border-aeirmist-bg shadow-[0_0_10px_rgba(191,255,0,0.5)] z-20" 
+              className="absolute bottom-1 right-1 w-4 h-4 bg-aeirmist-lime rounded-full border-2 border-white dark:border-aeirmist-bg shadow-[0_0_10px_rgba(191,255,0,0.5)] z-20" 
             />
           )}
         </div>
         
         <div className="flex items-center justify-center gap-1.5 mb-1 max-w-full px-2">
-          <h2 className="text-xl font-bold tracking-tight truncate cursor-pointer hover:text-aeirmist-cyan transition-colors" onClick={handleVisitProfile}>
+          <h2 className="text-xl font-bold tracking-tight truncate cursor-pointer text-slate-900 dark:text-white hover:text-aeirmist-cyan transition-colors" onClick={handleVisitProfile}>
             {otherProfile?.displayName || chat.name}
           </h2>
           {(otherProfile?.isVerified || chat.participantDetails?.[otherId || '']?.isVerified) && (
@@ -276,7 +364,7 @@ export const ChatInfoPanel = ({
           )}
         </div>
 
-        <p className="text-xs text-white/40 mb-5 font-medium tracking-wide">
+        <p className="text-xs text-slate-500 dark:text-white/40 mb-5 font-medium tracking-wide">
           @{otherProfile?.username || chat.participantDetails?.[otherId || '']?.username || (otherProfile?.displayName || chat.name).toLowerCase().replace(/\s+/g, '')}
         </p>
         
@@ -627,33 +715,30 @@ export const ChatInfoPanel = ({
 
       <AnimatePresence>
         {isNicknamesModalOpen && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-[#06111a] border border-white/10 rounded-3xl w-full max-w-sm p-6 relative overflow-hidden flex flex-col max-h-[90vh] shadow-[0_20px_50px_rgba(0,0,0,0.8)] text-left"
+              className="bg-white dark:bg-[#06111a] border border-slate-200 dark:border-white/10 rounded-3xl w-full max-w-sm p-6 relative overflow-hidden flex flex-col max-h-[90vh] shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.8)] text-left"
             >
-              {/* Scanline / Glow Effects */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-aeirmist-cyan/10 rounded-full blur-[80px] pointer-events-none" />
-              
               {/* Header */}
-              <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-5 relative z-10">
-                <h3 className="text-base font-bold text-white tracking-wide">Nicknames</h3>
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-4 mb-5 relative z-10">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white tracking-wide">Nicknames</h3>
                 <button 
                   onClick={() => {
                     setIsNicknamesModalOpen(false);
                     setEditingId(null);
                     setShowPermissionsToggle(false);
                   }}
-                  className="p-1.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition-all"
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:text-white/40 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-all"
                 >
                   <X size={18} />
                 </button>
               </div>
 
               {/* Participant List */}
-              <div className="space-y-4 overflow-y-auto no-scrollbar relative z-10 flex-1 max-h-[50vh]">
+              <div className="space-y-3 overflow-y-auto no-scrollbar relative z-10 flex-1 max-h-[50vh]">
                 {[
                   {
                     id: profile?.id || '',
@@ -683,10 +768,10 @@ export const ChatInfoPanel = ({
                     return (
                       <div 
                         key={member.id}
-                        className="flex items-center justify-between p-3 rounded-2xl border border-aeirmist-cyan/30 bg-aeirmist-cyan/[0.02] transition-all"
+                        className="flex items-center justify-between p-3 rounded-2xl border border-aeirmist-cyan/40 bg-aeirmist-cyan/[0.04] transition-all"
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <img src={avatar} className="w-10 h-10 rounded-2xl object-cover border border-white/10 shrink-0" alt="" />
+                          <img src={avatar} className="w-10 h-10 rounded-2xl object-cover border border-slate-200 dark:border-white/10 shrink-0" alt="" />
                           <div className="flex-1 min-w-0">
                             <input 
                               value={editValue}
@@ -703,7 +788,7 @@ export const ChatInfoPanel = ({
                               autoFocus
                               maxLength={30}
                               placeholder="Add a nickname"
-                              className="bg-black/45 border border-white/10 rounded-xl px-3 py-2 text-white text-xs w-full focus:outline-none focus:border-aeirmist-cyan placeholder-white/20"
+                              className="bg-white dark:bg-black/45 border border-slate-300 dark:border-white/10 rounded-xl px-3 py-2 text-slate-900 dark:text-white text-xs w-full focus:outline-none focus:border-aeirmist-cyan placeholder-slate-400 dark:placeholder-white/20 shadow-sm"
                             />
                           </div>
                         </div>
@@ -713,13 +798,13 @@ export const ChatInfoPanel = ({
                               handleSaveSharedNickname(member.id, editValue);
                               setEditingId(null);
                             }}
-                            className="p-1.5 rounded-lg text-aeirmist-lime hover:bg-aeirmist-lime/10 transition-all"
+                            className="p-1.5 rounded-lg text-emerald-600 dark:text-aeirmist-lime hover:bg-emerald-50 dark:hover:bg-aeirmist-lime/10 transition-all"
                           >
                             <CheckCircle2 size={18} />
                           </button>
                           <button 
                             onClick={() => setEditingId(null)}
-                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10 transition-all"
+                            className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all"
                           >
                             <X size={18} />
                           </button>
@@ -731,29 +816,29 @@ export const ChatInfoPanel = ({
                   return (
                     <div 
                       key={member.id}
-                      className="flex items-center justify-between p-3 rounded-2xl border border-white/5 bg-white/[0.01] hover:bg-white/[0.03] transition-all"
+                      className="flex items-center justify-between p-3 rounded-2xl border border-slate-200 dark:border-white/5 bg-slate-50/80 dark:bg-white/[0.01] hover:bg-slate-100/90 dark:hover:bg-white/[0.03] transition-all"
                     >
                       <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <img src={avatar} className="w-10 h-10 rounded-2xl object-cover border border-white/10 shrink-0" alt="" />
+                        <img src={avatar} className="w-10 h-10 rounded-2xl object-cover border border-slate-200 dark:border-white/10 shrink-0" alt="" />
                         <div className="flex-1 min-w-0">
                           {member.nickname ? (
                             <>
-                              <p className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                              <p className="text-xs font-bold text-slate-900 dark:text-white truncate flex items-center gap-1.5">
                                 {member.nickname}
-                                {member.isMe && <span className="text-[8px] font-black tracking-widest uppercase px-1 py-0.5 rounded bg-white/5 border border-white/10 text-white/40">You</span>}
+                                {member.isMe && <span className="text-[8px] font-black tracking-widest uppercase px-1 py-0.5 rounded bg-slate-200/80 dark:bg-white/5 border border-slate-300 dark:border-white/10 text-slate-600 dark:text-white/40">You</span>}
                               </p>
-                              <p className="text-[10px] text-white/40 truncate">
+                              <p className="text-[10px] text-slate-500 dark:text-white/40 truncate">
                                 {member.displayName}
                               </p>
                             </>
                           ) : (
                             <>
-                              <p className="text-xs font-bold text-white/90 truncate flex items-center gap-1.5">
+                              <p className="text-xs font-bold text-slate-800 dark:text-white/90 truncate flex items-center gap-1.5">
                                 {member.displayName}
-                                {member.isMe && <span className="text-[8px] font-black tracking-widest uppercase px-1 py-0.5 rounded bg-white/5 border border-white/10 text-white/40">You</span>}
+                                {member.isMe && <span className="text-[8px] font-black tracking-widest uppercase px-1 py-0.5 rounded bg-slate-200/80 dark:bg-white/5 border border-slate-300 dark:border-white/10 text-slate-600 dark:text-white/40">You</span>}
                                 {member.isVerified && <ShieldCheck className="text-aeirmist-cyan shrink-0" size={14} />}
                               </p>
-                              <p className="text-[10px] text-white/40 truncate">
+                              <p className="text-[10px] text-slate-500 dark:text-white/40 truncate">
                                 @{member.username}
                               </p>
                             </>
@@ -767,12 +852,12 @@ export const ChatInfoPanel = ({
                             setEditingId(member.id);
                             setEditValue(member.nickname);
                           }}
-                          className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition-all shrink-0"
+                          className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:text-white/40 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-white/5 transition-all shrink-0"
                         >
                           <Edit2 size={14} />
                         </button>
                       ) : (
-                        <div className="p-2 text-white/20 shrink-0" title="Only they can edit their nickname">
+                        <div className="p-2 text-slate-300 dark:text-white/20 shrink-0" title="Only they can edit their nickname">
                           <Lock size={14} />
                         </div>
                       )}
@@ -782,8 +867,8 @@ export const ChatInfoPanel = ({
               </div>
 
               {/* Footer Section */}
-              <div className="mt-6 border-t border-white/5 pt-4 flex flex-col items-center relative z-10">
-                <p className="text-[10px] text-white/30 uppercase tracking-widest text-center mb-2.5">
+              <div className="mt-6 border-t border-slate-100 dark:border-white/5 pt-4 flex flex-col items-center relative z-10">
+                <p className="text-[10px] text-slate-400 dark:text-white/30 uppercase tracking-widest text-center mb-2.5 font-medium">
                   Nicknames are only visible in this chat.
                 </p>
                 
@@ -838,16 +923,26 @@ export const ChatInfoPanel = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* FULLSCREEN STORY VIEWER MODAL */}
+      <AnimatePresence>
+        {activeStoryGroup && (
+          <StoryViewer 
+            group={activeStoryGroup} 
+            onClose={() => setActiveStoryGroup(null)} 
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };
 
 const ActionButton = ({ icon, label, onClick }: { icon: React.ReactNode, label: string, onClick?: () => void }) => (
   <button onClick={onClick} className="flex flex-col items-center gap-1.5 group active:scale-95 transition-transform">
-    <div className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/70 group-hover:text-white transition-all border border-white/10 shadow-inner">
+    <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 flex items-center justify-center text-slate-700 dark:text-white/70 group-hover:text-slate-900 dark:group-hover:text-white transition-all border border-slate-200/80 dark:border-white/10 shadow-inner">
       {icon}
     </div>
-    <span className="text-[9px] font-semibold text-white/50 group-hover:text-white/80 transition-colors tracking-wide">{label}</span>
+    <span className="text-[9px] font-semibold text-slate-500 dark:text-white/50 group-hover:text-slate-800 dark:group-hover:text-white/80 transition-colors tracking-wide">{label}</span>
   </button>
 );
 
@@ -857,12 +952,12 @@ const ToggleItem = ({ icon, label, active, onToggle, disabled }: { icon: React.R
     onClick={!disabled ? onToggle : undefined}
   >
     <div className="flex items-center gap-3">
-      <div className={`transition-colors ${active ? 'text-aeirmist-cyan' : 'text-white/40 group-hover:text-white'}`}>
+      <div className={`transition-colors ${active ? 'text-aeirmist-cyan' : 'text-slate-400 dark:text-white/40 group-hover:text-slate-600 dark:group-hover:text-white'}`}>
         {React.cloneElement(icon as any, { size: 18 })}
       </div>
-      <span className={`text-xs font-bold uppercase tracking-widest ${active ? 'text-white' : 'text-white/60 group-hover:text-white'}`}>{label}</span>
+      <span className={`text-xs font-bold uppercase tracking-widest ${active ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-white/60 group-hover:text-slate-900 dark:group-hover:text-white'}`}>{label}</span>
     </div>
-    <div className={`w-9 h-5 rounded-full relative transition-colors ${active ? 'bg-aeirmist-cyan' : 'bg-white/10'}`}>
+    <div className={`w-9 h-5 rounded-full relative transition-colors ${active ? 'bg-aeirmist-cyan' : 'bg-slate-200 dark:bg-white/10'}`}>
       <motion.div 
         animate={{ x: active ? 20 : 4 }}
         className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm" 

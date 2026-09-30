@@ -45,7 +45,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
   onBack,
   onUserClick
 }) => {
-  const { profile, db, addToast } = useAeirmist();
+  const { profile, user, db, addToast } = useAeirmist();
 
   const [isLiked, setIsLiked] = useState(() => 
     profile?.id ? (video.likedBy || []).includes(profile.id) : false
@@ -188,11 +188,14 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
     setIsSubmittingComment(true);
 
     try {
+      const authorUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
       await addDoc(collection(db, 'video_comments'), {
         videoId: video.id,
-        userId: profile.id,
-        userName: profile.name || 'Aeirmist User',
-        userAvatar: profile.avatar || '',
+        userId: authorUid,
+        authorUid: authorUid,
+        profileId: profile.id,
+        userName: profile.name || profile.displayName || profile.username || 'Aeirmist User',
+        userAvatar: profile.avatar || profile.photoURL || '',
         isVerified: profile.isVerified || false,
         text: commentInput.trim(),
         createdAt: new Date().toISOString(),

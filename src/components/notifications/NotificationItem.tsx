@@ -17,7 +17,9 @@ import {
   Trash2,
   BellOff,
   ShoppingBag,
-  Tv
+  Tv,
+  Info,
+  AlertTriangle
 } from 'lucide-react';
 import { getAvatarUrl as getAvatarUrlHelper, BLANK_DP } from '../../lib/avatar';
 
@@ -93,27 +95,63 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
     return `${diffMo}mo`;
   };
 
-  const isSecurity = String(notification.type || '').toLowerCase().includes('security') || 
-                     String(notification.type || '').toLowerCase().includes('device') ||
-                     String(notification.type || '').toLowerCase().includes('login');
+  const rawType = String(notification.type || '').toLowerCase();
+  const rawMsg = String(notification.message || notification.content || '').toLowerCase();
 
-  const isVerification = String(notification.type || '').toLowerCase().includes('verification');
+  const isRestriction = rawType.includes('restriction') || 
+                        rawType.includes('warning') || 
+                        rawType.includes('policy') || 
+                        rawType.includes('violation') ||
+                        rawMsg.includes('restriction') || 
+                        rawMsg.includes('restricted to your account') ||
+                        rawMsg.includes('we added a restriction');
+
+  const isBenefit = rawType.includes('benefit') || 
+                    rawType.includes('plus') || 
+                    rawType.includes('subscription') || 
+                    rawType.includes('membership') || 
+                    rawType.includes('perk') || 
+                    rawMsg.includes('plus benefits') || 
+                    rawMsg.includes('instagram plus') || 
+                    rawMsg.includes('aeirmist plus') ||
+                    rawMsg.includes('keep enjoying your');
+
+  const isSecurity = rawType.includes('security') || 
+                     rawType.includes('device') || 
+                     rawType.includes('login') || 
+                     rawType.includes('password') ||
+                     rawMsg.includes('sign-in') || 
+                     rawMsg.includes('login detected');
+
+  const isVerification = rawType.includes('verification');
+
+  const isSystemAnnouncement = rawType === 'system' || 
+                               notification.fromUserId === 'aeirmist_system' || 
+                               notification.user?.username === 'aeirmist' ||
+                               notification.user?.username === 'system';
+
+  const isSystem = isRestriction || isBenefit || isSecurity || isVerification || isSystemAnnouncement;
 
   const getUserDisplayName = () => {
+    if (isBenefit) return 'Aeirmist Plus';
+    if (isRestriction) return 'Account Status';
     if (isSecurity) return 'Security Alert';
     if (isVerification) return 'Aeirmist';
+    if (isSystemAnnouncement) return 'Aeirmist System';
     return notification.user?.name || notification.user?.displayName || notification.fromUser?.displayName || 'Aeirmist User';
   };
 
   const getUserHandle = () => {
+    if (isBenefit) return '@plus';
+    if (isRestriction) return '@system';
     if (isSecurity) return '@security';
     if (isVerification) return '@aeirmist';
+    if (isSystemAnnouncement) return '@aeirmist';
     return notification.user?.username ? `@${notification.user.username}` : `@${getUserDisplayName().toLowerCase().replace(/\s+/g, '')}`;
   };
 
   const getAvatarUrl = () => {
-    if (isSecurity) return null;
-    if (isVerification) return '/favicon.png';
+    if (isSystem) return null;
     return getAvatarUrlHelper(notification.user?.avatar || notification.user?.photoURL || notification.fromUser?.photoURL, notification.user?.name || notification.id);
   };
 
@@ -126,13 +164,38 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
   const getMetaContent = () => {
     const type = String(notification.type || '').toLowerCase();
 
+    // Account Restriction / Warning (Instagram/Meta style)
+    if (isRestriction) {
+      let text = notification.message || notification.content || 'We added a restriction to your account. See why.';
+      return {
+        actionText: text,
+        badgeIcon: <span className="font-serif font-bold text-[10px] text-white">i</span>,
+        badgeBg: 'bg-zinc-700',
+        category: 'system'
+      };
+    }
+
+    // Plus Benefits / Perks / Membership (Instagram/Meta style)
+    if (isBenefit) {
+      let text = notification.message || notification.content || 'To keep enjoying your Aeirmist Plus benefits, renew your subscription.';
+      text = text
+        .replace(/Instagram Plus/gi, 'Aeirmist Plus')
+        .replace(/Meta Plus/gi, 'Aeirmist Plus');
+      return {
+        actionText: text,
+        badgeIcon: <Sparkles size={10} className="text-white" />,
+        badgeBg: 'bg-gradient-to-br from-indigo-500 to-purple-600',
+        category: 'system'
+      };
+    }
+
     // Verification Notifications
     if (isVerification) {
-      let rawMsg = notification.message || notification.content || '';
-      const plan = notification.metadata?.plan || (rawMsg.toLowerCase().includes('business') ? 'business' : rawMsg.toLowerCase().includes('creator') ? 'creator' : 'essential');
+      let rawMsgText = notification.message || notification.content || '';
+      const plan = notification.metadata?.plan || (rawMsgText.toLowerCase().includes('business') ? 'business' : rawMsgText.toLowerCase().includes('creator') ? 'creator' : 'essential');
       const planTitle = plan ? (plan.charAt(0).toUpperCase() + plan.slice(1)) : 'Business';
 
-      let formattedMsg = rawMsg
+      let formattedMsg = rawMsgText
         .replace(/Meta-Style Verified/gi, `Aeirmist ${planTitle} Verified`)
         .replace(/Meta-style Verified/gi, `Aeirmist ${planTitle} Verified`)
         .replace(/Meta Verified/gi, `Aeirmist ${planTitle} Verified`);
@@ -152,9 +215,19 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
     // Security & Logins
     if (isSecurity) {
       return {
-        actionText: 'New sign-in detected on your account.',
+        actionText: notification.message || 'New sign-in detected on your account.',
         badgeIcon: <ShieldCheck size={10} className="text-white" />,
         badgeBg: 'bg-[#00B2FF]',
+        category: 'system'
+      };
+    }
+
+    // General System Announcement
+    if (isSystemAnnouncement) {
+      return {
+        actionText: notification.message || notification.content || 'System update from Aeirmist.',
+        badgeIcon: <Bell size={10} className="text-white" />,
+        badgeBg: 'bg-aeirmist-cyan',
         category: 'system'
       };
     }
@@ -314,12 +387,25 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         
         {/* Left: Square Avatar with Overlapping Meta Action Badge */}
         <div className="relative shrink-0">
-          {isSecurity ? (
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-900/80 to-blue-900/60 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shadow-inner">
+          {isBenefit ? (
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#1E1F24] to-[#121316] border border-white/10 ring-1 ring-white/10 flex items-center justify-center shadow-sm">
+              <svg className="w-6 h-6 text-white drop-shadow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                <path d="M12 2L3 9L12 22L21 9L12 2Z" />
+                <path d="M12 7L13.2 10.2L16.5 10.5L14 12.6L14.8 15.8L12 14.1L9.2 15.8L10 12.6L7.5 10.5L10.8 10.2L12 7Z" fill="currentColor" />
+              </svg>
+            </div>
+          ) : isRestriction ? (
+            <div className="w-11 h-11 rounded-xl bg-[#18191C] border border-amber-500/30 ring-1 ring-amber-500/20 flex items-center justify-center shadow-sm">
+              <div className="w-6 h-6 rounded-full border-2 border-white/80 flex items-center justify-center font-serif text-xs font-bold text-white shadow-sm">
+                i
+              </div>
+            </div>
+          ) : isSecurity ? (
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-950/70 to-blue-950/60 border border-cyan-500/30 ring-1 ring-cyan-500/20 flex items-center justify-center text-cyan-300 shadow-sm">
               <ShieldCheck size={22} />
             </div>
-          ) : isVerification ? (
-            <div className="w-11 h-11 rounded-xl bg-black/90 border border-aeirmist-cyan/40 flex items-center justify-center p-1.5 shadow-sm ring-1 ring-white/10 overflow-hidden">
+          ) : isVerification || isSystemAnnouncement ? (
+            <div className="w-11 h-11 rounded-xl bg-black/90 border border-aeirmist-cyan/40 ring-1 ring-white/10 flex items-center justify-center p-1.5 shadow-sm overflow-hidden">
               <img 
                 src="/favicon.png" 
                 alt="Aeirmist" 
@@ -346,9 +432,9 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         <div className="flex-1 min-w-0 pr-1">
           <p className="text-[13px] sm:text-[13.5px] leading-snug text-[#E4E6EB]">
             <strong 
-              className="font-bold text-white hover:underline cursor-pointer inline-flex items-center gap-1 mr-1"
+              className="font-bold text-white hover:underline cursor-pointer inline-flex items-center gap-1.5 mr-1"
               onClick={(e) => {
-                if (onUserClick && targetUserId && !isSecurity && !isVerification) {
+                if (onUserClick && targetUserId && !isSystem) {
                   e.stopPropagation();
                   onUserClick({
                     id: targetUserId,
@@ -360,9 +446,19 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
               }}
             >
               {displayName}
-              {(notification.user?.isVerified || isVerification) && (
-                <ShieldCheck className="text-aeirmist-cyan inline-block shrink-0" size={13} />
-              )}
+              {/* Separate Official Badge for System vs Verified Badge for User */}
+              {isSystem ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-aeirmist-cyan/15 border border-aeirmist-cyan/30 text-[10px] font-bold text-aeirmist-cyan uppercase tracking-wider shrink-0" title="Aeirmist Official">
+                  <ShieldCheck size={11} className="text-aeirmist-cyan shrink-0" />
+                  Official
+                </span>
+              ) : (notification.user?.isVerified || notification.user?.verified || notification.fromUser?.isVerified) ? (
+                <span className="inline-flex items-center justify-center shrink-0" title="Verified Account">
+                  <svg className="w-3.5 h-3.5 text-[#1877F2]" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.2 14.2l-3.5-3.5 1.41-1.41 2.09 2.08 5.69-5.69 1.41 1.41-7.1 7.11z" />
+                  </svg>
+                </span>
+              ) : null}
             </strong>
             <span className="text-[#D8DADF]">{actionText}</span>
             <span className="text-xs text-[#8A8D91] font-normal whitespace-nowrap ml-1.5">

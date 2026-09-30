@@ -275,7 +275,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
     <div className="w-full">
       {/* COVER BANNER HEIGHT 320px */}
       <div 
-        className="w-full h-80 rounded-t-2xl relative overflow-hidden bg-gradient-to-r from-zinc-950 via-[#120e2e] to-black border border-white/5 shadow-2xl group/cover cursor-pointer"
+        className="w-full h-80 rounded-t-2xl relative overflow-hidden bg-gradient-to-r from-slate-200 via-sky-100 to-indigo-100 dark:from-zinc-950 dark:via-[#120e2e] dark:to-black border border-slate-200/80 dark:border-white/5 shadow-2xl group/cover cursor-pointer"
         onDragOver={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -302,7 +302,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
             decoding="async"
             fetchPriority="high"
             style={{ imageRendering: 'auto' }}
-            className="w-full h-full object-cover relative z-0" 
+            className="w-full h-full object-cover relative z-0 transition-opacity duration-300" 
             referrerPolicy="no-referrer"
             onError={(e) => {
                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1614850523296-d8c1af93d400?q=80&w=2070&auto=format&fit=crop';
@@ -311,8 +311,8 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
         ) : (
           <div className="w-full h-full flex items-center justify-center opacity-35 relative z-0">
             <div className="text-center space-y-2">
-              <p className="text-[10px] uppercase font-black tracking-[0.4em] text-white/50">Aeirmist Member</p>
-              <p className="text-[8px] uppercase font-bold tracking-[0.2em] text-aeirmist-cyan/70">Profile #{(displayUser?.id || '').slice(0, 8)}</p>
+              <p className="text-[10px] uppercase font-black tracking-[0.4em] text-slate-500 dark:text-white/50">Aeirmist Member</p>
+              <p className="text-[8px] uppercase font-bold tracking-[0.2em] text-aeirmist-cyan">Profile #{(displayUser?.id || '').slice(0, 8)}</p>
             </div>
           </div>
         )}
@@ -354,22 +354,22 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
       </div>
 
       {/* LOWER DEETS CARD - FLAT & PROFESSIONAL */}
-      <div className="bg-[#04080e]/60 backdrop-blur-3xl border-x border-b border-white/5 rounded-b-2xl p-8 mb-8 shadow-2xl relative">
+      <div className="bg-white/95 dark:bg-[#04080e]/60 backdrop-blur-3xl border-x border-b border-slate-200/80 dark:border-white/5 rounded-b-2xl p-8 mb-8 shadow-2xl relative">
         <div className="flex flex-col lg:flex-row gap-8 items-center lg:items-start relative z-10">
           
-          {/* Overlapping Square Avatar (160x160px size) */}
+          {/* Overlapping Square Avatar (160x160px size) with crisp white border in light mode */}
           <div className="relative shrink-0 -mt-24">
-            <div className="relative group">
-              <div className={`absolute inset-0 blur-md rounded-3xl transition-opacity opacity-0 group-hover:opacity-100 ${isInfinity ? 'bg-aeirmist-magenta/40 opacity-100 animate-pulse' : 'bg-aeirmist-cyan/30'}`} />
+            <div className="relative group p-1.5 sm:p-2 bg-white dark:bg-[#07070a] rounded-[2.25rem] shadow-2xl ring-4 ring-white/95 dark:ring-[#07070a]/80 transition-all duration-300">
+              <div className={`absolute inset-0 blur-md rounded-[2.25rem] transition-opacity opacity-0 group-hover:opacity-100 ${isInfinity ? 'bg-aeirmist-magenta/40 opacity-100 animate-pulse' : 'bg-aeirmist-cyan/30'}`} />
               <Avatar
                 src={(isOwnProfile && localAvatarURL) ? localAvatarURL : getAvatarUrl(displayUser?.photoURL)}
                 alt={displayUser?.displayName || "User"}
-                sizeClassName="w-40 h-40"
-                roundedClassName="rounded-3xl"
-                innerRoundedClassName="rounded-[1.75rem]"
+                sizeClassName="w-36 h-36 sm:w-40 sm:h-40"
+                roundedClassName="rounded-[1.85rem]"
+                innerRoundedClassName="rounded-[1.65rem]"
                 showStoryRing={true}
                 userId={displayUser?.id}
-                className="shadow-2xl"
+                className="shadow-md"
               >
                 {profileUploadProgress > 0 && (
                   <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -416,7 +416,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
           <div className="flex-1 text-center lg:text-left space-y-4 min-w-0">
             <div>
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3">
-                <h1 className="text-2xl font-black uppercase tracking-tight text-white truncate max-w-sm">
+                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-white truncate max-w-sm">
                   {displayUser?.displayName || "Junaed Islam"}
                 </h1>
                 {isVerified && (
@@ -447,7 +447,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                   <textarea
                     value={tempBio}
                     onChange={(e) => setTempBio(e.target.value)}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl p-4 text-xs text-white focus:border-aeirmist-cyan focus:ring-0 outline-none"
+                    className="w-full bg-slate-100 dark:bg-black/40 border border-slate-200 dark:border-white/10 rounded-2xl p-4 text-xs text-slate-900 dark:text-white focus:border-aeirmist-cyan focus:ring-0 outline-none"
                     placeholder="Write something about your bio..."
                     rows={3}
                   />
@@ -460,14 +460,14 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                     </button>
                     <button 
                       onClick={() => setIsEditingBio(false)}
-                      className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg text-[10px] font-black uppercase tracking-widest"
+                      className="px-4 py-2 bg-slate-200 dark:bg-white/5 hover:bg-slate-300 dark:hover:bg-white/10 text-slate-700 dark:text-white rounded-lg text-[10px] font-black uppercase tracking-widest"
                     >
                       Cancel
                     </button>
                   </div>
                 </div>
               ) : (
-                <p className="text-white/60 text-xs tracking-wide max-w-lg mt-3 leading-relaxed font-sans">
+                <p className="text-slate-600 dark:text-white/60 text-xs tracking-wide max-w-lg mt-3 leading-relaxed font-sans">
                   {displayUser?.bio || "No bio added yet."}
                 </p>
               )}
@@ -485,7 +485,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                       target="_blank"
                       rel="noopener noreferrer"
                       referrerPolicy="no-referrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-aeirmist-cyan hover:bg-white/10 hover:border-aeirmist-cyan/40 transition-all font-mono"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 dark:bg-white/5 dark:border-white/10 text-xs text-aeirmist-cyan dark:hover:bg-white/10 dark:hover:border-aeirmist-cyan/40 transition-all font-mono"
                     >
                       <Globe size={13} className="text-aeirmist-cyan" />
                       <span className="font-bold tracking-tight">{(displayUser?.website || displayUser?.socialLinks?.website).replace(/^https?:\/\/(www\.)?/, '')}</span>
@@ -498,7 +498,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                       target="_blank"
                       rel="noopener noreferrer"
                       referrerPolicy="no-referrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white/70 hover:text-aeirmist-magenta hover:bg-white/10 transition-all"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 dark:bg-white/5 dark:border-white/10 text-xs text-slate-700 hover:text-aeirmist-magenta dark:text-white/70 dark:hover:bg-white/10 transition-all"
                     >
                       <Instagram size={13} className="text-aeirmist-magenta" />
                       <span className="font-semibold">{displayUser.socialLinks.instagram}</span>
@@ -510,7 +510,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                       target="_blank"
                       rel="noopener noreferrer"
                       referrerPolicy="no-referrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white/70 hover:text-blue-400 hover:bg-white/10 transition-all"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 dark:bg-white/5 dark:border-white/10 text-xs text-slate-700 hover:text-blue-500 dark:text-white/70 dark:hover:bg-white/10 transition-all"
                     >
                       <Facebook size={13} className="text-blue-500" />
                       <span className="font-semibold">{displayUser.socialLinks.facebook}</span>
@@ -544,10 +544,10 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
             </div>
 
             {/* --- STATS ROW ON EXACT SAME LINE --- */}
-            <div className="flex flex-wrap items-center gap-8 py-3 border-y border-white/5 w-full justify-center lg:justify-start font-sans">
+            <div className="flex flex-wrap items-center gap-8 py-3 border-y border-slate-200/80 dark:border-white/5 w-full justify-center lg:justify-start font-sans">
               <div className="flex items-baseline gap-1.5">
-                <span className="text-lg font-black text-white">{(posts || []).filter(p => p && !p.isArchived).length}</span>
-                <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">Posts</span>
+                <span className="text-lg font-black text-slate-900 dark:text-white">{(posts || []).filter(p => p && !p.isArchived).length}</span>
+                <span className="text-[10px] font-black text-slate-400 dark:text-white/30 uppercase tracking-widest">Posts</span>
               </div>
               <div 
                 onClick={() => !isLocked && handleShowFollowList?.('followers')}
@@ -556,9 +556,9 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 {isDataLoading ? (
                   <Skeleton className="h-6 w-8 mb-1 opacity-20" />
                 ) : (
-                  <span className="text-lg font-black text-white">{Array.isArray(displayUser?.social?.followers) ? displayUser.social.followers.length : Math.max(0, displayUser?.followersCount || 0)}</span>
+                  <span className="text-lg font-black text-slate-900 dark:text-white">{Array.isArray(displayUser?.social?.followers) ? displayUser.social.followers.length : Math.max(0, displayUser?.followersCount || 0)}</span>
                 )}
-                <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">Followers</span>
+                <span className="text-[10px] font-black text-slate-400 dark:text-white/30 uppercase tracking-widest">Followers</span>
               </div>
               <div 
                 onClick={() => !isLocked && handleShowFollowList?.('following')}
@@ -567,9 +567,9 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 {isDataLoading ? (
                   <Skeleton className="h-6 w-8 mb-1 opacity-20" />
                 ) : (
-                  <span className="text-lg font-black text-white">{Array.isArray(displayUser?.social?.following) ? displayUser.social.following.length : Math.max(0, displayUser?.followingCount || 0)}</span>
+                  <span className="text-lg font-black text-slate-900 dark:text-white">{Array.isArray(displayUser?.social?.following) ? displayUser.social.following.length : Math.max(0, displayUser?.followingCount || 0)}</span>
                 )}
-                <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">Following</span>
+                <span className="text-[10px] font-black text-slate-400 dark:text-white/30 uppercase tracking-widest">Following</span>
               </div>
               
               <div 
@@ -589,28 +589,28 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
               {isOwnProfile ? (
                 <>
                   <motion.button 
-                    whileHover={{ scale: 1.02, backgroundColor: 'rgba(255,255,255,1)', color: '#000' }}
+                    whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => setIsEditingBio(true)}
-                    className="px-5 py-2.5 bg-white/5 border border-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                    className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200/90 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white dark:border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer shadow-sm"
                   >
                     Edit Profile
                   </motion.button>
                   <motion.button 
-                    whileHover={{ scale: 1.02, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                    whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={handleShareProfile}
-                    className="px-5 py-2.5 bg-white/5 border border-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 cursor-pointer"
+                    className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200/90 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white dark:border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 cursor-pointer shadow-sm"
                   >
                     <Share2 size={12} className="text-aeirmist-cyan" />
                     <span>Share Profile</span>
                   </motion.button>
                   
                   <motion.button
-                    whileHover={{ scale: 1.02, backgroundColor: 'rgba(255, 255, 255, 0.1)' }}
+                    whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => setIsNGLDashboardOpen(true)}
-                    className="px-6 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white/75 flex items-center justify-center gap-2 transition-all hover:text-white hover:border-aeirmist-magenta/50 cursor-pointer"
+                    className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200/90 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white/85 dark:border-white/10 rounded-xl flex items-center justify-center gap-2 transition-all hover:border-aeirmist-magenta/50 cursor-pointer shadow-sm"
                   >
                     <Ghost size={14} className="text-aeirmist-magenta animate-pulse" />
                     <span className="text-[10px] font-black uppercase tracking-widest">
@@ -619,13 +619,13 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                   </motion.button>
                   
                   <motion.button 
-                    whileHover={{ scale: 1.02, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                    whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => setActiveTab('saved')}
-                    className={`p-2.5 border rounded-xl transition-all cursor-pointer ${
+                    className={`p-2.5 border rounded-xl transition-all cursor-pointer shadow-sm ${
                       activeTab === 'saved' 
                         ? 'bg-aeirmist-cyan border-aeirmist-cyan text-black shadow-[0_0_15px_rgba(0,242,255,0.3)]' 
-                        : 'bg-white/5 border-white/10 text-white/30 hover:text-white'
+                        : 'bg-slate-100 border-slate-200/90 text-slate-400 hover:text-slate-800 dark:bg-white/5 dark:border-white/10 dark:text-white/30 dark:hover:text-white'
                     }`}
                     title="Saved Content"
                   >
@@ -732,11 +732,11 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
 
       {/* HIGHLIGHTS CORRIDOR (UPPER MIDDLE) */}
       {!isLocked && (
-        <div className="bg-white/[0.02] border border-white/5 backdrop-blur-3xl rounded-[2.5rem] p-6 mb-8 shadow-2xl relative overflow-hidden group/highlights">
+        <div className="bg-white/80 dark:bg-white/[0.02] border border-slate-200/80 dark:border-white/5 backdrop-blur-3xl rounded-[2.5rem] p-6 mb-8 shadow-xl relative overflow-hidden group/highlights">
           {/* subtle background mesh glow */}
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-aeirmist-cyan/5 blur-[50px] rounded-full pointer-events-none" />
           
-          <h3 className="text-[10px] font-black text-white/40 uppercase tracking-[0.25em] mb-5 select-none pl-2 border-l-2 border-aeirmist-cyan flex items-center gap-2">
+          <h3 className="text-[10px] font-black text-slate-500 dark:text-white/40 uppercase tracking-[0.25em] mb-5 select-none pl-2 border-l-2 border-aeirmist-cyan flex items-center gap-2">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-aeirmist-cyan opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-aeirmist-cyan"></span>
@@ -749,12 +749,12 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
               <div className="flex flex-col items-center gap-3 shrink-0">
                 <button 
                   onClick={handleCreateHighlight}
-                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl border-2 border-dashed border-white/10 flex items-center justify-center text-white/20 hover:border-aeirmist-cyan hover:text-aeirmist-cyan transition-all bg-white/[0.01] hover:bg-aeirmist-cyan/5 group cursor-pointer shadow-md"
+                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl border-2 border-dashed border-slate-300 dark:border-white/10 flex items-center justify-center text-slate-400 dark:text-white/20 hover:border-aeirmist-cyan hover:text-aeirmist-cyan transition-all bg-slate-50 dark:bg-white/[0.01] hover:bg-aeirmist-cyan/5 group cursor-pointer shadow-sm"
                   title="Create new highlight"
                 >
                   <Plus size={28} className="group-hover:rotate-90 transition-transform duration-500" />
                 </button>
-                <span className="text-[9px] font-black uppercase text-white/35 tracking-widest">Initiate</span>
+                <span className="text-[9px] font-black uppercase text-slate-400 dark:text-white/35 tracking-widest">Initiate</span>
               </div>
             )}
             
@@ -769,10 +769,10 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                   <div className="relative p-1">
                     {/* Rotating holographic light ring */}
                     {!isEmpty && <div className="absolute inset-[-4px] bg-gradient-to-tr from-aeirmist-cyan via-white/5 to-aeirmist-magenta rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-700 animate-[spin_8s_linear_infinite]" />}
-                    <div className="absolute inset-[-2px] bg-[#01050a] rounded-2xl" />
+                    <div className="absolute inset-[-2px] bg-white dark:bg-[#01050a] rounded-2xl" />
                     
-                    <div className={`relative z-10 w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-neutral-900 group-hover:border-aeirmist-cyan/40 transition-colors duration-500 shadow-xl border ${
-                      isEmpty ? 'border-dashed border-red-500/40 bg-red-950/5' : 'border-white/10'
+                    <div className={`relative z-10 w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-slate-100 dark:bg-neutral-900 group-hover:border-aeirmist-cyan/40 transition-colors duration-500 shadow-xl border ${
+                      isEmpty ? 'border-dashed border-red-500/40 bg-red-50 dark:bg-red-950/5' : 'border-slate-200 dark:border-white/10'
                     }`}>
                       {h.coverUrl ? (
                         <img src={h.coverUrl} className={`w-full h-full object-cover transition-all duration-700 group-hover:scale-110 ${isEmpty ? 'opacity-40 grayscale' : 'grayscale-[0.5] group-hover:grayscale-0'}`} alt={h.label} />
@@ -790,7 +790,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                     </div>
                   </div>
                   <span className={`text-[9px] font-black uppercase tracking-[0.2em] font-sans transition-colors duration-500 text-center truncate max-w-[80px] ${
-                    isEmpty ? 'text-red-400/50 group-hover:text-red-400' : 'text-white/45 group-hover:text-aeirmist-cyan'
+                    isEmpty ? 'text-red-400/50 group-hover:text-red-400' : 'text-slate-600 dark:text-white/45 group-hover:text-aeirmist-cyan'
                   }`}>
                     {h.label}
                   </span>
@@ -800,13 +800,13 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
 
             {loadingHighlights && highlights.length === 0 && Array(5).fill(0).map((_, i) => (
               <div key={i} className="flex flex-col items-center gap-3 shrink-0">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white/5 animate-pulse border border-white/5" />
-                <div className="h-2 w-10 bg-white/5 rounded animate-pulse" />
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-slate-200 dark:bg-white/5 animate-pulse border border-slate-200 dark:border-white/5" />
+                <div className="h-2 w-10 bg-slate-200 dark:bg-white/5 rounded animate-pulse" />
               </div>
             ))}
 
             {!loadingHighlights && highlights.length === 0 && !isOwnProfile && (
-              <div className="py-2 text-center text-white/20 text-[9px] font-black uppercase tracking-widest pl-2">
+              <div className="py-2 text-center text-slate-400 dark:text-white/20 text-[9px] font-black uppercase tracking-widest pl-2">
                 No active highlights broadcasted on this channel.
               </div>
             )}
@@ -820,10 +820,10 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
         {/* Left column representing Main Tab-Feed Area (~70%) */}
         <div className="col-span-12 lg:col-span-8 space-y-6">
           {/* Custom Instagram/Aesthetic-style Tab button line WIP */}
-          <div className="flex flex-col mt-6 sm:mt-8 sticky top-0 bg-[#01050a]/90 backdrop-blur-xl z-30 w-full select-none">
+          <div className="flex flex-col mt-6 sm:mt-8 sticky top-0 bg-slate-50/95 dark:bg-[#01050a]/90 backdrop-blur-xl z-30 w-full select-none">
             {/* Subtle horizontal divider line directly above the tab bar row */}
-            <div className="w-full h-px bg-white/[0.08]" />
-            <div className="flex border-b border-white/5 justify-center items-center gap-8 sm:gap-14 md:gap-16 lg:gap-20 w-full" role="tablist" aria-label="Profile tabs">
+            <div className="w-full h-px bg-slate-200 dark:bg-white/[0.08]" />
+            <div className="flex border-b border-slate-200 dark:border-white/5 justify-center items-center gap-8 sm:gap-14 md:gap-16 lg:gap-20 w-full" role="tablist" aria-label="Profile tabs">
               {[
                 { id: 'tagged', label: 'QUARTS', icon: <Tag size={20} /> },
                 { id: 'posts', label: 'PHOTOS', icon: <Grid size={20} /> },
@@ -847,19 +847,19 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                   id={`${tb.id}-tab`}
                   className={`flex flex-col items-center justify-center gap-2 pt-6 pb-4 text-center transition-all cursor-pointer relative px-1 sm:px-3 select-none ${
                     activeTab === tb.id 
-                      ? 'text-white' 
-                      : 'text-white/40 hover:text-white/85'
+                      ? 'text-slate-900 dark:text-white' 
+                      : 'text-slate-400 hover:text-slate-800 dark:text-white/40 dark:hover:text-white/85'
                   }`}
                 >
                   <div className={`transition-all duration-300 ${
                     activeTab === tb.id 
                       ? 'text-aeirmist-cyan scale-110 drop-shadow-[0_0_8px_rgba(0,242,255,0.6)]' 
-                      : 'text-white/40'
+                      : 'text-slate-400 dark:text-white/40'
                   }`}>
                     {tb.icon}
                   </div>
                   <span className={`text-[10px] font-black uppercase tracking-[0.25em] transition-colors duration-300 ${
-                    activeTab === tb.id ? 'text-aeirmist-cyan' : ''
+                    activeTab === tb.id ? 'text-aeirmist-cyan font-bold' : ''
                   }`}>
                     {tb.label}
                   </span>

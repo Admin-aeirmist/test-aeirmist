@@ -35,10 +35,38 @@ import { logger } from '@/src/utils/logger';
 
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
 
+const STICKER_PACK = [
+  { id: 'neon_lightning', emoji: '⚡', name: 'Overcharged' },
+  { id: 'neon_fire', emoji: '🔥', name: 'Lit' },
+  { id: 'neon_rocket', emoji: '🚀', name: 'To The Moon' },
+  { id: 'neon_diamond', emoji: '💎', name: 'Diamond' },
+  { id: 'neon_crown', emoji: '👑', name: 'Royalty' },
+  { id: 'neon_ufo', emoji: '🛸', name: 'Alien Void' },
+  { id: 'neon_robot', emoji: '🤖', name: 'Synth' },
+  { id: 'neon_heart', emoji: '💖', name: 'Cyber Love' },
+  { id: 'neon_cat', emoji: '🐱', name: 'Neon Neko' },
+  { id: 'neon_sparkles', emoji: '✨', name: 'Pure Magic' },
+  { id: 'neon_shield', emoji: '🛡️', name: 'Secured' },
+  { id: 'neon_glitch', emoji: '👾', name: 'Glitch' },
+  { id: 'neon_wave', emoji: '🌊', name: 'Flow State' },
+  { id: 'neon_target', emoji: '🎯', name: 'On Point' },
+  { id: 'neon_planet', emoji: '🪐', name: 'Cosmic' },
+  { id: 'neon_crystal', emoji: '🔮', name: 'Oracle' },
+  { id: 'neon_ghost', emoji: '👻', name: 'Ghosted' },
+  { id: 'neon_skull', emoji: '💀', name: 'Dead' },
+  { id: 'neon_sunglasses', emoji: '😎', name: 'Ultra Cool' },
+  { id: 'neon_party', emoji: '🎉', name: 'Celebrate' },
+  { id: 'neon_eyes', emoji: '👀', name: 'Watching' },
+  { id: 'neon_clapping', emoji: '👏', name: 'Bravo' },
+  { id: 'neon_hundred', emoji: '💯', name: 'Absolute' },
+  { id: 'neon_galaxy', emoji: '🌌', name: 'Aeirmist Void' },
+];
+
 interface AeirmistInputSystemProps {
   chatId?: string;
   onSendMessage: (text: string, mood?: string, replyingTo?: any) => void;
   onSendMedia?: (file: File, isHD?: boolean, replyingTo?: any) => void;
+  onSendSpecialMessage?: (params: { type: 'location' | 'contact' | 'sticker' | 'file'; text?: string; mediaUrl?: string; metadata?: any; replyingTo?: any; }) => void;
   onTyping?: (isTyping: boolean) => void;
   onOpenCamera?: () => void;
   onCaptureRef?: React.MutableRefObject<((file: File) => void) | null>;
@@ -56,6 +84,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   chatId,
   onSendMessage, 
   onSendMedia, 
+  onSendSpecialMessage,
   onTyping, 
   onOpenCamera, 
   onCaptureRef, 
@@ -145,7 +174,99 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   const timerRef = useRef<number | null>(null);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+  const [showContactModal, setShowContactModal] = useState(false);
+  const [contactName, setContactName] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
   const { requestPermission, permissions, addToast, profile } = useAeirmist();
+
+  const handleShareLocation = () => {
+    setShowAttachments(false);
+    if (!navigator.geolocation) {
+      addToast({
+        title: "Geolocation Unsupported",
+        message: "Your browser or device does not support GPS location.",
+        type: "warning"
+      });
+      return;
+    }
+
+    addToast({
+      title: "Locating...",
+      message: "Fetching current GPS coordinates...",
+      type: "info"
+    });
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const mapUrl = `https://www.google.com/maps?q=${lat},${lng}`;
+        onSendSpecialMessage?.({
+          type: 'location',
+          text: `📍 Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+          metadata: {
+            latitude: lat,
+            longitude: lng,
+            accuracy: pos.coords.accuracy,
+            mapUrl
+          },
+          replyingTo
+        });
+        addToast({
+          title: "Location Shared",
+          message: "Location pin sent to conversation.",
+          type: "success"
+        });
+      },
+      (err) => {
+        logger.warn("Location error:", err);
+        addToast({
+          title: "Location Denied",
+          message: "Could not retrieve GPS coordinates. Please ensure location permission is enabled.",
+          type: "warning"
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  };
+
+  const handleShareContact = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contactName.trim()) {
+      addToast({ title: "Name Required", message: "Please enter a contact name.", type: "warning" });
+      return;
+    }
+
+    onSendSpecialMessage?.({
+      type: 'contact',
+      text: `👤 Contact: ${contactName.trim()}`,
+      metadata: {
+        contactName: contactName.trim(),
+        contactPhone: contactPhone.trim() || undefined,
+        contactHandle: contactPhone.trim().startsWith('@') ? contactPhone.trim() : undefined
+      },
+      replyingTo
+    });
+
+    setShowContactModal(false);
+    setContactName('');
+    setContactPhone('');
+  };
+
+  const handleSelectSticker = (sticker: { id: string; emoji: string; name: string }) => {
+    onSendSpecialMessage?.({
+      type: 'sticker',
+      text: sticker.emoji,
+      metadata: {
+        stickerId: sticker.id,
+        stickerName: sticker.name,
+        stickerEmoji: sticker.emoji
+      },
+      replyingTo
+    });
+    setShowStickerPicker(false);
+  };
 
   const startRecording = async () => {
     const granted = await requestPermission('microphone');
@@ -185,13 +306,54 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
     }
   };
 
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.onstop = null;
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        logger.warn("Error stopping recorder on cancel:", e);
+      }
+    }
+    if (audioStream) {
+      audioStream.getTracks().forEach(t => t.stop());
+    }
+    setIsRecording(false);
+    setIsPaused(false);
+    setAudioStream(null);
+    setAudioBlob(null);
+    setRecordingTime(0);
+    chunksRef.current = [];
+  };
+
+  // Component unmount cleanup to release microphone tracks immediately
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.onstop = null;
+          mediaRecorderRef.current.stop();
+        } catch (e) {
+          logger.warn("Error stopping recorder on unmount:", e);
+        }
+      }
+      if (audioStream) {
+        audioStream.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, [audioStream]);
+
   const stopAndSendRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         if (onSendMedia) {
           const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-          onSendMedia(file, false);
+          onSendMedia(file, false, replyingTo);
+          onCancelReply?.();
+        }
+        if (audioStream) {
+          audioStream.getTracks().forEach(track => track.stop());
         }
         setIsRecording(false);
         setAudioBlob(null);
@@ -210,6 +372,9 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
     }));
     setPendingMedia(prev => [...prev, ...newMedia]);
     setShowAttachments(false);
+    if (e.target) {
+      e.target.value = '';
+    }
   };
 
   const removePendingMedia = (index: number) => {
@@ -294,6 +459,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
         URL.revokeObjectURL(m.preview);
       });
       setPendingMedia([]);
+      onCancelReply?.();
     }
  
     if (inputText.trim()) {
@@ -302,6 +468,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
       if (textareaRef.current) {
         textareaRef.current.style.height = '40px';
       }
+      onCancelReply?.();
     }
     
     setShowEmoji(false);
@@ -337,9 +504,21 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
               {pendingMedia.map((media, idx) => (
                 <motion.div 
                   key={idx}
-                  className="relative flex-shrink-0 w-20 h-20 rounded-2xl overflow-hidden group/thumb border border-white/10 shadow-lg"
+                  className="relative flex-shrink-0 w-20 h-20 rounded-2xl overflow-hidden group/thumb border border-white/10 shadow-lg bg-black/40"
                 >
-                  <img src={media.preview} alt="" className="w-full h-full object-cover" />
+                  {media.file.type.startsWith('image/') || media.file.type.startsWith('video/') ? (
+                    <img src={media.preview} alt="" className="w-full h-full object-cover" />
+                  ) : media.file.type.startsWith('audio/') ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-2 bg-purple-500/10 text-center">
+                      <Music size={20} className="text-purple-400 mb-1" />
+                      <span className="text-[8px] text-white/70 truncate w-full font-mono">{media.file.name}</span>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-2 bg-lime-500/10 text-center">
+                      <FileText size={20} className="text-lime-400 mb-1" />
+                      <span className="text-[8px] text-white/70 truncate w-full font-mono">{media.file.name}</span>
+                    </div>
+                  )}
                   <button 
                     onClick={() => removePendingMedia(idx)}
                     className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white hover:bg-red-500 transition-colors"
@@ -479,7 +658,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
             </div>
             <div className="flex items-center gap-2">
                <button 
-                 onClick={() => { setIsRecording(false); audioStream?.getTracks().forEach(t => t.stop()); }}
+                 onClick={cancelRecording}
                  className="w-10 h-10 rounded-full flex items-center justify-center text-white/40 hover:text-red-500"
                >
                  <Trash2 size={20} />
@@ -518,15 +697,216 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
                   <button onClick={() => setShowAttachments(false)} className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/40 hover:text-white"><X size={18}/></button>
                 </div>
 
-                <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
-                  <AttachmentItem icon={<ImageIcon size={22} />} label="Photos" color="cyan" onClick={() => { if(fileInputRef.current) { fileInputRef.current.accept = "image/*,video/*"; fileInputRef.current.click(); } setShowAttachments(false); }} />
-                  <AttachmentItem icon={<Camera size={22} />} label="Camera" color="magenta" onClick={() => { onOpenCamera?.(); setShowAttachments(false); }} />
-                  <AttachmentItem icon={<FileText size={22} />} label="Files" color="lime" onClick={() => { if(fileInputRef.current) { fileInputRef.current.accept = ".pdf,.doc,.docx,.txt,.xls,.xlsx"; fileInputRef.current.click(); } setShowAttachments(false); }} />
-                  <AttachmentItem icon={<Music size={22} />} label="Music" color="purple" onClick={() => { if(fileInputRef.current) { fileInputRef.current.accept = "audio/*"; fileInputRef.current.click(); } setShowAttachments(false); }} />
-                  <AttachmentItem icon={<MapPin size={22} />} label="Location" color="red" onClick={() => setShowAttachments(false)} />
-                  <AttachmentItem icon={<UserPlus size={22} />} label="Contact" color="blue" onClick={() => setShowAttachments(false)} />
-                  <AttachmentItem icon={<Sticker size={22} />} label="Stickers" color="pink" onClick={() => setShowAttachments(false)} />
-                  <AttachmentItem icon={<Mic size={22} />} label="Voice" color="green" onClick={() => { startRecording(); setShowAttachments(false); }} />
+                <div className="grid grid-cols-4 gap-3">
+                  <AttachmentItem 
+                    icon={<ImageIcon size={22} />} 
+                    label="Photos" 
+                    color="cyan" 
+                    onClick={() => { 
+                      if(fileInputRef.current) { 
+                        fileInputRef.current.accept = "image/*,video/*"; 
+                        fileInputRef.current.value = ""; 
+                        fileInputRef.current.click(); 
+                      } 
+                      setShowAttachments(false); 
+                    }} 
+                  />
+                  <AttachmentItem 
+                    icon={<Camera size={22} />} 
+                    label="Camera" 
+                    color="magenta" 
+                    onClick={() => { 
+                      onOpenCamera?.(); 
+                      setShowAttachments(false); 
+                    }} 
+                  />
+                  <AttachmentItem 
+                    icon={<FileText size={22} />} 
+                    label="Files" 
+                    color="lime" 
+                    onClick={() => { 
+                      if(fileInputRef.current) { 
+                        fileInputRef.current.accept = ".pdf,.doc,.docx,.txt,.xls,.xlsx,.zip,.csv"; 
+                        fileInputRef.current.value = ""; 
+                        fileInputRef.current.click(); 
+                      } 
+                      setShowAttachments(false); 
+                    }} 
+                  />
+                  <AttachmentItem 
+                    icon={<Music size={22} />} 
+                    label="Music" 
+                    color="purple" 
+                    onClick={() => { 
+                      if(fileInputRef.current) { 
+                        fileInputRef.current.accept = "audio/*"; 
+                        fileInputRef.current.value = ""; 
+                        fileInputRef.current.click(); 
+                      } 
+                      setShowAttachments(false); 
+                    }} 
+                  />
+                  <AttachmentItem 
+                    icon={<MapPin size={22} />} 
+                    label="Location" 
+                    color="red" 
+                    onClick={handleShareLocation} 
+                  />
+                  <AttachmentItem 
+                    icon={<UserPlus size={22} />} 
+                    label="Contact" 
+                    color="blue" 
+                    onClick={() => { 
+                      setShowAttachments(false); 
+                      setShowContactModal(true); 
+                    }} 
+                  />
+                  <AttachmentItem 
+                    icon={<Sticker size={22} />} 
+                    label="Stickers" 
+                    color="pink" 
+                    onClick={() => { 
+                      setShowAttachments(false); 
+                      setShowStickerPicker(true); 
+                    }} 
+                  />
+                  <AttachmentItem 
+                    icon={<Mic size={22} />} 
+                    label="Voice" 
+                    color="green" 
+                    onClick={() => { 
+                      startRecording(); 
+                      setShowAttachments(false); 
+                    }} 
+                  />
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Contact Sharing Modal */}
+      <AnimatePresence>
+        {showContactModal && (
+          <motion.div key="contact-modal-wrapper" className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+              onClick={() => setShowContactModal(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-sm bg-[#16181F] border border-white/10 rounded-3xl p-6 shadow-2xl z-10"
+            >
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                    <UserPlus size={18} />
+                  </div>
+                  <h3 className="text-base font-bold text-white">Share Contact</h3>
+                </div>
+                <button onClick={() => setShowContactModal(false)} className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/50 hover:text-white">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleShareContact} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-white/40 uppercase tracking-wider mb-1.5">
+                    Contact Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={contactName}
+                    onChange={(e) => setContactName(e.target.value)}
+                    placeholder="e.g. Alex Vance"
+                    required
+                    autoFocus
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-[#00F2FF] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-white/40 uppercase tracking-wider mb-1.5">
+                    Phone or @Username (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={contactPhone}
+                    onChange={(e) => setContactPhone(e.target.value)}
+                    placeholder="e.g. +1 555-0192 or @alex"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-[#00F2FF] outline-none"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowContactModal(false)}
+                    className="flex-1 py-2.5 rounded-xl border border-white/10 text-white/60 hover:text-white text-sm font-semibold transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-sm font-bold shadow-lg transition-all"
+                  >
+                    Share
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Cyberpunk Sticker Drawer */}
+      <AnimatePresence>
+        {showStickerPicker && (
+          <motion.div key="sticker-picker-wrapper">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[95]" 
+              onClick={() => setShowStickerPicker(false)} 
+            />
+            <motion.div 
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="fixed bottom-0 left-0 right-0 md:absolute md:bottom-20 md:right-0 z-[96] bg-[#111318]/98 backdrop-blur-2xl border-t md:border border-white/10 rounded-t-[32px] md:rounded-[32px] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] w-full md:w-[420px] overflow-hidden"
+            >
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Sticker size={18} className="text-[#FF4B91]" />
+                    <h3 className="text-[12px] font-black uppercase tracking-[0.2em] text-white/70">Aeirmist Neon Stickers</h3>
+                  </div>
+                  <button onClick={() => setShowStickerPicker(false)} className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/40 hover:text-white">
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-3 max-h-[260px] overflow-y-auto no-scrollbar p-1">
+                  {STICKER_PACK.map(st => (
+                    <motion.button
+                      key={st.id}
+                      whileHover={{ scale: 1.25, rotate: [0, -5, 5, 0] }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => handleSelectSticker(st)}
+                      className="w-12 h-12 flex flex-col items-center justify-center rounded-2xl bg-white/5 hover:bg-white/15 border border-white/5 hover:border-white/20 transition-colors"
+                      title={st.name}
+                    >
+                      <span className="text-2xl select-none">{st.emoji}</span>
+                    </motion.button>
+                  ))}
                 </div>
               </div>
             </motion.div>

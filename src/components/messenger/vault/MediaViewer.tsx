@@ -253,7 +253,7 @@ export const MediaViewer = ({
                                 { icon: Download, label: 'Save', action: handleDownload },
                                 { icon: Share2, label: 'Share', action: handleShare },
                                 { icon: RefreshCw, label: 'Restore', color: 'text-emerald-400', action: handleRestoreItem },
-                                { icon: Trash2, label: 'Delete', color: 'text-red-400', action: () => onDelete(currentMedia?.id) },
+                                { icon: Trash2, label: 'Delete', color: 'text-red-400', action: () => { onDelete(currentMedia?.id); onClose(); } },
                             ].map((btn, i) => (
                                 <button 
                                     key={i}

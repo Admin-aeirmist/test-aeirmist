@@ -586,11 +586,19 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   React.useEffect(() => {
     if (!db || !displayUser?.id) return;
     
-    const isOwn = displayUser.id === user?.uid;
+    const isOwn = displayUser.id === user?.uid || displayUser.id === profile?.id;
     
+    const storyCandidateUids = Array.from(new Set([
+      displayUser.id,
+      displayUser.uid,
+      displayUser.ownerUid,
+      displayUser.id.replace(/^profile_/, ''),
+      'profile_' + displayUser.id.replace(/^profile_/, '')
+    ].filter(Boolean)));
+
     const q = query(
       collection(db, 'stories'),
-      where('userId', '==', displayUser.id),
+      where('userId', 'in', storyCandidateUids),
       limit(20)
     );
     const unsub = onSnapshot(q, (snap) => {
@@ -681,9 +689,17 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     if (!db || !displayUser?.id) return;
     
     setLoadingPosts(true);
+    const authorCandidateIds = Array.from(new Set([
+      displayUser.id,
+      displayUser.uid,
+      displayUser.ownerUid,
+      displayUser.id.replace(/^profile_/, ''),
+      'profile_' + displayUser.id.replace(/^profile_/, '')
+    ].filter(Boolean)));
+
     const q = query(
       collection(db, 'posts'), 
-      where('authorId', '==', displayUser.id),
+      where('authorId', 'in', authorCandidateIds),
       limit(50)
     );
 
@@ -1146,8 +1162,8 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                   {editingPhoto && (
                     <DigitalImageEditor
                       imageSrc={editingPhoto.src}
-                      aspectRatio={editingPhoto.type === 'avatar' ? 1 : 2.7}
-                      title={editingPhoto.type === 'avatar' ? 'Update profile picture' : 'Update cover photo'}
+                      aspectRatio={editingPhoto.type === 'avatar' ? 1 : 3}
+                      title={editingPhoto.type === 'avatar' ? 'Update profile picture' : 'Update cover photo (1080p HD)'}
                       onSave={handleSaveEditedPhoto}
                       onCancel={() => {
                         if (editingPhoto.src) URL.revokeObjectURL(editingPhoto.src);
@@ -1264,7 +1280,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               <motion.div 
                 whileHover={{ rotateX: 5, rotateY: 5, scale: 1.02 }}
                 style={{ perspective: 1000 }}
-                className="relative p-1 transition-all duration-700"
+                className="relative p-1.5 bg-white dark:bg-transparent rounded-[2.2rem] shadow-xl dark:shadow-none ring-4 ring-white/95 dark:ring-transparent transition-all duration-700"
               >
                 {/* DP FRAME IMPROVEMENT: Double Border + Glow */}
                 <div className={`absolute inset-0 blur-md opacity-0 group-hover:opacity-100 transition-opacity rounded-[2.2rem] ${isInfinity ? 'bg-aeirmist-magenta/40 opacity-100 animate-pulse' : 'bg-aeirmist-cyan/30'}`} />
@@ -1324,7 +1340,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                   whileHover={{ scale: 1.1, backgroundColor: 'rgba(0, 242, 255, 0.8)' }}
                   whileTap={{ scale: 0.9 }}
                   onClick={handleAvatarInteraction}
-                  className="absolute bottom-2 right-2 w-10 h-10 rounded-xl bg-white/90 backdrop-blur-xl text-black flex items-center justify-center border-2 border-[#01050a] transition-all z-40 shadow-xl hover:bg-aeirmist-cyan hover:text-black cursor-pointer"
+                  className="absolute bottom-2 right-2 w-10 h-10 rounded-xl bg-white/90 backdrop-blur-xl text-black flex items-center justify-center border-2 border-slate-200 dark:border-[#01050a] transition-all z-40 shadow-xl hover:bg-aeirmist-cyan hover:text-black cursor-pointer"
                 >
                   <Camera size={16} />
                 </motion.button>
@@ -1809,7 +1825,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
           <div className="space-y-4">
             {/* MOBILE COVER BANNER */}
             <div
-              className="w-full h-24 rounded-t-2xl relative overflow-hidden bg-gradient-to-r from-zinc-950 via-[#120e2e] to-black border-b border-white/5"
+              className="w-full h-24 rounded-t-2xl relative overflow-hidden bg-gradient-to-r from-slate-200 via-sky-100 to-indigo-100 dark:from-zinc-950 dark:via-[#120e2e] dark:to-black border-b border-slate-200/80 dark:border-white/5"
             >
               {isDataLoading ? (
                 <Skeleton className="w-full h-full opacity-20" />
@@ -1817,7 +1833,10 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                 <img
                   src={(isOwnProfile && localCoverURL) ? localCoverURL : displayUser.coverURL}
                   alt="Cover"
-                  className="w-full h-full object-cover"
+                  loading="eager"
+                  decoding="async"
+                  fetchPriority="high"
+                  className="w-full h-full object-cover transition-opacity duration-300"
                   referrerPolicy="no-referrer"
                 />
               )}
@@ -1854,13 +1873,13 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
             {/* Horizontal DP & Stats Row */}
             <div className="flex items-center gap-6 justify-between px-4">
-              {/* Square DP with custom Neon Glow Border */}
+              {/* Square DP with custom Neon Glow Border and crisp elevated white frame in light mode */}
               <div className="relative group shrink-0">
-                <div className="absolute inset-0 bg-gradient-to-tr from-aeirmist-cyan to-aeirmist-magenta rounded-xl blur px-[1px] opacity-35 animate-pulse" />
+                <div className="absolute inset-0 bg-gradient-to-tr from-aeirmist-cyan to-aeirmist-magenta rounded-2xl blur px-[1px] opacity-35 animate-pulse" />
                 
                 <div 
                   onClick={handleAvatarInteraction}
-                  className="relative z-10 w-20 h-20 rounded-xl overflow-hidden border border-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.6)] cursor-pointer bg-[#050a0f] flex items-center justify-center"
+                  className="relative z-10 w-20 h-20 rounded-2xl overflow-hidden border-2 border-white dark:border-aeirmist-cyan ring-4 ring-white/95 dark:ring-transparent shadow-xl cursor-pointer bg-white dark:bg-[#050a0f] flex items-center justify-center p-0.5"
                 >
                   <img 
                     src={(isOwnProfile && localAvatarURL) ? localAvatarURL : (getAvatarUrl(displayUser?.photoURL) || undefined)} 
@@ -1869,7 +1888,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                     decoding="async"
                     fetchPriority="high"
                     style={{ imageRendering: 'auto' }}
-                    className="w-full h-full object-cover rounded-lg"
+                    className="w-full h-full object-cover rounded-xl contrast-[1.02] brightness-[1.01] dark:contrast-100 dark:brightness-100"
                     referrerPolicy="no-referrer"
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = getAvatarUrl(null);
@@ -3276,12 +3295,12 @@ const HighlightItem = ({ h }: { h: any }) => (
       <div className="absolute inset-[-10%] border border-aeirmist-cyan/30 rounded-2xl animate-[spin_10s_linear_infinite] opacity-0 group-hover:opacity-100 transition-opacity" />
       <div className="absolute inset-[-5%] border border-white/5 rounded-2xl" />
       
-      <div className="relative z-10 w-16 h-16 sm:w-22 sm:h-22 rounded-2xl overflow-hidden border-[3px] border-[#01050a] bg-black ring-2 ring-white/5 group-hover:ring-aeirmist-cyan/50 transition-all duration-500 shadow-2xl">
+      <div className="relative z-10 w-16 h-16 sm:w-22 sm:h-22 rounded-2xl overflow-hidden border-[3px] border-white dark:border-[#01050a] bg-slate-100 dark:bg-black ring-2 ring-slate-200 dark:ring-white/5 group-hover:ring-aeirmist-cyan/50 transition-all duration-500 shadow-xl">
         <img src={h.coverUrl || undefined} className="w-full h-full object-cover grayscale-[0.6] group-hover:grayscale-0 transition-all duration-1000 group-hover:scale-125" alt="" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
     </div>
-    <span className="text-[9px] font-black uppercase text-white/30 group-hover:text-aeirmist-cyan tracking-[0.3em] font-display transition-colors duration-500">
+    <span className="text-[9px] font-black uppercase text-slate-500 dark:text-white/30 group-hover:text-aeirmist-cyan tracking-[0.3em] font-display transition-colors duration-500">
       {h.label}
     </span>
   </div>
@@ -3387,7 +3406,7 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
       id={`post-${post.id}`}
       whileHover={{ y: -8, scale: 1.02 }}
       onClick={onClick}
-      className="aspect-square relative group rounded-[1.8rem] overflow-hidden bg-[#050a0f] border border-white/5 cursor-pointer shadow-2xl transition-all duration-500"
+      className="aspect-square relative group rounded-md sm:rounded-xl md:rounded-2xl lg:rounded-[1.8rem] overflow-hidden bg-[#050a0f] border border-white/5 cursor-pointer shadow-2xl transition-all duration-500"
     >
       
       {hasMedia ? (

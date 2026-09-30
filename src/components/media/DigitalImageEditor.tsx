@@ -32,6 +32,7 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [imgNaturalSize, setImgNaturalSize] = useState<{ width: number; height: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const cropFrameRef = useRef<HTMLDivElement>(null);
@@ -45,6 +46,15 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
     positionRef.current = position;
   }, [position]);
 
+  // Load natural dimensions of source image
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      setImgNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.src = imageSrc;
+  }, [imageSrc]);
+
   // Back button closes modal cleanly on Android/browser
   useBackHandler(() => {
     onCancel();
@@ -52,7 +62,7 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
   }, true, 110, [onCancel]);
 
   const handleZoom = (delta: number) => {
-    setZoom(prev => Math.min(Math.max(1, +(prev + delta).toFixed(2)), 3));
+    setZoom(prev => Math.min(Math.max(1, +(prev + delta).toFixed(2)), 3.5));
   };
 
   const handleRotate = (deg: number) => {
@@ -116,6 +126,25 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
     };
   }, [isDragging, onPointerMove, onPointerUp]);
 
+  // Determine frame size
+  const isAvatar = aspectRatio === 1;
+  const frameWidth = isAvatar ? 280 : 460;
+  const frameHeight = Math.round(frameWidth / aspectRatio);
+
+  // Compute rendered base size that fully covers the crop frame at zoom 1
+  let renderedWidth = frameWidth;
+  let renderedHeight = frameHeight;
+  if (imgNaturalSize && imgNaturalSize.width && imgNaturalSize.height) {
+    const imgRatio = imgNaturalSize.width / imgNaturalSize.height;
+    if (imgRatio >= aspectRatio) {
+      renderedHeight = frameHeight;
+      renderedWidth = Math.round(frameHeight * imgRatio);
+    } else {
+      renderedWidth = frameWidth;
+      renderedHeight = Math.round(frameWidth / imgRatio);
+    }
+  }
+
   const handleSave = async () => {
     if (!imageRef.current || !canvasRef.current || !cropFrameRef.current) return;
     setIsProcessing(true);
@@ -127,16 +156,21 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Canvas context unavailable');
 
-      // High-resolution output canvas
-      const outputWidth = aspectRatio === 1 ? 1024 : 1920;
+      // Ultra-HD / 1080p Crisp Canvas Resolution:
+      // Cover: 2560px wide (Crisp 1080p & 2K QHD for desktop and mobile retina)
+      // Avatar: 1080px wide (True 1080p HD square avatar)
+      const outputWidth = isAvatar ? 1080 : 2560;
       const outputHeight = Math.round(outputWidth / aspectRatio);
       canvas.width = outputWidth;
       canvas.height = outputHeight;
 
+      // Enable high-quality smoothing
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Ratio of output resolution to on-screen preview resolution
-      const scaleMultiplier = outputWidth / (cropRect.width || 1);
+      // Exact pixel-perfect scaling ratio from on-screen preview to high-res canvas
+      const scaleMultiplier = outputWidth / (cropRect.width || frameWidth || 1);
 
       ctx.save();
       // Center canvas origin
@@ -147,22 +181,20 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
       // Apply scaled pan position
       ctx.translate(position.x * scaleMultiplier, position.y * scaleMultiplier);
 
-      // Draw image covering the crop area
-      const imgAspect = img.naturalWidth / img.naturalHeight;
-      let drawWidth = canvas.width;
-      let drawHeight = canvas.width / imgAspect;
+      // Draw image precisely matching the rendered preview dimensions scaled up
+      const finalDrawWidth = renderedWidth * scaleMultiplier;
+      const finalDrawHeight = renderedHeight * scaleMultiplier;
 
-      if (imgAspect < aspectRatio) {
-        drawWidth = canvas.width;
-        drawHeight = canvas.width / imgAspect;
-      } else {
-        drawHeight = canvas.height;
-        drawWidth = canvas.height * imgAspect;
-      }
-
-      ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+      ctx.drawImage(
+        img, 
+        -finalDrawWidth / 2, 
+        -finalDrawHeight / 2, 
+        finalDrawWidth, 
+        finalDrawHeight
+      );
       ctx.restore();
 
+      // Export at 0.95 high-fidelity JPEG to preserve crystal-clear HD details
       canvas.toBlob((blob) => {
         if (blob) {
           onSave(blob);
@@ -170,19 +202,18 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
           console.error('[DigitalImageEditor] Blob export returned null');
         }
         setIsProcessing(false);
-      }, 'image/jpeg', 0.92);
+      }, 'image/jpeg', 0.95);
     } catch (err) {
       console.error('[DigitalImageEditor] Export error:', err);
       setIsProcessing(false);
     }
   };
 
-  const defaultTitle = aspectRatio === 1 ? 'Update profile picture' : 'Update cover photo';
+  const defaultTitle = isAvatar ? 'Update profile picture' : 'Update cover photo';
   const modalTitle = title || defaultTitle;
-  const isAvatar = aspectRatio === 1;
 
   return (
-    <div className="fixed inset-0 z-[1200] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md select-none font-sans">
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md select-none font-sans">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -232,36 +263,45 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
               src={imageSrc} 
               alt="Crop target" 
               draggable={false}
-              className={`max-w-none ${isAvatar ? 'w-[320px] h-[320px] sm:w-[380px] sm:h-[380px]' : 'w-[480px] h-[320px] sm:w-[540px] sm:h-[380px]'} object-cover`}
+              style={{
+                width: `${renderedWidth}px`,
+                height: `${renderedHeight}px`,
+                maxWidth: 'none'
+              }}
+              className="select-none pointer-events-none"
             />
           </div>
 
           {/* Crop Frame with Box-Shadow Mask (DIMS EVERYTHING OUTSIDE THE FRAME) */}
           <div 
             ref={cropFrameRef}
+            style={{
+              width: `${frameWidth}px`,
+              height: `${frameHeight}px`
+            }}
             className={`relative pointer-events-none z-10 ${
               isAvatar 
-                ? 'w-[240px] h-[240px] sm:w-[280px] sm:h-[280px] rounded-3xl sm:rounded-[2.25rem]' 
-                : 'w-[90%] aspect-[2.7/1] rounded-2xl'
-            } border-2 border-white/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.65)]`}
+                ? 'rounded-3xl sm:rounded-[2.25rem]' 
+                : 'rounded-2xl'
+            } border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.7)]`}
           >
             {/* Subtle center alignment cross-guide for intuitive positioning */}
             <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-25">
-              <div className="border-r border-b border-white/20" />
-              <div className="border-r border-b border-white/20" />
-              <div className="border-b border-white/20" />
-              <div className="border-r border-b border-white/20" />
-              <div className="border-r border-b border-white/20" />
-              <div className="border-b border-white/20" />
-              <div className="border-r border-b border-white/20" />
-              <div className="border-r border-b border-white/20" />
+              <div className="border-r border-b border-white/30" />
+              <div className="border-r border-b border-white/30" />
+              <div className="border-b border-white/30" />
+              <div className="border-r border-b border-white/30" />
+              <div className="border-r border-b border-white/30" />
+              <div className="border-b border-white/30" />
+              <div className="border-r border-b border-white/30" />
+              <div className="border-r border-b border-white/30" />
               <div />
             </div>
           </div>
 
           {/* Helper hint */}
-          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none px-3 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[10px] text-white/60 font-medium">
-            Drag image to reposition
+          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 text-[10px] text-white/70 font-medium">
+            Drag image to reposition • HD 1080p Output
           </div>
         </div>
 
@@ -270,7 +310,7 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
           <div className="flex items-center gap-3 sm:gap-4">
             <button 
               type="button"
-              onClick={() => handleZoom(-0.1)} 
+              onClick={() => handleZoom(-0.15)} 
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               title="Zoom out"
             >
@@ -280,7 +320,7 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
               <input 
                 type="range" 
                 min="1" 
-                max="3" 
+                max="3.5" 
                 step="0.01" 
                 value={zoom} 
                 onChange={(e) => setZoom(parseFloat(e.target.value))}
@@ -289,7 +329,7 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
             </div>
             <button 
               type="button"
-              onClick={() => handleZoom(0.1)} 
+              onClick={() => handleZoom(0.15)} 
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               title="Zoom in"
             >
@@ -347,7 +387,7 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
             {isProcessing ? (
               <>
                 <RefreshCw size={14} className="animate-spin" />
-                <span>Applying...</span>
+                <span>Applying HD Crop...</span>
               </>
             ) : (
               <>
@@ -364,3 +404,4 @@ export const DigitalImageEditor: React.FC<DigitalImageEditorProps> = ({
     </div>
   );
 };
+

@@ -1422,8 +1422,8 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
       <div className="absolute top-0 right-0 w-32 h-32 bg-aeirmist-cyan/5 blur-2xl rounded-full pointer-events-none" />
 
       {/* Header Info */}
-      <div className="p-3 sm:p-4 flex items-center justify-between">
-        <div className="flex items-center gap-2.5 sm:gap-3 overflow-hidden">
+      <div className="p-3 sm:p-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 sm:gap-3 overflow-hidden min-w-0 flex-1">
           <button 
             type="button"
             role="link"

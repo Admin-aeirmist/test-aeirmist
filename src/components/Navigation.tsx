@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useAppearance } from '../context/AppearanceContext';
 import { 
   Home, 
@@ -38,7 +39,9 @@ import {
   Image as ImageIcon,
   AlertCircle,
   ArrowLeft,
-  Trash2
+  Trash2,
+  Check,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useAeirmist } from '../context/AeirmistContext';
@@ -47,6 +50,7 @@ import { AeirmistLogo } from './ui/AeirmistLogo';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { InstallModal } from './pwa/InstallModal';
 import { AccountSwitcher } from './auth/AccountSwitcher';
+import { ReportProblemModal } from './ReportProblemModal';
 
 export type Tab = 'feed' | 'messenger' | 'discover' | 'profile' | 'settings' | 'videos' | 'dashboard' | 'notifications' | 'admin';
 
@@ -63,13 +67,14 @@ interface NavigationProps {
 
 export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpanded, setIsExpanded, onNotificationsClick, onPreload, isRemoteView }: NavigationProps) => {
   const { user, profile, isNavHidden, unreadMessagesCount, unreadNotificationsCount, localAvatarURL, featureFlags, logout, addToast, uploadMedia } = useAeirmist();
-  const { settings, updateAppearanceSettings } = useAppearance();
+  const { settings, updateAppearanceSettings, resetAppearanceSettings } = useAppearance();
   const isGlobalBgActive = settings.globalBgType !== 'none' && !!settings.globalBgValue;
 
   // More Menu Popover State
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [moreSubView, setMoreSubView] = useState<'main' | 'appearance'>('main');
   const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -143,6 +148,11 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
   }, []);
 
   const handleMouseLeave = React.useCallback(() => {
+    // Never auto-collapse while More Menu / Appearance is active!
+    if (isMoreMenuOpen) {
+      return;
+    }
+
     // Smart collapse protection: check if user is currently typing or interacting
     const isUserActiveTyping = typeof document !== 'undefined' && document.activeElement && (
       document.activeElement.tagName === 'INPUT' || 
@@ -161,7 +171,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
     collapseTimeoutRef.current = setTimeout(() => {
       setIsHovered(false);
     }, 280); // Quick yet elegant buffer delay
-  }, []);
+  }, [isMoreMenuOpen]);
 
   // Clear timer on unmount
   React.useEffect(() => {
@@ -172,8 +182,8 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
     };
   }, []);
 
-  // Combined smart state
-  const targetWidth = isHovered ? 260 : (isExpanded ? (settings.compactSidebar ? 72 : 260) : 72);
+  // Combined smart state - stay expanded if hovered OR if more menu/appearance popover is open
+  const targetWidth = (isHovered || isMoreMenuOpen) ? 260 : (isExpanded ? (settings.compactSidebar ? 72 : 260) : 72);
   const isCurrentlyExpanded = targetWidth === 260;
   const shouldReduceMotion = useReducedMotion();
 
@@ -187,7 +197,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
         onMouseLeave={handleMouseLeave}
         animate={{ width: targetWidth }} initial={false}
         transition={shouldReduceMotion ? { duration: 0 } : { type: 'spring', damping: 22, stiffness: 125 }}
-        className="hidden md:flex flex-col h-full border-r border-white/10 bg-[#060608]/90 backdrop-blur-3xl px-3 py-4 z-50 shrink-0 relative select-none overflow-hidden"
+        className="hidden md:flex flex-col h-full border-r border-white/10 nav-sidebar-glass bg-[#060608]/90 backdrop-blur-3xl px-3 py-4 z-50 shrink-0 relative select-none overflow-hidden"
       >
         {/* Top Spotlight Bar */}
         <div className="absolute top-0 inset-x-0 h-[1.5px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
@@ -272,148 +282,359 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
           )}
         </div>
 
-        {/* MORE MENU POPOVER */}
-        <AnimatePresence>
-          {isMoreMenuOpen && (
-            <motion.div
-              ref={moreMenuRef}
-              initial={{ opacity: 0, y: 10, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.96 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
-              className="absolute bottom-20 left-3 w-64 bg-[#141418]/95 border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.8)] backdrop-blur-2xl z-[200] p-1.5 overflow-hidden text-white"
-            >
-              {moreSubView === 'main' ? (
-                <div className="flex flex-col space-y-0.5">
-                  <button
-                    onClick={() => {
-                      setIsMoreMenuOpen(false);
-                      onTabChange('settings');
-                    }}
-                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
-                  >
-                    <Settings size={17} className="text-white/70" />
-                    <span>Settings</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsMoreMenuOpen(false);
-                      onTabChange('dashboard');
-                    }}
-                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
-                  >
-                    <Activity size={17} className="text-white/70" />
-                    <span>Your activity</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsMoreMenuOpen(false);
-                      onTabChange('profile');
-                    }}
-                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
-                  >
-                    <Bookmark size={17} className="text-white/70" />
-                    <span>Saved</span>
-                  </button>
-
-                  <button
-                    onClick={() => setMoreSubView('appearance')}
-                    className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
-                  >
-                    <div className="flex items-center gap-3">
-                      {settings.themeMode === 'light' ? <Sun size={17} className="text-amber-400" /> : <Moon size={17} className="text-white/70" />}
-                      <span>Switch appearance</span>
-                    </div>
-                    <ChevronRight size={14} className="text-white/40" />
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsMoreMenuOpen(false);
-                      addToast({ title: "Report Sent", message: "Thank you for your feedback. Our team is investigating.", type: "info" });
-                    }}
-                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
-                  >
-                    <AlertCircle size={17} className="text-white/70" />
-                    <span>Report a problem</span>
-                  </button>
-
-                  <div className="h-px bg-white/10 my-1 mx-2" />
-
-                  <button
-                    onClick={() => {
-                      setIsMoreMenuOpen(false);
-                      setAccountSwitcherOpen(true);
-                    }}
-                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors w-full text-left"
-                  >
-                    <span>Switch accounts</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsMoreMenuOpen(false);
-                      logout();
-                    }}
-                    className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors w-full text-left"
-                  >
-                    <LogOut size={16} />
-                    <span>Log out</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col space-y-2 p-1">
-                  <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+        {/* MORE MENU POPOVER (PORTALED OUTSIDE SIDEBAR TO PREVENT CLIPPING BY OVERFLOW-HIDDEN & BLUR) */}
+        {typeof document !== 'undefined' && createPortal(
+          <AnimatePresence>
+            {isMoreMenuOpen && (
+              <motion.div
+                ref={moreMenuRef}
+                initial={{ opacity: 0, y: 12, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 12, scale: 0.95 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+                className={`fixed bottom-20 ${isCurrentlyExpanded ? 'left-4' : 'left-[78px]'} z-[9999] w-80 max-h-[85vh] overflow-y-auto ${
+                  settings.themeMode === 'light'
+                    ? 'bg-white/95 border-slate-200 text-slate-900 shadow-[0_24px_70px_rgba(0,0,0,0.18)]'
+                    : 'bg-[#111217]/98 border-white/15 text-white shadow-[0_24px_70px_rgba(0,0,0,0.95)]'
+                } border rounded-2xl backdrop-blur-3xl p-2.5 custom-scrollbar`}
+              >
+                {moreSubView === 'main' ? (
+                  <div className="flex flex-col space-y-0.5">
                     <button
-                      onClick={() => setMoreSubView('main')}
-                      className="p-1 hover:bg-white/10 rounded-lg text-white/70 hover:text-white transition-colors"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        onTabChange('settings');
+                      }}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left ${
+                        settings.themeMode === 'light'
+                          ? 'text-slate-800 hover:text-slate-950 hover:bg-slate-100'
+                          : 'text-white/90 hover:text-white hover:bg-white/10'
+                      }`}
                     >
-                      <ArrowLeft size={16} />
+                      <Settings size={17} className={settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'} />
+                      <span>Settings</span>
                     </button>
-                    <span className="text-xs font-bold uppercase tracking-wider text-white">Switch appearance</span>
-                  </div>
 
-                  {/* Dark Mode Toggle */}
-                  <div className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-white/[0.03]">
-                    <span className="text-xs text-white/80">Dark mode</span>
                     <button
-                      onClick={() => updateAppearanceSettings({ themeMode: settings.themeMode === 'dark' ? 'light' : 'dark' })}
-                      className={`w-10 h-6 rounded-full p-0.5 transition-colors ${settings.themeMode === 'dark' ? 'bg-aeirmist-cyan' : 'bg-white/20'}`}
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        onTabChange('dashboard');
+                      }}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left ${
+                        settings.themeMode === 'light'
+                          ? 'text-slate-800 hover:text-slate-950 hover:bg-slate-100'
+                          : 'text-white/90 hover:text-white hover:bg-white/10'
+                      }`}
                     >
-                      <div className={`w-5 h-5 rounded-full bg-black shadow-md transition-transform ${settings.themeMode === 'dark' ? 'translate-x-4' : 'translate-x-0'}`} />
+                      <Activity size={17} className={settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'} />
+                      <span>Your activity</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        onTabChange('profile');
+                      }}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left ${
+                        settings.themeMode === 'light'
+                          ? 'text-slate-800 hover:text-slate-950 hover:bg-slate-100'
+                          : 'text-white/90 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Bookmark size={17} className={settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'} />
+                      <span>Saved</span>
+                    </button>
+
+                    <button
+                      onClick={() => setMoreSubView('appearance')}
+                      className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left group ${
+                        settings.themeMode === 'light'
+                          ? 'text-slate-800 hover:text-slate-950 hover:bg-slate-100'
+                          : 'text-white/90 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {settings.themeMode === 'light' ? <Sun size={17} className="text-amber-500" /> : <Moon size={17} className="text-aeirmist-cyan" />}
+                        <span>Switch appearance</span>
+                      </div>
+                      <ChevronRight size={14} className={settings.themeMode === 'light' ? 'text-slate-400 group-hover:text-slate-700' : 'text-white/40 group-hover:text-white/80'} />
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        setReportModalOpen(true);
+                      }}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left ${
+                        settings.themeMode === 'light'
+                          ? 'text-slate-800 hover:text-slate-950 hover:bg-slate-100'
+                          : 'text-white/90 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <AlertCircle size={17} className="text-amber-500" />
+                      <span>Report a problem</span>
+                    </button>
+
+                    <div className={`h-px my-1 mx-2 ${settings.themeMode === 'light' ? 'bg-slate-200' : 'bg-white/10'}`} />
+
+                    <button
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        setAccountSwitcherOpen(true);
+                      }}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left ${
+                        settings.themeMode === 'light'
+                          ? 'text-slate-800 hover:text-slate-950 hover:bg-slate-100'
+                          : 'text-white/90 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Users size={16} className={settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'} />
+                      <span>Switch accounts</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        logout();
+                      }}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-red-500 hover:text-red-600 ${
+                        settings.themeMode === 'light' ? 'hover:bg-red-50' : 'hover:bg-red-500/10'
+                      } transition-colors w-full text-left`}
+                    >
+                      <LogOut size={16} />
+                      <span>Log out</span>
                     </button>
                   </div>
-
-                  {/* Custom Wallpaper Upload */}
-                  <div className="space-y-1.5 px-1 pt-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Custom Wallpaper</span>
-                    <label className="flex items-center justify-center gap-2 w-full p-2.5 rounded-xl border border-dashed border-white/20 hover:border-aeirmist-cyan bg-white/[0.02] hover:bg-aeirmist-cyan/5 text-xs text-white/80 hover:text-aeirmist-cyan cursor-pointer transition-all">
-                      <ImageIcon size={16} />
-                      <span>Choose Wallpaper</span>
-                      <input
-                        type="file"
-                        accept="image/*,video/*"
-                        className="hidden"
-                        onChange={handleWallpaperUpload}
-                      />
-                    </label>
-
-                    {settings.globalBgType === 'custom' && settings.globalBgValue && (
+                ) : (
+                  <div className="flex flex-col space-y-3 p-1.5">
+                    {/* Header */}
+                    <div className={`flex items-center gap-2 pb-2 border-b ${settings.themeMode === 'light' ? 'border-slate-200' : 'border-white/10'}`}>
                       <button
-                        onClick={() => updateAppearanceSettings({ globalBgType: 'none', globalBgValue: '' })}
-                        className="flex items-center justify-center gap-1.5 w-full py-1.5 text-[10px] font-bold text-red-400 hover:text-red-300 transition-colors"
+                        onClick={() => setMoreSubView('main')}
+                        className={`p-1 rounded-lg transition-colors ${
+                          settings.themeMode === 'light' ? 'hover:bg-slate-100 text-slate-600 hover:text-slate-900' : 'hover:bg-white/10 text-white/70 hover:text-white'
+                        }`}
                       >
-                        <Trash2 size={12} /> Remove Wallpaper
+                        <ArrowLeft size={16} />
                       </button>
-                    )}
+                      <span className={`text-xs font-bold uppercase tracking-wider ${settings.themeMode === 'light' ? 'text-slate-900' : 'text-white'}`}>
+                        Appearance & Theme
+                      </span>
+                    </div>
+
+                    {/* Theme Selector */}
+                    <div className="space-y-1.5">
+                      <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
+                        Theme Mode
+                      </span>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <button
+                          onClick={() => updateAppearanceSettings({ themeMode: 'dark', globalBgType: 'none', globalBgValue: '' })}
+                          className={`py-2 px-1 rounded-xl text-[10px] font-bold uppercase tracking-wider border transition-all flex flex-col items-center gap-1 ${
+                            settings.themeMode === 'dark' && settings.globalBgValue !== '#000000'
+                              ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,229,255,0.2)]'
+                              : settings.themeMode === 'light'
+                                ? 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                                : 'bg-white/5 border-white/10 text-white/60 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          <Moon size={14} />
+                          <span>Dark</span>
+                        </button>
+
+                        <button
+                          onClick={() => updateAppearanceSettings({ themeMode: 'light', globalBgType: 'none', globalBgValue: '' })}
+                          className={`py-2 px-1 rounded-xl text-[10px] font-bold uppercase tracking-wider border transition-all flex flex-col items-center gap-1 ${
+                            settings.themeMode === 'light'
+                              ? 'bg-amber-400/20 border-amber-500 text-amber-800 shadow-[0_0_12px_rgba(251,191,36,0.25)] font-black'
+                              : 'bg-white/5 border-white/10 text-white/60 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          <Sun size={14} />
+                          <span>Light</span>
+                        </button>
+
+                        <button
+                          onClick={() => updateAppearanceSettings({ themeMode: 'dark', globalBgType: 'solid', globalBgValue: '#000000' })}
+                          className={`py-2 px-1 rounded-xl text-[10px] font-bold uppercase tracking-wider border transition-all flex flex-col items-center gap-1 ${
+                            settings.themeMode === 'dark' && settings.globalBgValue === '#000000'
+                              ? 'bg-white/20 border-white text-white shadow-[0_0_12px_rgba(255,255,255,0.2)]'
+                              : settings.themeMode === 'light'
+                                ? 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                                : 'bg-white/5 border-white/10 text-white/60 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          <Zap size={14} />
+                          <span>OLED</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Accent Color Palette */}
+                    <div className="space-y-1.5">
+                      <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
+                        Accent Color
+                      </span>
+                      <div className={`flex items-center justify-between gap-1 p-2 rounded-xl border ${
+                        settings.themeMode === 'light' ? 'bg-slate-100 border-slate-200' : 'bg-white/5 border-white/10'
+                      }`}>
+                        {[
+                          { id: 'cyan', color: '#00E5FF', label: 'Cyan' },
+                          { id: 'blue', color: '#3B82F6', label: 'Blue' },
+                          { id: 'purple', color: '#A855F7', label: 'Purple' },
+                          { id: 'emerald', color: '#10B981', label: 'Emerald' },
+                          { id: 'orange', color: '#F97316', label: 'Orange' },
+                          { id: 'red', color: '#EF4444', label: 'Red' },
+                        ].map((acc) => {
+                          const isSelected = settings.accentColor === acc.id;
+                          return (
+                            <button
+                              key={acc.id}
+                              type="button"
+                              title={acc.label}
+                              onClick={() => updateAppearanceSettings({ accentColor: acc.id as any })}
+                              className={`w-7 h-7 rounded-full transition-all flex items-center justify-center shrink-0 cursor-pointer ${
+                                isSelected ? 'scale-110 ring-2 ring-white ring-offset-2 ring-offset-black shadow-lg' : 'opacity-70 hover:opacity-100 hover:scale-105'
+                              }`}
+                              style={{ backgroundColor: acc.color }}
+                              aria-label={`Select ${acc.label} accent color`}
+                              aria-pressed={isSelected}
+                            >
+                              {isSelected && (
+                                <Check size={14} className={acc.id === 'cyan' ? 'text-black stroke-[3]' : 'text-white stroke-[3]'} />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Wallpaper Presets */}
+                    <div className="space-y-1.5">
+                      <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
+                        Wallpaper Presets
+                      </span>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { name: 'Cyber Glow', value: 'linear-gradient(135deg, #091a29 0%, #050b14 100%)' },
+                          { name: 'Deep Space', value: 'linear-gradient(135deg, #150928 0%, #080312 100%)' },
+                          { name: 'Emerald Dusk', value: 'linear-gradient(135deg, #071f16 0%, #030d09 100%)' },
+                          { name: 'Sunset Ember', value: 'linear-gradient(135deg, #280d09 0%, #0e0403 100%)' },
+                        ].map((preset) => (
+                          <button
+                            key={preset.name}
+                            onClick={() => updateAppearanceSettings({ globalBgType: 'gradient', globalBgValue: preset.value })}
+                            className={`p-2 rounded-xl text-[9px] font-bold uppercase tracking-wider border transition-all text-left truncate ${
+                              settings.globalBgValue === preset.value
+                                ? 'border-aeirmist-cyan text-white shadow-[0_0_10px_rgba(0,229,255,0.2)] ring-1 ring-aeirmist-cyan'
+                                : 'border-white/15 text-white/90 hover:border-white/30'
+                            }`}
+                            style={{ background: preset.value }}
+                          >
+                            {preset.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Custom Wallpaper Upload */}
+                    <div className="space-y-1.5">
+                      <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
+                        Custom Wallpaper
+                      </span>
+                      <label className={`flex items-center justify-center gap-2 w-full p-2.5 rounded-xl border border-dashed transition-all cursor-pointer ${
+                        settings.themeMode === 'light'
+                          ? 'border-slate-300 hover:border-aeirmist-cyan bg-slate-50 hover:bg-cyan-50/50 text-slate-700 hover:text-cyan-700'
+                          : 'border-white/20 hover:border-aeirmist-cyan bg-white/[0.02] hover:bg-aeirmist-cyan/5 text-white/80 hover:text-aeirmist-cyan'
+                      } text-xs`}>
+                        <ImageIcon size={15} />
+                        <span className="text-[10px] font-bold uppercase tracking-wider">Upload Custom File</span>
+                        <input
+                          type="file"
+                          accept="image/*,video/*"
+                          className="hidden"
+                          onChange={handleWallpaperUpload}
+                        />
+                      </label>
+
+                      {settings.globalBgType !== 'none' && !!settings.globalBgValue && (
+                        <button
+                          onClick={() => updateAppearanceSettings({ globalBgType: 'none', globalBgValue: '' })}
+                          className="flex items-center justify-center gap-1.5 w-full py-1.5 text-[10px] font-bold text-red-500 hover:text-red-600 transition-colors cursor-pointer"
+                        >
+                          <Trash2 size={12} /> Remove Background
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Blur Density & Clarity Sliders */}
+                    <div className={`space-y-3 pt-2 border-t ${settings.themeMode === 'light' ? 'border-slate-200' : 'border-white/10'}`}>
+                      <div className="space-y-1.5">
+                        <div className={`flex justify-between text-[10px] font-bold uppercase tracking-wider ${settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'}`}>
+                          <span>Glass Blur Density</span>
+                          <span className="font-mono text-aeirmist-cyan font-bold">{settings.cardBlur ?? 16}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="30"
+                          value={settings.cardBlur ?? 16}
+                          onChange={(e) => updateAppearanceSettings({ cardBlur: Number(e.target.value) })}
+                          className={`w-full accent-aeirmist-cyan h-2 rounded-lg cursor-pointer transition-all ${settings.themeMode === 'light' ? 'bg-slate-200' : 'bg-white/15'}`}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className={`flex justify-between text-[10px] font-bold uppercase tracking-wider ${settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'}`}>
+                          <span>Panel Opacity / Clarity</span>
+                          <span className="font-mono text-aeirmist-cyan font-bold">{settings.backgroundTransparency ?? 15}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="4"
+                          max="100"
+                          value={settings.backgroundTransparency ?? 15}
+                          onChange={(e) => updateAppearanceSettings({ backgroundTransparency: Number(e.target.value) })}
+                          className={`w-full accent-aeirmist-cyan h-2 rounded-lg cursor-pointer transition-all ${settings.themeMode === 'light' ? 'bg-slate-200' : 'bg-white/15'}`}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className={`flex justify-between text-[10px] font-bold uppercase tracking-wider ${settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'}`}>
+                          <span>Dark Dim / Overlay</span>
+                          <span className="font-mono text-aeirmist-cyan font-bold">{settings.globalBgOverlay ?? 45}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="80"
+                          value={settings.globalBgOverlay ?? 45}
+                          onChange={(e) => updateAppearanceSettings({ globalBgOverlay: Number(e.target.value) })}
+                          className={`w-full accent-aeirmist-cyan h-2 rounded-lg cursor-pointer transition-all ${settings.themeMode === 'light' ? 'bg-slate-200' : 'bg-white/15'}`}
+                        />
+                      </div>
+
+                      {/* Reset to Default */}
+                      <button
+                        type="button"
+                        onClick={() => resetAppearanceSettings()}
+                        className={`w-full py-2 px-3 rounded-xl text-[10px] font-bold uppercase tracking-wider border flex items-center justify-center gap-1.5 transition-all mt-1 cursor-pointer ${
+                          settings.themeMode === 'light'
+                            ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700'
+                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70 hover:text-white'
+                        }`}
+                      >
+                        <RotateCcw size={12} />
+                        <span>Reset to Default</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
 
         {/* BOTTOM: Sticky user info profile card + More button */}
         <div className="mt-auto pt-2 shrink-0 space-y-1.5">
@@ -535,6 +756,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
       </AnimatePresence>
 
       <InstallModal isOpen={installModalOpen} onClose={() => setInstallModalOpen(false)} />
+      <ReportProblemModal isOpen={reportModalOpen} onClose={() => setReportModalOpen(false)} />
     </>
   );
 });
@@ -564,19 +786,19 @@ const NavItem = React.memo(({ icon, label, active = false, isExpanded = true, on
       transition={{ duration: 0.15, ease: "easeOut" }}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
-      className={`h-[42px] flex items-center ${isExpanded ? 'px-2.5' : 'justify-center px-0'} py-1.5 rounded-xl transition-all duration-[180ms] ease-out relative group min-w-0 w-full cursor-pointer outline-none focus:outline-none focus-visible:ring-1 focus-visible:ring-[#00E5FF]/50 select-none bg-transparent border border-transparent hover:bg-white/[0.06]`}
+      className={`h-[42px] flex items-center ${isExpanded ? 'px-2.5' : 'justify-center px-0'} py-1.5 rounded-xl transition-all duration-[180ms] ease-out relative group min-w-0 w-full cursor-pointer outline-none focus:outline-none focus-visible:ring-1 focus-visible:ring-aeirmist-cyan/50 select-none bg-transparent border border-transparent hover:bg-white/[0.06]`}
     >
       {/* Clean Icon Capsule */}
       <div className={`relative shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-[180ms] ease-out ${
         active 
-          ? 'text-[#00E5FF] bg-[#00E5FF]/15 border border-[#00E5FF]/30 shadow-[0_0_10px_rgba(0,229,255,0.3)]'
+          ? 'text-aeirmist-cyan bg-aeirmist-cyan/15 border border-aeirmist-cyan/35 shadow-[0_0_10px_var(--color-aeirmist-cyan)]'
           : 'text-white/80 group-hover:text-white group-hover:bg-white/10'
       }`}>
         {React.cloneElement(icon as any, { size: 19, strokeWidth: active ? 2.2 : 2.0 })}
         
         {/* Unread badge overlay for compact/collapsed state */}
         {!isExpanded && badge !== undefined && badge > 0 && (
-          <div className="absolute -top-1 -right-1 bg-[#00E5FF] text-black text-[8px] font-bold min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center shadow-sm">
+          <div className="absolute -top-1 -right-1 bg-aeirmist-cyan text-black text-[8px] font-bold min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center shadow-sm">
             {formatBadge(badge)}
           </div>
         )}
@@ -594,7 +816,7 @@ const NavItem = React.memo(({ icon, label, active = false, isExpanded = true, on
               SOON
             </span>
           ) : badge !== undefined && badge > 0 ? (
-            <span className="px-1.5 py-0.5 rounded-full bg-[#00E5FF]/20 text-[#00E5FF] border border-[#00E5FF]/30 text-[8px] font-bold tracking-wider shrink-0">
+            <span className="px-1.5 py-0.5 rounded-full bg-aeirmist-cyan/20 text-aeirmist-cyan border border-aeirmist-cyan/30 text-[8px] font-bold tracking-wider shrink-0">
               {formatBadge(badge)}
             </span>
           ) : null}
@@ -622,11 +844,11 @@ const MobileNavItem = React.memo(({ icon, active = false, onClick, onMouseEnter,
     onTouchStart={() => {
       onMouseEnter?.();
     }}
-    className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 active:scale-90 transition-transform duration-100 rounded-xl"
+    className="relative flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan/30 active:scale-90 transition-transform duration-100 rounded-xl"
   >
     <div className={`w-full h-full rounded-xl flex items-center justify-center transition-colors duration-150 border ${
       active 
-        ? 'bg-white/15 border-white/30 text-white shadow-[0_0_12px_rgba(255,255,255,0.15)]'
+        ? 'bg-aeirmist-cyan/15 border-aeirmist-cyan/35 text-aeirmist-cyan shadow-[0_0_12px_var(--color-aeirmist-cyan)]'
         : 'bg-[#0a0a0d]/90 border-white/5 text-white/50 active:text-white'
     }`}>
       {/* Premium Glass reflection */}

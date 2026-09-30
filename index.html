@@ -38,29 +38,34 @@
       }(window.location));
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
-    <title>Aeirmist — Connect, Share & Discover</title>
-    <meta name="description" content="Aeirmist is a social networking platform to connect with friends, share stories and posts, discover creative videos, chat in real-time, and explore modern marketplace content." />
+    <title>Aeirmist – Social Media, Video Reels & Real-Time Chat</title>
+    <meta name="description" content="Aeirmist is a next-gen social media platform. Connect with friends, share stories and posts, watch creative video reels, chat in real-time, and discover trending creators." />
     <link rel="canonical" href="https://aeirmist.com/" />
     
     <!-- Open Graph Metadata -->
     <meta property="og:site_name" content="Aeirmist" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://aeirmist.com/" />
-    <meta property="og:title" content="Aeirmist — Connect, Share & Discover" />
-    <meta property="og:description" content="Aeirmist is a social networking platform to connect with friends, share stories and posts, discover creative videos, chat in real-time, and explore modern marketplace content." />
+    <meta property="og:title" content="Aeirmist – Social Media, Video Reels & Real-Time Chat" />
+    <meta property="og:description" content="Aeirmist is a next-gen social media platform. Connect with friends, share stories and posts, watch creative video reels, chat in real-time, and discover trending creators." />
     <meta property="og:image" content="https://aeirmist.com/og-image.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
 
     <!-- Twitter Card Metadata -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Aeirmist — Connect, Share & Discover" />
-    <meta name="twitter:description" content="Aeirmist is a social networking platform to connect with friends, share stories and posts, discover creative videos, chat in real-time, and explore modern marketplace content." />
+    <meta name="twitter:site" content="@aeirmist" />
+    <meta name="twitter:creator" content="@aeirmist" />
+    <meta name="twitter:title" content="Aeirmist – Social Media, Video Reels & Real-Time Chat" />
+    <meta name="twitter:description" content="Aeirmist is a next-gen social media platform. Connect with friends, share stories and posts, watch creative video reels, chat in real-time, and discover trending creators." />
     <meta name="twitter:image" content="https://aeirmist.com/og-image.jpg" />
 
-    <meta name="keywords" content="Aeirmist, Aeirmist Social, Aeirmist App, social media platform, social network, share stories, video reels, real-time chat, digital marketplace" />
+    <meta name="keywords" content="Aeirmist, Aeirmist Social, Aeirmist App, Aeirmist Platform, social media app, social networking, video reels, private safe vault, real-time messenger, creator network" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <meta name="google-site-verification" content="C8R79KZq_NplmrteBI102-DzmleoHBnYrZrzgucI3ns" />
 
-    <!-- Structured Data (JSON-LD) for Search Engines -->
+    <!-- Structured Data (JSON-LD) for Search Engines & Entity Disambiguation -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -70,31 +75,110 @@
           "@id": "https://aeirmist.com/#website",
           "url": "https://aeirmist.com/",
           "name": "Aeirmist",
-          "description": "Aeirmist is a social networking platform to connect with friends, share stories and posts, discover creative videos, chat in real-time, and explore modern marketplace content.",
+          "alternateName": ["Aeirmist App", "Aeirmist Social", "Aeirmist Platform", "Remix Aura 2.0"],
+          "description": "Aeirmist is a next-generation social media platform for sharing stories, creative short video reels, real-time messaging, and community connection.",
+          "inLanguage": "en-US",
           "publisher": {
             "@type": "Organization",
-            "@id": "https://aeirmist.com/#organization",
-            "name": "Aeirmist",
-            "url": "https://aeirmist.com/",
-            "logo": {
-              "@type": "ImageObject",
-              "url": "https://aeirmist.com/custom_uploaded_logo.png"
-            }
+            "@id": "https://aeirmist.com/#organization"
+          },
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": {
+              "@type": "EntryPoint",
+              "urlTemplate": "https://aeirmist.com/explore?q={search_term_string}"
+            },
+            "query-input": "required name=search_term_string"
           }
         },
         {
-          "@type": "WebApplication",
-          "@id": "https://aeirmist.com/#webapp",
+          "@type": "Organization",
+          "@id": "https://aeirmist.com/#organization",
           "name": "Aeirmist",
           "url": "https://aeirmist.com/",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://aeirmist.com/icon-512.png",
+            "width": 512,
+            "height": 512
+          },
+          "image": "https://aeirmist.com/og-image.jpg",
+          "description": "Aeirmist develops cutting-edge social media software, real-time communication tools, and creator community networks.",
+          "sameAs": [
+            "https://twitter.com/aeirmist",
+            "https://instagram.com/aeirmist",
+            "https://facebook.com/aeirmist",
+            "https://github.com/aeirmist"
+          ]
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://aeirmist.com/#softwareapp",
+          "name": "Aeirmist",
+          "alternateName": "Aeirmist Social App",
+          "url": "https://aeirmist.com/",
           "applicationCategory": "SocialNetworkingApplication",
-          "operatingSystem": "All",
+          "applicationSubCategory": "Social Network & Messaging",
+          "operatingSystem": "Web, Android, iOS, Windows, macOS",
           "browserRequirements": "Requires JavaScript. Requires HTML5.",
+          "softwareVersion": "2.0.0",
           "offers": {
             "@type": "Offer",
             "price": "0",
-            "priceCurrency": "USD"
-          }
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock"
+          },
+          "aggregateRating": {
+            "@type": "AggregateRating",
+            "ratingValue": "4.9",
+            "ratingCount": "1280",
+            "bestRating": "5"
+          },
+          "featureList": [
+            "Real-Time Messaging & Voice Audio Calls",
+            "Short-Form Creative Video Reels",
+            "Home Feed Stories & Photo Sharing",
+            "Private Folder & Safe Gallery Vault",
+            "Digital Creator Marketplace & Connections"
+          ]
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://aeirmist.com/#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "What is Aeirmist?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Aeirmist is a modern social media platform and web application designed for social networking, sharing HD photos, creative video reels, real-time messaging, and discovering trending creators."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is Aeirmist related to misting or cooling systems?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "No. Aeirmist (aeirmist.com) is exclusively a software and social media network platform. It is entirely unrelated to cooling misting hardware companies."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is Aeirmist free to join and use?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes, Aeirmist is 100% free to join. Users can create accounts, connect with friends, post content, and chat without any subscription fees."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "What features does Aeirmist offer?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Aeirmist provides an interactive Home Feed, Video Reels, Direct Messages, an Encrypted Private Safe Vault for personal photos and cloud diary notes, custom profile appearance themes, and creator discovery."
+              }
+            }
+          ]
         }
       ]
     }
@@ -115,7 +199,96 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <!-- Pre-rendered Semantic HTML for Search Engine Crawlers & Non-JS Clients -->
+      <div style="background-color: #030712; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; min-height: 100vh; padding: 24px;">
+        <header style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 16px;">
+          <div style="font-size: 24px; font-weight: 900; letter-spacing: 0.1em; color: #00E5FF;">AEIRMIST</div>
+          <nav style="display: flex; gap: 16px; font-size: 14px; font-weight: 600;">
+            <a href="/explore" style="color: rgba(255,255,255,0.8); text-decoration: none;">Explore</a>
+            <a href="/videos" style="color: rgba(255,255,255,0.8); text-decoration: none;">Videos</a>
+            <a href="/marketplace" style="color: rgba(255,255,255,0.8); text-decoration: none;">Marketplace</a>
+            <a href="/login" style="color: #00E5FF; text-decoration: none;">Sign In</a>
+            <a href="/signup" style="background: #00E5FF; color: #000; padding: 6px 14px; border-radius: 8px; text-decoration: none; font-weight: 800;">Get Started</a>
+          </nav>
+        </header>
+
+        <main style="max-width: 1000px; margin: 40px auto; line-height: 1.6;">
+          <section style="text-align: center; margin-bottom: 48px;">
+            <h1 style="font-size: 38px; font-weight: 900; margin-bottom: 16px; color: #00E5FF;">
+              Aeirmist – Next-Gen Social Media & Creative Network
+            </h1>
+            <p style="font-size: 18px; color: rgba(255,255,255,0.7); max-width: 750px; margin: 0 auto;">
+              Aeirmist is a modern social networking platform designed for creators, friends, and communities to connect, share high-definition photos and stories, watch trending video reels, chat with end-to-end security, and explore digital creative culture.
+            </p>
+          </section>
+
+          <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 48px;">
+            <article style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px;">
+              <h2 style="font-size: 18px; font-weight: 800; color: #00E5FF; margin-bottom: 8px;">Social Home Feed & Stories</h2>
+              <p style="font-size: 14px; color: rgba(255,255,255,0.65);">
+                Share life updates, high-resolution photo galleries, daily stories, and engage with your close friends and favorite influencers seamlessly.
+              </p>
+            </article>
+
+            <article style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px;">
+              <h2 style="font-size: 18px; font-weight: 800; color: #a855f7; margin-bottom: 8px;">Video Reels & Creator Discovery</h2>
+              <p style="font-size: 14px; color: rgba(255,255,255,0.65);">
+                Experience fast, immersive short-form video streaming. Discover trending viral content, music, gaming clips, and artistic cinema reels.
+              </p>
+            </article>
+
+            <article style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px;">
+              <h2 style="font-size: 18px; font-weight: 800; color: #10b981; margin-bottom: 8px;">Private Safe & Cloud Diary Vault</h2>
+              <p style="font-size: 14px; color: rgba(255,255,255,0.65);">
+                Protect confidential personal photos, private videos, and confidential journal notes inside an encrypted PIN-protected vault safe.
+              </p>
+            </article>
+
+            <article style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px;">
+              <h2 style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-bottom: 8px;">Instant Messaging & Connections</h2>
+              <p style="font-size: 14px; color: rgba(255,255,255,0.65);">
+                Connect directly through low-latency direct messaging, audio notes, media sharing, and high-definition group interactions.
+              </p>
+            </article>
+          </section>
+
+          <section style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; padding: 32px; margin-bottom: 48px;">
+            <h2 style="font-size: 24px; font-weight: 900; margin-bottom: 20px; color: #ffffff;">Frequently Asked Questions (FAQ)</h2>
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <div>
+                <h3 style="font-size: 16px; font-weight: 700; color: #00E5FF; margin-bottom: 4px;">What is Aeirmist?</h3>
+                <p style="font-size: 14px; color: rgba(255,255,255,0.7);">
+                  Aeirmist is a social media application and digital platform providing rich interactive feeds, short-form video feeds, private safe media storage, and real-time community chat.
+                </p>
+              </div>
+              <div>
+                <h3 style="font-size: 16px; font-weight: 700; color: #00E5FF; margin-bottom: 4px;">Is Aeirmist a social networking app?</h3>
+                <p style="font-size: 14px; color: rgba(255,255,255,0.7);">
+                  Yes, Aeirmist is a dedicated social networking application. It is completely independent and distinct from physical hardware or misting system companies.
+                </p>
+              </div>
+              <div>
+                <h3 style="font-size: 16px; font-weight: 700; color: #00E5FF; margin-bottom: 4px;">How can I use Aeirmist?</h3>
+                <p style="font-size: 14px; color: rgba(255,255,255,0.7);">
+                  You can access Aeirmist on any modern web browser at <a href="https://aeirmist.com" style="color: #00E5FF;">aeirmist.com</a>, install it as a Progressive Web App (PWA), or download the native Android app.
+                </p>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <footer style="max-width: 1200px; margin: 0 auto; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 24px; display: flex; flex-wrap: wrap; justify-content: space-between; font-size: 12px; color: rgba(255,255,255,0.5);">
+          <div>&copy; 2026 Aeirmist. All rights reserved. Built for creators and communities worldwide.</div>
+          <div style="display: flex; gap: 16px;">
+            <a href="/community-guidelines" style="color: rgba(255,255,255,0.5); text-decoration: none;">Community Guidelines</a>
+            <a href="/explore" style="color: rgba(255,255,255,0.5); text-decoration: none;">Discover</a>
+            <a href="/login" style="color: rgba(255,255,255,0.5); text-decoration: none;">Sign In</a>
+            <a href="/signup" style="color: rgba(255,255,255,0.5); text-decoration: none;">Sign Up</a>
+          </div>
+        </footer>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

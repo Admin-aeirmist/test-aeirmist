@@ -569,33 +569,33 @@
 }
 
 /* Comprehensive Text Colors Mapping for Light Mode */
-:root.light .text-white, 
-:root.light .text-white\/100,
-:root.light .text-white\/95,
-:root.light .text-white\/90 {
+:root.light .text-white:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *):not(.badge-white):not(.badge-white *), 
+:root.light .text-white\/100:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/95:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/90:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *) {
   color: rgba(15, 23, 42, 0.95) !important;
 }
-:root.light .text-white\/85,
-:root.light .text-white\/80 {
+:root.light .text-white\/85:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/80:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *) {
   color: rgba(15, 23, 42, 0.82) !important;
 }
-:root.light .text-white\/75,
-:root.light .text-white\/70,
-:root.light .text-white\/60,
-:root.light .text-gray-400 {
+:root.light .text-white\/75:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/70:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/60:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-gray-400:not(.keep-white):not(.keep-white *) {
   color: rgba(15, 23, 42, 0.62) !important;
 }
-:root.light .text-white\/50,
-:root.light .text-white\/45,
-:root.light .text-white\/40,
-:root.light .text-slate-400 {
+:root.light .text-white\/50:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/45:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/40:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-slate-400:not(.keep-white):not(.keep-white *) {
   color: rgba(15, 23, 42, 0.45) !important;
 }
-:root.light .text-white\/30,
-:root.light .text-white\/25,
-:root.light .text-white\/20,
-:root.light .text-white\/10,
-:root.light .text-white\/5 {
+:root.light .text-white\/30:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/25:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/20:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/10:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *),
+:root.light .text-white\/5:not(.keep-white):not(.keep-white *):not([data-keep-white]):not([data-keep-white] *):not(.chat-bubble-me):not(.chat-bubble-me *) {
   color: rgba(15, 23, 42, 0.25) !important;
 }
 
@@ -685,26 +685,73 @@
   backdrop-filter: blur(24px) !important;
 }
 
-/* Scalable catch-all for any hardcoded dark hex background class by prefix */
-:root.light [class*="bg-[#0"],
-:root.light [class*="bg-[#1"],
-:root.light [class*="bg-[#2"],
-:root.light [class*="from-[#0"],
-:root.light [class*="from-[#1"],
-:root.light [class*="to-[#0"],
-:root.light [class*="to-[#1"] {
+/* Scalable catch-all for any hardcoded dark hex background class by prefix (exempting wallpaper layers) */
+:root.light [class*="bg-[#0"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="bg-[#1"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="bg-[#2"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="from-[#0"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="from-[#1"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="to-[#0"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="to-[#1"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *) {
   background-color: #f8fafc !important;
   background-image: none !important; /* Kill dark gradients */
   color: #0f172a !important;
 }
 
 /* Catch-all for dark background named colors if not caught above */
-:root.light [class*="bg-zinc-"],
-:root.light [class*="bg-slate-"],
-:root.light [class*="bg-neutral-"],
-:root.light [class*="bg-black"] {
+:root.light [class*="bg-zinc-"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="bg-slate-"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="bg-neutral-"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *),
+:root.light [class*="bg-black"]:not(#chat-wallpaper-system-layer *):not(#aeirmist-global-app-background *):not([data-wallpaper-layer] *):not([data-wallpaper-layer]):not([data-keep-bg]):not([data-keep-bg] *) {
   background-color: #f8fafc !important;
   color: #0f172a !important;
+}
+
+/* Custom Wallpaper & Background Protection */
+#chat-wallpaper-system-layer,
+#chat-wallpaper-system-layer *,
+#aeirmist-global-app-background,
+#aeirmist-global-app-background *,
+[data-wallpaper-layer],
+[data-wallpaper-layer] * {
+  background-image: inherit;
+}
+
+:root.light #chat-wallpaper-system-layer {
+  background-color: transparent !important;
+}
+
+/* Keep white text rule */
+.keep-white,
+.keep-white *,
+[data-keep-white],
+[data-keep-white] *,
+.chat-bubble-me,
+.chat-bubble-me * {
+  color: #ffffff !important;
+}
+
+/* Messenger in Light Theme Glassmorphism */
+:root.light .messenger-sidebar-glass {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(28px) !important;
+  -webkit-backdrop-filter: blur(28px) !important;
+  border-right-color: rgba(226, 232, 240, 0.8) !important;
+}
+
+:root.light .messenger-header-glass {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: blur(28px) !important;
+  -webkit-backdrop-filter: blur(28px) !important;
+  border-bottom-color: rgba(226, 232, 240, 0.8) !important;
+}
+
+:root.light .messenger-input-glass {
+  background-color: rgba(255, 255, 255, 0.88) !important;
+  backdrop-filter: blur(28px) !important;
+  -webkit-backdrop-filter: blur(28px) !important;
+  border-color: rgba(226, 232, 240, 0.8) !important;
+  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08) !important;
 }
 
 /* Navigation & Sidebar Specific Overrides */
@@ -726,6 +773,13 @@
   background-color: #ffffff !important;
   border-color: rgba(15, 23, 42, 0.08) !important;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03) !important;
+}
+
+/* Ensure blank DP placeholder SVGs adapt cleanly to light mode */
+:root.light img[src*="%230c0f17"],
+:root.light img[src*="#0c0f17"],
+:root.light img[src*="fill=%230c0f17"] {
+  filter: invert(0.92) hue-rotate(180deg) brightness(1.05) contrast(0.95);
 }
 
 /* Hide dark background effects in Light Mode */
@@ -789,6 +843,14 @@
 :root.light .drop-shadow-glow {
   filter: none !important;
   text-shadow: none !important;
+}
+
+/* Ambient glow orbs in light mode: never render as solid unblurred circles */
+:root.light [class*="rounded-full"][class*="blur-"],
+:root.light [class*="rounded-full"].blur-3xl,
+:root.light [class*="rounded-full"].blur-2xl,
+:root.light [class*="rounded-full"].blur-xl {
+  display: none !important;
 }
 
 /* Fix for AEIRMIST Logo and hardcoded light-blue text */
@@ -915,7 +977,20 @@ html.global-bg-active,
 html.global-bg-active body,
 html.global-bg-active #root,
 html.global-bg-active .app-container,
-html.global-bg-active .layout-shell {
+html.global-bg-active .layout-shell,
+html.has-global-bg,
+html.has-global-bg body,
+html.has-global-bg #root,
+html.has-global-bg .app-container,
+html.has-global-bg .layout-shell,
+:root.light.has-global-bg body,
+:root.light.has-global-bg #root,
+:root.light.has-global-bg .app-container,
+:root.light.has-global-bg .layout-shell,
+:root.light.global-bg-active body,
+:root.light.global-bg-active #root,
+:root.light.global-bg-active .app-container,
+:root.light.global-bg-active .layout-shell {
   background: transparent !important;
   background-color: transparent !important;
 }

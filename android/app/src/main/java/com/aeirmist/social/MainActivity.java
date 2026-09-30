@@ -282,10 +282,26 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    private android.webkit.PermissionRequest pendingPermissionRequest = null;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeSettingsPlugin.class);
         super.onCreate(savedInstanceState);
+
+        // Proactively ensure Camera & Microphone permissions are requested so calls never get blocked
+        try {
+            List<String> startupPerms = new ArrayList<>();
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                startupPerms.add(Manifest.permission.CAMERA);
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                startupPerms.add(Manifest.permission.RECORD_AUDIO);
+            }
+            if (!startupPerms.isEmpty()) {
+                ActivityCompat.requestPermissions(this, startupPerms.toArray(new String[0]), ALL_PERMISSIONS_CODE);
+            }
+        } catch (Exception ignored) {}
 
         try {
             if (this.bridge != null && this.bridge.getWebView() != null) {
@@ -305,8 +321,78 @@ public class MainActivity extends BridgeActivity {
                 settings.setMediaPlaybackRequiresUserGesture(false);
                 settings.setCacheMode(WebSettings.LOAD_DEFAULT);
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+
+                final android.webkit.WebChromeClient defaultChromeClient = webView.getWebChromeClient();
+                webView.setWebChromeClient(new android.webkit.WebChromeClient() {
+                    @Override
+                    public void onPermissionRequest(final android.webkit.PermissionRequest request) {
+                        runOnUiThread(() -> {
+                            try {
+                                List<String> needed = new ArrayList<>();
+                                for (String res : request.getResources()) {
+                                    if (android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res)) {
+                                        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                                            needed.add(Manifest.permission.CAMERA);
+                                        }
+                                    } else if (android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res)) {
+                                        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                            needed.add(Manifest.permission.RECORD_AUDIO);
+                                        }
+                                    }
+                                }
+
+                                if (!needed.isEmpty()) {
+                                    pendingPermissionRequest = request;
+                                    ActivityCompat.requestPermissions(MainActivity.this, needed.toArray(new String[0]), ALL_PERMISSIONS_CODE);
+                                } else {
+                                    request.grant(request.getResources());
+                                }
+                            } catch (Exception e) {
+                                try {
+                                    request.grant(request.getResources());
+                                } catch (Exception ex) {
+                                    request.deny();
+                                }
+                            }
+                        });
+                    }
+
+                    @Override
+                    public boolean onShowFileChooser(WebView webView, android.webkit.ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                        if (defaultChromeClient != null) {
+                            return defaultChromeClient.onShowFileChooser(webView, filePathCallback, fileChooserParams);
+                        }
+                        return super.onShowFileChooser(webView, filePathCallback, fileChooserParams);
+                    }
+
+                    @Override
+                    public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
+                        if (defaultChromeClient != null) {
+                            return defaultChromeClient.onConsoleMessage(consoleMessage);
+                        }
+                        return super.onConsoleMessage(consoleMessage);
+                    }
+                });
             }
         } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == ALL_PERMISSIONS_CODE && pendingPermissionRequest != null) {
+            runOnUiThread(() -> {
+                try {
+                    pendingPermissionRequest.grant(pendingPermissionRequest.getResources());
+                } catch (Exception ignored) {
+                    try {
+                        pendingPermissionRequest.deny();
+                    } catch (Exception ignored2) {}
+                } finally {
+                    pendingPermissionRequest = null;
+                }
+            });
         }
     }
 

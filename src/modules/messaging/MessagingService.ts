@@ -526,9 +526,12 @@ class MessagingService {
   ) {
     logger.info(`[MessagingService] Subscribed to messages for ${conversationId}`);
     
+    let isCancelled = false;
+
     // 1. Instant Cache Load
     try {
       aeirmistCache.getMessages(conversationId).then(cached => {
+        if (isCancelled) return;
         if (cached && cached.length > 0) {
           logger.info(`[MessagingService] Instant Cache Hit: ${cached.length} messages for ${conversationId}`);
           const formatted = cached.map(m => ({
@@ -536,7 +539,9 @@ class MessagingService {
             timestamp: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             timestampMs: m.timestamp
           })).sort((a, b) => a.timestampMs - b.timestampMs);
-          callback(formatted as any);
+          if (!isCancelled) {
+            callback(formatted as any);
+          }
         }
       }).catch(err => logger.warn("[MessagingService] Cache retrieval failure:", err));
     } catch (e) {
@@ -673,14 +678,25 @@ class MessagingService {
         }
       }
 
-      callback(reversed);
+      if (!isCancelled) {
+        callback(reversed);
+      }
     }, (error) => {
+      if (isCancelled) return;
       logger.error(`[MessagingService] Snapshot error for ${conversationId}:`, error);
       handleFirestoreError(error, OperationType.LIST, `conversations/${conversationId}/messages`);
     });
 
-    this.listeners.set(key, unsubscribe);
-    return unsubscribe;
+    const cleanup = () => {
+      isCancelled = true;
+      if (this.listeners.get(key) === cleanup) {
+        this.listeners.delete(key);
+      }
+      unsubscribe();
+    };
+
+    this.listeners.set(key, cleanup);
+    return cleanup;
   }
 
   subscribeToChats(db: Firestore, userUid: string, profileId: string, callback: (chats: Chat[]) => void) {

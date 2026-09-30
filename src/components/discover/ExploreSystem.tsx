@@ -657,22 +657,25 @@ export const ExploreSystem: React.FC<{
       const parsedNlp = parseNaturalLanguageQuery(searchQuery, currencyRate);
       let list = filterProductsByNlp(products, parsedNlp, selectedLocation);
 
-      // Category filter override
+      // Category filter override (if user selected a specific category tab)
       if (selectedCategory) {
-        list = list.filter((p) => p.category === selectedCategory);
+        const catFiltered = list.filter((p) => p.category?.toLowerCase() === selectedCategory.toLowerCase());
+        if (catFiltered.length > 0) {
+          list = catFiltered;
+        }
       }
 
       // Location filter mapping override
       if (selectedLocation !== 'All') {
         list = list.filter((p) => {
           const matchingStore = stores.find(s => s.id === p.storeId);
-          const storeLoc = matchingStore?.location || 'Dhaka';
+          const storeLoc = matchingStore?.location || (p as any).location || 'Dhaka';
           return storeLoc.toLowerCase().includes(selectedLocation.toLowerCase());
         });
       }
 
-      // Max price limit override (relative to BDT rate)
-      list = list.filter((p) => p.price <= priceFilter);
+      // Max price limit override (comparing against effective price)
+      list = list.filter((p) => (p.discountPrice || p.price) <= priceFilter);
 
       return list;
     }
@@ -680,26 +683,29 @@ export const ExploreSystem: React.FC<{
     // 2. Default standard filters
     return products.filter((p) => {
       // Category filter
-      if (selectedCategory && p.category !== selectedCategory) return false;
+      if (selectedCategory && p.category?.toLowerCase() !== selectedCategory.toLowerCase()) return false;
       
       // Location filter mapping
       if (selectedLocation !== 'All') {
         const matchingStore = stores.find(s => s.id === p.storeId);
-        const storeLoc = matchingStore?.location || 'Dhaka';
+        const storeLoc = matchingStore?.location || (p as any).location || 'Dhaka';
         if (!storeLoc.toLowerCase().includes(selectedLocation.toLowerCase())) {
           return false;
         }
       }
 
-      // Max price limit
-      if (p.price > priceFilter) return false;
+      // Max price limit (checks discountPrice if present)
+      const effectivePrice = p.discountPrice || p.price;
+      if (effectivePrice > priceFilter) return false;
 
       return true;
     }).sort((a, b) => {
-      if (activeSort === 'price_low') return a.price - b.price;
-      if (activeSort === 'price_high') return b.price - a.price;
+      const priceA = a.discountPrice || a.price;
+      const priceB = b.discountPrice || b.price;
+      if (activeSort === 'price_low') return priceA - priceB;
+      if (activeSort === 'price_high') return priceB - priceA;
       if (activeSort === 'oldest') return (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0);
-      return (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0); // newest or fallback
+      return (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0); // newest
     });
   }, [products, selectedCategory, searchQuery, priceFilter, activeSort, selectedLocation, stores, currencyRate]);
 
@@ -707,14 +713,18 @@ export const ExploreSystem: React.FC<{
   const filteredServices = useMemo(() => {
     return services.filter((s) => {
       if (selectedLocation !== 'All') {
-        // Services assume provider matches selected location
-        const srvLoc = 'Dhaka'; // Default
-        if (selectedLocation !== 'Dhaka') return false; // Simple filter bounds
+        const srvLoc = (s as any).location || 'Dhaka';
+        if (!srvLoc.toLowerCase().includes(selectedLocation.toLowerCase())) return false;
       }
 
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        return srvTitle.toLowerCase().includes(q) || srvDesc.toLowerCase().includes(q) || srvCategory.toLowerCase().includes(q) || s.ownerName.toLowerCase().includes(q);
+        const q = searchQuery.toLowerCase().trim();
+        return (
+          (s.title || '').toLowerCase().includes(q) || 
+          (s.description || '').toLowerCase().includes(q) || 
+          (s.category || '').toLowerCase().includes(q) || 
+          (s.ownerName || '').toLowerCase().includes(q)
+        );
       }
       return true;
     });
@@ -952,14 +962,19 @@ export const ExploreSystem: React.FC<{
           productContext: pContext || null
         });
       } else {
+        const currentUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
+        const storeOwnerUid = (activeMessageDraftStore as any).ownerUid || activeMessageDraftStore.ownerId;
         const newChat = {
           storeId: activeMessageDraftStore.id,
           storeName: activeMessageDraftStore.name,
           storeLogo: activeMessageDraftStore.logo,
           storeOwnerId: activeMessageDraftStore.ownerId,
+          sellerUid: storeOwnerUid,
+          buyerUid: currentUid,
           customerId: profile.id,
           customerName: profile.displayName || profile.username,
           customerAvatar: profile.photoURL || '',
+          participants: Array.from(new Set([currentUid, profile.id, storeOwnerUid, activeMessageDraftStore.ownerId].filter(Boolean))),
           lastMessage: messageDraftText,
           lastMessageAt: serverTimestamp(),
           chatCategory: 'store',
@@ -987,8 +1002,8 @@ export const ExploreSystem: React.FC<{
       // Open store chat immediately
       setShowBusinessInbox(true);
     } catch (e: any) {
-      logger.info(e);
-      addToast({ title: 'Message Failed', message: 'Error occurred.', type: 'warning' });
+      logger.error('Failed to send store inquiry:', e);
+      addToast({ title: 'Error', message: 'Could not send message to shop.', type: 'warning' });
     } finally {
       setIsSendingDraft(false);
     }
@@ -1030,8 +1045,12 @@ export const ExploreSystem: React.FC<{
     if (!db || !profile) return;
 
     try {
+      const ownerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
       await addDoc(collection(db, 'services'), {
         ownerId: profile.id,
+        ownerUid: ownerUid,
+        sellerUid: ownerUid,
+        sellerId: profile.id,
         ownerName: profile.displayName || profile.username,
         ownerAvatar: profile.photoURL || '',
         title: srvTitle,
@@ -1051,8 +1070,9 @@ export const ExploreSystem: React.FC<{
       setSrvPricing('');
       setSrvContactEmail('');
       setSrvContactPhone('');
-    } catch (e) {
-      logger.info(e);
+    } catch (e: any) {
+      logger.error('Service listing error:', e);
+      addToast({ title: 'Save Failed', message: e?.message || 'Could not list service.', type: 'warning' });
     }
   };
 
@@ -1075,10 +1095,14 @@ export const ExploreSystem: React.FC<{
     const activeStoreNode = ownedStores[0];
 
     try {
+      const sellerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
       await addDoc(collection(db, 'products'), {
         storeId: activeStoreNode.id,
         storeName: activeStoreNode.name,
         storeLogo: activeStoreNode.logo,
+        sellerUid: sellerUid,
+        sellerId: profile.id,
+        ownerUid: sellerUid,
         name: newProdName,
         description: newProdDesc,
         price: Number(newProdPrice),
@@ -1104,8 +1128,9 @@ export const ExploreSystem: React.FC<{
       setNewProdMedia('');
       setNewProdVariants('');
       setNewProdTags('');
-    } catch (err) {
-      logger.error(err);
+    } catch (err: any) {
+      logger.error('Product launch error:', err);
+      addToast({ title: 'Listing Failed', message: err?.message || 'Could not launch product listing.', type: 'warning' });
     }
   };
 
@@ -1123,10 +1148,13 @@ export const ExploreSystem: React.FC<{
     const activeStoreNode = ownedStores[0];
 
     try {
+      const ownerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
       await addDoc(collection(db, 'store_posts'), {
         storeId: activeStoreNode.id,
         storeName: activeStoreNode.name,
         storeLogo: activeStoreNode.logo,
+        ownerUid: ownerUid,
+        sellerUid: ownerUid,
         content: newPostContent,
         mediaUrl: newPostMedia || undefined,
         mediaType: 'image',
@@ -1140,8 +1168,9 @@ export const ExploreSystem: React.FC<{
       setShowCreatePostModal(false);
       setNewPostContent('');
       setNewPostMedia('');
-    } catch (err) {
-      logger.error(err);
+    } catch (err: any) {
+      logger.error('Store post error:', err);
+      addToast({ title: 'Posting Failed', message: err?.message || 'Could not publish shop update.', type: 'warning' });
     }
   };
 
@@ -1197,7 +1226,7 @@ export const ExploreSystem: React.FC<{
 
   return (
     <div 
-      className="flex flex-col flex-1 h-full min-h-0 relative text-white bg-zinc-950/95 backdrop-blur-2xl select-none w-full overflow-y-auto scroll-container pb-8"
+      className="flex flex-col flex-1 h-full min-h-0 relative text-white bg-zinc-950/95 backdrop-blur-2xl select-none w-full overflow-y-auto scroll-container pb-36 md:pb-8"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -1260,8 +1289,8 @@ export const ExploreSystem: React.FC<{
 
           {/* Center: Large Search Bar */}
           <div className="flex-1 max-w-2xl mx-auto w-full">
-            <div className="flex items-center rounded-xl border border-white/10 bg-zinc-900/90 focus-within:border-aeirmist-cyan/60 transition-colors shadow-inner overflow-hidden">
-              <div className="pl-3 text-zinc-400 shrink-0">
+            <div className="flex items-center rounded-xl border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-zinc-900/90 focus-within:border-aeirmist-cyan/60 transition-colors shadow-inner overflow-hidden">
+              <div className="pl-3 text-slate-400 dark:text-zinc-400 shrink-0">
                 <Search size={15} />
               </div>
               <input
@@ -1274,12 +1303,12 @@ export const ExploreSystem: React.FC<{
                   }
                 }}
                 placeholder="Search products, stores, services..."
-                className="w-full bg-transparent px-3 py-2 text-xs text-white placeholder:text-zinc-500 focus:outline-none"
+                className="w-full bg-transparent px-3 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 focus:outline-none"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="p-1 text-zinc-500 hover:text-white mr-1 cursor-pointer"
+                  className="p-1 text-slate-400 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-white mr-1 cursor-pointer"
                   title="Clear search"
                 >
                   <X size={13} />
@@ -1462,21 +1491,21 @@ export const ExploreSystem: React.FC<{
             className="absolute inset-[0_0_0_0] bg-black/98 z-50 overflow-y-auto no-scrollbar p-5 pt-20"
           >
             {/* Overlay sticky search header */}
-            <div className="absolute top-0 left-0 right-0 p-4 bg-black/95 border-b border-white/[0.04] flex items-center gap-3 z-50">
+            <div className="absolute top-0 left-0 right-0 p-4 bg-white/95 dark:bg-black/95 border-b border-slate-200 dark:border-white/[0.04] flex items-center gap-3 z-50">
               <div className="relative flex-1">
-                <Search size={13} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-500" />
+                <Search size={13} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-neutral-500" />
                 <input
                   type="text"
                   autoFocus
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search products, stores, services..."
-                  className="w-full bg-zinc-900 border border-white/10 rounded-2xl pl-9 pr-8 py-2 text-xs text-white placeholder:text-neutral-600 focus:outline-none focus:border-white select-text"
+                  className="w-full bg-slate-100 dark:bg-zinc-900 border border-slate-200 dark:border-white/10 rounded-2xl pl-9 pr-8 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-neutral-600 focus:outline-none focus:border-aeirmist-cyan select-text"
                 />
                 {searchQuery && (
                   <button 
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-neutral-400 hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-slate-400 dark:text-neutral-400 hover:text-slate-900 dark:hover:text-white"
                   >
                     <X size={10} />
                   </button>
@@ -1484,7 +1513,7 @@ export const ExploreSystem: React.FC<{
               </div>
               <button 
                 onClick={() => setIsSearchFocused(false)}
-                className="text-white text-xs font-mono py-2 px-3 border border-white/10 bg-zinc-900 rounded-xl hover:bg-zinc-800 transition-all cursor-pointer"
+                className="text-slate-700 dark:text-white text-xs font-mono py-2 px-3 border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-zinc-900 rounded-xl hover:bg-slate-200 dark:hover:bg-zinc-800 transition-all cursor-pointer"
               >
                 Back
               </button>
@@ -3811,7 +3840,7 @@ export const ExploreSystem: React.FC<{
       <nav 
         role="tablist"
         aria-label="Marketplace Navigation"
-        className="lg:hidden fixed bottom-3 left-1/2 -translate-x-1/2 w-[92%] max-w-sm bg-zinc-950/95 backdrop-blur-xl border border-white/10 rounded-2xl px-2 py-1.5 flex items-center justify-between shadow-2xl z-40 select-none"
+        className="md:hidden fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] left-1/2 -translate-x-1/2 w-[92%] max-w-sm bg-zinc-950/95 backdrop-blur-xl border border-white/10 rounded-2xl px-2 py-1.5 flex items-center justify-between shadow-2xl z-40 select-none"
       >
         {[
           { id: 'foryou', label: 'For You', icon: <Sparkles size={14} /> },

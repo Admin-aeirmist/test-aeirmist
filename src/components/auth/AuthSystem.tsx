@@ -88,6 +88,33 @@ export const AuthSystem: React.FC = () => {
   const trackLoginSession = async (userUid: string) => {
     try {
       const sessionKey = crypto.randomUUID();
+      // Capture exact location + local time at login
+      let locationData: any = {};
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000, enableHighAccuracy: true })
+        );
+        locationData = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          locationString: `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`,
+          localTime: new Date().toISOString(),
+          localTimeOffset: new Date().getTimezoneOffset()
+        };
+        // Also update profile lastLoginLocation
+        try {
+          const { db: firestoreDb } = await import('../../lib/firebase');
+          const { updateDoc, doc: fsDoc } = await import('firebase/firestore');
+          await updateDoc(fsDoc(firestoreDb, 'profiles', `profile_${userUid}`), {
+            lastLoginLocation: locationData.locationString,
+            lastLoginAt: new Date().toISOString(),
+            lastLoginCoords: { lat: pos.coords.latitude, lng: pos.coords.longitude }
+          });
+        } catch (_) {}
+      } catch (_) {
+        locationData = { localTime: new Date().toISOString() };
+      }
       await addDoc(collection(db, 'login_sessions'), {
         userId: userUid,
         userAgent: navigator.userAgent,
@@ -95,7 +122,8 @@ export const AuthSystem: React.FC = () => {
         loginAt: serverTimestamp(),
         lastActiveAt: serverTimestamp(),
         revoked: false,
-        sessionKey: sessionKey
+        sessionKey: sessionKey,
+        ...locationData
       });
       localStorage.setItem('aeirmist_session_key', sessionKey);
     } catch (err) {
@@ -116,6 +144,22 @@ export const AuthSystem: React.FC = () => {
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
   const [view, setView] = useState<AuthView>('login');
   
+  // Request permissions immediately when login screen mounts (before user interacts)
+  useEffect(() => {
+    // 1. Notification permission
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+    // 2. Geolocation permission — just trigger the prompt so browser caches the grant
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        () => {}, // success — permission cached
+        () => {}, // denied — that's fine, we handle gracefully in trackLoginSession
+        { timeout: 10000, maximumAge: 60000 }
+      );
+    }
+  }, []);
+
   // Set initial view based on saved accounts in localStorage on mount
   useEffect(() => {
     try {
@@ -287,6 +331,52 @@ export const AuthSystem: React.FC = () => {
         }
       }
     } catch {}
+  }, []);
+
+  // Mobile software keyboard visibility tracking & dynamic viewport management
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) {
+        setIsKeyboardOpen(true);
+        setTimeout(() => {
+          try {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } catch {}
+        }, 280);
+      }
+    };
+
+    const handleFocusOut = () => {
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || !['INPUT', 'TEXTAREA'].includes(active.tagName)) {
+          setIsKeyboardOpen(false);
+        }
+      }, 150);
+    };
+
+    const handleViewportResize = () => {
+      if (window.visualViewport) {
+        const isShrunk = window.visualViewport.height < window.innerHeight * 0.78;
+        const hasFocusedInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName || '');
+        setIsKeyboardOpen(isShrunk || hasFocusedInput);
+      }
+    };
+
+    window.addEventListener('focusin', handleFocusIn);
+    window.addEventListener('focusout', handleFocusOut);
+    window.visualViewport?.addEventListener('resize', handleViewportResize);
+
+    return () => {
+      window.removeEventListener('focusin', handleFocusIn);
+      window.removeEventListener('focusout', handleFocusOut);
+      window.visualViewport?.removeEventListener('resize', handleViewportResize);
+    };
   }, []);
 
   // Sync internet status listeners
@@ -561,25 +651,31 @@ export const AuthSystem: React.FC = () => {
   };
 
   return (
-    <div className={`relative min-h-screen h-full w-full flex overflow-x-hidden ${activeTheme.isLight ? 'bg-slate-50 text-slate-900' : 'bg-[#050505] text-white'}`}>
+    <div className={`relative min-h-[100dvh] h-full w-full flex overflow-x-hidden ${activeTheme.isLight ? 'bg-slate-50 text-slate-900' : 'bg-[#050505] text-white'}`}>
       
       {/* Universal light animated drifting background */}
       <DriftingBg />
 
       {/* Dual Pane split-screen layout */}
-      <div className="w-full min-h-screen flex flex-col lg:flex-row overflow-y-auto">
+      <div className="w-full min-h-[100dvh] flex flex-col lg:flex-row overflow-y-auto overscroll-contain">
         
         {/* Left Side: Facebook/Instagram-Style Dynamic Social Poster */}
         <AuthPoster />
 
         {/* Right Side: Interactive Auth Cards & Notices */}
-        <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-4 sm:py-6 overflow-y-auto z-10 relative w-full min-h-screen lg:min-h-0">
+        <div className={`flex-1 flex flex-col items-center ${
+          isKeyboardOpen ? 'justify-start pt-2 pb-24' : 'justify-start lg:justify-center py-4 sm:py-6'
+        } px-3 sm:px-6 lg:px-8 overflow-y-auto overscroll-contain z-10 relative w-full min-h-[100dvh] lg:min-h-0`}>
           
           {/* Keyboard safe, responsive card container */}
-          <div className="w-full max-w-[440px] flex flex-col items-center my-auto py-2">
+          <div className={`w-full max-w-[440px] flex flex-col items-center ${
+            isKeyboardOpen ? 'my-0 pb-16' : 'my-2 lg:my-auto py-1 sm:py-2'
+          } transition-all duration-200`}>
             
-            {/* Mobile Header Branding (Shown on small devices only - matching Image 2) */}
-            <div className="lg:hidden flex flex-col items-center text-center mb-4 sm:mb-5">
+            {/* Mobile Header Branding (Auto-collapses when software keyboard is open) */}
+            <div className={`lg:hidden flex flex-col items-center text-center transition-all duration-200 ${
+              isKeyboardOpen ? 'hidden' : 'mb-3 sm:mb-5'
+            }`}>
               <AeirmistLogo className="w-11 h-11 sm:w-12 sm:h-12 drop-shadow-[0_0_30px_rgba(0,242,255,0.7)] mb-2" variant="compact" />
               <h1 className="font-display font-black text-2xl sm:text-3xl tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-[var(--color-aeirmist-cyan)] to-[var(--color-aeirmist-magenta)]">
                 AEIRMIST
@@ -606,12 +702,14 @@ export const AuthSystem: React.FC = () => {
                 activeTheme.isLight 
                   ? 'bg-white border-slate-300 shadow-[0_20px_50px_rgba(15,23,42,0.15)]' 
                   : 'bg-[#121520]/95 border-white/20 shadow-[0_25px_60px_rgba(0,0,0,0.85)]'
-              } p-4 sm:p-6 backdrop-blur-2xl transition-all duration-300 relative`}
+              } ${isKeyboardOpen ? 'p-3.5 sm:p-6' : 'p-4 sm:p-6'} backdrop-blur-2xl transition-all duration-300 relative`}
             >
               
               {/* Card Title Header - Clean Welcome title (no duplicate logo) */}
               {view === 'login' && (
-                <div className="mb-4 sm:mb-5 flex flex-col items-center justify-center text-center border-b border-white/10 pb-2.5 sm:pb-3">
+                <div className={`flex flex-col items-center justify-center text-center border-b border-white/10 ${
+                  isKeyboardOpen ? 'mb-2 pb-2' : 'mb-4 sm:mb-5 pb-2.5 sm:pb-3'
+                }`}>
                   <h2 className="text-lg sm:text-xl font-black uppercase tracking-wider text-center text-white">Welcome</h2>
                 </div>
               )}
@@ -785,7 +883,7 @@ export const AuthSystem: React.FC = () => {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -10 }}
                     onSubmit={handleSavedAccountLogin}
-                    className="flex flex-col gap-4"
+                    className="flex flex-col gap-3 sm:gap-4"
                   >
                     <div className="mb-2 flex flex-col items-center text-center border-b border-white/5 pb-4">
                       <div className="relative mb-3">
@@ -830,7 +928,6 @@ export const AuthSystem: React.FC = () => {
                           onChange={(e) => setPassword(e.target.value)}
                           onKeyDown={handlePasswordKeyDown}
                           className="w-full py-3.5 pl-12 pr-12 bg-transparent outline-none text-sm text-white placeholder:text-slate-400 font-medium"
-                          autoFocus
                           required
                         />
                         <button
@@ -880,7 +977,7 @@ export const AuthSystem: React.FC = () => {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 10 }}
                     onSubmit={handleLogin}
-                    className="flex flex-col gap-4"
+                    className="flex flex-col gap-3 sm:gap-4"
                   >
                     <div className="space-y-1.5">
                       <label htmlFor="login-identity" className="text-xs font-bold uppercase text-slate-200 tracking-wider">Username or Email</label>
@@ -891,7 +988,6 @@ export const AuthSystem: React.FC = () => {
                           type="text"
                           name="username"
                           autoComplete="username"
-                          autoFocus
                           placeholder="Phone number, username, or email"
                           value={identifier}
                           onChange={(e) => setIdentifier(e.target.value)}

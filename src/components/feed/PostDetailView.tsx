@@ -329,6 +329,8 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
       const newComment = {
         authorId: profile.id,
+        authorUid: user?.uid || profile.id,
+        userId: user?.uid || profile.id,
         authorName: profile.displayName || profile.username || 'User',
         authorPhoto: profile.photoURL || '',
         isVerified: profile.isVerified || false,
@@ -421,7 +423,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
   // Share action
   const handleShare = async () => {
     try {
-      const shareUrl = `${window.location.origin}/#post-${post.id}`;
+      const shareUrl = `${window.location.origin}/post/${post.id}`;
       if (navigator.share) {
         await navigator.share({
           title: `Post by ${post.author.name} on Aeirmist`,
@@ -680,7 +682,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                       <button 
                         onClick={() => {
                           setIsMenuOpen(false);
-                          navigator.clipboard.writeText(`${window.location.origin}/#post-${post.id}`);
+                          navigator.clipboard.writeText(`${window.location.origin}/post/${post.id}`);
                           if (addToast) addToast({ title: 'COPIED', message: 'Link copied', type: 'success' });
                         }}
                         className="w-full px-4 py-2.5 text-left text-neutral-200 hover:bg-neutral-800 cursor-pointer"
@@ -1036,7 +1038,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
             <button 
               onClick={() => {
                 setIsMenuOpen(false);
-                navigator.clipboard.writeText(`${window.location.origin}/#post-${post.id}`);
+                navigator.clipboard.writeText(`${window.location.origin}/post/${post.id}`);
                 if (addToast) addToast({ title: 'COPIED', message: 'Link copied', type: 'success' });
               }}
               className="w-full px-4 py-2.5 text-left text-neutral-200 hover:bg-neutral-800 cursor-pointer"

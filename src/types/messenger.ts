@@ -4,8 +4,11 @@ export interface Message {
   senderId: string;
   timestamp: string;
   timestampMs?: number;
-  type: 'text' | 'image' | 'video' | 'voice' | 'media' | 'post' | 'system';
+  type: 'text' | 'image' | 'video' | 'voice' | 'media' | 'post' | 'system' | 'file' | 'location' | 'contact' | 'sticker';
   mediaUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
   duration?: number;
   reactions?: { [emoji: string]: number };
   userReactions?: { [userId: string]: string };

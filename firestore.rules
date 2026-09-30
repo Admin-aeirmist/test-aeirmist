@@ -147,6 +147,12 @@ service cloud.firestore {
         request.auth.uid == callDoc.receiverUid ||
         request.auth.uid == callDoc.initiatorId ||
         request.auth.uid == callDoc.targetId ||
+        request.auth.uid == callDoc.callerId ||
+        request.auth.uid == callDoc.receiverId ||
+        ('profile_' + request.auth.uid) == callDoc.callerUid ||
+        ('profile_' + request.auth.uid) == callDoc.receiverUid ||
+        ('profile_' + request.auth.uid) == callDoc.callerId ||
+        ('profile_' + request.auth.uid) == callDoc.receiverId ||
         (callDoc.keys().hasAll(['participants']) && (
           request.auth.uid in callDoc.participants ||
           ('profile_' + request.auth.uid) in callDoc.participants
@@ -280,11 +286,14 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isSignedIn() && isUserActive() && (
         request.resource.data.authorUid == request.auth.uid ||
-        request.resource.data.userId == request.auth.uid
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == ('profile_' + request.auth.uid) ||
+        request.resource.data.authorId == request.auth.uid ||
+        request.resource.data.authorId == ('profile_' + request.auth.uid)
       );
       allow update: if isSignedIn() && (
         (
-          (resource.data.authorUid == request.auth.uid || resource.data.userId == request.auth.uid) &&
+          (resource.data.authorUid == request.auth.uid || resource.data.userId == request.auth.uid || resource.data.authorId == request.auth.uid || resource.data.authorId == ('profile_' + request.auth.uid)) &&
           !incoming().diff(existing()).affectedKeys().hasAny(['authorUid', 'userId', 'createdAt'])
         ) ||
         isValidEngagementUpdate() ||
@@ -293,6 +302,8 @@ service cloud.firestore {
       allow delete: if isSignedIn() && (
         resource.data.authorUid == request.auth.uid ||
         resource.data.userId == request.auth.uid ||
+        resource.data.authorId == request.auth.uid ||
+        resource.data.authorId == ('profile_' + request.auth.uid) ||
         isModerator()
       );
 
@@ -317,6 +328,8 @@ service cloud.firestore {
           resource.data.userId == request.auth.uid ||
           resource.data.authorId == request.auth.uid ||
           resource.data.authorId == ('profile_' + request.auth.uid) ||
+          get(/databases/$(database)/documents/posts/$(postId)).data.authorUid == request.auth.uid ||
+          get(/databases/$(database)/documents/posts/$(postId)).data.userId == request.auth.uid ||
           isModerator()
         );
       }
@@ -470,37 +483,40 @@ service cloud.firestore {
       );
     }
 
+    // Vault ownership helper — checks both raw uid AND profile_uid without Firestore document lookups
+    // This is intentionally explicit to avoid cross-document read costs and timing issues on create.
+    function isVaultOwnerData(uid) {
+      return isSignedIn() && (
+        uid == request.auth.uid ||
+        uid == ('profile_' + request.auth.uid) ||
+        ('profile_' + uid) == request.auth.uid
+      );
+    }
+
     // 13. VAULT FOLDERS: Owner only (supports both uid and profile_uid)
     match /vault_folders/{folderId} {
       allow read, update, delete: if isSignedIn() && (
-        resource.data.userId == request.auth.uid ||
-        resource.data.userId == ('profile_' + request.auth.uid) ||
-        resource.data.ownerUid == request.auth.uid ||
-        resource.data.ownerUid == ('profile_' + request.auth.uid)
+        isVaultOwnerData(resource.data.userId) ||
+        isVaultOwnerData(resource.data.ownerUid)
       );
       allow create: if isSignedIn() && (
-        request.resource.data.userId == request.auth.uid ||
-        request.resource.data.userId == ('profile_' + request.auth.uid) ||
-        request.resource.data.ownerUid == request.auth.uid ||
-        request.resource.data.ownerUid == ('profile_' + request.auth.uid)
+        isVaultOwnerData(request.resource.data.userId) ||
+        isVaultOwnerData(request.resource.data.ownerUid)
       );
     }
 
     // 13B. VAULT MEDIA: Owner only (supports both uid and profile_uid)
     match /vault_media/{mediaId} {
       allow read, update, delete: if isSignedIn() && (
-        resource.data.userId == request.auth.uid ||
-        resource.data.userId == ('profile_' + request.auth.uid) ||
-        resource.data.ownerUid == request.auth.uid ||
-        resource.data.ownerUid == ('profile_' + request.auth.uid)
+        isVaultOwnerData(resource.data.userId) ||
+        isVaultOwnerData(resource.data.ownerUid)
       );
       allow create: if isSignedIn() && (
-        request.resource.data.userId == request.auth.uid ||
-        request.resource.data.userId == ('profile_' + request.auth.uid) ||
-        request.resource.data.ownerUid == request.auth.uid ||
-        request.resource.data.ownerUid == ('profile_' + request.auth.uid)
+        isVaultOwnerData(request.resource.data.userId) ||
+        isVaultOwnerData(request.resource.data.ownerUid)
       );
     }
+
 
     // 14. CHAT NICKNAMES: Owner only
     match /chat_nickname/{docId} {
@@ -517,34 +533,49 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isSignedIn() && isUserActive() && (
         request.resource.data.authorUid == request.auth.uid ||
-        request.resource.data.userId == request.auth.uid
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.creatorUid == request.auth.uid ||
+        request.resource.data.creatorId == request.auth.uid ||
+        request.resource.data.creatorId == ('profile_' + request.auth.uid) ||
+        request.resource.data.authorId == request.auth.uid ||
+        request.resource.data.authorId == ('profile_' + request.auth.uid)
       );
       allow update: if isSignedIn() && (
         (
-          (resource.data.authorUid == request.auth.uid || resource.data.userId == request.auth.uid) &&
+          (resource.data.authorUid == request.auth.uid || resource.data.userId == request.auth.uid || resource.data.creatorId == request.auth.uid || resource.data.creatorId == ('profile_' + request.auth.uid)) &&
           !incoming().diff(existing()).affectedKeys().hasAny(['authorUid', 'userId', 'createdAt'])
         ) ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['likes', 'views', 'sharesCount']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'likes', 'likeCount', 'likedBy', 'views', 'viewCount', 'sharesCount', 'shareCount', 'saveCount', 'savedBy', 'commentCount', 'commentsCount', 'comments'
+        ]) ||
         isModerator()
       );
-      allow delete: if isSignedIn() && (existing().authorUid == request.auth.uid || isModerator());
+      allow delete: if isSignedIn() && (existing().authorUid == request.auth.uid || existing().userId == request.auth.uid || existing().creatorId == request.auth.uid || existing().creatorId == ('profile_' + request.auth.uid) || isModerator());
     }
     
     match /stories/{storyId} {
       allow read: if true;
       allow create: if isSignedIn() && isUserActive() && (
         request.resource.data.authorUid == request.auth.uid ||
-        request.resource.data.userId == request.auth.uid
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.authorId == request.auth.uid ||
+        request.resource.data.authorId == ('profile_' + request.auth.uid)
       );
       allow update: if isSignedIn() && (
         (
-          (resource.data.authorUid == request.auth.uid || resource.data.userId == request.auth.uid) &&
+          (resource.data.authorUid == request.auth.uid || resource.data.userId == request.auth.uid || resource.data.authorId == request.auth.uid || resource.data.authorId == ('profile_' + request.auth.uid)) &&
           !incoming().diff(existing()).affectedKeys().hasAny(['authorUid', 'userId', 'createdAt'])
         ) ||
         incoming().diff(existing()).affectedKeys().hasOnly(['viewers', 'reactions']) ||
         isModerator()
       );
-      allow delete: if isSignedIn() && (existing().authorUid == request.auth.uid || isModerator());
+      allow delete: if isSignedIn() && (
+        existing().authorUid == request.auth.uid ||
+        existing().userId == request.auth.uid ||
+        existing().authorId == request.auth.uid ||
+        existing().authorId == ('profile_' + request.auth.uid) ||
+        isModerator()
+      );
     }
 
     // 16. NOTIFICATIONS: Strict recipient get and list authorization; sender-bound creation
@@ -582,6 +613,10 @@ service cloud.firestore {
       allow delete: if (resource.data.initiatorId == request.auth.uid || resource.data.callerUid == request.auth.uid || isAdmin());
 
       match /candidates/{candId} {
+        allow read, write: if isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data) || isAdmin();
+      }
+
+      match /signaling/{docId} {
         allow read, write: if isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data) || isAdmin();
       }
     }
@@ -690,19 +725,33 @@ service cloud.firestore {
       allow read: if resource == null || 
                      resource.data.status == 'active' || 
                      !resource.data.keys().hasAll(['status']) ||
-                     (isSignedIn() && (resource.data.ownerId == request.auth.uid || resource.data.ownerUid == request.auth.uid || isMarketplaceModerator()));
+                     (isSignedIn() && (
+                       resource.data.ownerId == request.auth.uid || 
+                       resource.data.ownerUid == request.auth.uid || 
+                       resource.data.ownerId == ('profile_' + request.auth.uid) ||
+                       resource.data.ownerUid == ('profile_' + request.auth.uid) ||
+                       isMarketplaceModerator()
+                     ));
       allow create: if isSignedIn() && (
         request.resource.data.ownerId == request.auth.uid || 
-        request.resource.data.ownerUid == request.auth.uid
+        request.resource.data.ownerUid == request.auth.uid ||
+        request.resource.data.ownerId == ('profile_' + request.auth.uid) ||
+        request.resource.data.ownerUid == ('profile_' + request.auth.uid)
       );
       allow update: if isSignedIn() && (
         (
-          (resource.data.ownerId == request.auth.uid || resource.data.ownerUid == request.auth.uid) &&
+          (resource.data.ownerId == request.auth.uid || resource.data.ownerUid == request.auth.uid || resource.data.ownerId == ('profile_' + request.auth.uid) || resource.data.ownerUid == ('profile_' + request.auth.uid)) &&
           !incoming().diff(existing()).affectedKeys().hasAny(['ownerId', 'ownerUid', 'createdAt'])
         ) || 
         isMarketplaceModerator()
       );
-      allow delete: if isSignedIn() && (resource.data.ownerId == request.auth.uid || resource.data.ownerUid == request.auth.uid || isMarketplaceModerator());
+      allow delete: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid || 
+        resource.data.ownerUid == request.auth.uid || 
+        resource.data.ownerId == ('profile_' + request.auth.uid) ||
+        resource.data.ownerUid == ('profile_' + request.auth.uid) ||
+        isMarketplaceModerator()
+      );
     }
 
     // 26. MARKETPLACE PRODUCTS: Public read; seller/owner or marketplace moderator write
@@ -711,11 +760,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && (
         request.resource.data.sellerUid == request.auth.uid || 
         request.resource.data.sellerId == request.auth.uid || 
-        request.resource.data.ownerUid == request.auth.uid
+        request.resource.data.ownerUid == request.auth.uid ||
+        request.resource.data.sellerUid == ('profile_' + request.auth.uid) ||
+        request.resource.data.sellerId == ('profile_' + request.auth.uid) ||
+        request.resource.data.ownerUid == ('profile_' + request.auth.uid)
       );
       allow update: if isSignedIn() && (
         (
-          (resource.data.sellerUid == request.auth.uid || resource.data.sellerId == request.auth.uid || resource.data.ownerUid == request.auth.uid) &&
+          (resource.data.sellerUid == request.auth.uid || resource.data.sellerId == request.auth.uid || resource.data.ownerUid == request.auth.uid || resource.data.sellerUid == ('profile_' + request.auth.uid) || resource.data.sellerId == ('profile_' + request.auth.uid) || resource.data.ownerUid == ('profile_' + request.auth.uid)) &&
           !incoming().diff(existing()).affectedKeys().hasAny(['sellerUid', 'sellerId', 'ownerUid', 'createdAt'])
         ) ||
         isMarketplaceModerator()
@@ -724,6 +776,9 @@ service cloud.firestore {
         resource.data.sellerUid == request.auth.uid || 
         resource.data.sellerId == request.auth.uid || 
         resource.data.ownerUid == request.auth.uid || 
+        resource.data.sellerUid == ('profile_' + request.auth.uid) || 
+        resource.data.sellerId == ('profile_' + request.auth.uid) || 
+        resource.data.ownerUid == ('profile_' + request.auth.uid) || 
         isMarketplaceModerator()
       );
     }
@@ -734,12 +789,17 @@ service cloud.firestore {
       allow create: if isSignedIn() && (
         request.resource.data.sellerUid == request.auth.uid || 
         request.resource.data.sellerId == request.auth.uid || 
-        request.resource.data.ownerUid == request.auth.uid
+        request.resource.data.ownerUid == request.auth.uid ||
+        request.resource.data.ownerId == request.auth.uid ||
+        request.resource.data.ownerId == ('profile_' + request.auth.uid) ||
+        request.resource.data.sellerId == ('profile_' + request.auth.uid) ||
+        request.resource.data.sellerUid == ('profile_' + request.auth.uid) ||
+        request.resource.data.ownerUid == ('profile_' + request.auth.uid)
       );
       allow update: if isSignedIn() && (
         (
-          (resource.data.sellerUid == request.auth.uid || resource.data.sellerId == request.auth.uid || resource.data.ownerUid == request.auth.uid) &&
-          !incoming().diff(existing()).affectedKeys().hasAny(['sellerUid', 'sellerId', 'ownerUid', 'createdAt'])
+          (resource.data.sellerUid == request.auth.uid || resource.data.sellerId == request.auth.uid || resource.data.ownerUid == request.auth.uid || resource.data.ownerId == request.auth.uid || resource.data.ownerId == ('profile_' + request.auth.uid)) &&
+          !incoming().diff(existing()).affectedKeys().hasAny(['sellerUid', 'sellerId', 'ownerUid', 'ownerId', 'createdAt'])
         ) ||
         isMarketplaceModerator()
       );
@@ -747,6 +807,8 @@ service cloud.firestore {
         resource.data.sellerUid == request.auth.uid || 
         resource.data.sellerId == request.auth.uid || 
         resource.data.ownerUid == request.auth.uid || 
+        resource.data.ownerId == request.auth.uid || 
+        resource.data.ownerId == ('profile_' + request.auth.uid) || 
         isMarketplaceModerator()
       );
     }
@@ -756,11 +818,15 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isSignedIn() && (
         request.resource.data.ownerUid == request.auth.uid ||
-        request.resource.data.sellerUid == request.auth.uid
+        request.resource.data.sellerUid == request.auth.uid ||
+        request.resource.data.ownerUid == ('profile_' + request.auth.uid) ||
+        request.resource.data.sellerUid == ('profile_' + request.auth.uid)
       );
       allow update, delete: if isSignedIn() && (
         resource.data.ownerUid == request.auth.uid ||
         resource.data.sellerUid == request.auth.uid ||
+        resource.data.ownerUid == ('profile_' + request.auth.uid) ||
+        resource.data.sellerUid == ('profile_' + request.auth.uid) ||
         isMarketplaceModerator()
       );
     }
@@ -770,19 +836,37 @@ service cloud.firestore {
       allow get, list: if isSignedIn() && (
         resource.data.buyerUid == request.auth.uid ||
         resource.data.sellerUid == request.auth.uid ||
-        (resource.data.keys().hasAll(['participants']) && request.auth.uid in resource.data.participants) ||
+        resource.data.buyerUid == ('profile_' + request.auth.uid) ||
+        resource.data.sellerUid == ('profile_' + request.auth.uid) ||
+        resource.data.customerId == request.auth.uid ||
+        resource.data.customerId == ('profile_' + request.auth.uid) ||
+        resource.data.storeOwnerId == request.auth.uid ||
+        resource.data.storeOwnerId == ('profile_' + request.auth.uid) ||
+        (resource.data.keys().hasAll(['participants']) && (request.auth.uid in resource.data.participants || ('profile_' + request.auth.uid) in resource.data.participants)) ||
         isMarketplaceModerator()
       );
       allow create: if isSignedIn() && (
         request.resource.data.buyerUid == request.auth.uid ||
         request.resource.data.sellerUid == request.auth.uid ||
-        (request.resource.data.keys().hasAll(['participants']) && request.auth.uid in request.resource.data.participants) ||
+        request.resource.data.buyerUid == ('profile_' + request.auth.uid) ||
+        request.resource.data.sellerUid == ('profile_' + request.auth.uid) ||
+        request.resource.data.customerId == request.auth.uid ||
+        request.resource.data.customerId == ('profile_' + request.auth.uid) ||
+        request.resource.data.storeOwnerId == request.auth.uid ||
+        request.resource.data.storeOwnerId == ('profile_' + request.auth.uid) ||
+        (request.resource.data.keys().hasAll(['participants']) && (request.auth.uid in request.resource.data.participants || ('profile_' + request.auth.uid) in request.resource.data.participants)) ||
         isMarketplaceModerator()
       );
       allow update, delete: if isSignedIn() && (
         resource.data.buyerUid == request.auth.uid ||
         resource.data.sellerUid == request.auth.uid ||
-        (resource.data.keys().hasAll(['participants']) && request.auth.uid in resource.data.participants) ||
+        resource.data.buyerUid == ('profile_' + request.auth.uid) ||
+        resource.data.sellerUid == ('profile_' + request.auth.uid) ||
+        resource.data.customerId == request.auth.uid ||
+        resource.data.customerId == ('profile_' + request.auth.uid) ||
+        resource.data.storeOwnerId == request.auth.uid ||
+        resource.data.storeOwnerId == ('profile_' + request.auth.uid) ||
+        (resource.data.keys().hasAll(['participants']) && (request.auth.uid in resource.data.participants || ('profile_' + request.auth.uid) in resource.data.participants)) ||
         isMarketplaceModerator()
       );
 
@@ -790,7 +874,12 @@ service cloud.firestore {
         allow read, write: if isSignedIn() && (
           get(/databases/$(database)/documents/store_chats/$(chatId)).data.buyerUid == request.auth.uid ||
           get(/databases/$(database)/documents/store_chats/$(chatId)).data.sellerUid == request.auth.uid ||
+          get(/databases/$(database)/documents/store_chats/$(chatId)).data.buyerUid == ('profile_' + request.auth.uid) ||
+          get(/databases/$(database)/documents/store_chats/$(chatId)).data.sellerUid == ('profile_' + request.auth.uid) ||
+          get(/databases/$(database)/documents/store_chats/$(chatId)).data.customerId == request.auth.uid ||
+          get(/databases/$(database)/documents/store_chats/$(chatId)).data.customerId == ('profile_' + request.auth.uid) ||
           request.auth.uid in get(/databases/$(database)/documents/store_chats/$(chatId)).data.participants ||
+          ('profile_' + request.auth.uid) in get(/databases/$(database)/documents/store_chats/$(chatId)).data.participants ||
           isMarketplaceModerator()
         );
       }
@@ -818,6 +907,31 @@ service cloud.firestore {
         resource.data.userId == request.auth.uid ||
         resource.data.authorId == request.auth.uid ||
         resource.data.authorId == ('profile_' + request.auth.uid) ||
+        isModerator()
+      );
+    }
+
+    // 30B. VIDEO COMMENTS: Public read; author or moderator write; interactions
+    match /video_comments/{commentId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isUserActive() && (
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == ('profile_' + request.auth.uid) ||
+        request.resource.data.authorUid == request.auth.uid ||
+        request.resource.data.profileId == ('profile_' + request.auth.uid)
+      );
+      allow update: if isSignedIn() && (
+        (
+          (resource.data.userId == request.auth.uid || resource.data.userId == ('profile_' + request.auth.uid) || resource.data.authorUid == request.auth.uid) &&
+          !incoming().diff(existing()).affectedKeys().hasAny(['userId', 'videoId', 'createdAt'])
+        ) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['likeCount', 'likedBy', 'isPinned', 'isHearted', 'replies']) ||
+        isModerator()
+      );
+      allow delete: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.userId == ('profile_' + request.auth.uid) ||
+        resource.data.authorUid == request.auth.uid ||
         isModerator()
       );
     }
@@ -916,15 +1030,15 @@ service cloud.firestore {
           !incoming().diff(existing()).affectedKeys().hasAny([
             'price', 'total', 'amount', 'sellerUid', 'sellerId', 'buyerUid', 'buyerId', 'currency', 'items', 'paymentMethod', 'transactionId'
           ]) && (
-            // Seller updates fulfillment status and shipping tracking
+            // Seller updates fulfillment status, shipping tracking, and refund resolution
             (
               (resource.data.sellerUid == request.auth.uid || resource.data.sellerId == request.auth.uid || resource.data.sellerId == ('profile_' + request.auth.uid) || (resource.data.keys().hasAll(['sellerUids']) && (request.auth.uid in resource.data.sellerUids || ('profile_' + request.auth.uid) in resource.data.sellerUids))) &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['currentStatus', 'status', 'trackingTimeline', 'trackingNumber', 'notes', 'sellerNotes', 'fulfillmentStatus', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['currentStatus', 'status', 'trackingTimeline', 'trackingNumber', 'notes', 'sellerNotes', 'fulfillmentStatus', 'refundStatus', 'refundReason', 'refundNotes', 'refundDecisionDate', 'resolution', 'updatedAt'])
             ) ||
             // Buyer updates cancellation or refund notes
             (
               (resource.data.buyerUid == request.auth.uid || resource.data.buyerId == request.auth.uid || resource.data.buyerId == ('profile_' + request.auth.uid)) &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['refundStatus', 'refundReason', 'customerNotes', 'buyerNotes', 'cancellationReason', 'rating', 'review', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['currentStatus', 'status', 'refundStatus', 'refundReason', 'customerNotes', 'buyerNotes', 'cancellationReason', 'rating', 'review', 'updatedAt'])
             )
           )
         )
@@ -944,13 +1058,13 @@ service cloud.firestore {
       allow read: if isModerator() || (
         isSignedIn() && resource != null && (
           (resource.data.keys().hasAll(['reporterUid']) && resource.data.reporterUid == request.auth.uid) ||
-          (resource.data.keys().hasAll(['reporterId']) && resource.data.reporterId == request.auth.uid)
+          (resource.data.keys().hasAll(['reporterId']) && (resource.data.reporterId == request.auth.uid || resource.data.reporterId == ('profile_' + request.auth.uid)))
         )
       );
       allow create: if isSignedIn()
         && (
           (request.resource.data.keys().hasAll(['reporterUid']) && request.resource.data.reporterUid == request.auth.uid) ||
-          (request.resource.data.keys().hasAll(['reporterId']) && request.resource.data.reporterId == request.auth.uid)
+          (request.resource.data.keys().hasAll(['reporterId']) && (request.resource.data.reporterId == request.auth.uid || request.resource.data.reporterId == ('profile_' + request.auth.uid)))
         )
         && request.resource.data.status == 'pending';
       allow update, delete: if isModerator();

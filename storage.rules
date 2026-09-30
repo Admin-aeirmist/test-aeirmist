@@ -45,8 +45,19 @@ service firebase.storage {
         && request.resource.size < 50 * 1024 * 1024; // Max 50MB
     }
 
+    function isValidDocument() {
+      return (
+        request.resource.contentType.matches('application/.*') ||
+        request.resource.contentType.matches('text/.*')
+      ) && request.resource.size < 50 * 1024 * 1024; // Max 50MB
+    }
+
     function isValidMedia() {
       return isValidImage() || isValidVideo() || isValidAudio();
+    }
+
+    function isValidChatAttachment() {
+      return isValidMedia() || isValidDocument();
     }
 
     // -- USER ISOLATED PATHS --
@@ -102,13 +113,24 @@ service firebase.storage {
 
     // Private Vault files — strictly owner-only read AND write
     match /vault/{userId}/{allPaths=**} {
-      allow read, write: if isOwner(userId) && isValidMedia();
+      allow read: if isSignedIn() && (
+        isOwner(userId) ||
+        request.auth.uid == userId ||
+        ('profile_' + request.auth.uid) == userId ||
+        request.auth.uid == ('profile_' + userId)
+      );
+      allow write: if isSignedIn() && (
+        isOwner(userId) ||
+        request.auth.uid == userId ||
+        ('profile_' + request.auth.uid) == userId ||
+        request.auth.uid == ('profile_' + userId)
+      ) && (request.resource == null || request.resource.size < 250 * 1024 * 1024);
     }
 
     // Chat attachments — strictly participant-bound
     match /chats/{chatId}/{allPaths=**} {
       allow read: if isChatParticipant(chatId);
-      allow write: if isChatParticipant(chatId) && isValidMedia();
+      allow write: if isChatParticipant(chatId) && isValidChatAttachment();
     }
 
     // Report/support attachments — user-scoped, owner writes, signed-in staff reads

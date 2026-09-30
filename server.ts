@@ -131,6 +131,20 @@ async function startServer() {
   // to correctly detect secure (HTTPS) requests for setting secure cookies.
   app.set('trust proxy', 1);
 
+  // 0. Canonical Domain & HTTPS 301 Redirect Middleware (SEO & Entity Integrity)
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const host = req.headers.host || '';
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    
+    // In production, enforce canonical domain https://aeirmist.com
+    if (isProduction && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+      if (host.startsWith('www.') || host.includes('.run.app') || proto !== 'https') {
+        return res.redirect(301, `https://aeirmist.com${req.originalUrl}`);
+      }
+    }
+    next();
+  });
+
   // 1. Production Security & Performance Hardening
   app.use(compression() as any);
   // Eased security headers for development & production previews inside iframe
@@ -478,6 +492,68 @@ async function startServer() {
       gemini_key_present: !!process.env.GEMINI_API_KEY,
       env: process.env.NODE_ENV || "development"
     });
+  });
+
+  // WebRTC ICE / TURN Configuration Endpoint
+  app.get("/api/webrtc/ice-servers", async (req, res) => {
+    try {
+      const iceServers: any[] = [
+        {
+          urls: [
+            "stun:stun.l.google.com:19302",
+            "stun:stun1.l.google.com:19302",
+            "stun:stun2.l.google.com:19302",
+            "stun:stun3.l.google.com:19302",
+            "stun:stun4.l.google.com:19302",
+            "stun:stun.cloudflare.com:3478"
+          ]
+        }
+      ];
+
+      // 1. Environment TURN credentials (UDP, TCP, TLS)
+      const turnUrls = process.env.TURN_URLS || process.env.TURN_URL;
+      const turnUsername = process.env.TURN_USERNAME;
+      const turnCredential = process.env.TURN_CREDENTIAL || process.env.TURN_PASSWORD;
+
+      if (turnUrls && turnUsername && turnCredential) {
+        const urlsArray = turnUrls.split(",").map(u => u.trim()).filter(Boolean);
+        iceServers.push({
+          urls: urlsArray,
+          username: turnUsername,
+          credential: turnCredential
+        });
+      }
+
+      // 2. Metered TURN integration (if API Key provided)
+      const meteredApiKey = process.env.METERED_API_KEY;
+      const meteredAppDomain = process.env.METERED_DOMAIN;
+      if (meteredApiKey && meteredAppDomain) {
+        try {
+          const resp = await fetch(`https://${meteredAppDomain}.metered.ca/api/v1/turn/credentials?apiKey=${meteredApiKey}`);
+          if (resp.ok) {
+            const meteredServers = await resp.json();
+            if (Array.isArray(meteredServers)) {
+              iceServers.push(...meteredServers);
+            }
+          }
+        } catch (meteredErr) {
+          console.warn("[WebRTC] Failed to fetch dynamic Metered credentials:", meteredErr);
+        }
+      }
+
+      const hasTurn = iceServers.some(s => 
+        Array.isArray(s.urls) 
+          ? s.urls.some((u: string) => u.startsWith("turn:") || u.startsWith("turns:"))
+          : String(s.urls).startsWith("turn:") || String(s.urls).startsWith("turns:")
+      );
+
+      res.json({
+        iceServers,
+        hasTurn
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "Failed to generate ICE server configuration" });
+    }
   });
 
   // Gemini API Proxy
@@ -830,6 +906,31 @@ Return JSON object: { "suggestion": string or null }`,
       return res.sendFile(targetFile);
     }
     next();
+  });
+
+  // Explicit route handler for SEO robots.txt and sitemap.xml
+  app.get("/robots.txt", (req: express.Request, res: express.Response) => {
+    const publicFile = path.join(process.cwd(), "public", "robots.txt");
+    const distFile = path.join(process.cwd(), "dist", "robots.txt");
+    const targetFile = fs.existsSync(publicFile) ? publicFile : (fs.existsSync(distFile) ? distFile : null);
+    if (targetFile) {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.sendFile(targetFile);
+    }
+    res.status(404).send("User-agent: *\nAllow: /\nSitemap: https://aeirmist.com/sitemap.xml");
+  });
+
+  app.get("/sitemap.xml", (req: express.Request, res: express.Response) => {
+    const publicFile = path.join(process.cwd(), "public", "sitemap.xml");
+    const distFile = path.join(process.cwd(), "dist", "sitemap.xml");
+    const targetFile = fs.existsSync(publicFile) ? publicFile : (fs.existsSync(distFile) ? distFile : null);
+    if (targetFile) {
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.sendFile(targetFile);
+    }
+    res.status(404).send("<xml></xml>");
   });
 
   // Vite middleware for development
