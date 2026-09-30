@@ -72,7 +72,15 @@ export const NoteUserAvatar = ({
   const getCleanPhoto = (p?: string | null) => {
     if (!p || typeof p !== 'string') return undefined;
     const trimmed = p.trim();
-    if (!trimmed || trimmed === 'null' || trimmed === 'undefined' || trimmed.includes('data:image/svg+xml') || trimmed.includes('default_avatar')) {
+    if (
+      !trimmed || 
+      trimmed === 'null' || 
+      trimmed === 'undefined' || 
+      trimmed.includes('data:image/svg+xml') || 
+      trimmed.includes('default_avatar') ||
+      trimmed.includes('dicebear') ||
+      trimmed.includes('api.dicebear.com')
+    ) {
       return undefined;
     }
     return trimmed;
@@ -205,7 +213,7 @@ export const NoteUserAvatar = ({
     );
   }
 
-  const initial = (alt || 'U').trim().charAt(0).toUpperCase();
+  const initial = (alt && alt !== 'Me' ? alt : (profile?.displayName || profile?.username || 'J')).trim().charAt(0).toUpperCase();
 
   return (
     <div className={`${className} ${roundedClassName} bg-gradient-to-br from-[#242735] via-[#1a1c26] to-[#12131a] border border-white/10 flex items-center justify-center font-bold text-white shadow-inner select-none`}>

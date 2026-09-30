@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aeirmist-static-v100';
+const CACHE_NAME = 'aeirmist-static-v102';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
