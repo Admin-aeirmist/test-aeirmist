@@ -1,11 +1,43 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useAeirmist } from './AeirmistContext';
 import { logger } from '@/src/utils/logger';
+import { MESSENGER_THEMES } from '../components/messenger/ChatWallpaperController';
 
+export type AccentColor = 
+  | 'cyan' 
+  | 'blue' 
+  | 'purple' 
+  | 'emerald' 
+  | 'orange' 
+  | 'red'
+  | 'ocean'
+  | 'sunset'
+  | 'cyberpunk'
+  | 'lavender'
+  | 'berry'
+  | 'cotton_candy'
+  | 'midnight';
+
+export const ACCENT_COLOR_MAP: Record<string, string> = {
+  cyan: '#00f2ff',
+  blue: '#3b82f6',
+  purple: '#a855f7',
+  emerald: '#10b981',
+  orange: '#f97316',
+  red: '#ef4444',
+  ocean: '#0084FF',
+  sunset: '#FF512F',
+  cyberpunk: '#00f2ff',
+  lavender: '#8B5CF6',
+  berry: '#f43f5e',
+  cotton_candy: '#ec4899',
+  midnight: '#475569',
+};
 
 export interface AppearanceSettingsConfig {
   themeMode: 'dark' | 'light' | 'system';
-  accentColor: 'cyan' | 'blue' | 'purple' | 'emerald' | 'orange' | 'red';
+  accentColor: AccentColor;
+  activeThemeId?: string; // Tracks currently active Messenger Theme ID (e.g. 'ocean', 'sunset', etc.)
   
   // Section 3: Global App Background
   globalBgType: 'none' | 'gradient' | 'solid' | 'custom';
@@ -67,6 +99,7 @@ export interface AppearanceSettingsConfig {
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettingsConfig = {
   themeMode: 'dark',
   accentColor: 'cyan',
+  activeThemeId: undefined,
   
   globalBgType: 'none',
   globalBgValue: '',
@@ -213,6 +246,17 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         root.classList.add('dark');
         root.classList.remove('light');
       }
+
+      // If a messenger theme preset is active, adapt wallpaper gradient to light/dark mode
+      if (settings.activeThemeId && settings.globalBgType === 'gradient') {
+        const matchingTheme = MESSENGER_THEMES.find(t => t.id === settings.activeThemeId);
+        if (matchingTheme) {
+          const targetGrad = isLight ? matchingTheme.bgGradientLight : matchingTheme.bgGradientDark;
+          if (settings.globalBgValue !== targetGrad) {
+            setSettings(prev => ({ ...prev, globalBgValue: targetGrad }));
+          }
+        }
+      }
     };
     handleThemeMode();
 
@@ -226,15 +270,7 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     mediaQuery.addEventListener('change', handleSystemChange);
 
     // 2. Accent Color Map
-    const colorMap: Record<string, string> = {
-      cyan: '#00f2ff',
-      blue: '#3b82f6',
-      purple: '#a855f7',
-      emerald: '#10b981',
-      orange: '#f97316',
-      red: '#ef4444',
-    };
-    const hex = colorMap[settings.accentColor] || '#00f2ff';
+    const hex = ACCENT_COLOR_MAP[settings.accentColor] || '#00f2ff';
     root.style.setProperty('--color-aeirmist-cyan', hex);
     root.style.setProperty('--color-aura-cyan', hex);
     root.style.setProperty('--accent-color', hex);
@@ -327,15 +363,7 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     // Render transparent alpha values based on theme mode
     const isLight = rootIsLight();
-    const colorMap: Record<string, string> = {
-      cyan: '#00f2ff',
-      blue: '#3b82f6',
-      purple: '#a855f7',
-      emerald: '#10b981',
-      orange: '#f97316',
-      red: '#ef4444',
-    };
-    const hex = colorMap[settings.accentColor] || '#00f2ff';
+    const hex = ACCENT_COLOR_MAP[settings.accentColor] || '#00f2ff';
     const glassBgBase = isLight ? '255, 255, 255' : '15, 15, 25';
     const glassTransparencyVal = (settings.enableGlassEffect && !settings.performanceMode) 
       ? Math.max(0.04, Math.min(1, (settings.backgroundTransparency ?? 15) / 100)) 
@@ -348,10 +376,13 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         --color-aeirmist-cyan: ${hex} !important;
         --color-aura-cyan: ${hex} !important;
         --accent-color: ${hex} !important;
+        --color-accent: ${hex} !important;
         --glass-blur: ${glassBlurVal}px !important;
         --glass-bg: rgba(${glassBgBase}, ${glassTransparencyVal}) !important;
         --panel-opacity: ${glassTransparencyVal} !important;
         --global-dim-opacity: ${darkOverlayOpacity} !important;
+        --aeirmist-panel: rgba(${glassBgBase}, ${glassTransparencyVal}) !important;
+        --tw-backdrop-blur: blur(${glassBlurVal}px) !important;
         ${settings.compactSidebar ? '--sidebar-w: 72px !important; --sidebar-w-collapsed: 72px !important;' : ''}
       }
 
@@ -426,15 +457,24 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         border-radius: 8px !important;
       }
 
-      /* Glass panel and messenger dynamic configuration */
+      /* Glass panel, cards, and dynamic blur & opacity across the app */
       .messenger-sidebar-glass,
       .messenger-header-glass,
       .nav-sidebar-glass,
       .glass-panel, 
       .glass-card, 
+      .glass-button,
+      [class*="backdrop-blur-"],
       [class*="glass-"] {
         backdrop-filter: blur(var(--glass-blur)) !important;
         -webkit-backdrop-filter: blur(var(--glass-blur)) !important;
+      }
+
+      .glass-panel,
+      .glass-card,
+      .nav-sidebar-glass,
+      .messenger-sidebar-glass,
+      .messenger-header-glass {
         background-color: var(--glass-bg) !important;
       }
 

@@ -547,13 +547,13 @@
 }
 
 :root.light .glass-panel {
-  background-color: rgba(255, 255, 255, 0.96) !important;
+  background-color: var(--glass-bg, rgba(255, 255, 255, 0.96)) !important;
   border-color: rgba(15, 23, 42, 0.1) !important;
   box-shadow: 0 12px 36px -10px rgba(15, 23, 42, 0.06) !important;
 }
 
 :root.light .glass-card {
-  background-color: rgba(255, 255, 255, 0.92) !important;
+  background-color: var(--glass-bg, rgba(255, 255, 255, 0.92)) !important;
   border-color: rgba(15, 23, 42, 0.08) !important;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04) !important;
 }
@@ -987,19 +987,27 @@ html.global-bg-active body,
 html.global-bg-active #root,
 html.global-bg-active .app-container,
 html.global-bg-active .layout-shell,
+html.global-bg-active #main-content,
+html.global-bg-active .fluid-container,
 html.has-global-bg,
 html.has-global-bg body,
 html.has-global-bg #root,
 html.has-global-bg .app-container,
 html.has-global-bg .layout-shell,
+html.has-global-bg #main-content,
+html.has-global-bg .fluid-container,
 :root.light.has-global-bg body,
 :root.light.has-global-bg #root,
 :root.light.has-global-bg .app-container,
 :root.light.has-global-bg .layout-shell,
+:root.light.has-global-bg #main-content,
+:root.light.has-global-bg .fluid-container,
 :root.light.global-bg-active body,
 :root.light.global-bg-active #root,
 :root.light.global-bg-active .app-container,
-:root.light.global-bg-active .layout-shell {
+:root.light.global-bg-active .layout-shell,
+:root.light.global-bg-active #main-content,
+:root.light.global-bg-active .fluid-container {
   background: transparent !important;
   background-color: transparent !important;
 }

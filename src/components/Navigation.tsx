@@ -1,6 +1,20 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppearance } from '../context/AppearanceContext';
+import { MESSENGER_THEMES } from './messenger/ChatWallpaperController';
+
+const MESSENGER_ACCENT_COLORS = [
+  { id: 'cyan', color: '#00f2ff', label: 'Neon Cyber' },
+  { id: 'ocean', color: '#0084FF', label: 'Ocean Blue' },
+  { id: 'lavender', color: '#8B5CF6', label: 'Lilac Dream' },
+  { id: 'emerald', color: '#10B981', label: 'Emerald Mint' },
+  { id: 'sunset', color: '#FF512F', label: 'Sunset Peach' },
+  { id: 'berry', color: '#f43f5e', label: 'Berry Rose' },
+  { id: 'cotton_candy', color: '#ec4899', label: 'Cotton Candy' },
+  { id: 'midnight', color: '#475569', label: 'Midnight Slate' },
+  { id: 'blue', color: '#3B82F6', label: 'Royal Blue' },
+  { id: 'orange', color: '#F97316', label: 'Bright Orange' },
+];
 import { 
   Home, 
   Search, 
@@ -292,7 +306,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 12, scale: 0.95 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
-                className={`fixed bottom-20 ${isCurrentlyExpanded ? 'left-4' : 'left-[78px]'} z-[9999] w-80 max-h-[85vh] overflow-y-auto ${
+                className={`fixed bottom-20 ${isCurrentlyExpanded ? 'left-4' : 'left-[78px]'} z-[9999] w-[340px] max-h-[88vh] overflow-y-auto ${
                   settings.themeMode === 'light'
                     ? 'bg-white/95 border-slate-200 text-slate-900 shadow-[0_24px_70px_rgba(0,0,0,0.18)]'
                     : 'bg-[#111217]/98 border-white/15 text-white shadow-[0_24px_70px_rgba(0,0,0,0.95)]'
@@ -472,20 +486,18 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
 
                     {/* Accent Color Palette */}
                     <div className="space-y-1.5">
-                      <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
-                        Accent Color
-                      </span>
-                      <div className={`flex items-center justify-between gap-1 p-2 rounded-xl border ${
-                        settings.themeMode === 'light' ? 'bg-slate-100 border-slate-200' : 'bg-white/5 border-white/10'
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
+                          Messenger Accent Colors
+                        </span>
+                        <span className="text-[9px] font-mono text-aeirmist-cyan font-bold capitalize">
+                          {settings.accentColor}
+                        </span>
+                      </div>
+                      <div className={`grid grid-cols-5 gap-1.5 p-2 rounded-xl border ${
+                        settings.themeMode === 'light' ? 'bg-slate-100/80 border-slate-200' : 'bg-white/5 border-white/10'
                       }`}>
-                        {[
-                          { id: 'cyan', color: '#00E5FF', label: 'Cyan' },
-                          { id: 'blue', color: '#3B82F6', label: 'Blue' },
-                          { id: 'purple', color: '#A855F7', label: 'Purple' },
-                          { id: 'emerald', color: '#10B981', label: 'Emerald' },
-                          { id: 'orange', color: '#F97316', label: 'Orange' },
-                          { id: 'red', color: '#EF4444', label: 'Red' },
-                        ].map((acc) => {
+                        {MESSENGER_ACCENT_COLORS.map((acc) => {
                           const isSelected = settings.accentColor === acc.id;
                           return (
                             <button
@@ -493,7 +505,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
                               type="button"
                               title={acc.label}
                               onClick={() => updateAppearanceSettings({ accentColor: acc.id as any })}
-                              className={`w-7 h-7 rounded-full transition-all flex items-center justify-center shrink-0 cursor-pointer ${
+                              className={`w-7 h-7 mx-auto rounded-full transition-all flex items-center justify-center shrink-0 cursor-pointer ${
                                 isSelected ? 'scale-110 ring-2 ring-white ring-offset-2 ring-offset-black shadow-lg' : 'opacity-70 hover:opacity-100 hover:scale-105'
                               }`}
                               style={{ backgroundColor: acc.color }}
@@ -509,31 +521,57 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
                       </div>
                     </div>
 
-                    {/* Wallpaper Presets */}
+                    {/* Wallpaper Presets (Messenger Themes) */}
                     <div className="space-y-1.5">
-                      <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
-                        Wallpaper Presets
-                      </span>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {[
-                          { name: 'Cyber Glow', value: 'linear-gradient(135deg, #091a29 0%, #050b14 100%)' },
-                          { name: 'Deep Space', value: 'linear-gradient(135deg, #150928 0%, #080312 100%)' },
-                          { name: 'Emerald Dusk', value: 'linear-gradient(135deg, #071f16 0%, #030d09 100%)' },
-                          { name: 'Sunset Ember', value: 'linear-gradient(135deg, #280d09 0%, #0e0403 100%)' },
-                        ].map((preset) => (
-                          <button
-                            key={preset.name}
-                            onClick={() => updateAppearanceSettings({ globalBgType: 'gradient', globalBgValue: preset.value })}
-                            className={`p-2 rounded-xl text-[9px] font-bold uppercase tracking-wider border transition-all text-left truncate ${
-                              settings.globalBgValue === preset.value
-                                ? 'border-aeirmist-cyan text-white shadow-[0_0_10px_rgba(0,229,255,0.2)] ring-1 ring-aeirmist-cyan'
-                                : 'border-white/15 text-white/90 hover:border-white/30'
-                            }`}
-                            style={{ background: preset.value }}
-                          >
-                            {preset.name}
-                          </button>
-                        ))}
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider block ${settings.themeMode === 'light' ? 'text-slate-500' : 'text-white/50'}`}>
+                          Messenger Themes
+                        </span>
+                        <span className="text-[9px] font-medium text-aeirmist-cyan">
+                          {MESSENGER_THEMES.length} Presets
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5 max-h-[190px] overflow-y-auto pr-0.5 custom-scrollbar">
+                        {MESSENGER_THEMES.map((theme) => {
+                          const isLight = settings.themeMode === 'light';
+                          const themeGradient = isLight ? theme.bgGradientLight : theme.bgGradientDark;
+                          const isSelected = settings.activeThemeId === theme.id || settings.globalBgValue === themeGradient;
+                          return (
+                            <button
+                              key={theme.id}
+                              type="button"
+                              onClick={() => {
+                                updateAppearanceSettings({ 
+                                  globalBgType: 'gradient', 
+                                  globalBgValue: themeGradient,
+                                  accentColor: theme.id as any,
+                                  activeThemeId: theme.id,
+                                });
+                              }}
+                              className={`p-2 rounded-xl text-[9px] font-bold border transition-all text-left flex items-center justify-between gap-1.5 group cursor-pointer ${
+                                isSelected
+                                  ? 'border-aeirmist-cyan text-white shadow-[0_0_12px_rgba(0,229,255,0.25)] ring-1 ring-aeirmist-cyan font-black'
+                                  : isLight
+                                    ? 'border-slate-200 text-slate-800 hover:border-slate-400 hover:scale-[1.01]'
+                                    : 'border-white/15 text-white/90 hover:border-white/30 hover:scale-[1.01]'
+                              }`}
+                              style={{ 
+                                background: themeGradient,
+                              }}
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span 
+                                  className="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm border border-white/30" 
+                                  style={{ backgroundColor: theme.previewColor }} 
+                                />
+                                <span className={`truncate ${isLight && isSelected ? 'text-slate-900' : 'text-white'}`}>{theme.name}</span>
+                              </div>
+                              {isSelected && (
+                                <Check size={12} className={isLight ? 'text-slate-900 shrink-0 stroke-[3]' : 'text-aeirmist-cyan shrink-0 stroke-[3]'} />
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -559,7 +597,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
 
                       {settings.globalBgType !== 'none' && !!settings.globalBgValue && (
                         <button
-                          onClick={() => updateAppearanceSettings({ globalBgType: 'none', globalBgValue: '' })}
+                          onClick={() => updateAppearanceSettings({ globalBgType: 'none', globalBgValue: '', activeThemeId: undefined })}
                           className="flex items-center justify-center gap-1.5 w-full py-1.5 text-[10px] font-bold text-red-500 hover:text-red-600 transition-colors cursor-pointer"
                         >
                           <Trash2 size={12} /> Remove Background

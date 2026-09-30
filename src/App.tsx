@@ -1370,7 +1370,7 @@ function AppContent() {
   }
 
   return (
-    <div className={`flex-1 w-full relative overflow-hidden flex flex-col min-h-0 ${isGlobalBgActive ? 'bg-transparent' : 'bg-aeirmist-bg'}`}>
+    <div className={`flex-1 w-full relative overflow-hidden flex flex-col min-h-0 ${isGlobalBgActive ? '!bg-transparent' : 'bg-aeirmist-bg'}`}>
       {/* Skip to Main Content Link */}
       <a 
         href="#main-content" 
@@ -1379,11 +1379,7 @@ function AppContent() {
         Skip to Main Content
       </a>
       <GlobalAppBackground />
-      {/* Dynamic Dark Dim Overlay tied to Appearance Settings */}
-      <div 
-        className="aeirmist-dim-overlay fixed inset-0 bg-black pointer-events-none transition-opacity duration-300" 
-        style={{ opacity: (settings?.globalBgOverlay ?? 45) / 100, zIndex: -14 }} 
-      />
+
       {/* Subtle Background Elements */}
       <div className={`fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-aeirmist-cyan/10 rounded-full blur-[120px] pointer-events-none ${isGlobalBgActive ? 'opacity-0' : 'opacity-100'}`} style={{ zIndex: -15 }} />
       <div className={`fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-aeirmist-magenta/10 rounded-full blur-[120px] pointer-events-none ${isGlobalBgActive ? 'opacity-0' : 'opacity-100'}`} style={{ zIndex: -15 }} />
@@ -1556,7 +1552,7 @@ function AppContent() {
           key="main"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className={`layout-shell flex flex-1 min-h-0 ${isGlobalBgActive ? 'bg-transparent!' : ''}`}
+          className={`layout-shell flex flex-1 min-h-0 relative z-[2] ${isGlobalBgActive ? '!bg-transparent' : ''}`}
         >
           <Navigation 
             onCreate={() => setIsPosting(true)} 
@@ -1575,7 +1571,7 @@ function AppContent() {
             isRemoteView={!!viewingProfile}
           />
 
-          <main id="main-content" className="flex-1 min-w-0 h-full min-h-0 relative overflow-hidden flex flex-col">
+          <main id="main-content" className={`flex-1 min-w-0 h-full min-h-0 relative overflow-hidden flex flex-col ${isGlobalBgActive ? '!bg-transparent' : ''}`}>
             <Suspense fallback={<LazyFallback />}>
               <Routes>
                 <Route path="/payment-success" element={<Suspense fallback={null}><PaymentResult status="success" /></Suspense>} />

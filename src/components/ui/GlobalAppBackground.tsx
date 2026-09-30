@@ -132,8 +132,7 @@ export const GlobalAppBackground: React.FC = () => {
       ref={containerRef}
       id="aeirmist-global-app-background"
       data-wallpaper-layer="true"
-      className="fixed inset-0 pointer-events-none overflow-hidden select-none"
-      style={{ zIndex: -20 }}
+      className="fixed inset-0 pointer-events-none overflow-hidden select-none z-0"
     >
       {/* 1. SOLID / GRADIENT underlay */}
       {settings.globalBgType === 'solid' && (
@@ -190,10 +189,10 @@ export const GlobalAppBackground: React.FC = () => {
       {/* 3. ADAPTIVE READABILITY OVERLAY TINT */}
       {darkOverlayOpacity > 0 && (
         <div 
-          className="absolute inset-0 w-full h-full global-bg-overlay transition-opacity duration-300 pointer-events-none"
+          className="aeirmist-dim-overlay absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-300"
           style={{ 
             backgroundColor: isLight ? '#ffffff' : '#000000',
-            opacity: isLight ? Math.min(0.2, darkOverlayOpacity * 0.25) : darkOverlayOpacity 
+            opacity: isLight ? Math.min(0.25, darkOverlayOpacity * 0.3) : darkOverlayOpacity 
           }}
         />
       )}
