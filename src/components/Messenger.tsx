@@ -2022,7 +2022,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       </div>
 
       {/* Chat Window */}
-      <div className={`${isMobileList ? 'hidden md:flex' : 'flex'} ${vaultState.isOpen && !vaultState.activeVaultChatId ? 'hidden md:hidden' : 'flex-1'} flex-col bg-aeirmist-bg relative min-w-0 w-full max-w-full overflow-hidden`}>
+      <div className={`${isMobileList ? 'hidden md:flex' : 'flex'} ${vaultState.isOpen && !vaultState.activeVaultChatId ? 'hidden md:hidden' : 'flex-1'} flex-col h-full min-h-0 bg-aeirmist-bg relative min-w-0 w-full max-w-full overflow-hidden`}>
         {view === 'restricted' ? (
           <div className="flex-1 h-full overflow-hidden">
             <RestrictedSection 
@@ -2402,10 +2402,12 @@ const ChatWindow = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior, block: 'end' });
-    } else if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (scrollRef.current) {
+      if (behavior === 'smooth') {
+        scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      } else {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
     }
   }, []);
   const [failedMessages, setFailedMessages] = useState<Set<string>>(new Set());
@@ -3514,7 +3516,7 @@ const ChatWindow = ({
       </div>
 
       {/* Input Area - Docked at Bottom cleanly without artificial void gaps */}
-      <footer className="flex-shrink-0 w-full px-2 sm:px-4 md:px-8 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] md:pb-6 z-30 transition-all duration-150">
+      <footer className="flex-shrink-0 sticky bottom-0 w-full px-2 sm:px-4 md:px-8 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] md:pb-4 z-30 transition-all duration-150">
         <div className="w-full">
           {(() => {
             const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);

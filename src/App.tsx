@@ -1575,7 +1575,7 @@ function AppContent() {
             isRemoteView={!!viewingProfile}
           />
 
-          <main id="main-content" className="flex-1 min-w-0 h-full relative overflow-hidden flex flex-col">
+          <main id="main-content" className="flex-1 min-w-0 h-full min-h-0 relative overflow-hidden flex flex-col">
             <Suspense fallback={<LazyFallback />}>
               <Routes>
                 <Route path="/payment-success" element={<Suspense fallback={null}><PaymentResult status="success" /></Suspense>} />
