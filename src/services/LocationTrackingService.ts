@@ -4,6 +4,7 @@
  */
 
 import { logger } from '../utils/logger';
+import { PermissionService } from './PermissionService';
 
 export interface LocationData {
   city?: string;
@@ -11,6 +12,9 @@ export interface LocationData {
   region?: string;
   latitude?: number;
   longitude?: number;
+  accuracy?: number;
+  isPrecise: boolean;
+  locationType: 'precise_gps' | 'approximate_network' | 'ip_approximate' | 'timezone_approximate' | 'unavailable';
   ip?: string;
   displayLocation: string;
   timestamp: number;
@@ -64,7 +68,8 @@ export class LocationTrackingService {
   }
 
   /**
-   * Request location permission and capture current location coordinates
+   * Request location permission and capture current location coordinates.
+   * Accurately distinguishes precise GPS from approximate IP locations.
    */
   public static async captureCurrentLocation(): Promise<LocationData> {
     const now = Date.now();
@@ -72,46 +77,28 @@ export class LocationTrackingService {
       return this.cachedLocation;
     }
 
-    // 1. Attempt High-Accuracy GPS Geolocation
-    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      try {
-        const gpsCoords = await new Promise<GeolocationCoordinates | null>((resolve) => {
-          const timer = setTimeout(() => resolve(null), 6000);
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              clearTimeout(timer);
-              resolve(pos.coords);
-            },
-            () => {
-              clearTimeout(timer);
-              resolve(null);
-            },
-            { timeout: 5000, maximumAge: 60000, enableHighAccuracy: false }
-          );
-        });
-
-        if (gpsCoords) {
-          const lat = Number(gpsCoords.latitude.toFixed(4));
-          const lng = Number(gpsCoords.longitude.toFixed(4));
-          
-          // Optional reverse-geocoding or fallback to coordinates string
-          const loc: LocationData = {
-            latitude: lat,
-            longitude: lng,
-            displayLocation: `Lat ${lat}, Lng ${lng}`,
-            timestamp: now
-          };
-          
-          this.cachedLocation = loc;
-          this.lastFetchTime = now;
-          return loc;
-        }
-      } catch (e) {
-        logger.warn('[LocationTrackingService] GPS capture bypassed:', e);
+    // 1. Attempt High-Accuracy GPS via PermissionService
+    try {
+      const gpsResult = await PermissionService.getPreciseLocation({ timeoutMs: 6000, highAccuracy: true });
+      if (gpsResult && gpsResult.isPrecise && typeof gpsResult.latitude === 'number' && typeof gpsResult.longitude === 'number') {
+        const loc: LocationData = {
+          latitude: gpsResult.latitude,
+          longitude: gpsResult.longitude,
+          accuracy: gpsResult.accuracy,
+          isPrecise: true,
+          locationType: 'precise_gps',
+          displayLocation: gpsResult.displayLocation || `Lat ${gpsResult.latitude}, Lng ${gpsResult.longitude}`,
+          timestamp: now
+        };
+        this.cachedLocation = loc;
+        this.lastFetchTime = now;
+        return loc;
       }
+    } catch (e) {
+      logger.warn('[LocationTrackingService] GPS capture bypassed:', e);
     }
 
-    // 2. Fallback: Fast IP-Based Geolocation (No GPS permission needed, 100% safe)
+    // 2. Fallback: Fast IP-Based Geolocation (explicitly marked as approximate IP)
     try {
       const response = await fetch('https://ipapi.co/json/', { method: 'GET', signal: AbortSignal.timeout(4000) });
       if (response.ok) {
@@ -129,6 +116,8 @@ export class LocationTrackingService {
           country,
           latitude: data.latitude,
           longitude: data.longitude,
+          isPrecise: false,
+          locationType: 'ip_approximate',
           ip: data.ip,
           displayLocation: display,
           timestamp: now
@@ -148,6 +137,8 @@ export class LocationTrackingService {
       const display = timeZone ? timeZone.replace(/_/g, ' ') : 'Online Node';
       const loc: LocationData = {
         displayLocation: display,
+        isPrecise: false,
+        locationType: 'timezone_approximate',
         timestamp: now
       };
       this.cachedLocation = loc;
@@ -156,6 +147,8 @@ export class LocationTrackingService {
     } catch {
       return {
         displayLocation: 'Active Node',
+        isPrecise: false,
+        locationType: 'unavailable',
         timestamp: now
       };
     }

@@ -196,10 +196,17 @@ export function loginUser(email: string, password: string) {
 }
 
 // ==========================================
-// ৩. পাসওয়ার্ড রিসেট মেইল পাঠানোর ফাংশন
+// ৩. পাসওয়ার্ড রিসেট মেইল পাঠানোর ফাংশন (Firebase Templates)
 // ==========================================
 export function handleForgotPassword(userEmail: string) {
-  return sendPasswordResetEmail(auth, userEmail)
+  const origin = typeof window !== 'undefined' && window.location.origin
+    ? window.location.origin
+    : 'https://aeirmist.com';
+
+  return sendPasswordResetEmail(auth, userEmail, {
+    url: `${origin}/?mode=resetPassword`,
+    handleCodeInApp: true,
+  })
     .then(() => {
       logger.info("পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে:", userEmail);
     })

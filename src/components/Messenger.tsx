@@ -352,7 +352,19 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     addToast
   } = useAeirmist();
   const { settings } = useAppearance();
-  const [chats, setChats] = useState<Chat[]>([]);
+  const [chats, setChats] = useState<Chat[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const uid = profile?.ownerUid || profile?.uid || user?.uid || '';
+        const raw = (uid && localStorage.getItem(`aeirmist_chats_${uid}`)) || localStorage.getItem('aeirmist_cached_inbox_chats');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+    }
+    return [];
+  });
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -793,7 +805,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           name: (data.isGroup || data.type === 'group') ? (data.groupName || data.name || 'Group Chat') : cleanDisplayName,
           photo: (data.isGroup || data.type === 'group') ? getAvatarUrl(data.groupPhotoURL || data.photo) : getAvatarUrl(details.photoURL),
           rawLastMessage: rawLastMsg,
-          lastMessage: displayLastMsg,
+          lastMessage: typeof displayLastMsg === 'string' ? displayLastMsg : (displayLastMsg?.text || (rawLastMsg?.mediaUrl ? 'Sent an attachment' : 'No messages yet')),
           time: timeString,
           unread: typeof data.unreadCount === 'number' ? data.unreadCount > 0 : (data.unreadCount?.[profile.id] || 0) > 0,
           isPinned: typeof data.isPinned === 'boolean' ? data.isPinned : !!data.isPinned?.[profile.id],
@@ -909,6 +921,16 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     const existingChat = chats.find(c => c.id === detId || c.profileIds?.includes(targetId) || c.participants?.includes(targetUid));
     
     if (existingChat) {
+      // If this conversation is vaulted/private, require vault password unlock first!
+      if (existingChat.isVaulted?.[profile.id] === true && !vaultState.isUnlocked) {
+        setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: existingChat.id });
+        setActiveChatId(existingChat.id);
+        setTempChat(null);
+        setIsMobileList(false);
+        setSearchQuery('');
+        setSearchResults([]);
+        return;
+      }
       handleChatSelect(existingChat);
       if (autoCallType) {
         setTimeout(() => setPendingCall({ conversationId: existingChat.id, type: autoCallType }), 100);
@@ -933,6 +955,27 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     setSearchQuery('');
     setSearchResults([]);
   };
+
+  // Protect vaulted chat from tempChat bypass when chats list updates
+  useEffect(() => {
+    if (tempChat && chats.length > 0 && profile?.id) {
+      const targetId = tempChat.profileIds?.find(id => id !== profile.id);
+      if (targetId) {
+        const matchingChat = chats.find(c => c.profileIds?.includes(targetId) || c.participants?.includes(targetId));
+        if (matchingChat) {
+          if (matchingChat.isVaulted?.[profile.id] === true && !vaultState.isUnlocked) {
+            setTempChat(null);
+            setActiveChatId(matchingChat.id);
+            setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: matchingChat.id });
+            setIsMobileList(false);
+          } else {
+            setTempChat(null);
+            setActiveChatId(matchingChat.id);
+          }
+        }
+      }
+    }
+  }, [chats, tempChat, profile?.id, vaultState.isUnlocked]);
 
   const [pendingCall, setPendingCall] = useState<{ conversationId: string, type: 'audio' | 'video' } | null>(null);
 
@@ -1551,13 +1594,14 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   const isMySpaceSearch = mySpaceTerms.some(term => lowercaseQuery.includes(term));
 
                   // Matches for Chats / Channels
-                  const chatMatches = chats.filter(c => 
-                    c.isVaulted?.[profile?.id || ''] !== true && (
+                  const chatMatches = chats.filter(c => {
+                    const lastMsgStr = typeof c.lastMessage === 'string' ? c.lastMessage : (c.lastMessage?.text || '');
+                    return c.isVaulted?.[profile?.id || ''] !== true && (
                       (c.name || '').toLowerCase().includes(lowercaseQuery) ||
-                      (c.lastMessage || '').toLowerCase().includes(lowercaseQuery) ||
+                      lastMsgStr.toLowerCase().includes(lowercaseQuery) ||
                       (c.id.startsWith('myspace_') && (isMySpaceSearch || lowercaseQuery.includes('my space') || lowercaseQuery.includes('space') || lowercaseQuery.includes('notes')))
-                    )
-                  );
+                    );
+                  });
 
                   let displayList: React.ReactNode[] = [];
 
@@ -1700,7 +1744,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         ) : (
           /* Normal Sidebar View starts here */
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-            <div className="pt-[calc(0.875rem+env(safe-area-inset-top,0px))] md:pt-4 px-3.5 md:px-4 pb-1.5 space-y-2.5 min-w-0 relative">
+            <div className="pt-[calc(0.875rem+var(--sat,env(safe-area-inset-top,0px)))] md:pt-4 px-3.5 md:px-4 pb-1.5 space-y-2.5 min-w-0 relative">
               <div className="flex items-center justify-between gap-3">
                 <div 
                   className="flex flex-col cursor-pointer group min-w-0 flex-1" 
@@ -2008,7 +2052,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                       {/* Bottom Row: Last message preview + Unread badge */}
                       <div className="flex items-center justify-between gap-2 min-w-0 mt-0.5">
                         <p className={`text-[12px] truncate flex-1 min-w-0 ${chat.unread ? 'text-slate-800 dark:text-white font-semibold' : 'text-slate-400 dark:text-white/50'}`}>
-                          {chat.lastMessage || 'No messages yet'}
+                          {typeof chat.lastMessage === 'string' ? chat.lastMessage : (chat.lastMessage?.text || 'No messages yet')}
                         </p>
                         {chat.unread && (
                           <div className="w-2.5 h-2.5 rounded-full bg-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.5)] shrink-0" />
@@ -2356,7 +2400,10 @@ const ChatWindow = ({
   } = useAeirmist();
   const { settings } = useAppearance();
 
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>(() => {
+    if (!chat?.id || chat.id.startsWith('new_')) return [];
+    return messagingService.getCachedMessages(chat.id) || [];
+  });
   const [optimistic, setOptimistic] = useState<any[]>([]);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
@@ -2390,12 +2437,14 @@ const ChatWindow = ({
     }
   }, [pendingNoteReply, chat.id, onClearPendingNoteReply]);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (!chat?.id || chat.id.startsWith('new_')) return false;
+    const initial = messagingService.getCachedMessages(chat.id);
+    return !initial || initial.length === 0;
+  });
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [expandedAlbumImages, setExpandedAlbumImages] = useState<string[] | undefined>(undefined);
   const [expandedImageIndex, setExpandedImageIndex] = useState<number>(0);
-  const [callType, setCallType] = useState<'audio' | 'video' | null>(null);
-  const [isOutgoingCallLocally, setIsOutgoingCallLocally] = useState<boolean>(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ progress: number, status: string } | null>(null);
   const [isHDActive, setIsHDActive] = useState(false);
@@ -2579,8 +2628,17 @@ const ChatWindow = ({
       return;
     }
 
-    setIsOutgoingCallLocally(true);
-    setCallType(type);
+    try {
+      const targetUid = chat.otherParticipantUid || chat.participants?.find((id: string) => id !== profile?.id && id !== user?.uid && id !== ('profile_' + user?.uid));
+      await startCall(chat.id, type, targetUid);
+    } catch (err: any) {
+      logger.error("[Messenger] Failed to start call:", err);
+      addToast?.({
+        title: 'Call Failed',
+        message: err.message || 'Unable to establish call connection.',
+        type: 'error'
+      });
+    }
   };
 
   // Intersection Observer for Seen Status
@@ -2606,19 +2664,32 @@ const ChatWindow = ({
 
   // Message Listener
   useEffect(() => {
-    setMessages([]);
-    setOptimistic([]);
-    setLoading(true);
-
     if (!db || !chat.id || !user || !profile?.id || chat.id.startsWith('new_')) {
       setLoading(false);
       return;
     }
 
+    // Instant Cache Hydration: Never wipe messages if cache exists
+    const cached = messagingService.getCachedMessages(chat.id);
+    if (cached && cached.length > 0) {
+      setMessages(cached);
+      setLoading(false);
+    } else {
+      setMessages([]);
+      setLoading(true);
+    }
+    setOptimistic([]);
+
+    // Safety timeout: Never keep user stuck on skeletons longer than 1.2s even on slow/offline networks
+    const fallbackTimer = setTimeout(() => {
+      setLoading(false);
+    }, 1200);
+
     let isCurrent = true;
     // Subscribe once per chat.id
     const unsubscribe = messagingService.subscribeToMessages(db, chat.id, profile.id, chat, (fetchedMessages) => {
       if (!isCurrent) return;
+      clearTimeout(fallbackTimer);
       setMessages(fetchedMessages);
       setLoading(false);
       requestAnimationFrame(() => scrollToBottom('auto'));
@@ -2626,6 +2697,7 @@ const ChatWindow = ({
 
     return () => {
       isCurrent = false;
+      clearTimeout(fallbackTimer);
       unsubscribe();
     };
   }, [db, chat.id, user?.uid, profile?.id, scrollToBottom]);
@@ -3259,7 +3331,7 @@ const ChatWindow = ({
       {/* Centered Column for Desktop */}
       <div className="flex-1 flex flex-col w-full h-full min-h-0 relative min-w-0 overflow-hidden z-10">
         {/* Header */}
-        <header className="flex-shrink-0 w-full px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] md:pt-3 pb-2 md:pb-3 md:px-6 border-b border-slate-200/80 dark:border-white/10 flex items-center justify-between bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-header-glass z-[40] relative min-h-0 min-h-[calc(4rem+env(safe-area-inset-top,0px))] md:h-[64px]">
+        <header className="flex-shrink-0 w-full px-4 pt-[calc(0.625rem+var(--sat,env(safe-area-inset-top,0px)))] md:pt-3 pb-2 md:pb-3 md:px-6 border-b border-slate-200/80 dark:border-white/10 flex items-center justify-between bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-header-glass z-[40] relative min-h-0 min-h-[calc(4.25rem+var(--sat,env(safe-area-inset-top,0px)))] md:h-[64px]">
         <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
           <button onClick={onBack} className="md:hidden p-1 -ml-1 text-white/60 hover:text-white transition-colors shrink-0">
             <ChevronLeft size={22} />
@@ -3348,21 +3420,6 @@ const ChatWindow = ({
         </div>
       </header>
 
-      <AnimatePresence>
-        {callType && isOutgoingCallLocally ? (
-          <CallModal 
-            key="outgoing-call-session"
-            chat={chat} 
-            type={callType} 
-            isIncoming={false}
-            onClose={() => {
-              if (activeCall) endCall(activeCall.id, activeCall.conversationId);
-              setCallType(null);
-              setIsOutgoingCallLocally(false);
-            }} 
-          />
-        ) : null}
-      </AnimatePresence>
 
 
       {/* Messages */}

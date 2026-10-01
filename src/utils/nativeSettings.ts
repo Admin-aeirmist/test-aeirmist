@@ -3,15 +3,97 @@ import { logger } from './logger';
 
 interface NativeSettingsPlugin {
   openNotificationSettings(): Promise<void>;
-  requestNotificationPermission(): Promise<void>;
-  requestAllPermissions(): Promise<{ requestedCount?: number; success: boolean }>;
+  openAppPermissionSettings(): Promise<void>;
+  requestNotificationPermission(): Promise<{ granted: boolean; requested?: boolean; alreadyGranted?: boolean }>;
+  checkNotificationPermission(): Promise<{ granted: boolean }>;
+  checkLocationPermission(): Promise<{ granted: boolean; fine?: boolean; coarse?: boolean }>;
+  requestLocationPermission(): Promise<{ granted: boolean; fine?: boolean; coarse?: boolean; alreadyGranted?: boolean; requested?: boolean }>;
+  showDeviceNotification(options: {
+    title: string;
+    body: string;
+    id?: number;
+    avatarUrl?: string;
+    targetUrl?: string;
+    type?: string;
+  }): Promise<{ success: boolean; id?: number }>;
   checkCallPermissions(options: { type: 'audio' | 'video' }): Promise<{ granted: boolean; microphone: boolean; camera: boolean; type: string }>;
-  requestCallPermissions(options: { type: 'audio' | 'video' }): Promise<{ alreadyGranted: boolean; requestedCount: number; type: string; success: boolean }>;
+  requestCallPermissions(options: { type: 'audio' | 'video' }): Promise<{ alreadyGranted: boolean; requestedCount?: number; type: string; success: boolean; granted?: boolean; microphone?: boolean; camera?: boolean }>;
+  getSystemInsets(): Promise<{ top: number; bottom: number }>;
   setAudioMode(options: { mode: 'communication' | 'normal'; speaker?: boolean }): Promise<void>;
   saveMediaToDevice(options: { url: string; filename?: string }): Promise<{ success: boolean; filename?: string; message?: string }>;
 }
 
 export const NativeSettings = registerPlugin<NativeSettingsPlugin>('NativeSettings');
+
+export interface SystemNotificationOptions {
+  title: string;
+  body: string;
+  avatarUrl?: string;
+  targetUrl?: string;
+  type?: string;
+  tag?: string;
+  id?: number;
+}
+
+/**
+ * Dispatches a system/device notification across all platforms:
+ * - Native Android/iOS: Posts directly to Android NotificationManager with sound & heads-up banner.
+ * - Desktop/Web: Uses Web Notification API and Service Worker.
+ */
+export const showSystemNotification = async (options: SystemNotificationOptions): Promise<void> => {
+  if (typeof window === 'undefined') return;
+
+  const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
+
+  // 1. Android / iOS Native Capacitor App
+  if (isNative) {
+    try {
+      await NativeSettings.showDeviceNotification({
+        title: options.title,
+        body: options.body,
+        avatarUrl: options.avatarUrl,
+        targetUrl: options.targetUrl,
+        type: options.type,
+        id: options.id,
+      });
+      return;
+    } catch (e) {
+      logger.warn('[NativeSettings] showDeviceNotification native failed:', e);
+    }
+  }
+
+  // 2. Desktop & Mobile Browser Web Notification Fallback
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const notifOptions: NotificationOptions = {
+      body: options.body,
+      icon: options.avatarUrl || '/icons/icon-192x192.png',
+      badge: options.avatarUrl || '/icons/icon-192x192.png',
+      tag: options.tag || String(Date.now()),
+      renotify: true,
+      data: {
+        url: options.targetUrl || '/'
+      }
+    };
+
+    if ('serviceWorker' in navigator && navigator.serviceWorker.ready) {
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.showNotification(options.title, notifOptions);
+      }).catch(() => {
+        try {
+          new Notification(options.title, notifOptions);
+        } catch (e) {
+          logger.warn('[NativeSettings] Browser SW showNotification fallback failed:', e);
+        }
+      });
+    } else {
+      try {
+        new Notification(options.title, notifOptions);
+      } catch (e) {
+        logger.warn('[NativeSettings] Direct browser Notification failed:', e);
+      }
+    }
+  }
+};
 
 /**
  * Checks whether the current runtime is a mobile/phone environment.
@@ -26,17 +108,43 @@ export const isMobileDevice = (): boolean => {
 };
 
 /**
- * Directly opens the device notification settings on mobile/phone,
- * or triggers native browser Notification.requestPermission() on desktop.
+ * Directly requests native device notification permission, or opens device settings on mobile,
+ * or triggers browser Notification.requestPermission() on desktop.
  */
 export const handleNotificationPermissionFlow = async (
   addToast?: (toast: { title: string; message: string; type: 'success' | 'warning' | 'info' }) => void
 ): Promise<boolean> => {
   if (typeof window === 'undefined') return false;
 
+  const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
   const isPhone = isMobileDevice();
 
-  // 1. Phone / Mobile Environment
+  // 1. Native Mobile APK (Capacitor)
+  if (isNative) {
+    try {
+      const res = await NativeSettings.requestNotificationPermission();
+      if (res?.granted) {
+        addToast?.({
+          title: 'Notifications Allowed',
+          message: 'Real-time device notifications are now active on your phone.',
+          type: 'success'
+        });
+        return true;
+      }
+      // If user had previously permanently denied, open settings
+      await NativeSettings.openNotificationSettings();
+      addToast?.({
+        title: 'Device Settings',
+        message: 'Please allow notifications for Aeirmist in your phone settings.',
+        type: 'info'
+      });
+      return true;
+    } catch (nativeErr) {
+      logger.warn('[NativeSettings] Native notification permission failed:', nativeErr);
+    }
+  }
+
+  // 2. Phone Browser Environment
   if (isPhone) {
     try {
       // Try native Capacitor plugin first if inside native Android/iOS shell
@@ -137,89 +245,101 @@ export const handleNotificationPermissionFlow = async (
 };
 
 /**
- * Requests all core permissions simultaneously (Camera, Microphone, Location, Storage/Media, Notifications).
- * On Android Capacitor APK: Triggers native OS permission request dialog batch.
- * On Web: Sequentially requests Notification, Media (camera/mic), and Geolocation.
+ * Opens native App details / permission settings page.
  */
-export const requestAllCorePermissions = async (
-  addToast?: (toast: { title: string; message: string; type: 'success' | 'warning' | 'info' }) => void
-): Promise<boolean> => {
-  if (typeof window === 'undefined') return false;
-
+export const openAppPermissionSettings = async (): Promise<void> => {
+  if (typeof window === 'undefined') return;
   const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
-
-  // 1. Native Android / iOS APK shell: Trigger native batch permissions dialog
   if (isNative) {
     try {
-      const res = await NativeSettings.requestAllPermissions();
-      addToast?.({
-        title: 'Permissions Requested',
-        message: 'Please grant Camera, Mic, Location, Storage & Notification access when prompted.',
-        type: 'info'
-      });
-      return res.success;
-    } catch (nativeErr) {
-      logger.warn('[NativeSettings] requestAllPermissions fallback:', nativeErr);
+      await NativeSettings.openAppPermissionSettings();
+      return;
+    } catch (e) {
+      logger.warn('[NativeSettings] openAppPermissionSettings failed:', e);
     }
   }
+};
 
-  // 2. Web Browser Fallback: Prompt user sequentially
-  let allGranted = true;
+/**
+ * Checks location permission on Android native or Web.
+ */
+export const checkLocationPermission = async (): Promise<{ granted: boolean; fine?: boolean; coarse?: boolean }> => {
+  if (typeof window === 'undefined') return { granted: false };
+  const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
+  if (isNative) {
+    try {
+      return await NativeSettings.checkLocationPermission();
+    } catch (e) {
+      logger.warn('[NativeSettings] checkLocationPermission native call failed:', e);
+    }
+  }
+  if ('permissions' in navigator && navigator.permissions.query) {
+    try {
+      const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+      return { granted: status.state === 'granted' };
+    } catch (e) {
+      logger.warn('[NativeSettings] checkLocationPermission query failed:', e);
+    }
+  }
+  return { granted: false };
+};
 
-  // A. Notifications
+/**
+ * Requests location permission on Android native.
+ */
+export const requestLocationPermission = async (): Promise<{ granted: boolean; fine?: boolean; coarse?: boolean }> => {
+  if (typeof window === 'undefined') return { granted: false };
+  const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
+  if (isNative) {
+    try {
+      return await NativeSettings.requestLocationPermission();
+    } catch (e) {
+      logger.warn('[NativeSettings] requestLocationPermission native call failed:', e);
+    }
+  }
+  return { granted: false };
+};
+
+/**
+ * Checks notification permission on Android native or Web.
+ */
+export const checkNotificationPermission = async (): Promise<{ granted: boolean }> => {
+  if (typeof window === 'undefined') return { granted: false };
+  const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
+  if (isNative) {
+    try {
+      return await NativeSettings.checkNotificationPermission();
+    } catch (e) {
+      logger.warn('[NativeSettings] checkNotificationPermission native call failed:', e);
+    }
+  }
+  if ('Notification' in window) {
+    return { granted: Notification.permission === 'granted' };
+  }
+  return { granted: false };
+};
+
+/**
+ * Requests notification permission on Android native or Web.
+ */
+export const requestNotificationPermission = async (): Promise<{ granted: boolean }> => {
+  if (typeof window === 'undefined') return { granted: false };
+  const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
+  if (isNative) {
+    try {
+      const res = await NativeSettings.requestNotificationPermission();
+      return { granted: !!res?.granted };
+    } catch (e) {
+      logger.warn('[NativeSettings] requestNotificationPermission native call failed:', e);
+    }
+  }
   if ('Notification' in window) {
     try {
-      const notifStatus = await Notification.requestPermission();
-      if (notifStatus !== 'granted') allGranted = false;
+      const res = await Notification.requestPermission();
+      return { granted: res === 'granted' };
     } catch (e) {
-      logger.warn('[Permissions] Web notification request failed:', e);
+      logger.warn('[NativeSettings] requestNotificationPermission browser call failed:', e);
     }
   }
-
-  // B. Camera & Microphone
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-      stream.getTracks().forEach(track => track.stop());
-    } catch (e) {
-      try {
-        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioStream.getTracks().forEach(track => track.stop());
-      } catch (audioErr) {
-        logger.warn('[Permissions] Web audio/video request denied:', audioErr);
-        allGranted = false;
-      }
-    }
-  }
-
-  // C. Geolocation
-  if ('geolocation' in navigator) {
-    try {
-      await new Promise<void>((resolve) => {
-        navigator.geolocation.getCurrentPosition(
-          () => resolve(),
-          () => { allGranted = false; resolve(); },
-          { timeout: 8000 }
-        );
-      });
-    } catch (e) {
-      logger.warn('[Permissions] Web location request failed:', e);
-    }
-  }
-
-  if (allGranted) {
-    addToast?.({
-      title: 'Access Granted',
-      message: 'Camera, Microphone, Location, and Notifications enabled successfully.',
-      type: 'success'
-    });
-  } else {
-    addToast?.({
-      title: 'Permissions Updated',
-      message: 'Some permissions may be pending. You can enable them anytime from device settings.',
-      type: 'info'
-    });
-  }
-
-  return allGranted;
+  return { granted: false };
 };

@@ -12,6 +12,7 @@ interface VideoPlayerProps {
   controls?: boolean;
   autoPlay?: boolean;
   onNavigateToWatch?: () => void;
+  showTopHeader?: boolean;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
@@ -21,7 +22,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   title,
   caption,
   autoPlay = false,
-  onNavigateToWatch
+  onNavigateToWatch,
+  showTopHeader = false
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -34,7 +36,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Derive high-resolution poster from Cloudinary if not explicitly provided
+  // High-resolution poster
   const derivedPoster = useMemo(() => {
     if (poster && poster.trim()) return poster;
     if (!src) return undefined;
@@ -49,35 +51,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Clean direct streaming source URL
   const videoSrc = src;
 
-  // AutoPlay on Scroll Intersection Observer (only if autoPlay is requested)
+  // AutoPlay on Scroll Intersection Observer (Feed auto-play muted like YouTube/Instagram)
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !autoPlay) return;
+    const container = containerRef.current;
+    if (!video || !container || !autoPlay) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting) {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.4) {
             video.muted = true;
             setIsMuted(true);
-            video.play()
-              .then(() => setIsPlaying(true))
-              .catch((err) => {
-                logger.info('Auto-play prevented by browser policy:', err);
-                setIsPlaying(false);
-              });
+            const playPromise = video.play();
+            if (playPromise !== undefined) {
+              playPromise
+                .then(() => {
+                  setIsPlaying(true);
+                  setIsBuffering(false);
+                })
+                .catch((err) => {
+                  logger.info('Feed auto-play prevented by browser policy:', err);
+                  setIsPlaying(false);
+                });
+            }
           } else {
-            video.pause();
-            setIsPlaying(false);
+            if (!video.paused) {
+              video.pause();
+              setIsPlaying(false);
+            }
           }
         });
       },
-      { threshold: 0.5 }
+      { threshold: [0, 0.4, 0.8] }
     );
 
-    if (containerRef.current) {
-      observer.observe(containerRef.current);
-    }
+    observer.observe(container);
 
     return () => {
       observer.disconnect();
@@ -96,12 +105,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  const handlePlayPause = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handlePlayPause = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     const video = videoRef.current;
     if (!video) return;
 
-    if (video.paused || !isPlaying) {
+    if (video.paused) {
+      setIsBuffering(true);
       const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise
@@ -120,7 +130,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 setIsBuffering(false);
                 resetControlsTimer();
               })
-              .catch((e2) => logger.warn("Playback error:", e2));
+              .catch((e2) => {
+                logger.warn("Video playback error:", e2);
+                setIsBuffering(false);
+                setIsPlaying(false);
+              });
           });
       }
     } else {
@@ -130,16 +144,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  const handleContainerClick = (e: React.MouseEvent) => {
-    // If clicking outside controls and button:
-    // If already playing, toggle play/pause
-    if (isPlaying) {
-      handlePlayPause(e);
-      return;
-    }
-    // If paused, open in Videos section if handler is provided
+  // Clicking around the center button navigates to videos section if available
+  const handleAroundPauseClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (onNavigateToWatch) {
-      e.stopPropagation();
       onNavigateToWatch();
     } else {
       handlePlayPause(e);
@@ -165,8 +173,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleLoadedMetadata = () => {
     const video = videoRef.current;
-    if (video && video.duration) {
+    if (!video) return;
+    if (video.duration) {
       setDuration(video.duration);
+    }
+    // Seek slightly forward to reveal the first video frame if paused and no poster
+    if (video.paused && !derivedPoster && video.currentTime === 0) {
+      try {
+        video.currentTime = 0.01;
+      } catch {}
     }
   };
 
@@ -212,11 +227,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      onClick={handleContainerClick}
       onMouseMove={resetControlsTimer}
-      className="relative w-full h-full min-h-[240px] max-h-[540px] overflow-hidden group/video bg-[#04060a] flex items-center justify-center cursor-pointer select-none"
+      className="relative w-full h-full min-h-[240px] max-h-[540px] overflow-hidden group/video bg-[#04060a] flex items-center justify-center select-none"
     >
-      {/* Native HTML5 Video Element - Clean Direct CDN Stream */}
+      {/* Native HTML5 Video Element - Clean Direct Stream */}
       <video
         ref={videoRef}
         src={videoSrc}
@@ -225,7 +239,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         loop
         muted={isMuted}
         playsInline
-        preload="metadata"
+        preload="auto"
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onWaiting={() => setIsBuffering(true)}
@@ -249,50 +263,75 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         />
       )}
 
-      {/* TOP HEADER OVERLAY (Videos Section Pill + Title) */}
-      <div className={`absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex items-center justify-between z-20 transition-opacity duration-300 ${(!isPlaying || showControls) ? 'opacity-100' : 'opacity-0 md:group-hover/video:opacity-100'}`}>
-        <div className="flex items-center gap-2 min-w-0 pr-3">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onNavigateToWatch?.();
-            }}
-            className="px-2.5 py-1 rounded-full bg-aeirmist-cyan/20 hover:bg-aeirmist-cyan hover:text-black border border-aeirmist-cyan/40 text-aeirmist-cyan text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 backdrop-blur-md shadow-md transition-all active:scale-95 cursor-pointer pointer-events-auto shrink-0"
-            title="Open in Videos section"
-          >
-            <Film size={11} className="fill-current" /> Watch in Videos ↗
-          </button>
-          {displayHeadline && (
-            <span className="text-xs font-semibold text-white/95 truncate drop-shadow-md">
-              {displayHeadline}
+      {/* TOP HEADER OVERLAY (Videos Section Pill + Title) - only if explicitly enabled */}
+      {showTopHeader && (
+        <div className={`absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex items-center justify-between z-20 transition-opacity duration-300 ${(!isPlaying || showControls) ? 'opacity-100' : 'opacity-0 md:group-hover/video:opacity-100'}`}>
+          <div className="flex items-center gap-2 min-w-0 pr-3">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigateToWatch?.();
+              }}
+              className="px-2.5 py-1 rounded-full bg-aeirmist-cyan/20 hover:bg-aeirmist-cyan hover:text-black border border-aeirmist-cyan/40 text-aeirmist-cyan text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 backdrop-blur-md shadow-md transition-all active:scale-95 cursor-pointer pointer-events-auto shrink-0"
+              title="Open in Videos section"
+            >
+              <Film size={11} className="fill-current" /> Watch in Videos ↗
+            </button>
+            {displayHeadline && (
+              <span className="text-xs font-semibold text-white/95 truncate drop-shadow-md">
+                {displayHeadline}
+              </span>
+            )}
+          </div>
+
+          {duration > 0 && (
+            <span className="text-[10px] font-mono text-white/70 px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-md border border-white/10 shrink-0">
+              {formatTime(duration)}
             </span>
           )}
         </div>
+      )}
 
-        {duration > 0 && (
-          <span className="text-[10px] font-mono text-white/70 px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-md border border-white/10 shrink-0">
-            {formatTime(duration)}
-          </span>
-        )}
-      </div>
-
-      {/* CENTER PLAY BUTTON / BUFFERING SPINNER (Clean, high contrast, guaranteed play) */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+      {/* CENTER PLAY BUTTON / TAP AREA (Clicking button plays/pauses; clicking around button navigates to videos section) */}
+      <div 
+        onClick={handleAroundPauseClick}
+        className="absolute inset-0 flex items-center justify-center z-15 cursor-pointer pointer-events-auto"
+        title="Tap to watch in Videos"
+      >
         {isBuffering ? (
-          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-black/75 backdrop-blur-md border border-aeirmist-cyan/50 flex items-center justify-center text-aeirmist-cyan shadow-[0_0_35px_rgba(0,242,255,0.4)]">
+          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-black/75 backdrop-blur-md border border-aeirmist-cyan/50 flex items-center justify-center text-aeirmist-cyan shadow-[0_0_35px_rgba(0,242,255,0.4)] pointer-events-none">
             <Loader2 size={32} className="animate-spin text-aeirmist-cyan" />
           </div>
         ) : !isPlaying ? (
           <button
             type="button"
-            onClick={handlePlayPause}
-            className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-black/60 hover:bg-black/85 backdrop-blur-xl border-2 border-white/30 hover:border-aeirmist-cyan text-white shadow-[0_8px_32px_rgba(0,0,0,0.8)] flex items-center justify-center group-hover/video:scale-110 active:scale-95 transition-all duration-300 pointer-events-auto cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePlayPause(e);
+            }}
+            className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-black/60 hover:bg-black/85 backdrop-blur-xl border-2 border-white/35 hover:border-aeirmist-cyan text-white shadow-[0_8px_32px_rgba(0,0,0,0.85)] flex items-center justify-center group-hover/video:scale-110 active:scale-95 transition-all duration-300 pointer-events-auto cursor-pointer z-20"
             aria-label="Play video"
+            title="Play video"
           >
             <Play size={28} className="fill-aeirmist-cyan text-aeirmist-cyan ml-1 drop-shadow-[0_0_15px_rgba(0,242,255,0.8)]" />
           </button>
-        ) : null}
+        ) : (
+          showControls && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePlayPause(e);
+              }}
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-black/55 hover:bg-black/80 backdrop-blur-md border border-white/25 text-white flex items-center justify-center active:scale-95 transition-all pointer-events-auto cursor-pointer z-20 shadow-lg"
+              aria-label="Pause video"
+              title="Pause video"
+            >
+              <Pause size={24} className="fill-current text-white" />
+            </button>
+          )
+        )}
       </div>
 
       {/* DEDICATED BOTTOM-RIGHT FLOATING MUTE / UNMUTE BUTTON */}

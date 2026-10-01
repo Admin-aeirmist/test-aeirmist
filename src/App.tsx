@@ -17,6 +17,7 @@ import { GlobalAppBackground } from './components/ui/GlobalAppBackground';
 import { AdaptiveEngine } from './components/ui/AdaptiveEngine';
 import { EmotionalEngine } from './components/ui/EmotionalEngine';
 import { AuthSystem } from './components/auth/AuthSystem';
+import { PublicPreviewGateway } from './components/auth/PublicPreviewGateway';
 import { SignupWizard } from './components/auth/SignupWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sparkles, Zap, Lock, AlertCircle, Clock } from 'lucide-react';
@@ -207,6 +208,187 @@ const ComingSoonScreen = ({ sectorName, onHomeClick }: { sectorName: string; onH
   );
 };
 
+// Helper functions for URL sync across tabs and pages
+export const getPathForAppState = (
+  tab: Tab,
+  vProfile: any,
+  isNotifsOpen: boolean,
+  vPostId: string | null,
+  vVideoId: string | null,
+  vStoreId: string | null,
+  vProductId: string | null,
+  vChatUid: string | null,
+  vStoryUserId: string | null = null,
+  vSettingsSection: string | null = null,
+  vIsPosting: boolean = false
+): string => {
+  if (vPostId) return `/post/${vPostId}`;
+  if (vVideoId) return `/videos/${vVideoId}`;
+  if (vStoryUserId) return `/story/${vStoryUserId}`;
+  if (vStoreId) return `/store/${vStoreId}`;
+  if (vProductId) return `/product/${vProductId}`;
+  if (isNotifsOpen) return '/notifications';
+  if (vIsPosting) return '/create-post';
+
+  if (tab === 'profile') {
+    if (vProfile?.username) return `/@${vProfile.username}`;
+    if (vProfile?.id) return `/profile/${vProfile.id}`;
+    return '/profile';
+  }
+
+  if (tab === 'settings') {
+    if (vSettingsSection) return `/settings/${vSettingsSection}`;
+    return '/settings';
+  }
+
+  switch (tab) {
+    case 'feed': return '/';
+    case 'discover': return '/marketplace';
+    case 'videos': return '/videos';
+    case 'messenger': 
+      if (vChatUid) return `/messages/${vChatUid}`;
+      return '/messages';
+    case 'admin': return '/admin';
+    case 'dashboard': return '/connections';
+    default: return `/${tab}`;
+  }
+};
+
+export const getInitialStateFromPath = (path: string) => {
+  const cleanPath = path.trim();
+  const lowerPath = cleanPath.toLowerCase();
+
+  // 1. Posts
+  if (lowerPath.startsWith('/post/') || lowerPath.startsWith('/p/')) {
+    const postId = (lowerPath.startsWith('/post/') 
+      ? cleanPath.substring('/post/'.length) 
+      : cleanPath.substring('/p/'.length)).split('?')[0];
+    return { tab: 'feed' as Tab, notifs: false, postId: postId || null };
+  }
+
+  // 2. Videos / Reels
+  if (
+    lowerPath.startsWith('/video/') || 
+    lowerPath.startsWith('/videos/') || 
+    lowerPath.startsWith('/v/') || 
+    lowerPath.startsWith('/reel/') || 
+    lowerPath.startsWith('/reels/')
+  ) {
+    let videoId = '';
+    if (lowerPath.startsWith('/video/')) videoId = cleanPath.substring('/video/'.length);
+    else if (lowerPath.startsWith('/videos/')) videoId = cleanPath.substring('/videos/'.length);
+    else if (lowerPath.startsWith('/v/')) videoId = cleanPath.substring('/v/'.length);
+    else if (lowerPath.startsWith('/reel/')) videoId = cleanPath.substring('/reel/'.length);
+    else if (lowerPath.startsWith('/reels/')) videoId = cleanPath.substring('/reels/'.length);
+    videoId = videoId.split('?')[0];
+    return { tab: 'videos' as Tab, notifs: false, videoId: videoId || null };
+  }
+
+  // 3. Stories
+  if (lowerPath.startsWith('/story/') || lowerPath.startsWith('/stories/')) {
+    const storyId = (lowerPath.startsWith('/story/') 
+      ? cleanPath.substring('/story/'.length) 
+      : cleanPath.substring('/stories/'.length)).split('?')[0];
+    return { tab: 'feed' as Tab, notifs: false, storyUserId: storyId || null };
+  }
+
+  // 4. Stores & Products
+  if (lowerPath.startsWith('/store/')) {
+    const storeId = cleanPath.substring('/store/'.length).split('?')[0];
+    return { tab: 'discover' as Tab, notifs: false, storeId: storeId || null };
+  }
+  if (lowerPath.startsWith('/product/') || lowerPath.startsWith('/marketplace/item/')) {
+    const productId = (lowerPath.startsWith('/product/') 
+      ? cleanPath.substring('/product/'.length) 
+      : cleanPath.substring('/marketplace/item/'.length)).split('?')[0];
+    return { tab: 'discover' as Tab, notifs: false, productId: productId || null };
+  }
+  if (lowerPath === '/marketplace' || lowerPath === '/shop') {
+    return { tab: 'discover' as Tab, notifs: false };
+  }
+
+  // 5. Messages / Chats
+  if (lowerPath.startsWith('/messages/') || lowerPath.startsWith('/chat/') || lowerPath.startsWith('/m/')) {
+    let chatId = '';
+    if (lowerPath.startsWith('/messages/')) chatId = cleanPath.substring('/messages/'.length);
+    else if (lowerPath.startsWith('/chat/')) chatId = cleanPath.substring('/chat/'.length);
+    else if (lowerPath.startsWith('/m/')) chatId = cleanPath.substring('/m/'.length);
+    chatId = chatId.split('?')[0];
+    return { tab: 'messenger' as Tab, notifs: false, chatUid: chatId || null };
+  }
+  if (lowerPath === '/messages' || lowerPath === '/messenger' || lowerPath === '/chat' || lowerPath === '/inbox') {
+    return { tab: 'messenger' as Tab, notifs: false };
+  }
+
+  // 6. Settings & Sub-sections
+  if (lowerPath.startsWith('/settings/')) {
+    const section = cleanPath.substring('/settings/'.length).split('?')[0].toLowerCase();
+    return { tab: 'settings' as Tab, notifs: false, settingsSection: section || null };
+  }
+  if (lowerPath === '/settings') {
+    return { tab: 'settings' as Tab, notifs: false };
+  }
+
+  // 7. Profiles
+  if (lowerPath.startsWith('/@') || lowerPath.startsWith('/u/') || lowerPath.startsWith('/profile/')) {
+    let username: string | null = null;
+    let userId: string | null = null;
+    if (lowerPath.startsWith('/@')) {
+      username = cleanPath.substring('/@'.length).split('?')[0];
+    } else if (lowerPath.startsWith('/u/')) {
+      userId = cleanPath.substring('/u/'.length).split('?')[0];
+    } else if (lowerPath.startsWith('/profile/')) {
+      const seg = cleanPath.substring('/profile/'.length).split('?')[0];
+      if (seg.startsWith('@')) username = seg.substring(1);
+      else userId = seg;
+    }
+    return { tab: 'profile' as Tab, notifs: false, username, userId };
+  }
+  if (lowerPath === '/profile' || lowerPath === '/me') {
+    return { tab: 'profile' as Tab, notifs: false };
+  }
+
+  // 8. Notifications
+  if (lowerPath === '/notifications' || lowerPath === '/alerts') {
+    return { tab: 'feed' as Tab, notifs: true };
+  }
+
+  // 9. Discover / Explore
+  if (lowerPath === '/explore' || lowerPath === '/discover' || lowerPath === '/search') {
+    return { tab: 'discover' as Tab, notifs: false };
+  }
+
+  // 10. Videos / Reels main feed
+  if (lowerPath === '/reels' || lowerPath === '/videos' || lowerPath === '/shorts') {
+    return { tab: 'videos' as Tab, notifs: false };
+  }
+
+  // 11. Admin & Dashboard
+  if (lowerPath === '/admin-panel' || lowerPath === '/admin') {
+    return { tab: 'admin' as Tab, notifs: false };
+  }
+  if (lowerPath === '/connections' || lowerPath === '/network' || lowerPath === '/friends' || lowerPath === '/dashboard' || lowerPath === '/stats' || lowerPath === '/analytics') {
+    return { tab: 'dashboard' as Tab, notifs: false };
+  }
+
+  // 12. Create Post
+  if (lowerPath === '/create-post' || lowerPath === '/new-post') {
+    return { tab: 'feed' as Tab, notifs: false, isPosting: true };
+  }
+
+  // 13. Offline Sanctuary
+  if (lowerPath === '/offline') {
+    return { tab: 'feed' as Tab, notifs: false, isOfflineView: true };
+  }
+
+  // 14. Private Safe / Vault
+  if (lowerPath === '/vault' || lowerPath === '/safe' || lowerPath === '/private-safe') {
+    return { tab: 'messenger' as Tab, notifs: false, isVault: true };
+  }
+
+  return { tab: 'feed' as Tab, notifs: false };
+};
+
 function AppContent() {
   const { settings, updateAppearanceSettings } = useAppearance();
   const location = useLocation();
@@ -252,7 +434,20 @@ function AppContent() {
   const { isLoading: isThemeLoading } = useTheme();
 
   const [isPosting, setIsPosting] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>('feed');
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    if (typeof window !== 'undefined') {
+      const pathInit = getInitialStateFromPath(window.location.pathname);
+      const currentNormPath = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+      const s = window.history.state;
+      if (currentNormPath !== '/') {
+        return pathInit.tab || s?.activeTab || 'feed';
+      }
+      if (s?.activeTab) {
+        return s.activeTab;
+      }
+    }
+    return 'feed';
+  });
   const isGlobalBgActive = Boolean(settings?.globalBgType && settings.globalBgType !== 'none');
   const [viewingPostId, setViewingPostId] = useState<string | null>(null);
   const [viewingStoreId, setViewingStoreId] = useState<string | null>(null);
@@ -272,15 +467,81 @@ function AppContent() {
   const [showSafeExit, setShowSafeExit] = useState(false);
   const [networkWarningText, setNetworkWarningText] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [showSplash, setShowSplash] = useState(true);
+  // Show welcome screen ONLY on root home feed ('/')
+  const [showSplash, setShowSplash] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const normPath = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+    const pathInit = getInitialStateFromPath(window.location.pathname);
+    return normPath === '/' && pathInit.tab === 'feed';
+  });
+  const [showFullAuth, setShowFullAuth] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>('login');
+  const [previewAuthor, setPreviewAuthor] = useState<{ name?: string; username?: string; avatar?: string } | null>(null);
+
+  // Insets & Native Platform initialization
+  useEffect(() => {
+    try {
+      const isNative = (window as any)?.Capacitor?.isNativePlatform?.() || !!(window as any)?.Capacitor?.platform;
+      if (isNative && typeof document !== 'undefined') {
+        document.documentElement.classList.add('is-native-app');
+      }
+    } catch (e) {}
+
+    const handleInsets = (e: any) => {
+      if (e.detail && typeof document !== 'undefined') {
+        const top = typeof e.detail.top === 'number' ? e.detail.top : 0;
+        const bottom = typeof e.detail.bottom === 'number' ? e.detail.bottom : 0;
+        document.documentElement.style.setProperty('--sat', `${top}px`);
+        document.documentElement.style.setProperty('--sab', `${bottom}px`);
+        document.documentElement.style.setProperty('--safe-area-inset-top', `${top}px`);
+        document.documentElement.style.setProperty('--safe-area-inset-bottom', `${bottom}px`);
+      }
+    };
+    window.addEventListener('aeirmist_insets_changed', handleInsets);
+    return () => window.removeEventListener('aeirmist_insets_changed', handleInsets);
+  }, []);
+
+  // Listen for reset to feed on logout / login
+  useEffect(() => {
+    const handleResetToFeed = () => {
+      setActiveTab('feed');
+      setSettingsSection(null);
+      setViewingProfile(null);
+      setViewingVideoId(null);
+      setViewingPostId(null);
+      setViewingStoreId(null);
+      setViewingProductId(null);
+      setIsNotificationsOpen(false);
+    };
+    window.addEventListener('aeirmist-reset-to-feed', handleResetToFeed);
+    return () => window.removeEventListener('aeirmist-reset-to-feed', handleResetToFeed);
+  }, []);
 
   useEffect(() => {
-    setShowSplash(true);
+    const handleAuthor = (e: any) => {
+      if (e.detail) {
+        setPreviewAuthor(e.detail);
+      }
+    };
+    window.addEventListener('aeirmist-preview-author', handleAuthor);
+    return () => window.removeEventListener('aeirmist-preview-author', handleAuthor);
+  }, []);
+
+  useEffect(() => {
+    const hasCachedProfile = typeof window !== 'undefined' && Boolean(localStorage.getItem('aeirmist_cached_profile') || localStorage.getItem('aeirmist_session'));
+    const delay = hasCachedProfile ? 200 : 400;
     const timer = setTimeout(() => {
       setShowSplash(false);
-    }, 4800);
+    }, delay);
     return () => clearTimeout(timer);
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (profile && !loading) {
+      const quickTimer = setTimeout(() => setShowSplash(false), 100);
+      return () => clearTimeout(quickTimer);
+    }
+  }, [profile, loading]);
 
   useEffect(() => {
     // Only show safe exit if genuinely offline or real connection error
@@ -494,12 +755,16 @@ function AppContent() {
   }, [settings?.globalBgType, activeTab, isGlobalBgActive]);
 
   // Derive call chat info for the modal
+  const isCaller = Boolean(activeCall && (activeCall.callerUid === user?.uid || activeCall.callerId === profile?.id));
   const callChatInfo = activeCall ? {
-    id: activeCall.conversationId,
-    name: activeCall.callerName || 'Incoming Link',
-    photo: getAvatarUrl(activeCall.callerPhoto, activeCall.callerId),
-    participants: [activeCall.callerId, profile?.id].filter(Boolean),
-    otherParticipantUid: activeCall.callerUid,
+    id: activeCall.conversationId || activeCall.id,
+    name: isCaller ? (activeCall.receiverName || 'Aeirmist User') : (activeCall.callerName || 'Incoming Call'),
+    photo: getAvatarUrl(
+      isCaller ? (activeCall.receiverPhoto || '') : (activeCall.callerPhoto || ''), 
+      isCaller ? activeCall.receiverId : activeCall.callerId
+    ),
+    participants: [activeCall.callerId, activeCall.receiverId, profile?.id].filter(Boolean),
+    otherParticipantUid: isCaller ? activeCall.receiverUid : activeCall.callerUid,
   } : null;
 
   const handleUserClick = React.useCallback((userData: any) => {
@@ -562,6 +827,35 @@ function AppContent() {
     setActiveTab(tab);
   };
 
+  // --- DEVICE NOTIFICATION CLICK LISTENER (ANDROID & WEB) ---
+  useEffect(() => {
+    const handleNotificationClickEvent = (e: any) => {
+      const url = e.detail?.url;
+      if (!url) return;
+
+      // Phase 5 Critical Bug Fix: Clicking a notification must NEVER automatically request camera or microphone.
+      // Explicitly guarantee Story Studio and any active camera views are dismissed.
+      setStoryState(prev => ({ ...prev, isStudioOpen: false }));
+      window.dispatchEvent(new CustomEvent('aeirmist-story-state-restore', { 
+        detail: { activeStoryGroup: null, isStudioOpen: false, isCreatingNote: false } 
+      }));
+
+      if (url.includes('/post/')) {
+        const parts = url.split('/post/');
+        const postId = parts[1]?.split('?')[0]?.split('/')[0];
+        if (postId) {
+          setIsNotificationsOpen(false);
+          handlePostClick(postId);
+        }
+      } else if (url.includes('/messenger') || url.includes('/messages')) {
+        setIsNotificationsOpen(false);
+        handleTabChange('messenger');
+      }
+    };
+    window.addEventListener('aeirmist_notification_click', handleNotificationClickEvent);
+    return () => window.removeEventListener('aeirmist_notification_click', handleNotificationClickEvent);
+  }, [handlePostClick]);
+
   // --- BROWSER HISTORY INTEGRATION FOR NAVIGATION ---
   const [storyState, setStoryState] = useState<{
     activeStoryGroup: any | null;
@@ -582,187 +876,6 @@ function AppContent() {
     window.addEventListener('aeirmist-story-state-change', handleStoryChange);
     return () => window.removeEventListener('aeirmist-story-state-change', handleStoryChange);
   }, []);
-
-  // Helper functions for URL sync across tabs and pages
-  const getPathForAppState = (
-    tab: Tab,
-    vProfile: any,
-    isNotifsOpen: boolean,
-    vPostId: string | null,
-    vVideoId: string | null,
-    vStoreId: string | null,
-    vProductId: string | null,
-    vChatUid: string | null,
-    vStoryUserId: string | null = null,
-    vSettingsSection: string | null = null,
-    vIsPosting: boolean = false
-  ): string => {
-    if (vPostId) return `/post/${vPostId}`;
-    if (vVideoId) return `/videos/${vVideoId}`;
-    if (vStoryUserId) return `/story/${vStoryUserId}`;
-    if (vStoreId) return `/store/${vStoreId}`;
-    if (vProductId) return `/product/${vProductId}`;
-    if (isNotifsOpen) return '/notifications';
-    if (vIsPosting) return '/create-post';
-
-    if (tab === 'profile') {
-      if (vProfile?.username) return `/@${vProfile.username}`;
-      if (vProfile?.id) return `/profile/${vProfile.id}`;
-      return '/profile';
-    }
-
-    if (tab === 'settings') {
-      if (vSettingsSection) return `/settings/${vSettingsSection}`;
-      return '/settings';
-    }
-
-    switch (tab) {
-      case 'feed': return '/';
-      case 'discover': return '/marketplace';
-      case 'videos': return '/videos';
-      case 'messenger': 
-        if (vChatUid) return `/messages/${vChatUid}`;
-        return '/messages';
-      case 'admin': return '/admin';
-      case 'dashboard': return '/connections';
-      default: return `/${tab}`;
-    }
-  };
-
-  const getInitialStateFromPath = (path: string) => {
-    const cleanPath = path.trim();
-    const lowerPath = cleanPath.toLowerCase();
-
-    // 1. Posts
-    if (lowerPath.startsWith('/post/') || lowerPath.startsWith('/p/')) {
-      const postId = (lowerPath.startsWith('/post/') 
-        ? cleanPath.substring('/post/'.length) 
-        : cleanPath.substring('/p/'.length)).split('?')[0];
-      return { tab: 'feed' as Tab, notifs: false, postId: postId || null };
-    }
-
-    // 2. Videos / Reels
-    if (
-      lowerPath.startsWith('/video/') || 
-      lowerPath.startsWith('/videos/') || 
-      lowerPath.startsWith('/v/') || 
-      lowerPath.startsWith('/reel/') || 
-      lowerPath.startsWith('/reels/')
-    ) {
-      let videoId = '';
-      if (lowerPath.startsWith('/video/')) videoId = cleanPath.substring('/video/'.length);
-      else if (lowerPath.startsWith('/videos/')) videoId = cleanPath.substring('/videos/'.length);
-      else if (lowerPath.startsWith('/v/')) videoId = cleanPath.substring('/v/'.length);
-      else if (lowerPath.startsWith('/reel/')) videoId = cleanPath.substring('/reel/'.length);
-      else if (lowerPath.startsWith('/reels/')) videoId = cleanPath.substring('/reels/'.length);
-      videoId = videoId.split('?')[0];
-      return { tab: 'videos' as Tab, notifs: false, videoId: videoId || null };
-    }
-
-    // 3. Stories
-    if (lowerPath.startsWith('/story/') || lowerPath.startsWith('/stories/')) {
-      const storyId = (lowerPath.startsWith('/story/') 
-        ? cleanPath.substring('/story/'.length) 
-        : cleanPath.substring('/stories/'.length)).split('?')[0];
-      return { tab: 'feed' as Tab, notifs: false, storyUserId: storyId || null };
-    }
-
-    // 4. Stores & Products
-    if (lowerPath.startsWith('/store/')) {
-      const storeId = cleanPath.substring('/store/'.length).split('?')[0];
-      return { tab: 'discover' as Tab, notifs: false, storeId: storeId || null };
-    }
-    if (lowerPath.startsWith('/product/') || lowerPath.startsWith('/marketplace/item/')) {
-      const productId = (lowerPath.startsWith('/product/') 
-        ? cleanPath.substring('/product/'.length) 
-        : cleanPath.substring('/marketplace/item/'.length)).split('?')[0];
-      return { tab: 'discover' as Tab, notifs: false, productId: productId || null };
-    }
-    if (lowerPath === '/marketplace' || lowerPath === '/shop') {
-      return { tab: 'discover' as Tab, notifs: false };
-    }
-
-    // 5. Messages / Chats
-    if (lowerPath.startsWith('/messages/') || lowerPath.startsWith('/chat/') || lowerPath.startsWith('/m/')) {
-      let chatId = '';
-      if (lowerPath.startsWith('/messages/')) chatId = cleanPath.substring('/messages/'.length);
-      else if (lowerPath.startsWith('/chat/')) chatId = cleanPath.substring('/chat/'.length);
-      else if (lowerPath.startsWith('/m/')) chatId = cleanPath.substring('/m/'.length);
-      chatId = chatId.split('?')[0];
-      return { tab: 'messenger' as Tab, notifs: false, chatUid: chatId || null };
-    }
-    if (lowerPath === '/messages' || lowerPath === '/messenger' || lowerPath === '/chat' || lowerPath === '/inbox') {
-      return { tab: 'messenger' as Tab, notifs: false };
-    }
-
-    // 6. Settings & Sub-sections
-    if (lowerPath.startsWith('/settings/')) {
-      const section = cleanPath.substring('/settings/'.length).split('?')[0].toLowerCase();
-      return { tab: 'settings' as Tab, notifs: false, settingsSection: section || null };
-    }
-    if (lowerPath === '/settings') {
-      return { tab: 'settings' as Tab, notifs: false };
-    }
-
-    // 7. Profiles
-    if (lowerPath.startsWith('/@') || lowerPath.startsWith('/u/') || lowerPath.startsWith('/profile/')) {
-      let username: string | null = null;
-      let userId: string | null = null;
-      if (lowerPath.startsWith('/@')) {
-        username = cleanPath.substring('/@'.length).split('?')[0];
-      } else if (lowerPath.startsWith('/u/')) {
-        userId = cleanPath.substring('/u/'.length).split('?')[0];
-      } else if (lowerPath.startsWith('/profile/')) {
-        const seg = cleanPath.substring('/profile/'.length).split('?')[0];
-        if (seg.startsWith('@')) username = seg.substring(1);
-        else userId = seg;
-      }
-      return { tab: 'profile' as Tab, notifs: false, username, userId };
-    }
-    if (lowerPath === '/profile' || lowerPath === '/me') {
-      return { tab: 'profile' as Tab, notifs: false };
-    }
-
-    // 8. Notifications
-    if (lowerPath === '/notifications' || lowerPath === '/alerts') {
-      return { tab: 'feed' as Tab, notifs: true };
-    }
-
-    // 9. Discover / Explore
-    if (lowerPath === '/explore' || lowerPath === '/discover' || lowerPath === '/search') {
-      return { tab: 'discover' as Tab, notifs: false };
-    }
-
-    // 10. Videos / Reels main feed
-    if (lowerPath === '/reels' || lowerPath === '/videos' || lowerPath === '/shorts') {
-      return { tab: 'videos' as Tab, notifs: false };
-    }
-
-    // 11. Admin & Dashboard
-    if (lowerPath === '/admin-panel' || lowerPath === '/admin') {
-      return { tab: 'admin' as Tab, notifs: false };
-    }
-    if (lowerPath === '/connections' || lowerPath === '/network' || lowerPath === '/friends' || lowerPath === '/dashboard' || lowerPath === '/stats' || lowerPath === '/analytics') {
-      return { tab: 'dashboard' as Tab, notifs: false };
-    }
-
-    // 12. Create Post
-    if (lowerPath === '/create-post' || lowerPath === '/new-post') {
-      return { tab: 'feed' as Tab, notifs: false, isPosting: true };
-    }
-
-    // 13. Offline Sanctuary
-    if (lowerPath === '/offline') {
-      return { tab: 'feed' as Tab, notifs: false, isOfflineView: true };
-    }
-
-    // 14. Private Safe / Vault
-    if (lowerPath === '/vault' || lowerPath === '/safe' || lowerPath === '/private-safe') {
-      return { tab: 'messenger' as Tab, notifs: false, isVault: true };
-    }
-
-    return { tab: 'feed' as Tab, notifs: false };
-  };
 
   // Initialize history state on mount
   useEffect(() => {
@@ -1066,8 +1179,27 @@ function AppContent() {
     );
   }
 
-  // Show unified Welcome screen on opening / initial load
-  if (loading || (showSplash && !needsUsername)) {
+  const isFeedRoute = (() => {
+    if (typeof window === 'undefined') return true;
+    const normPath = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+    return normPath === '/' && activeTab === 'feed';
+  })();
+
+  // If loading on a non-feed subroute (e.g. /settings, /profile, /messages, /videos):
+  // Do NOT show the full-screen "Preparing your feed..." splash!
+  if (!isFeedRoute && loading && !user) {
+    const hasCachedSession = typeof window !== 'undefined' && Boolean(localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_cached_profile'));
+    if (!hasCachedSession) {
+      return (
+        <div className="w-full h-screen bg-[#050505] flex items-center justify-center">
+          <LazyFallback />
+        </div>
+      );
+    }
+  }
+
+  // Show unified Welcome screen ONLY on Home Feed during app opening or Home Feed reload!
+  if (isFeedRoute && (loading || (user && showSplash && !needsUsername))) {
     const getPersistedIdName = () => {
       const isValid = (val?: string | null) => {
         if (!val || typeof val !== 'string') return false;
@@ -1219,7 +1351,7 @@ function AppContent() {
           <motion.div
             initial={{ scaleX: 0, opacity: 0 }}
             animate={{ scaleX: 1, opacity: 1 }}
-            transition={{ delay: 1.1, duration: 0.7, ease: "easeInOut" }}
+            transition={{ delay: 0.15, duration: 0.35, ease: "easeInOut" }}
             className="h-[1.5px] w-44 bg-gradient-to-r from-transparent via-aeirmist-cyan to-transparent shadow-[0_0_14px_rgba(0,242,255,0.7)]"
           />
 
@@ -1227,7 +1359,7 @@ function AppContent() {
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 1.3, duration: 0.5 }}
+            transition={{ delay: 0.2, duration: 0.25 }}
             className="flex flex-col items-center gap-2.5"
           >
             <p className="text-[9px] font-mono tracking-[0.35em] text-zinc-400 uppercase flex items-center gap-2">
@@ -1241,7 +1373,7 @@ function AppContent() {
               <motion.div
                 initial={{ width: "0%" }}
                 animate={{ width: "100%" }}
-                transition={{ delay: 1.4, duration: 2.2, ease: "easeInOut" }}
+                transition={{ delay: 0.25, duration: 0.65, ease: "easeInOut" }}
                 className="h-full bg-gradient-to-r from-zinc-600 via-aeirmist-cyan to-white shadow-[0_0_12px_rgba(0,242,255,0.9)] rounded-full"
               />
             </div>
@@ -1285,12 +1417,48 @@ function AppContent() {
     );
   }
 
-  if (!user) {
-    return <AuthSystem />;
+  const isSharedUrl = Boolean(
+    viewingPostId || 
+    viewingVideoId || 
+    viewingProfile || 
+    storyState?.activeStoryGroup || 
+    viewingStoreId || 
+    viewingProductId ||
+    location.pathname.startsWith('/post/') ||
+    location.pathname.startsWith('/p/') ||
+    location.pathname.startsWith('/video/') ||
+    location.pathname.startsWith('/videos/') ||
+    location.pathname.startsWith('/reel/') ||
+    location.pathname.startsWith('/reels/') ||
+    location.pathname.startsWith('/@') ||
+    location.pathname.startsWith('/profile/') ||
+    location.pathname.startsWith('/u/') ||
+    location.pathname.startsWith('/story/') ||
+    location.pathname.startsWith('/stories/') ||
+    location.pathname.startsWith('/store/') ||
+    location.pathname.startsWith('/product/')
+  );
+
+  // Check if an incoming Firebase Authentication Template action code is present (e.g. verifyEmail, resetPassword)
+  const hasAuthActionCode = typeof window !== 'undefined' && Boolean(
+    new URLSearchParams(window.location.search).get('oobCode') &&
+    new URLSearchParams(window.location.search).get('mode')
+  );
+
+  // If user is not logged in OR an action code (email verification/password reset) needs processing:
+  // If they navigated directly to root / search ("aeirmist.com") or requested full auth: show full AuthSystem interface!
+  // Only show public preview gateway if an actual shared URL is being viewed!
+  if ((!user || hasAuthActionCode) && (showFullAuth || !isSharedUrl || hasAuthActionCode)) {
+    return (
+      <AuthSystem 
+        initialMode={authModalMode} 
+        onClose={() => setShowFullAuth(false)} 
+      />
+    );
   }
 
   // If user is authenticated but profile document is still hydrating
-  if (!profile && !needsUsername) {
+  if (user && !profile && !needsUsername) {
     return (
       <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center p-4 z-50">
         <div className="w-12 h-12 border-2 border-aeirmist-cyan/30 border-t-aeirmist-cyan rounded-full animate-spin mb-4" />
@@ -1303,13 +1471,13 @@ function AppContent() {
 
   // Onboarding guard: Check if user needs to complete onboarding
   const isOnboardingIncomplete = Boolean(
-    profile && (
+    user && profile && (
       profile.onboardingCompleted === false ||
       (profile.onboardingStep && profile.onboardingStep >= 2 && profile.onboardingStep <= 5 && profile.onboardingCompleted !== true)
     )
   );
 
-  if (isOnboardingIncomplete || needsUsername) {
+  if (user && (isOnboardingIncomplete || needsUsername)) {
     const activeStep = profile?.onboardingStep || (needsUsername ? 1 : 2);
     return (
       <div className="fixed inset-0 bg-slate-950 flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -1325,7 +1493,7 @@ function AppContent() {
     );
   }
 
-  if (needsPasswordOnboarding) {
+  if (user && needsPasswordOnboarding) {
     return (
       <Suspense fallback={null}>
         <CompleteYourAccountScreen />
@@ -1333,7 +1501,7 @@ function AppContent() {
     );
   }
 
-  if (isScheduledForPurge || profile?.scheduledForPurge || profile?.status === 'scheduled_for_deletion') {
+  if (user && (isScheduledForPurge || profile?.scheduledForPurge || profile?.status === 'scheduled_for_deletion')) {
     return (
       <Suspense fallback={null}>
         <PurgeScreen onCancel={async () => {
@@ -1347,7 +1515,7 @@ function AppContent() {
     );
   }
 
-  if (profile?.isDeactivated) {
+  if (user && profile?.isDeactivated) {
     return (
       <Suspense fallback={null}>
         <DeactivatedScreen onReactivate={async () => {
@@ -1361,7 +1529,7 @@ function AppContent() {
     );
   }
 
-  if (profile?.isBanned || profile?.status === 'BANNED' || profile?.status === 'SUSPENDED' || profile?.status === 'DELETED') {
+  if (user && (profile?.isBanned || profile?.status === 'BANNED' || profile?.status === 'SUSPENDED' || profile?.status === 'DELETED')) {
     return (
       <Suspense fallback={null}>
         <BannedScreen />
@@ -1369,7 +1537,7 @@ function AppContent() {
     );
   }
 
-  return (
+  const appLayout = (
     <div className={`flex-1 w-full relative overflow-hidden flex flex-col min-h-0 ${isGlobalBgActive ? '!bg-transparent' : 'bg-aeirmist-bg'}`}>
       {/* Skip to Main Content Link */}
       <a 
@@ -1554,22 +1722,24 @@ function AppContent() {
           animate={{ opacity: 1 }}
           className={`layout-shell flex flex-1 min-h-0 relative z-[2] ${isGlobalBgActive ? '!bg-transparent' : ''}`}
         >
-          <Navigation 
-            onCreate={() => setIsPosting(true)} 
-            activeTab={viewingProfile ? lastMainTab : activeTab} 
-            onTabChange={handleTabChange}
-            isExpanded={isSidebarExpanded}
-            setIsExpanded={(val) => {
-              setIsSidebarExpanded(val);
-              try {
-                localStorage.setItem('aeirmist_sidebar_user_pinned', val ? 'true' : 'false');
-              } catch (e) {}
-              updateAppearanceSettings({ desktopSidebarMode: val ? 'pinned' : 'hover' }).catch(() => {});
-            }}
-            onNotificationsClick={() => setIsNotificationsOpen(true)}
-            onPreload={preload}
-            isRemoteView={!!viewingProfile}
-          />
+          {user && (
+            <Navigation 
+              onCreate={() => setIsPosting(true)} 
+              activeTab={viewingProfile ? lastMainTab : activeTab} 
+              onTabChange={handleTabChange}
+              isExpanded={isSidebarExpanded}
+              setIsExpanded={(val) => {
+                setIsSidebarExpanded(val);
+                try {
+                  localStorage.setItem('aeirmist_sidebar_user_pinned', val ? 'true' : 'false');
+                } catch (e) {}
+                updateAppearanceSettings({ desktopSidebarMode: val ? 'pinned' : 'hover' }).catch(() => {});
+              }}
+              onNotificationsClick={() => setIsNotificationsOpen(true)}
+              onPreload={preload}
+              isRemoteView={!!viewingProfile}
+            />
+          )}
 
           <main id="main-content" className={`flex-1 min-w-0 h-full min-h-0 relative overflow-hidden flex flex-col ${isGlobalBgActive ? '!bg-transparent' : ''}`}>
             <Suspense fallback={<LazyFallback />}>
@@ -1578,7 +1748,7 @@ function AppContent() {
                 <Route path="/payment-failure" element={<Suspense fallback={null}><PaymentResult status="failure" /></Suspense>} />
                 <Route path="/community-guidelines" element={<CommunityGuidelines />} />
                 <Route path="*" element={
-                  <AnimatePresence mode="wait">
+                  <AnimatePresence mode="popLayout" initial={false}>
                     {activeTab === 'feed' ? (
                   <motion.div
                     key="feed"
@@ -1811,6 +1981,10 @@ function AppContent() {
                     setIsNotificationsOpen(false);
                   }}
                   onUserClick={handleUserClick}
+                  onPostClick={(postId) => {
+                    setIsNotificationsOpen(false);
+                    handlePostClick(postId);
+                  }}
                 />
               </Suspense>
             )}
@@ -1852,13 +2026,14 @@ function AppContent() {
           </AnimatePresence>
 
           <AnimatePresence>
-            {activeCall && activeCall.status !== 'ended' && callChatInfo && activeCall.callerId !== profile?.id && activeCall.callerUid !== user?.uid && (
+            {activeCall && !['ended', 'rejected', 'missed', 'busy'].includes(activeCall.status) && callChatInfo && (
               <Suspense fallback={null}>
                 <CallModal 
+                  key={`global-call-${activeCall.id}`}
                   chat={callChatInfo}
                   type={activeCall.type}
                   onClose={() => endCall(activeCall.id, activeCall.conversationId)}
-                  isIncoming={true}
+                  isIncoming={!isCaller && activeCall.status === 'calling'}
                 />
               </Suspense>
             )}
@@ -1927,6 +2102,30 @@ function AppContent() {
       </AnimatePresence>
     </div>
   );
+
+  if (!user) {
+    return (
+      <PublicPreviewGateway
+        onLogin={() => {
+          setAuthModalMode('login');
+          setShowFullAuth(true);
+        }}
+        onSignUp={() => {
+          setAuthModalMode('signup');
+          setShowFullAuth(true);
+        }}
+        previewAuthor={previewAuthor || (viewingProfile ? {
+          name: viewingProfile.displayName || viewingProfile.fullName || viewingProfile.name,
+          username: viewingProfile.username,
+          avatar: viewingProfile.photoURL || viewingProfile.avatar
+        } : null)}
+      >
+        {appLayout}
+      </PublicPreviewGateway>
+    );
+  }
+
+  return appLayout;
 }
 
 export default function App() {

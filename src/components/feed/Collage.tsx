@@ -110,6 +110,7 @@ export const Collage: React.FC<CollageProps> = ({
             className={customClass} 
             poster={poster}
             caption={caption}
+            autoPlay={true}
             onNavigateToWatch={onNavigateToWatch}
           />
         ) : (
@@ -162,6 +163,7 @@ export const Collage: React.FC<CollageProps> = ({
                     className="w-full h-full object-contain" 
                     poster={poster}
                     caption={caption}
+                    autoPlay={true}
                     onNavigateToWatch={onNavigateToWatch}
                   />
                 ) : (

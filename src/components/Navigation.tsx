@@ -211,7 +211,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
         onMouseLeave={handleMouseLeave}
         animate={{ width: targetWidth }} initial={false}
         transition={shouldReduceMotion ? { duration: 0 } : { type: 'spring', damping: 22, stiffness: 125 }}
-        className="hidden md:flex flex-col h-full border-r border-white/10 nav-sidebar-glass bg-[#060608]/90 backdrop-blur-3xl px-3 py-4 z-50 shrink-0 relative select-none overflow-hidden"
+        className="hidden md:flex flex-col h-full border-r border-white/10 bg-[#090a0f] px-3 py-4 z-50 shrink-0 relative select-none overflow-hidden"
       >
         {/* Top Spotlight Bar */}
         <div className="absolute top-0 inset-x-0 h-[1.5px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
@@ -772,12 +772,13 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="md:hidden fixed bottom-3 left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-[390px] mb-[env(safe-area-inset-bottom,0px)] overflow-visible"
+            style={{ bottom: 'calc(0.75rem + var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
+            className="md:hidden fixed left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-[390px] overflow-visible pointer-events-auto"
           >
             <div 
               role="navigation" 
               aria-label="Mobile Navigation"
-              className={`relative rounded-2xl border border-white/10 px-2 py-1.5 flex justify-around items-center shadow-[0_12px_30px_rgba(0,0,0,0.85)] ${isGlobalBgActive ? 'bg-[#060608]/80' : 'bg-black/85'} backdrop-blur-3xl overflow-hidden`}
+              className="relative rounded-2xl border border-white/10 px-2 py-1.5 flex justify-around items-center shadow-[0_12px_30px_rgba(0,0,0,0.85)] bg-[#090a0f]/95 backdrop-blur-3xl overflow-hidden"
             >
               {/* Metallic Glass sheen highlights */}
               <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />

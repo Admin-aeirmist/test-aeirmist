@@ -152,6 +152,17 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
         setPost(postData);
         setLikesCount(postData.likesCount);
 
+        // Broadcast author details for Instagram-style logged-out preview modal
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('aeirmist-preview-author', {
+            detail: {
+              name: postData.author.name,
+              username: data.author?.username || data.userName || data.authorName,
+              avatar: postData.author.avatar
+            }
+          }));
+        }
+
         if (profile?.id) {
           setIsLiked(Boolean(postData.likedBy?.includes(profile.id)));
           setIsBookmarked(Boolean(postData.savedBy?.includes(profile.id)));
@@ -245,7 +256,13 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
   // Like action
   const handleLike = async () => {
-    if (!profile || !db || !post) return;
+    if (!profile) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      }
+      return;
+    }
+    if (!db || !post) return;
     const newLiked = !isLiked;
     setIsLiked(newLiked);
     setLikesCount(prev => newLiked ? prev + 1 : Math.max(0, prev - 1));
@@ -275,7 +292,13 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
   // Bookmark action
   const handleBookmarkToggle = async () => {
-    if (!profile || !db || !post) return;
+    if (!profile) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      }
+      return;
+    }
+    if (!db || !post) return;
     const newBookmarked = !isBookmarked;
     setIsBookmarked(newBookmarked);
     try {
@@ -295,7 +318,13 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
   // Follow action
   const handleFollow = async () => {
-    if (!profile || !postAuthorId || isOwnPost) return;
+    if (!profile) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      }
+      return;
+    }
+    if (!postAuthorId || isOwnPost) return;
     try {
       if (toggleFollow) {
         await toggleFollow(postAuthorId);
@@ -315,7 +344,13 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
   // Submit comment
   const handleCommentSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!db || !profile || !commentText.trim() || submittingComment) return;
+    if (!profile) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      }
+      return;
+    }
+    if (!db || !commentText.trim() || submittingComment) return;
 
     const txt = commentText.trim();
     const replyTarget = replyingTo;
@@ -551,12 +586,14 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                       useCache 
                     />
                   ) : (
-                    <SafeImage 
+                    <img 
                       src={mediaList[activeMediaIdx]?.url} 
                       alt="Post Media" 
-                      className="w-full h-full object-contain relative z-10" 
+                      loading="eager"
+                      fetchPriority="high"
+                      decoding="async"
+                      className="w-full h-full object-contain relative z-10 select-none" 
                       referrerPolicy="no-referrer" 
-                      useCache 
                     />
                   )}
 
@@ -633,7 +670,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                   <img 
                     src={post.author.avatar || BLANK_DP} 
                     alt={post.author.name} 
-                    className="w-8 h-8 rounded-full object-cover border border-neutral-800 flex-shrink-0 cursor-pointer" 
+                    className="w-8 h-8 rounded-xl object-cover border border-white/10 flex-shrink-0 cursor-pointer" 
                   />
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className="font-semibold text-sm text-white hover:underline cursor-pointer truncate max-w-[130px]">
@@ -709,7 +746,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                     <img 
                       src={post.author.avatar || BLANK_DP} 
                       alt={post.author.name} 
-                      className="w-8 h-8 rounded-full object-cover border border-neutral-800 flex-shrink-0 cursor-pointer" 
+                      className="w-8 h-8 rounded-xl object-cover border border-white/10 flex-shrink-0 cursor-pointer" 
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-neutral-100 text-[13.5px] leading-relaxed break-words">
@@ -745,7 +782,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                           <img 
                             src={getAvatarUrl(c.authorPhoto)} 
                             alt={c.authorName} 
-                            className="w-8 h-8 rounded-full object-cover border border-neutral-800 flex-shrink-0 cursor-pointer" 
+                            className="w-8 h-8 rounded-xl object-cover border border-white/10 flex-shrink-0 cursor-pointer" 
                           />
                           <div className="flex-1 min-w-0">
                             <p className="text-neutral-100 text-[13px] leading-snug break-words">
@@ -817,7 +854,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                                   <img 
                                     src={getAvatarUrl(reply.authorPhoto)} 
                                     alt={reply.authorName} 
-                                    className="w-6 h-6 rounded-full object-cover border border-neutral-800 flex-shrink-0" 
+                                    className="w-6 h-6 rounded-lg object-cover border border-white/10 flex-shrink-0" 
                                   />
                                   <div className="flex-1 min-w-0">
                                     <p className="text-neutral-200 leading-snug break-words">
@@ -1080,7 +1117,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                   <img 
                     src={post.author.avatar || BLANK_DP} 
                     alt={post.author.name} 
-                    className="w-8 h-8 rounded-full object-cover border border-neutral-800 flex-shrink-0" 
+                    className="w-8 h-8 rounded-xl object-cover border border-white/10 flex-shrink-0" 
                   />
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className="font-semibold text-sm text-white truncate max-w-[140px]">
@@ -1124,12 +1161,14 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                       useCache 
                     />
                   ) : (
-                    <SafeImage 
+                    <img 
                       src={mediaList[activeMediaIdx]?.url} 
                       alt="Post Media" 
-                      className="w-full h-full object-contain relative z-10" 
+                      loading="eager"
+                      fetchPriority="high"
+                      decoding="async"
+                      className="w-full h-full object-contain relative z-10 select-none" 
                       referrerPolicy="no-referrer" 
-                      useCache 
                     />
                   )}
 
@@ -1356,7 +1395,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
         </div>
 
         {/* Fixed Mobile Bottom Comment Input Bar (docked above safe-area) */}
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-neutral-950/95 backdrop-blur-lg border-t border-neutral-800 px-3 py-2 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-neutral-950/95 backdrop-blur-lg border-t border-neutral-800 px-3 py-2 pb-[max(0.625rem,var(--sab,var(--safe-area-inset-bottom,0px)))]">
           {replyingTo && (
             <div className="flex items-center justify-between text-xs text-sky-400 mb-1.5 px-1">
               <span>Replying to @{replyingTo.authorName}</span>

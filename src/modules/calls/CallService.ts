@@ -67,6 +67,7 @@ class CallService {
   private makingOffer: boolean = false;
   private isSettingRemoteAnswerPending: boolean = false;
   private lastStatsAudioLevel: number = 0;
+  private statsInterval: any = null;
   private audioContext: AudioContext | null = null;
   private localAudioSource: MediaStreamAudioSourceNode | null = null;
   private remoteAudioSource: MediaStreamAudioSourceNode | null = null;
@@ -137,15 +138,10 @@ class CallService {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
-        channelCount: 1,
-        sampleRate: 48000
+        channelCount: 1
       };
-      // Chromium & Android WebView hardware AEC / DSP optimization flags
+      // Chromium & Android WebView hardware AEC
       (audioConstraints as any).googEchoCancellation = true;
-      (audioConstraints as any).googAutoGainControl = true;
-      (audioConstraints as any).googNoiseSuppression = true;
-      (audioConstraints as any).googHighpassFilter = true;
-      (audioConstraints as any).googTypingNoiseDetection = true;
 
       if (type === 'video') {
         try {
@@ -210,8 +206,11 @@ class CallService {
   }
 
   getAudioLevel(type: 'local' | 'remote' = 'local'): number {
-    const analyzer = type === 'local' ? this.analyzer : this.remoteAnalyzer;
-    const dataArray = type === 'local' ? this.dataArray : this.remoteDataArray;
+    if (type === 'remote') {
+      return this.lastStatsAudioLevel || 0;
+    }
+    const analyzer = this.analyzer;
+    const dataArray = this.dataArray;
     
     if (!analyzer || !dataArray) return 0;
     analyzer.getByteFrequencyData(dataArray);
@@ -222,7 +221,41 @@ class CallService {
     return sum / dataArray.length;
   }
 
+  public startStatsMonitoring() {
+    this.stopStatsMonitoring();
+    if (!this.peerConnection) return;
+    this.statsInterval = setInterval(async () => {
+      if (!this.peerConnection || (this.peerConnection.connectionState !== 'connected' && this.peerConnection.iceConnectionState !== 'connected')) return;
+      try {
+        const stats = await this.peerConnection.getStats();
+        stats.forEach((report: any) => {
+          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+            if (typeof report.audioLevel === 'number') {
+              // WebRTC standard audioLevel is 0.0 to 1.0; scale to 0-255 like AnalyserNode byte frequency
+              this.lastStatsAudioLevel = Math.round(report.audioLevel * 255);
+            }
+          }
+        });
+      } catch (e) {}
+    }, 200);
+  }
+
+  public stopStatsMonitoring() {
+    if (this.statsInterval) {
+      clearInterval(this.statsInterval);
+      this.statsInterval = null;
+    }
+    this.lastStatsAudioLevel = 0;
+  }
+
   setupAudioMonitoring(stream: MediaStream, type: 'local' | 'remote' = 'local') {
+    // CRITICAL: Remote audio stream MUST NOT be connected to AudioContext / MediaStreamSource!
+    // In Chromium and Android WebView, connecting a remote WebRTC stream to Web Audio creates
+    // a duplicate hardware audio playback path that causes severe echo and 3-4x repetition.
+    // Remote audio volume levels are monitored strictly via WebRTC getStats() inbound-rtp.
+    if (type === 'remote') {
+      return;
+    }
     try {
       if (!stream || stream.getAudioTracks().length === 0) {
         return;
@@ -234,29 +267,16 @@ class CallService {
         this.audioContext.resume().catch(() => {});
       }
       
-      if (type === 'local') {
-        if (this.localAudioSource) {
-          try { this.localAudioSource.disconnect(); } catch (e) {}
-        }
-        const source = this.audioContext.createMediaStreamSource(stream);
-        const analyzer = this.audioContext.createAnalyser();
-        analyzer.fftSize = 256;
-        source.connect(analyzer);
-        this.localAudioSource = source;
-        this.analyzer = analyzer;
-        this.dataArray = new Uint8Array(analyzer.frequencyBinCount);
-      } else {
-        if (this.remoteAudioSource) {
-          try { this.remoteAudioSource.disconnect(); } catch (e) {}
-        }
-        const source = this.audioContext.createMediaStreamSource(stream);
-        const analyzer = this.audioContext.createAnalyser();
-        analyzer.fftSize = 256;
-        source.connect(analyzer);
-        this.remoteAudioSource = source;
-        this.remoteAnalyzer = analyzer;
-        this.remoteDataArray = new Uint8Array(analyzer.frequencyBinCount);
+      if (this.localAudioSource) {
+        try { this.localAudioSource.disconnect(); } catch (e) {}
       }
+      const source = this.audioContext.createMediaStreamSource(stream);
+      const analyzer = this.audioContext.createAnalyser();
+      analyzer.fftSize = 256;
+      source.connect(analyzer);
+      this.localAudioSource = source;
+      this.analyzer = analyzer;
+      this.dataArray = new Uint8Array(analyzer.frequencyBinCount);
     } catch (e) {
       logger.warn(`Audio monitoring (${type}) failed to initialize`, e);
     }
@@ -270,22 +290,24 @@ class CallService {
 
   private optimizeOpusSdp(sdp: string): string {
     if (!sdp) return sdp;
-    // Inject Opus FEC (Forward Error Correction), DTX, and mono speech parameters
+    // Inject Opus FEC (Forward Error Correction), DTX, and mono speech parameters with standard 20ms ptime
     return sdp.replace(/a=rtpmap:(\d+)\s+opus\/48000\/2/gi, (match, pt) => {
-      const fmtpRegex = new RegExp(`a=fmtp:${pt}\\s+([^\\r\\n]*)`, 'i');
+      const fmtpRegex = new RegExp(`^a=fmtp:${pt}\\s+(.*)$`, 'm');
       if (fmtpRegex.test(sdp)) {
         return match;
       }
-      return `${match}\r\na=fmtp:${pt} minptime=10;useinbandfec=1;usedtx=1;stereo=0;sprop-stereo=0;maxaveragebitrate=40000`;
-    }).replace(/(a=fmtp:(\d+)\s+)([^\\r\\n]*)/gi, (match, prefix, pt, params) => {
+      return `${match}\r\na=fmtp:${pt} minptime=20;useinbandfec=1;usedtx=1;stereo=0;sprop-stereo=0;maxaveragebitrate=40000;maxplaybackrate=48000`;
+    }).replace(/^a=fmtp:(\d+)\s+(.*)$/gm, (match, pt, params) => {
       if (sdp.includes(`a=rtpmap:${pt} opus/48000/2`)) {
         let p = params;
-        if (!p.includes('useinbandfec=1')) p += ';useinbandfec=1';
-        if (!p.includes('usedtx=1')) p += ';usedtx=1';
-        if (!p.includes('stereo=0')) p += ';stereo=0';
-        if (!p.includes('sprop-stereo=0')) p += ';sprop-stereo=0';
+        if (!p.includes('useinbandfec=')) p += ';useinbandfec=1';
+        if (!p.includes('usedtx=')) p += ';usedtx=1';
+        if (!p.includes('stereo=')) p += ';stereo=0';
+        if (!p.includes('sprop-stereo=')) p += ';sprop-stereo=0';
+        if (!p.includes('minptime=')) p += ';minptime=20';
         if (!p.includes('maxaveragebitrate=')) p += ';maxaveragebitrate=40000';
-        return `${prefix}${p}`;
+        if (!p.includes('maxplaybackrate=')) p += ';maxplaybackrate=48000';
+        return `a=fmtp:${pt} ${p}`;
       }
       return match;
     });
@@ -405,8 +427,12 @@ class CallService {
         streams: this.localStream ? [this.localStream] : []
       });
     } else {
+      // Audio-only call: pre-negotiate video transceiver with recvonly.
+      // We do NOT claim to send video until the user explicitly enables the camera.
+      // When toggleVideo(true) is called, the direction is updated to sendrecv and
+      // onnegotiationneeded fires to renegotiate the SDP with the actual video track.
       this.videoTransceiver = this.peerConnection.addTransceiver('video', {
-        direction: 'sendrecv'
+        direction: 'recvonly'
       });
     }
 
@@ -433,6 +459,9 @@ class CallService {
       const videoCount = this.remoteStream.getVideoTracks().length;
       logger.info(`[WebRTC] Remote stream active tracks -> Audio: ${audioCount}, Video: ${videoCount}`);
 
+      // Create a new MediaStream wrapper so React detects the state change and
+      // re-runs audio/video useEffects. The effects guard by track ID so they
+      // will NOT reassign srcObject or restart the decoder if the track hasn't changed.
       onRemoteStream(new MediaStream(this.remoteStream.getTracks()));
 
       event.track.onunmute = () => {
@@ -480,6 +509,7 @@ class CallService {
       logger.info("[WebRTC] Connection state:", state);
       if (state === 'connected') {
         this.notifyConnectionState('connected');
+        this.startStatsMonitoring();
         if (this.callId && !this.isSafeMode) {
           updateDoc(doc(db, 'calls', this.callId), { status: 'ongoing' }).catch(() => {});
           this.startHeartbeat(db);
@@ -501,6 +531,7 @@ class CallService {
           }
         } catch (e) {}
       } else if (state === 'closed') {
+        this.stopStatsMonitoring();
         this.notifyConnectionState('ended');
       }
     };
@@ -510,6 +541,7 @@ class CallService {
       logger.info("[WebRTC] ICE Connection state:", state);
       if (state === 'connected' || state === 'completed') {
         this.notifyConnectionState('connected');
+        this.startStatsMonitoring();
       } else if (state === 'disconnected') {
         this.notifyConnectionState('reconnecting');
       } else if (state === 'failed') {
@@ -580,7 +612,10 @@ class CallService {
       await this.initLocalStream(type);
     }
 
-    if (!callerProfile?.ownerUid || !receiverProfile?.ownerUid) {
+    const effectiveCallerUid = callerProfile?.ownerUid || callerProfile?.uid || callerProfile?.id;
+    const effectiveReceiverUid = receiverProfile?.ownerUid || receiverProfile?.uid || receiverProfile?.id;
+
+    if (!effectiveCallerUid || !effectiveReceiverUid) {
       logger.error("[CallService] Identity sync failure:", { caller: callerProfile?.id, receiver: receiverProfile?.id });
       throw new Error("Could not connect to user. The Link could not be established.");
     }
@@ -588,10 +623,7 @@ class CallService {
     const iceServers = await this.getEffectiveIceServers();
     this.setupPeerConnection(db, iceServers, onRemoteStream);
 
-    const rawOffer = await this.peerConnection!.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: true
-    });
+    const rawOffer = await this.peerConnection!.createOffer();
 
     const offer = {
       type: rawOffer.type,
@@ -603,13 +635,22 @@ class CallService {
       id: this.callId,
       callerId: callerProfile.id,
       receiverId: receiverProfile.id,
-      callerUid: callerProfile.ownerUid || callerProfile.id,
-      receiverUid: receiverProfile.ownerUid || receiverProfile.id,
+      callerUid: effectiveCallerUid,
+      receiverUid: effectiveReceiverUid,
+      initiatorId: callerProfile.id,
+      targetId: receiverProfile.id,
       callerName: callerProfile.displayName || callerProfile.username || 'Unknown User',
       callerPhoto: callerProfile.photoURL || '',
       receiverName: receiverProfile.displayName || receiverProfile.username || 'Aeirmist User',
       receiverPhoto: receiverProfile.photoURL || '',
-      participants: [callerProfile.ownerUid || callerProfile.id, receiverProfile.ownerUid || receiverProfile.id].filter(Boolean).sort(),
+      participants: Array.from(new Set([
+        callerProfile.ownerUid,
+        callerProfile.uid,
+        callerProfile.id,
+        receiverProfile.ownerUid,
+        receiverProfile.uid,
+        receiverProfile.id
+      ].filter(Boolean) as string[])).sort(),
       status: 'calling',
       type,
       offer: { type: offer.type, sdp: offer.sdp },
@@ -1041,6 +1082,7 @@ class CallService {
     this.releaseWakeLock();
     this.endMediaSession();
     this.stopHeartbeat();
+    this.stopStatsMonitoring();
     if (this.handleOffline) {
       window.removeEventListener('offline', this.handleOffline);
       this.handleOffline = null;
@@ -1139,6 +1181,10 @@ class CallService {
   }
 
   private facingMode: 'user' | 'environment' = 'user';
+
+  public getFacingMode(): 'user' | 'environment' {
+    return this.facingMode;
+  }
 
   async switchCamera(): Promise<MediaStream | null> {
     if (!this.localStream) return null;
@@ -1328,9 +1374,11 @@ class CallService {
       }
 
       this.hasLocalVideo = true;
-      if (this.videoTransceiver?.sender) {
-        await this.videoTransceiver.sender.replaceTrack(track);
+      if (this.videoTransceiver) {
+        // Update direction FIRST to trigger onnegotiationneeded on the remote side
+        // so they know to expect an incoming video track from us.
         this.videoTransceiver.direction = 'sendrecv';
+        await this.videoTransceiver.sender.replaceTrack(track);
         try {
           const params = this.videoTransceiver.sender.getParameters();
           if (params.encodings && params.encodings.length > 0) {
@@ -1352,8 +1400,10 @@ class CallService {
         this.localStream?.removeTrack(t);
       });
       this.hasLocalVideo = false;
-      if (this.videoTransceiver?.sender) {
+      if (this.videoTransceiver) {
         await this.videoTransceiver.sender.replaceTrack(null);
+        // Signal we are no longer sending video; still receive if remote sends.
+        this.videoTransceiver.direction = 'recvonly';
       } else if (this.peerConnection) {
         const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
         if (sender) {

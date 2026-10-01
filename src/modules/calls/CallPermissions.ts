@@ -80,7 +80,7 @@ export async function ensureCallPermissions(type: 'audio' | 'video'): Promise<bo
       if (isNative) {
         try {
           const res = await NativeSettings.requestCallPermissions({ type });
-          if (res.alreadyGranted) return true;
+          if (res.alreadyGranted || res.granted) return true;
           // Re-verify after prompt
           const afterState = await checkCallPermissionState(type);
           return afterState.granted;

@@ -8,7 +8,8 @@ import {
   Layers, ZoomIn, ZoomOut, Eye, Volume2, VolumeX, Maximize2, Minimize2, Flashlight, Save, FolderHeart, 
   Image as LucideImage, UploadCloud, Info, Sparkle, Timer, Loader2, Ghost,
   MapPin, HelpCircle, Clock, Link as LucideLink, Heart, LayoutGrid, ImagePlus, Hash,
-  Send, AtSign, MoreHorizontal, ChevronLeft, ChevronRight, ChevronDown,
+  BarChart2, CheckSquare,
+  Send, AtSign, MoreHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Star,
   Globe, Users, Shield
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
@@ -19,6 +20,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 import { MusicSearchModal } from '../music/MusicSearchModal';
 import { logger } from '@/src/utils/logger';
+import { PermissionService } from '../../services/PermissionService';
 
 
 // Mock songs
@@ -32,18 +34,23 @@ const SOUNDTRACKS = [
 
 // Stickers data
 const STICKERS = [
-  { id: 'mention_tool', type: 'mention', content: 'Mention User', category: 'Mention' },
-  { id: 'hashtag_tool', type: 'hashtag', content: 'Add Hashtag', category: 'Hashtag' },
-  { id: 'quiz_tool', type: 'quiz', content: 'Add Quiz', category: 'Quiz' },
-  { id: 'qbox_tool', type: 'question', content: 'Question Box', category: 'Questions' },
-  { id: 'countdown_tool', type: 'countdown', content: 'Countdown', category: 'Time' },
-  { id: 'slider_tool', type: 'slider', content: 'Emoji Slider', category: 'Engagement' },
-  { id: 'link_tool', type: 'link', content: 'Link', category: 'Utility' },
-  { id: 'location_tool', type: 'location', content: 'Add Location', category: 'Location' },
-  { id: 'poll1', type: 'poll', content: 'Simulation active?', category: 'Poll' },
-  { id: 'giphy_tool', type: 'gif', content: 'Search GIFs', category: 'GIF' },
-  { id: 'music_sticker_tool', type: 'music', content: 'Add Music', category: 'Music' },
-  { id: 'q1', type: 'question', content: 'Ask me anything...', category: 'Questions' },
+  { id: 'location_tool', type: 'location', content: 'LOCATION', category: 'Location' },
+  { id: 'mention_tool', type: 'mention', content: '@MENTION', category: 'Mention' },
+  { id: 'music_sticker_tool', type: 'music', content: 'MUSIC', category: 'Music' },
+  { id: 'photo_sticker_tool', type: 'photo', content: 'PHOTO', category: 'Engagement' },
+  { id: 'giphy_tool', type: 'gif', content: 'GIF', category: 'GIF' },
+  { id: 'add_yours_tool', type: 'add_yours', content: 'ADD YOURS', category: 'Engagement' },
+  { id: 'frames_tool', type: 'frames', content: 'FRAMES', category: 'Engagement' },
+  { id: 'highlight_tool', type: 'highlight', content: 'Highlight', category: 'Engagement' },
+  { id: 'cutouts_tool', type: 'cutouts', content: 'CUTOUTS', category: 'Engagement' },
+  { id: 'qbox_tool', type: 'question', content: 'QUESTIONS', category: 'Questions' },
+  { id: 'avatar_tool', type: 'avatar', content: 'AVATAR', category: 'Engagement' },
+  { id: 'poll1', type: 'poll', content: 'POLL', category: 'Poll' },
+  { id: 'slider_tool', type: 'slider', content: 'SLIDER', category: 'Engagement' },
+  { id: 'link_tool', type: 'link', content: 'LINK', category: 'Link' },
+  { id: 'hashtag_tool', type: 'hashtag', content: '#HASHTAG', category: 'Hashtag' },
+  { id: 'countdown_tool', type: 'countdown', content: 'COUNTDOWN', category: 'Countdown' },
+  { id: 'quiz_tool', type: 'quiz', content: 'QUIZ', category: 'Quiz' },
   { id: 'gif2', type: 'gif', content: '✨', category: 'GIF' },
   { id: 'gif3', type: 'gif', content: '⚡', category: 'GIF' },
   { id: 'gif4', type: 'gif', content: '💖', category: 'GIF' },
@@ -1242,8 +1249,8 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [showDiscardConfirmation, setShowDiscardConfirmation] = useState(false);
 
-  // Gallery Selection Screen states
-  const [isGallerySelectorOpen, setIsGallerySelectorOpen] = useState(false);
+  // Gallery Selection Screen states (Instagram starts in Add to Story gallery view)
+  const [isGallerySelectorOpen, setIsGallerySelectorOpen] = useState(true);
   const [isMusicFirstFlow, setIsMusicFirstFlow] = useState(false);
   const [showMusicBackgroundPrompt, setShowMusicBackgroundPrompt] = useState(false);
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<string[]>([]);
@@ -1505,24 +1512,17 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
   const startCamera = async () => {
     try {
       stopCamera();
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode },
-          audio: true
-        });
-      } catch (audioErr) {
-        // Fallback to video-only stream if mic is absent or denied
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode },
-          audio: false
-        });
+      // Phase 7: Camera preview & photo capture requests VIDEO ONLY (isolated from microphone)
+      const res = await PermissionService.requestCameraStream({ withAudio: false, facingMode });
+      if (res.granted && res.stream) {
+        streamRef.current = res.stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = res.stream;
+        }
+        setCameraError(false);
+      } else {
+        setCameraError(true);
       }
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setCameraError(false);
     } catch (err) {
       logger.warn("Webcam access unavailable. Using mock simulation mode.", err);
       setCameraError(true);
@@ -1593,7 +1593,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
   };
 
   // Start Video Recording
-  const startRecording = () => {
+  const startRecording = async () => {
     if (flash) {
       setIsFlashActive(true);
       setTimeout(() => setIsFlashActive(false), 200);
@@ -1601,6 +1601,19 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
 
     recordedChunksRef.current = [];
     if (streamRef.current) {
+      // Phase 6 & 7: Only acquire microphone if recording a video and audio track is not yet added
+      if (streamRef.current.getAudioTracks().length === 0) {
+        try {
+          const micRes = await PermissionService.requestMicrophoneStream();
+          if (micRes.granted && micRes.stream) {
+            const audioTrack = micRes.stream.getAudioTracks()[0];
+            if (audioTrack && streamRef.current) {
+              streamRef.current.addTrack(audioTrack);
+            }
+          }
+        } catch (_) {}
+      }
+
       const options = { mimeType: 'video/webm;codecs=vp9' };
       let recorder;
       try {
@@ -2164,6 +2177,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
       setShowDiscardConfirmation(true);
     } else {
       setCapturedMedia(null);
+      setIsGallerySelectorOpen(true);
     }
   };
 
@@ -2597,6 +2611,28 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
 
   // Stickers handlers
   const selectSticker = (sticker: any) => {
+    if (sticker.id === 'add_yours_tool' || sticker.type === 'add_yours' || sticker.type === 'photo' || sticker.type === 'frames' || sticker.type === 'cutouts') {
+      insertPhotoInputRef.current?.click();
+      setStickersOpen(false);
+      return;
+    }
+
+    if (sticker.type === 'avatar') {
+      const avatarUrl = getAvatarUrl(user?.uid || '', profile?.avatarUrl || user?.photoURL);
+      const newLayer: PhotoLayer = {
+        id: Date.now().toString(),
+        url: avatarUrl,
+        x: 120,
+        y: 280,
+        scale: 1,
+        rotation: 0,
+        shape: 'circle'
+      };
+      setPhotoLayers(prev => [...prev, newLayer]);
+      setStickersOpen(false);
+      return;
+    }
+
     if (sticker.category === 'Mention') {
       setMentionSearchOpen(true);
       setStickersOpen(false);
@@ -3816,98 +3852,118 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
               </div>
             )}
 
-            {/* === REAL DEVICE GALLERY FILE PICKER PORTAL === */}
-            <div className="flex-1 px-4 pb-12 pt-6 flex flex-col items-center justify-center gap-6">
+            {/* === INSTAGRAM RECENTS HEADER & ALBUM DROPDOWN === */}
+            <div className="flex items-center justify-between px-4 py-2 relative z-30 border-t border-white/5 bg-black/60">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowAlbumDropdown(prev => !prev)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-white hover:text-white/80 active:scale-95 transition-all"
+                >
+                  <span className="capitalize">{activeAlbum}</span>
+                  <ChevronDown size={15} className={`transition-transform duration-200 ${showAlbumDropdown ? 'rotate-180' : ''}`} />
+                </button>
+                {showAlbumDropdown && (
+                  <div className="absolute left-0 mt-2 w-36 bg-[#181920] border border-white/10 rounded-xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    {(['recents', 'camera', 'downloads'] as const).map(album => (
+                      <button
+                        key={album}
+                        type="button"
+                        onClick={() => {
+                          setActiveAlbum(album);
+                          setShowAlbumDropdown(false);
+                        }}
+                        className={`w-full px-3 py-2 text-left text-xs font-medium capitalize flex items-center justify-between transition-colors ${activeAlbum === album ? 'text-aeirmist-cyan bg-white/5 font-bold' : 'text-white/70 hover:text-white hover:bg-white/5'}`}
+                      >
+                        <span>{album}</span>
+                        {activeAlbum === album && <Check size={14} className="text-aeirmist-cyan" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full max-w-sm aspect-[4/3] rounded-[2.5rem] bg-[#07090f] border-2 border-dashed border-white/10 hover:border-aeirmist-cyan hover:bg-white/[0.01] active:scale-98 flex flex-col items-center justify-center gap-5 transition-all text-center p-8 group relative overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)]"
+                type="button"
+                onClick={() => {
+                  setIsMultiSelectMode(prev => !prev);
+                  if (isMultiSelectMode) setSelectedGalleryItems([]);
+                }}
+                className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all border ${isMultiSelectMode ? 'bg-white text-black border-white' : 'bg-white/10 text-white/90 border-white/15 hover:bg-white/20'}`}
               >
-                {/* Visual Stack of Photos Animation */}
-                <div className="relative w-20 h-16 flex items-center justify-center">
-                  <motion.div 
-                    animate={{ rotate: -12, x: -16, y: 2 }}
-                    transition={{ type: "spring", stiffness: 100 }}
-                    className="absolute w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/20 shadow-md"
-                  >
-                    <ImageIcon size={20} />
-                  </motion.div>
-                  <motion.div 
-                    animate={{ rotate: 12, x: 16, y: 2 }}
-                    transition={{ type: "spring", stiffness: 100 }}
-                    className="absolute w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/20 shadow-md"
-                  >
-                    <ImageIcon size={20} />
-                  </motion.div>
-                  <motion.div 
-                    className="relative w-14 h-14 rounded-2xl bg-gradient-to-br from-aeirmist-cyan to-aeirmist-magenta text-black flex items-center justify-center shadow-2xl z-10 border border-white/20"
-                  >
-                    <ImagePlus size={22} className="text-black" />
-                  </motion.div>
-                </div>
-
-                <div className="space-y-2">
-                  <h3 className="text-xs font-black uppercase tracking-[0.2em] text-white group-hover:text-aeirmist-cyan transition-colors">
-                    Choose from Device
-                  </h3>
-                  <p className="text-[10px] text-white/40 font-semibold max-w-[220px] mx-auto leading-relaxed">
-                    Select photos or videos from your library. Multi-select is fully supported natively!
-                  </p>
-                </div>
-
-                {/* Subtle animated light indicator */}
-                <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-aeirmist-cyan via-aeirmist-magenta to-aeirmist-cyan opacity-20 group-hover:opacity-60 transition-opacity duration-300" />
+                {isMultiSelectMode ? "Cancel" : "Select"}
               </button>
             </div>
 
-            {/* === SELECTED ITEMS REVIEW === */}
-            {selectedGalleryItems.length > 0 && (
-              <div className="mx-4 mb-32 p-4 rounded-2xl bg-white/[0.02] border border-white/5 backdrop-blur-md">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[9px] font-black uppercase tracking-wider text-aeirmist-cyan flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-cyan animate-pulse" />
-                    Selected ({selectedGalleryItems.length})
-                  </span>
-                  <button 
+            {/* === 3-COLUMN CAMERA ROLL & PHOTOS GRID (Instagram Style) === */}
+            <div className="flex-1 px-1 pb-28 grid grid-cols-3 gap-1 overflow-y-auto no-scrollbar">
+              {/* Tile 1: Live Camera Shortcut Tile */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsGallerySelectorOpen(false);
+                  startCamera();
+                }}
+                className="aspect-square bg-[#1c1d24] hover:bg-[#252732] rounded-lg flex flex-col items-center justify-center gap-1 text-white active:scale-95 transition-all border border-white/10 group cursor-pointer"
+              >
+                <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center group-hover:bg-white/20 transition-colors">
+                  <Camera size={18} />
+                </div>
+                <span className="text-[10px] font-bold text-white/80">Camera</span>
+              </button>
+
+              {/* Tile 2: Pick from Device (Native file picker) */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="aspect-square bg-[#161720] hover:bg-[#20222e] rounded-lg flex flex-col items-center justify-center gap-1 text-white active:scale-95 transition-all border border-dashed border-white/20 hover:border-aeirmist-cyan group cursor-pointer"
+              >
+                <div className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-white/60 group-hover:text-aeirmist-cyan group-hover:bg-aeirmist-cyan/10 transition-colors">
+                  <ImagePlus size={18} />
+                </div>
+                <span className="text-[10px] font-bold text-white/60 group-hover:text-white">Upload</span>
+              </button>
+
+              {/* Photo Tiles from Selected Album */}
+              {(ALBUM_IMAGES[activeAlbum] || []).map((imgUrl, idx) => {
+                const isSelected = selectedGalleryItems.includes(imgUrl);
+                const selectedIndex = selectedGalleryItems.indexOf(imgUrl);
+                return (
+                  <div
+                    key={`${activeAlbum}-${idx}`}
                     onClick={() => {
-                      setSelectedGalleryItems([]);
-                      setIsMultiSelectMode(false);
+                      if (isMultiSelectMode) {
+                        if (isSelected) {
+                          setSelectedGalleryItems(prev => prev.filter(url => url !== imgUrl));
+                        } else {
+                          setSelectedGalleryItems(prev => [...prev, imgUrl]);
+                        }
+                      } else {
+                        setCapturedMedia({ url: imgUrl, type: 'image' });
+                        setIsGallerySelectorOpen(false);
+                      }
                     }}
-                    className="text-[9px] font-black uppercase tracking-wider text-rose-400 hover:text-rose-300 transition-colors"
+                    className="aspect-square relative rounded-lg overflow-hidden cursor-pointer group active:scale-95 transition-transform bg-zinc-900"
                   >
-                    Clear All
-                  </button>
-                </div>
-                <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
-                  {selectedGalleryItems.map((url, idx) => (
-                    <div key={idx} className="relative w-16 h-16 rounded-xl border border-white/10 overflow-hidden shrink-0 group shadow-md">
-                      <img src={url} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
-                      <button 
-                        onClick={() => {
-                          const updated = selectedGalleryItems.filter(item => item !== url);
-                          setSelectedGalleryItems(updated);
-                          if (updated.length < 2) {
-                            setIsMultiSelectMode(false);
-                          }
-                        }}
-                        className="absolute top-1 right-1 w-4 h-4 rounded-full bg-rose-500 hover:bg-rose-600 text-white flex items-center justify-center transition-colors shadow-lg"
-                        title="Remove"
-                      >
-                        <X size={8} />
-                      </button>
-                    </div>
-                  ))}
-                  
-                  {/* Plus item button */}
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-16 h-16 rounded-xl bg-white/5 border border-dashed border-white/15 flex flex-col items-center justify-center gap-1 text-white/40 hover:text-white/80 hover:border-white/30 transition-all shrink-0 active:scale-95"
-                  >
-                    <Plus size={14} />
-                    <span className="text-[7px] font-black uppercase tracking-widest">More</span>
-                  </button>
-                </div>
-              </div>
-            )}
+                    <img
+                      src={imgUrl}
+                      alt=""
+                      className={`w-full h-full object-cover transition-transform duration-200 group-hover:scale-105 ${isSelected ? 'brightness-75' : ''}`}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                    {/* Multi-select indicator circle */}
+                    {isMultiSelectMode && (
+                      <div className="absolute top-1.5 right-1.5 z-10">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center font-bold text-[10px] shadow-md transition-all ${isSelected ? 'bg-aeirmist-cyan border-white text-black' : 'bg-black/50 border-white/80 text-transparent'}`}>
+                          {isSelected ? selectedIndex + 1 : ''}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
             {/* === BOTTOM SHEET === */}
             {isMultiSelectMode && selectedGalleryItems.length >= 2 && (
@@ -4039,7 +4095,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
 
           {/* Configuration tools */}
           {capturedMedia ? (
-            <div className="flex items-center gap-1.5 pointer-events-auto overflow-x-auto no-scrollbar py-1">
+            <div className="flex items-center gap-2 pointer-events-auto">
               {/* Sound / Mute Toggle (if video or music active) */}
               {(capturedMedia.type === 'video' || activeMusic) && (
                 <button
@@ -4051,86 +4107,12 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                       type: "info"
                     });
                   }}
-                  className={`w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-all border ${isVideoMuted ? 'bg-rose-500/20 border-rose-500/40 text-rose-300' : 'bg-black/40 border-white/10 text-white hover:bg-black/60'}`}
+                  className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center transition-all border shadow-lg ${isVideoMuted ? 'bg-rose-500/20 border-rose-500/40 text-rose-300' : 'bg-black/50 border-white/20 text-white hover:bg-black/70'}`}
                   title={isVideoMuted ? "Unmute" : "Mute"}
                 >
-                  {isVideoMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                  {isVideoMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
                 </button>
               )}
-
-              {/* Fit / Fill Aspect Ratio Toggle */}
-              <button
-                onClick={() => {
-                  const nextFit = mediaFit === 'cover' ? 'contain' : 'cover';
-                  setMediaFit(nextFit);
-                  addToast({
-                    title: nextFit === 'contain' ? "Fit Frame" : "Fill Screen",
-                    message: nextFit === 'contain' ? "Original aspect ratio preserved" : "Cropped to 9:16 screen",
-                    type: "info"
-                  });
-                }}
-                className={`w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-all border ${mediaFit === 'contain' ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan' : 'bg-black/40 border-white/10 text-white hover:bg-black/60'}`}
-                title="Aspect Ratio"
-              >
-                {mediaFit === 'cover' ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
-              </button>
-
-              {/* Save / Download Frame */}
-              <button
-                onClick={saveStoryFrame}
-                className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white flex items-center justify-center hover:bg-black/60 transition-all shadow-md"
-                title="Save to Device"
-              >
-                <Download size={16} />
-              </button>
-
-              {/* Effects / Filters */}
-              <button
-                onClick={() => setEffectsOpen(true)}
-                className={`w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-all border ${effectsOpen || currentFilter !== 'none' ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan' : 'bg-black/40 border-white/10 text-white hover:bg-black/60'}`}
-                title="Filters & Effects"
-              >
-                <Sparkles size={16} />
-              </button>
-
-              {/* Music */}
-              <button
-                onClick={() => setMusicOpen(true)}
-                className={`w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-all border ${activeMusic ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan' : 'bg-black/40 border-white/10 text-white hover:bg-black/60'}`}
-                title="Music"
-              >
-                <Music size={16} />
-              </button>
-
-              {/* Stickers */}
-              <button
-                onClick={() => setStickersOpen(true)}
-                className={`w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-all border ${stickersOpen ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan' : 'bg-black/40 border-white/10 text-white hover:bg-black/60'}`}
-                title="Stickers"
-              >
-                <Smile size={16} />
-              </button>
-
-              {/* Draw */}
-              <button
-                onClick={() => {
-                  setIsDrawingMode(true);
-                  setDrawToolsOpen(true);
-                }}
-                className={`w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-all border ${drawToolsOpen ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan' : 'bg-black/40 border-white/10 text-white hover:bg-black/60'}`}
-                title="Draw"
-              >
-                <Paintbrush size={16} />
-              </button>
-
-              {/* Text tool ("Aa") */}
-              <button
-                onClick={addTextLayer}
-                className={`w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-all border font-serif font-black text-xs ${textEditorOpen ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan' : 'bg-black/40 border-white/10 text-white hover:bg-black/60'}`}
-                title="Text"
-              >
-                Aa
-              </button>
             </div>
           ) : !cameraError ? (
             <div className="flex flex-row items-center gap-2 pointer-events-auto">
@@ -4230,74 +4212,170 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
           className="hidden" 
         />
 
-        {/* --- FLOATING QUICK-TOOLS RAIL (IG/FB Style) --- */}
+        {/* --- FLOATING QUICK-TOOLS RAIL: CAMERA MODE (Left Rail, Instagram Style) --- */}
         {!capturedMedia ? (
-          <div className="absolute right-4 top-24 z-[100] flex flex-col gap-3 pointer-events-auto">
+          <div className="absolute left-3.5 top-20 z-[100] flex flex-col gap-3.5 pointer-events-auto">
             {[
               { 
-                id: 'text', 
-                icon: Type, 
+                id: 'create', 
+                icon: <span className="font-serif font-black text-sm">Aa</span>, 
                 onClick: () => {
                   setCapturedMedia({ url: '', type: 'image', isSolidBackground: true });
                   addTextLayer();
                 }, 
-                label: 'Text' 
+                label: 'Create' 
               },
               { 
-                id: 'stickers', 
-                icon: Smile, 
+                id: 'boomerang', 
+                icon: <span className="font-mono text-base font-bold">∞</span>, 
                 onClick: () => {
-                  setCapturedMedia({ url: '', type: 'image', isSolidBackground: true });
-                  setStickersOpen(true);
+                  setIsHandsFree(prev => !prev);
+                  addToast({
+                    title: "Boomerang / Loop",
+                    message: "Burst sequence mode active",
+                    type: "info"
+                  });
                 }, 
-                label: 'Stickers' 
-              },
-              { 
-                id: 'insert_photo', 
-                icon: ImagePlus, 
-                onClick: () => {
-                  insertPhotoInputRef.current?.click();
-                }, 
-                label: 'Add Photo' 
-              },
-              { 
-                id: 'draw', 
-                icon: Paintbrush, 
-                onClick: () => {
-                  setCapturedMedia({ url: '', type: 'image', isSolidBackground: true });
-                  setIsDrawingMode(true); 
-                  setDrawToolsOpen(true); 
-                }, 
-                label: 'Draw' 
-              },
-              { 
-                id: 'music', 
-                icon: Music, 
-                onClick: () => setMusicOpen(true), 
-                label: 'Music' 
+                label: 'Boomerang' 
               },
               { 
                 id: 'layout', 
-                icon: LayoutGrid, 
+                icon: <LayoutGrid size={18} />, 
                 onClick: () => setLayoutModeOpen(true), 
                 label: 'Layout' 
+              },
+              { 
+                id: 'handsfree', 
+                icon: <Timer size={18} />, 
+                onClick: () => {
+                  setIsHandsFree(prev => !prev);
+                  addToast({
+                    title: isHandsFree ? "Hands-free Off" : "Hands-free On",
+                    message: isHandsFree ? "Tap & hold to record" : "Tap once to record hands-free",
+                    type: "info"
+                  });
+                }, 
+                label: 'Hands-free' 
               }
             ].map((tool) => (
               <motion.button 
                 key={tool.id}
-                whileHover={{ scale: 1.1, x: -2 }}
-                whileTap={{ scale: 0.9 }}
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.92 }}
                 onClick={tool.onClick}
-                className="w-11 h-11 rounded-full bg-white/10 backdrop-blur-md border border-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-all shadow-lg group relative"
+                className="w-10 h-10 rounded-full bg-black/45 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-black/65 transition-all shadow-lg group relative"
+                title={tool.label}
               >
-                <tool.icon size={20} />
-                <span className="absolute right-full mr-3 px-2 py-1 rounded bg-black/80 text-[8px] font-black uppercase tracking-widest text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                {tool.icon}
+                <span className="absolute left-full ml-2.5 px-2 py-0.5 rounded-md bg-black/80 text-[9px] font-bold text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap drop-shadow-md">
                   {tool.label}
                 </span>
               </motion.button>
             ))}
           </div>
-        ) : null}
+        ) : (
+          /* --- FLOATING ACTION RAIL: EDITOR PREVIEW (Right Rail, Instagram Style) --- */
+          <div className="absolute right-3.5 top-16 z-[100] flex flex-col gap-3.5 items-end pointer-events-auto">
+            {[
+              {
+                id: 'text',
+                label: 'Text',
+                icon: <span className="font-serif font-black text-sm">Aa</span>,
+                onClick: addTextLayer,
+                active: textEditorOpen
+              },
+              {
+                id: 'stickers',
+                label: 'Stickers',
+                icon: <Smile size={19} />,
+                onClick: () => setStickersOpen(true),
+                active: stickersOpen
+              },
+              {
+                id: 'music',
+                label: 'Music',
+                icon: <Music size={18} />,
+                onClick: () => setMusicOpen(true),
+                active: Boolean(activeMusic)
+              },
+              {
+                id: 'effects',
+                label: 'Effects',
+                icon: <Sparkles size={18} />,
+                onClick: () => setEffectsOpen(true),
+                active: effectsOpen || currentFilter !== 'none'
+              },
+              {
+                id: 'mention',
+                label: 'Mention',
+                icon: <AtSign size={18} />,
+                onClick: () => setMentionSearchOpen(true),
+                active: mentionSearchOpen
+              },
+              {
+                id: 'draw',
+                label: 'Draw',
+                icon: <Paintbrush size={18} />,
+                onClick: () => {
+                  setIsDrawingMode(true);
+                  setDrawToolsOpen(true);
+                },
+                active: drawToolsOpen
+              },
+              {
+                id: 'save',
+                label: 'Save',
+                icon: <Download size={18} />,
+                onClick: saveStoryFrame,
+                active: false
+              },
+              {
+                id: 'more',
+                label: 'More',
+                icon: <MoreHorizontal size={18} />,
+                onClick: () => {
+                  const nextFit = mediaFit === 'cover' ? 'contain' : 'cover';
+                  setMediaFit(nextFit);
+                  addToast({
+                    title: nextFit === 'contain' ? "Fit Frame" : "Fill Screen",
+                    message: nextFit === 'contain' ? "Original aspect ratio preserved" : "Cropped to 9:16 screen",
+                    type: "info"
+                  });
+                },
+                active: false
+              }
+            ].map((action) => (
+              <div key={action.id} className="flex items-center gap-2 group">
+                <span className="text-white text-xs font-semibold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] opacity-95 group-hover:opacity-100 select-none tracking-wide">
+                  {action.label}
+                </span>
+                <button
+                  type="button"
+                  onClick={action.onClick}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-xl active:scale-90 border ${
+                    action.active 
+                      ? 'bg-aeirmist-cyan text-black border-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.4)]' 
+                      : 'bg-black/50 hover:bg-black/75 backdrop-blur-md border-white/20 text-white'
+                  }`}
+                  title={action.label}
+                >
+                  {action.icon}
+                </button>
+              </div>
+            ))}
+            {/* Collapse/Expand Rail Toggle matching Instagram screenshot */}
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setIsRailCollapsed(prev => !prev)}
+                className="w-10 h-10 rounded-full bg-black/50 hover:bg-black/75 backdrop-blur-md border border-white/20 text-white flex items-center justify-center transition-all shadow-xl active:scale-90 cursor-pointer"
+                title="Toggle Tools"
+              >
+                <ChevronUp size={18} className={`transition-transform duration-200 ${isRailCollapsed ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* --- DYNAMIC STORIES VISUAL CANVAS --- */}
         <div className="flex-1 w-full h-full relative overflow-hidden bg-[#090a0f]" id="story_canvas_body">
@@ -4694,92 +4772,103 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
             {capturedMedia ? (
               <div className="w-full flex flex-col items-center max-w-xs px-4">
                 {/* --- CAPTION ROW --- */}
-                {captionInputOpen ? (
-                  <div className="w-full mb-4 flex items-center gap-2 bg-black/80 backdrop-blur-md rounded-2xl border border-white/10 px-3 py-2 z-[110]">
-                    <input 
-                      type="text" 
-                      placeholder="Write a caption..." 
-                      value={storyCaption}
-                      onChange={(e) => setStoryCaption(e.target.value)}
-                      className="bg-transparent text-white text-xs outline-none flex-1 font-sans placeholder-white/30"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          setCaptionInputOpen(false);
-                        }
-                      }}
-                    />
-                    <button 
-                      onClick={() => setCaptionInputOpen(false)}
-                      className="text-[10px] text-aeirmist-cyan font-black uppercase tracking-wider hover:text-white px-2 py-1"
-                    >
-                      Done
-                    </button>
-                  </div>
-                ) : (
-                  <button 
-                    onClick={() => setCaptionInputOpen(true)}
-                    className="w-full mb-3 bg-black/50 backdrop-blur-md border border-white/10 hover:border-white/20 rounded-full py-2.5 px-4 text-center text-[10px] font-bold uppercase tracking-widest text-white/60 hover:text-white transition-all shadow-md"
-                  >
-                    {storyCaption.trim() ? `Caption: "${storyCaption}"` : "ADD A CAPTION..."}
-                  </button>
-                )}
-
-                {/* --- AUDIENCE SELECTOR ROW --- */}
-                <div className="w-full flex items-center justify-center gap-2 mb-3.5">
-                  {[
-                    { id: 'public', label: 'PUBLIC', icon: <Globe size={11} /> },
-                    { id: 'followers', label: 'FOLLOWERS', icon: <Users size={11} /> },
-                    { id: 'closeFriends', label: 'CLOSE FRIENDS', icon: <Sparkles size={11} /> }
-                  ].map((aud) => {
-                    const isSelected = audience === aud.id;
-                    const isCloseFriends = aud.id === 'closeFriends';
-                    return (
-                      <button
-                        key={aud.id}
-                        onClick={() => setAudience(aud.id as any)}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border ${
-                          isSelected 
-                            ? (isCloseFriends ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.35)]' : 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_12px_rgba(0,242,255,0.35)]') 
-                            : 'bg-black/30 border-white/10 text-white/40 hover:text-white/70 hover:border-white/20'
-                        }`}
+                <div className="w-full mb-3 px-1">
+                  {captionInputOpen ? (
+                    <div className="flex items-center gap-2 w-full bg-black/60 backdrop-blur-md rounded-full px-4 py-2 border border-white/20">
+                      <input 
+                        type="text"
+                        placeholder="Add a caption..."
+                        value={storyCaption}
+                        onChange={(e) => setStoryCaption(e.target.value)}
+                        className="bg-transparent text-white text-xs outline-none flex-1 font-sans placeholder-white/40"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            setCaptionInputOpen(false);
+                          }
+                        }}
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => setCaptionInputOpen(false)}
+                        className="text-[10px] text-aeirmist-cyan font-black uppercase tracking-wider hover:text-white px-2 py-1"
                       >
-                        {aud.icon}
-                        <span>{aud.label}</span>
+                        Done
                       </button>
-                    );
-                  })}
+                    </div>
+                  ) : (
+                    <button 
+                      type="button"
+                      onClick={() => setCaptionInputOpen(true)}
+                      className="text-white/80 hover:text-white text-xs font-semibold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] px-2 py-1 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <span>{storyCaption.trim() ? `Caption: "${storyCaption}"` : "Add a caption..."}</span>
+                    </button>
+                  )}
                 </div>
 
-                {/* --- PUBLISH ROW --- */}
-                <div className="w-full flex items-center gap-3">
+                {/* --- INSTAGRAM-STYLE BOTTOM PUBLISH ROW (Your Story, Close Friends, Next) --- */}
+                <div className="w-full flex items-center justify-between gap-2 pt-1 pb-[calc(0.5rem+var(--sab,var(--safe-area-inset-bottom,0px)))]">
                   {/* Your Story Pill */}
                   <button
-                    onClick={
-                      multiStoryItems.length > 0
-                        ? (currentMultiStoryIndex < multiStoryItems.length - 1 ? handleSequentialNext : publishMultiStorySet)
-                        : handlePublishStory
-                    }
+                    type="button"
+                    onClick={() => {
+                      setAudience('public');
+                      if (multiStoryItems.length > 0) {
+                        currentMultiStoryIndex < multiStoryItems.length - 1 ? handleSequentialNext() : publishMultiStorySet();
+                      } else {
+                        handlePublishStory();
+                      }
+                    }}
                     disabled={isPublishing}
-                    className="flex-1 h-12 rounded-full bg-white text-black font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2.5 hover:bg-white/95 active:scale-95 transition-all shadow-xl disabled:opacity-50"
+                    className="flex-1 h-11 px-3 rounded-full bg-[#1c1d22]/90 hover:bg-[#282a32] active:scale-95 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center gap-2 transition-all shadow-lg disabled:opacity-50 min-w-0 cursor-pointer"
                   >
                     <img 
                       src={getAvatarUrl(user?.uid || '', profile?.avatarUrl || user?.photoURL)} 
-                      className="w-6 h-6 rounded-full object-cover shrink-0 border border-black/10" 
-                      alt="" 
+                      className="w-5 h-5 rounded-full object-cover shrink-0 border border-white/20" 
+                      alt=""
+                      width={20}
+                      height={20}
                       referrerPolicy="no-referrer"
                     />
-                    <span>
+                    <span className="font-semibold text-xs text-white truncate">
                       {isPublishing 
                         ? "Sharing..." 
                         : (multiStoryItems.length > 0 
-                            ? (currentMultiStoryIndex < multiStoryItems.length - 1 ? `Next (${currentMultiStoryIndex + 1}/${multiStoryItems.length})` : "Publish Set")
-                            : "YOUR STORY"
+                            ? (currentMultiStoryIndex < multiStoryItems.length - 1 ? `Next (${currentMultiStoryIndex + 1}/${multiStoryItems.length})` : "Your story")
+                            : "Your story"
                           )}
                     </span>
                   </button>
 
-                  {/* Circular Send Arrow Icon Button */}
+                  {/* Close Friends Pill */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAudience('closeFriends');
+                      addToast({
+                        title: "Close Friends",
+                        message: "Sharing story to your Close Friends.",
+                        type: "info"
+                      });
+                      if (multiStoryItems.length > 0) {
+                        currentMultiStoryIndex < multiStoryItems.length - 1 ? handleSequentialNext() : publishMultiStorySet();
+                      } else {
+                        handlePublishStory();
+                      }
+                    }}
+                    disabled={isPublishing}
+                    className="flex-1 h-11 px-3 rounded-full bg-[#1c1d22]/90 hover:bg-[#282a32] active:scale-95 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center gap-2 transition-all shadow-lg disabled:opacity-50 min-w-0 cursor-pointer"
+                  >
+                    <div className="w-5 h-5 rounded-full bg-[#00c950] flex items-center justify-center shrink-0">
+                      <Star size={11} className="fill-white text-white" />
+                    </div>
+                    <span className="font-semibold text-xs text-white truncate">
+                      Close Friends
+                    </span>
+                  </button>
+
+                  {/* Circular White Send / Next Button */}
                   <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
@@ -4789,10 +4878,10 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                         : handlePublishStory
                     }
                     disabled={isPublishing}
-                    className="w-12 h-12 rounded-full bg-aeirmist-cyan text-black flex items-center justify-center hover:bg-aeirmist-cyan/90 transition-all shadow-xl active:scale-95 disabled:opacity-50 shrink-0"
-                    title={multiStoryItems.length > 0 ? "Next / Publish" : "Publish Story"}
+                    className="w-11 h-11 rounded-full bg-white text-black flex items-center justify-center hover:bg-white/90 active:scale-95 transition-all shadow-xl disabled:opacity-50 shrink-0 cursor-pointer"
+                    title={multiStoryItems.length > 0 ? "Next / Share" : "Share Story"}
                   >
-                    <Send size={18} className="translate-x-[1px]" />
+                    <ChevronRight size={22} className="stroke-[2.5] text-black translate-x-[1px]" />
                   </motion.button>
                 </div>
               </div>
@@ -4877,65 +4966,34 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                   </div>
                 </div>
 
-                {/* Mode Switcher Tabs */}
-                <div className="flex items-center gap-6 mb-8 px-5 py-2.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 shadow-lg">
-                  {[
-                    { id: 'story', label: 'Story' },
-                    { id: 'reel', label: 'Reel' },
-                    { id: 'text', label: 'Text' }
-                  ].map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => setMode(m.id as any)}
-                      className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all relative ${mode === m.id ? 'text-aeirmist-cyan' : 'text-white/40 hover:text-white'}`}
-                    >
-                      {m.label}
-                      {mode === m.id && (
-                        <motion.div layoutId="mode-dot" className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-aeirmist-cyan" />
+                {/* Central Shutter Capture Trigger (Instagram Style) */}
+                <div className="relative flex items-center justify-center mb-5">
+                  <div className="relative w-20 h-20 flex items-center justify-center">
+                    {/* Breathing Signal Ring during recording */}
+                    <AnimatePresence>
+                      {isRecording && (
+                        <motion.div key="recording-ring-wrapper">
+                          <motion.div 
+                            initial={{ scale: 1, opacity: 0.8 }}
+                            animate={{ scale: [1, 1.4, 1.1], opacity: [0.8, 0, 0.4] }}
+                            transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
+                            className="absolute inset-0 rounded-full border-2 border-aeirmist-magenta shadow-[0_0_20px_rgba(255,0,127,0.5)] z-0"
+                          />
+                          <motion.div 
+                            initial={{ scale: 1, opacity: 0.8 }}
+                            animate={{ scale: [1, 1.8, 1.2], opacity: [0.8, 0, 0.2] }}
+                            transition={{ duration: 2, repeat: Infinity, ease: "easeOut", delay: 0.4 }}
+                            className="absolute inset-0 rounded-full border border-aeirmist-cyan shadow-[0_0_30px_rgba(0,242,255,0.3)] z-0"
+                          />
+                        </motion.div>
                       )}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Core action button row */}
-                <div className="w-full flex items-center justify-between gap-10 max-w-sm px-4">
-                  
-                  {/* Gallery Button */}
-                  <motion.button 
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => setIsGallerySelectorOpen(true)}
-                    className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-all shadow-md"
-                  >
-                    <LucideImage size={20} />
-                  </motion.button>
-
-                  {/* Central Capture Trigger */}
-                  <div className="relative flex items-center justify-center">
-                    <div className="relative w-20 h-20 flex items-center justify-center">
-                      {/* Breathing Signal Message Ring during recording */}
-                      <AnimatePresence>
-                        {isRecording && (
-                          <motion.div key="recording-ring-wrapper">
-                            <motion.div 
-                              initial={{ scale: 1, opacity: 0.8 }}
-                              animate={{ scale: [1, 1.4, 1.1], opacity: [0.8, 0, 0.4] }}
-                              transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
-                              className="absolute inset-0 rounded-full border-2 border-aeirmist-magenta shadow-[0_0_20px_rgba(255,0,127,0.5)] z-0"
-                            />
-                            <motion.div 
-                              initial={{ scale: 1, opacity: 0.8 }}
-                              animate={{ scale: [1, 1.8, 1.2], opacity: [0.8, 0, 0.2] }}
-                              transition={{ duration: 2, repeat: Infinity, ease: "easeOut", delay: 0.4 }}
-                              className="absolute inset-0 rounded-full border border-aeirmist-cyan shadow-[0_0_30px_rgba(0,242,255,0.3)] z-0"
-                            />
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                      
+                    </AnimatePresence>
+                    
+                    {/* Outer Shutter Ring */}
+                    <div className="w-20 h-20 rounded-full border-[3.5px] border-white/70 flex items-center justify-center p-1 shadow-2xl">
                       <motion.button 
                         whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.9 }}
+                        whileTap={{ scale: 0.92 }}
                         onMouseDown={(e) => {
                           if (e.button !== 0) return;
                           const timer = setTimeout(() => {
@@ -4969,20 +5027,66 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                             capturePhoto();
                           }
                         }}
-                        className={`w-16 h-16 rounded-full border-4 transition-all duration-300 z-10 ${isRecording ? 'bg-aeirmist-magenta border-white' : 'bg-white border-white/30'}`}
+                        className={`w-full h-full rounded-full transition-all duration-200 z-10 cursor-pointer ${isRecording ? 'bg-rose-500 scale-75 rounded-2xl' : 'bg-white'}`}
                       />
                     </div>
                   </div>
+                </div>
 
-                  {/* Flip Camera */}
-                  <motion.button 
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={toggleCameraFacing}
-                    className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-all shadow-md"
+                {/* Bottom Dock: Gallery Thumbnail + Mode Switcher + Flip Camera (media_1790795924515.png) */}
+                <div className="w-full flex items-center justify-between px-6 pb-4 pt-1">
+                  {/* Gallery Thumbnail Preview */}
+                  <button 
+                    type="button"
+                    onClick={() => setIsGallerySelectorOpen(true)}
+                    className="w-10 h-10 rounded-xl overflow-hidden border border-white/30 active:scale-95 transition-transform bg-zinc-800 shadow-lg relative group shrink-0 cursor-pointer"
+                    title="Open Gallery"
                   >
-                    <RefreshCw size={20} />
-                  </motion.button>
+                    <img 
+                      src={ALBUM_IMAGES.recents[0]} 
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform" 
+                      alt="" 
+                      referrerPolicy="no-referrer"
+                    />
+                  </button>
+
+                  {/* Horizontal Mode Slider: POST STORY REEL LIVE */}
+                  <div className="flex items-center gap-4 justify-center flex-1">
+                    {['POST', 'STORY', 'REEL', 'LIVE'].map((tag) => {
+                      const isActive = tag === (mode === 'reel' ? 'REEL' : 'STORY');
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => {
+                            if (tag === 'POST') {
+                              onClose();
+                              window.dispatchEvent(new CustomEvent('aeirmist-create-post'));
+                            } else if (tag === 'REEL') {
+                              setMode('reel');
+                            } else if (tag === 'STORY') {
+                              setMode('story');
+                            }
+                          }}
+                          className={`text-xs font-black tracking-widest uppercase transition-all cursor-pointer ${
+                            isActive ? 'text-white scale-110 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]' : 'text-white/40 hover:text-white/70'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Flip Camera Button */}
+                  <button 
+                    type="button"
+                    onClick={toggleCameraFacing}
+                    className="w-10 h-10 rounded-full bg-black/40 border border-white/20 flex items-center justify-center text-white active:scale-90 hover:bg-black/60 transition-all shadow-lg shrink-0 cursor-pointer"
+                    title="Flip Camera"
+                  >
+                    <RefreshCw size={18} />
+                  </button>
                 </div>
               </>
             )}
@@ -5048,20 +5152,192 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-2 overflow-y-auto flex-1 pb-6">
-                {filteredStickers.map(sticker => (
-                  <button 
-                    key={sticker.id}
-                    onClick={() => selectSticker(sticker)}
-                    className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5 hover:border-white/15 hover:bg-white/5 flex flex-col items-center justify-center transition-all text-center min-h-[50px]"
-                  >
-                    {sticker.type === 'gif' || sticker.type === 'emoji' ? (
-                      <span className="text-2xl">{sticker.content}</span>
-                    ) : (
-                      <span className="text-[10px] font-bold uppercase truncate max-w-full">{sticker.content}</span>
-                    )}
-                  </button>
-                ))}
+              <div className="grid grid-cols-2 gap-3 overflow-y-auto flex-1 pb-6 pr-0.5">
+                {filteredStickers.map(sticker => {
+                  const isEmoji = sticker.type === 'emoji';
+                  const isLocation = sticker.type === 'location';
+                  const isMention = sticker.type === 'mention';
+                  const isAddYours = sticker.id === 'add_yours_tool';
+                  const isQuestions = sticker.type === 'question';
+                  const isGif = sticker.type === 'gif';
+                  const isMusic = sticker.type === 'music';
+                  const isPoll = sticker.type === 'poll';
+                  const isQuiz = sticker.type === 'quiz';
+                  const isLink = sticker.type === 'link';
+                  const isHashtag = sticker.type === 'hashtag';
+                  const isCountdown = sticker.type === 'countdown';
+                  const isSlider = sticker.type === 'slider';
+                  const isPhoto = sticker.type === 'photo';
+                  const isFrames = sticker.type === 'frames';
+                  const isHighlight = sticker.type === 'highlight';
+                  const isCutouts = sticker.type === 'cutouts';
+                  const isAvatar = sticker.type === 'avatar';
+
+                  if (isEmoji) {
+                    return (
+                      <button
+                        key={sticker.id}
+                        onClick={() => selectSticker(sticker)}
+                        className="h-12 rounded-2xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-2xl transition-all active:scale-95 border border-white/5"
+                      >
+                        {sticker.content}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={sticker.id}
+                      onClick={() => selectSticker(sticker)}
+                      className="h-12 px-3 rounded-2xl bg-white hover:bg-slate-100 flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 border border-black/5"
+                    >
+                      {isLocation && (
+                        <>
+                          <MapPin size={15} className="text-red-500 fill-red-500/20 shrink-0" />
+                          <span className="bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 bg-clip-text text-transparent font-black text-xs tracking-wider">
+                            LOCATION
+                          </span>
+                        </>
+                      )}
+                      {isMention && (
+                        <span className="bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent font-black text-xs tracking-wider">
+                          @MENTION
+                        </span>
+                      )}
+                      {isAddYours && (
+                        <>
+                          <Camera size={14} className="text-emerald-500 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            ADD YOURS
+                          </span>
+                        </>
+                      )}
+                      {isQuestions && (
+                        <>
+                          <HelpCircle size={15} className="text-violet-600 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            QUESTIONS
+                          </span>
+                        </>
+                      )}
+                      {isGif && (
+                        <>
+                          <span className="px-1 py-0.5 rounded bg-gradient-to-r from-pink-500 to-rose-500 text-white font-black text-[9px] tracking-tight leading-none shrink-0">
+                            GIF
+                          </span>
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            GIPHY
+                          </span>
+                        </>
+                      )}
+                      {isMusic && (
+                        <>
+                          <Music size={15} className="text-cyan-600 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            MUSIC
+                          </span>
+                        </>
+                      )}
+                      {isPoll && (
+                        <>
+                          <BarChart2 size={15} className="text-blue-500 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            POLL
+                          </span>
+                        </>
+                      )}
+                      {isQuiz && (
+                        <>
+                          <CheckSquare size={15} className="text-amber-500 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            QUIZ
+                          </span>
+                        </>
+                      )}
+                      {isLink && (
+                        <>
+                          <LucideLink size={15} className="text-blue-600 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            LINK
+                          </span>
+                        </>
+                      )}
+                      {isHashtag && (
+                        <>
+                          <Hash size={15} className="text-rose-500 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            #HASHTAG
+                          </span>
+                        </>
+                      )}
+                      {isCountdown && (
+                        <>
+                          <Clock size={15} className="text-purple-600 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            COUNTDOWN
+                          </span>
+                        </>
+                      )}
+                      {isSlider && (
+                        <>
+                          <Sparkles size={15} className="text-orange-500 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            SLIDER
+                          </span>
+                        </>
+                      )}
+                      {isPhoto && (
+                        <>
+                          <LucideImage size={15} className="text-emerald-500 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            PHOTO
+                          </span>
+                        </>
+                      )}
+                      {isFrames && (
+                        <>
+                          <LayoutGrid size={15} className="text-amber-500 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            FRAMES
+                          </span>
+                        </>
+                      )}
+                      {isHighlight && (
+                        <>
+                          <Heart size={15} className="text-rose-500 fill-rose-500/20 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            Highlight
+                          </span>
+                        </>
+                      )}
+                      {isCutouts && (
+                        <>
+                          <Crop size={15} className="text-emerald-600 shrink-0" />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            CUTOUTS
+                          </span>
+                        </>
+                      )}
+                      {isAvatar && (
+                        <>
+                          <img 
+                            src={getAvatarUrl(user?.uid || '', profile?.avatarUrl || user?.photoURL)} 
+                            className="w-5 h-5 rounded-full object-cover shrink-0" 
+                            alt="" 
+                          />
+                          <span className="text-slate-900 font-black text-xs tracking-wider">
+                            AVATAR
+                          </span>
+                        </>
+                      )}
+                      {!isLocation && !isMention && !isAddYours && !isQuestions && !isGif && !isMusic && !isPoll && !isQuiz && !isLink && !isHashtag && !isCountdown && !isSlider && !isPhoto && !isFrames && !isHighlight && !isCutouts && !isAvatar && (
+                        <span className="text-slate-900 font-black text-xs tracking-wider truncate">
+                          {sticker.content}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </motion.div>
           </div>
@@ -5656,6 +5932,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                     setActiveMusic(null);
                     setStoryCaption('');
                     setCapturedMedia(null);
+                    setIsGallerySelectorOpen(true);
                     setShowDiscardConfirmation(false);
                     addToast({
                       title: "Story Cleared",

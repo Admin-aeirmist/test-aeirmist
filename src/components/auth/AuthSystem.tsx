@@ -9,9 +9,10 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { useTheme } from '../../context/ThemeContext';
 import { analytics } from '../../services/AnalyticsService';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
-import { confirmPasswordReset, sendPasswordResetEmail, getAuth } from 'firebase/auth';
+import { confirmPasswordReset, sendPasswordResetEmail, getAuth, applyActionCode } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
 import { handleForgotPassword } from '../../services/forgotPassword';
+import { applyEmailVerificationCode, verifyResetCode } from '../../services/authActionService';
 import { collection, addDoc, serverTimestamp, getDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { mapAuthError } from '../../utils/authErrorMapper';
 import { SignupWizard } from './SignupWizard';
@@ -19,9 +20,10 @@ import { logger } from '@/src/utils/logger';
 import { getAvatarUrl } from '../../lib/avatar';
 import { AuthPoster } from './AuthPoster';
 import { validateEmailDetailed, isValidEmail } from '../../utils/emailValidator';
+import { PermissionService, PreciseLocationResult } from '../../services/PermissionService';
 
 
-type AuthView = 'login' | 'signup' | 'forgot' | 'pairing' | 'reset' | 'saved_accounts' | 'saved_accounts_login' | 'two_factor';
+type AuthView = 'login' | 'signup' | 'forgot' | 'pairing' | 'reset' | 'saved_accounts' | 'saved_accounts_login' | 'two_factor' | 'verify_email';
 
 const RuleIndicator = ({ active, label }: { active: boolean | number; label: string }) => (
   <div className="flex items-center gap-2 text-[11px] font-semibold">
@@ -61,7 +63,12 @@ const DriftingBg = () => (
   </div>
 );
 
-export const AuthSystem: React.FC = () => {
+export interface AuthSystemProps {
+  initialMode?: 'login' | 'signup';
+  onClose?: () => void;
+}
+
+export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) => {
   const { activeTheme } = useTheme();
   const { 
     user,
@@ -82,38 +89,58 @@ export const AuthSystem: React.FC = () => {
 
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [isVerifying2FA, setIsVerifying2FA] = useState(false);
+
+  const resetRouteToHomeFeed = () => {
+    if (typeof window !== 'undefined') {
+      try {
+        window.history.replaceState({ activeTab: 'feed', _appNav: true }, '', '/');
+        window.dispatchEvent(new CustomEvent('aeirmist-reset-to-feed'));
+      } catch (e) {}
+    }
+  };
   const [pendingUserUid, setPendingUserUid] = useState<string | null>(null);
   const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
 
-  const trackLoginSession = async (userUid: string) => {
+  const trackLoginSession = async (userUid: string, preAcquiredLocation?: PreciseLocationResult | null) => {
     try {
       const sessionKey = crypto.randomUUID();
-      // Capture exact location + local time at login
       let locationData: any = {};
       try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000, enableHighAccuracy: true })
-        );
-        locationData = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          locationString: `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`,
-          localTime: new Date().toISOString(),
-          localTimeOffset: new Date().getTimezoneOffset()
-        };
-        // Also update profile lastLoginLocation
-        try {
-          const { db: firestoreDb } = await import('../../lib/firebase');
-          const { updateDoc, doc: fsDoc } = await import('firebase/firestore');
-          await updateDoc(fsDoc(firestoreDb, 'profiles', `profile_${userUid}`), {
-            lastLoginLocation: locationData.locationString,
-            lastLoginAt: new Date().toISOString(),
-            lastLoginCoords: { lat: pos.coords.latitude, lng: pos.coords.longitude }
-          });
-        } catch (_) {}
+        let locResult = preAcquiredLocation;
+        if (!locResult) {
+          locResult = await PermissionService.getPreciseLocation({ timeoutMs: 5000, highAccuracy: true });
+        }
+
+        if (locResult && typeof locResult.latitude === 'number' && typeof locResult.longitude === 'number') {
+          locationData = {
+            latitude: locResult.latitude,
+            longitude: locResult.longitude,
+            accuracy: locResult.accuracy,
+            isPrecise: locResult.isPrecise,
+            locationType: locResult.locationType,
+            locationString: locResult.displayLocation || `${locResult.latitude.toFixed(5)}, ${locResult.longitude.toFixed(5)}`,
+            localTime: new Date().toISOString(),
+            localTimeOffset: new Date().getTimezoneOffset()
+          };
+          // Also update profile lastLoginLocation & coords
+          try {
+            const { db: firestoreDb } = await import('../../lib/firebase');
+            const { updateDoc, doc: fsDoc } = await import('firebase/firestore');
+            await updateDoc(fsDoc(firestoreDb, 'profiles', `profile_${userUid}`), {
+              lastLoginLocation: locationData.locationString,
+              lastLoginAt: new Date().toISOString(),
+              lastLoginCoords: { lat: locResult.latitude, lng: locResult.longitude }
+            });
+          } catch (_) {}
+        } else {
+          locationData = {
+            localTime: new Date().toISOString(),
+            isPrecise: false,
+            locationType: locResult?.locationType || 'unavailable'
+          };
+        }
       } catch (_) {
-        locationData = { localTime: new Date().toISOString() };
+        locationData = { localTime: new Date().toISOString(), isPrecise: false, locationType: 'unavailable' };
       }
       await addDoc(collection(db, 'login_sessions'), {
         userId: userUid,
@@ -143,25 +170,13 @@ export const AuthSystem: React.FC = () => {
   const [selectedAccount, setSelectedAccount] = useState<SavedAccount | null>(null);
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
   const [view, setView] = useState<AuthView>('login');
-  
-  // Request permissions immediately when login screen mounts (before user interacts)
-  useEffect(() => {
-    // 1. Notification permission
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
-    // 2. Geolocation permission — just trigger the prompt so browser caches the grant
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        () => {}, // success — permission cached
-        () => {}, // denied — that's fine, we handle gracefully in trackLoginSession
-        { timeout: 10000, maximumAge: 60000 }
-      );
-    }
-  }, []);
 
-  // Set initial view based on saved accounts in localStorage on mount
+  // Set initial view based on saved accounts in localStorage or initialMode on mount
   useEffect(() => {
+    if (initialMode) {
+      setView(initialMode);
+      return;
+    }
     try {
       const savedRaw = localStorage.getItem('aeirmist_saved_accounts');
       const savedList = savedRaw ? JSON.parse(savedRaw) : [];
@@ -174,7 +189,7 @@ export const AuthSystem: React.FC = () => {
     } catch {
       setView('login');
     }
-  }, []);
+  }, [initialMode]);
 
   const removeSavedAccount = (uid: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -200,6 +215,16 @@ export const AuthSystem: React.FC = () => {
     if (loading || !selectedAccount) return;
     setError(null);
     setLoading(true);
+
+    // Phase 3 & 4 & 5: Check & request location + notification permissions
+    let acquiredLoc: PreciseLocationResult | null = null;
+    try {
+      const permRes = await PermissionService.executeLoginPermissionFlow();
+      acquiredLoc = permRes.location;
+    } catch (e) {
+      logger.warn('[AuthSystem] Permission flow bypassed:', e);
+    }
+
     try {
       const userCredential = await loginWithEmail(selectedAccount.username, password, true);
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
@@ -212,11 +237,11 @@ export const AuthSystem: React.FC = () => {
           setLoading(false);
           return;
         }
-        logger.security("Login Success", { uid: userUid }); await trackLoginSession(userUid);
+        logger.security("Login Success", { uid: userUid }); 
+        await trackLoginSession(userUid, acquiredLoc);
       }
       
-      analytics.trackAuth('login', 'saved_account');
-      
+      resetRouteToHomeFeed();
       setIsSuccess(true);
       if (navigator.vibrate) navigator.vibrate([30, 50]);
       await new Promise(resolve => setTimeout(resolve, 1200));
@@ -264,6 +289,7 @@ export const AuthSystem: React.FC = () => {
         });
         
         await trackLoginSession(pendingUserUid);
+        resetRouteToHomeFeed();
         setIsSuccess(true);
         if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
         await new Promise(resolve => setTimeout(resolve, 1200));
@@ -287,6 +313,10 @@ export const AuthSystem: React.FC = () => {
   const [forgotStep, setForgotStep] = useState(1);
   const [resetStep, setResetStep] = useState(1);
   const [resetCode, setResetCode] = useState<string | null>(null);
+  const [resetEmail, setResetEmail] = useState<string | null>(null);
+  const [verifyEmailStatus, setVerifyEmailStatus] = useState<'verifying' | 'success' | 'error'>('verifying');
+  const [verifyEmailMessage, setVerifyEmailMessage] = useState<string | null>(null);
+  const [verifiedTargetEmail, setVerifiedTargetEmail] = useState<string | null>(null);
 
   // Signup specific fields
   const [fullName, setFullName] = useState('');
@@ -391,20 +421,60 @@ export const AuthSystem: React.FC = () => {
     };
   }, []);
 
-  // Parse action code on mount for direct reset flow redirects
+  // Parse action code on mount for direct reset flow and email verification redirects
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const oobCode = params.get('oobCode');
-      const mode = params.get('mode');
-      if (oobCode && mode === 'resetPassword') {
-        setResetCode(oobCode);
-        setView('reset');
-        setResetStep(1);
+    const handleAuthActionCode = async () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const oobCode = params.get('oobCode');
+        const mode = params.get('mode');
+
+        if (!oobCode || !mode) return;
+
+        if (mode === 'resetPassword') {
+          setResetCode(oobCode);
+          setView('reset');
+          setResetStep(1);
+          try {
+            const targetEmail = await verifyResetCode(oobCode);
+            if (targetEmail) {
+              setResetEmail(targetEmail);
+            }
+          } catch (codeErr: any) {
+            logger.warn("Password reset code expired or invalid:", codeErr);
+            setError("This password reset link has expired or has already been used. Please request a new link.");
+          }
+        } else if (mode === 'verifyEmail') {
+          setView('verify_email');
+          setVerifyEmailStatus('verifying');
+          try {
+            const res = await applyEmailVerificationCode(oobCode);
+            setVerifyEmailStatus('success');
+            if (res.email) {
+              setVerifiedTargetEmail(res.email);
+            }
+          } catch (err: any) {
+            setVerifyEmailStatus('error');
+            setVerifyEmailMessage(mapAuthError(err) || "This email verification link is invalid or has expired.");
+          }
+        } else if (mode === 'recoverEmail' || mode === 'verifyAndChangeEmail') {
+          setView('verify_email');
+          setVerifyEmailStatus('verifying');
+          try {
+            await applyActionCode(auth, oobCode);
+            setVerifyEmailStatus('success');
+            setVerifyEmailMessage("Your email address update has been verified and applied successfully.");
+          } catch (err: any) {
+            setVerifyEmailStatus('error');
+            setVerifyEmailMessage(mapAuthError(err) || "Unable to restore or verify email address.");
+          }
+        }
+      } catch (e) {
+        logger.warn("Failed to parse auth action credentials link:", e);
       }
-    } catch (e) {
-      logger.warn("Failed to parse reset credentials link:", e);
-    }
+    };
+
+    handleAuthActionCode();
   }, []);
 
   // Username validation debouncer
@@ -474,7 +544,24 @@ export const AuthSystem: React.FC = () => {
     e.preventDefault();
     if (loading) return;
     setError(null);
+
+    // Phase 3: Validate form first
+    if (!identifier.trim() || !password) {
+      setError("Please enter your identifier and password.");
+      return;
+    }
+
     setLoading(true);
+
+    // Phase 3 & 4 & 5: Check & request location + notification permissions
+    let acquiredLoc: PreciseLocationResult | null = null;
+    try {
+      const permRes = await PermissionService.executeLoginPermissionFlow();
+      acquiredLoc = permRes.location;
+    } catch (e) {
+      logger.warn('[AuthSystem] Permission flow bypassed:', e);
+    }
+
     try {
       const userCredential = await loginWithEmail(identifier, password, true);
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
@@ -487,7 +574,8 @@ export const AuthSystem: React.FC = () => {
           setLoading(false);
           return;
         }
-        logger.security("Login Success", { uid: userUid }); await trackLoginSession(userUid);
+        logger.security("Login Success", { uid: userUid }); 
+        await trackLoginSession(userUid, acquiredLoc);
       }
 
       analytics.trackAuth('login', 'email');
@@ -503,6 +591,7 @@ export const AuthSystem: React.FC = () => {
         }
       } catch {}
 
+      resetRouteToHomeFeed();
       setIsSuccess(true);
       if (navigator.vibrate) navigator.vibrate([30, 50]);
     } catch (err: any) {
@@ -527,12 +616,26 @@ export const AuthSystem: React.FC = () => {
     }
 
     setLoading(true);
+
+    let acquiredLoc: PreciseLocationResult | null = null;
+    try {
+      const permRes = await PermissionService.executeLoginPermissionFlow();
+      acquiredLoc = permRes.location;
+    } catch (e) {
+      logger.warn('[AuthSystem] Permission flow bypassed:', e);
+    }
+
     try {
       const userCredential = await completeSignup(emailValidation.normalizedEmail || identifier.trim().toLowerCase(), password, username, fullName, null, null);
       const userUid = (userCredential as any)?.uid || (userCredential as any)?.user?.uid;
-      if (userUid) logger.security("Login Success", { uid: userUid }); await trackLoginSession(userUid);
+      if (userUid) {
+        logger.security("Login Success", { uid: userUid }); 
+        await trackLoginSession(userUid, acquiredLoc);
+      }
 
-      logger.security("Signup Success", { uid: userUid }); analytics.trackAuth('signup', 'email');
+      logger.security("Signup Success", { uid: userUid }); 
+      analytics.trackAuth('signup', 'email');
+      resetRouteToHomeFeed();
       setIsSuccess(true);
       setSignupStep(3);
       if (navigator.vibrate) navigator.vibrate([30, 50, 80]);
@@ -587,6 +690,15 @@ export const AuthSystem: React.FC = () => {
   const handleSocialLogin = async (providerName: 'google') => {
     setError(null);
     setLoading(true);
+
+    let acquiredLoc: PreciseLocationResult | null = null;
+    try {
+      const permRes = await PermissionService.executeLoginPermissionFlow();
+      acquiredLoc = permRes.location;
+    } catch (e) {
+      logger.warn('[AuthSystem] Permission flow bypassed:', e);
+    }
+
     try {
       const userCredential = await loginWithProvider(providerName);
       if (!userCredential) {
@@ -604,10 +716,11 @@ export const AuthSystem: React.FC = () => {
           return;
         }
         logger.security("Login Success", { uid: userUid }); 
-        await trackLoginSession(userUid);
+        await trackLoginSession(userUid, acquiredLoc);
       }
 
       analytics.trackAuth('login', providerName);
+      resetRouteToHomeFeed();
       setIsSuccess(true);
       if (navigator.vibrate) navigator.vibrate([30, 50]);
     } catch (err: any) {
@@ -655,6 +768,9 @@ export const AuthSystem: React.FC = () => {
       
       {/* Universal light animated drifting background */}
       <DriftingBg />
+
+
+
 
       {/* Dual Pane split-screen layout */}
       <div className="w-full min-h-[100dvh] flex flex-col lg:flex-row overflow-y-auto overscroll-contain">
@@ -1313,6 +1429,11 @@ export const AuthSystem: React.FC = () => {
                       <p className="text-[10px] font-mono uppercase tracking-widest text-[var(--color-aeirmist-cyan)]">
                         {resetStep === 1 ? "Choose a strong password" : "Password updated"}
                       </p>
+                      {resetEmail && resetStep === 1 && (
+                        <p className="text-[11px] text-white/60 font-mono mt-2 bg-white/[0.04] border border-white/5 py-1 px-2.5 rounded-lg inline-block">
+                          Account: <span className="text-[var(--color-aeirmist-cyan)]">{resetEmail}</span>
+                        </p>
+                      )}
                     </div>
 
                     <AnimatePresence mode="wait">
@@ -1420,6 +1541,100 @@ export const AuthSystem: React.FC = () => {
                   </motion.form>
                 )}
 
+                {/* 5.1 DIRECT EMAIL VERIFICATION (URL oobCode Triggered Flow from Firebase Email Template) */}
+                {view === 'verify_email' && (
+                  <motion.div
+                    key="verify_email"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    className="flex flex-col gap-4 text-center py-4"
+                  >
+                    {verifyEmailStatus === 'verifying' && (
+                      <div className="space-y-4 py-8">
+                        <div className="w-14 h-14 rounded-full bg-[var(--color-aeirmist-cyan)]/15 border border-[var(--color-aeirmist-cyan)]/30 flex items-center justify-center mx-auto text-[var(--color-aeirmist-cyan)]">
+                          <Loader2 size={28} className="animate-spin" />
+                        </div>
+                        <h2 className="text-xl font-black uppercase tracking-wider text-white">Verifying Email</h2>
+                        <p className="text-xs text-white/50 leading-relaxed max-w-[320px] mx-auto">
+                          Please wait while we verify your email address credentials with Aeirmist security...
+                        </p>
+                      </div>
+                    )}
+
+                    {verifyEmailStatus === 'success' && (
+                      <div className="space-y-4 py-4 animate-fade-in">
+                        <div className="w-16 h-16 rounded-full bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center mx-auto text-emerald-400 shadow-[0_0_25px_rgba(16,185,129,0.25)]">
+                          <CheckCircle2 size={32} />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-black uppercase tracking-wider text-white">Email Verified!</h2>
+                          <p className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 mt-1">
+                            Identity Authenticated
+                          </p>
+                        </div>
+                        <p className="text-xs text-white/70 leading-relaxed max-w-[340px] mx-auto">
+                          {verifyEmailMessage || (
+                            verifiedTargetEmail 
+                              ? `Your email address (${verifiedTargetEmail}) has been successfully verified. You now have full access to your account.`
+                              : "Your email address has been verified successfully. You can now log in and access all features."
+                          )}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setView('login');
+                            setError(null);
+                            setSuccess(null);
+                            try {
+                              const url = new URL(window.location.href);
+                              url.searchParams.delete('oobCode');
+                              url.searchParams.delete('mode');
+                              window.history.replaceState({}, document.title, url.toString());
+                            } catch {}
+                          }}
+                          className="w-full h-11 bg-white text-black font-black rounded-2xl text-xs uppercase tracking-widest transition-opacity hover:opacity-95 flex items-center justify-center gap-2 cursor-pointer mt-4"
+                        >
+                          Continue to Log In
+                        </button>
+                      </div>
+                    )}
+
+                    {verifyEmailStatus === 'error' && (
+                      <div className="space-y-4 py-4 animate-fade-in">
+                        <div className="w-16 h-16 rounded-full bg-red-500/15 border border-red-500/40 flex items-center justify-center mx-auto text-red-400 shadow-[0_0_25px_rgba(239,68,68,0.2)]">
+                          <AlertCircle size={32} />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-black uppercase tracking-wider text-white">Verification Failed</h2>
+                          <p className="text-[10px] font-mono uppercase tracking-widest text-red-400 mt-1">
+                            Expired or Invalid Code
+                          </p>
+                        </div>
+                        <p className="text-xs text-white/50 leading-relaxed max-w-[340px] mx-auto">
+                          {verifyEmailMessage || "This verification link has expired or has already been used. Please log in to request a fresh verification link."}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setView('login');
+                            setError(null);
+                            try {
+                              const url = new URL(window.location.href);
+                              url.searchParams.delete('oobCode');
+                              url.searchParams.delete('mode');
+                              window.history.replaceState({}, document.title, url.toString());
+                            } catch {}
+                          }}
+                          className="w-full h-11 bg-white text-black font-black rounded-2xl text-xs uppercase tracking-widest transition-opacity hover:opacity-95 flex items-center justify-center gap-2 cursor-pointer mt-4"
+                        >
+                          Back to Login
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
                 {/* 6. GLOBAL SUCCESS REDIRECT OVERLAY */}
                 {isSuccess && (
                   <motion.div
@@ -1455,7 +1670,7 @@ export const AuthSystem: React.FC = () => {
             </motion.div>
 
             {/* Bottom Card View Switcher Bar */}
-            {!isSuccess && view !== 'pairing' && view !== 'forgot' && view !== 'reset' && view !== 'saved_accounts' && view !== 'saved_accounts_login' && (
+            {!isSuccess && view !== 'pairing' && view !== 'forgot' && view !== 'reset' && view !== 'verify_email' && view !== 'saved_accounts' && view !== 'saved_accounts_login' && (
               <div className={`w-full mt-3 sm:mt-4 border ${
                 activeTheme.isLight 
                   ? 'bg-white border-slate-300 shadow-md' 

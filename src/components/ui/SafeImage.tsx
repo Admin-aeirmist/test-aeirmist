@@ -84,6 +84,8 @@ export const SafeImage: React.FC<SafeImageProps> = ({
       </AnimatePresence>
 
       <img
+        width={props.width || '100%'}
+        height={props.height || '100%'}
         {...props}
         src={currentSrc || undefined}
         alt={alt}
@@ -91,7 +93,7 @@ export const SafeImage: React.FC<SafeImageProps> = ({
         onError={handleError}
         loading="lazy"
         decoding="async"
-        style={{ imageRendering: 'auto' }}
+        style={{ imageRendering: 'auto', aspectRatio: props.style?.aspectRatio || 'auto', ...props.style }}
         className={`transition-opacity duration-300 ease-out ${
           isLoaded ? 'opacity-100' : 'opacity-0'
         } ${className}`}

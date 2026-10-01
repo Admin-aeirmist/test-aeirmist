@@ -1231,7 +1231,7 @@ export const ExploreSystem: React.FC<{
       onTouchEnd={handleTouchEnd}
     >
       {/* ----------------- STICKY HEADER ----------------- */}
-      <header className="sticky top-0 bg-zinc-950/95 backdrop-blur-xl border-b border-white/10 px-4 pt-[calc(0.625rem+env(safe-area-inset-top,0px))] pb-2.5 z-40">
+      <header className="sticky top-0 bg-zinc-950/95 backdrop-blur-xl border-b border-white/10 px-4 pt-[calc(0.625rem+var(--sat,var(--safe-area-inset-top,0px)))] pb-2.5 z-40">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
           {/* Left: Branding */}
           <div className="flex items-center justify-between">
@@ -3840,7 +3840,7 @@ export const ExploreSystem: React.FC<{
       <nav 
         role="tablist"
         aria-label="Marketplace Navigation"
-        className="md:hidden fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] left-1/2 -translate-x-1/2 w-[92%] max-w-sm bg-zinc-950/95 backdrop-blur-xl border border-white/10 rounded-2xl px-2 py-1.5 flex items-center justify-between shadow-2xl z-40 select-none"
+        className="md:hidden fixed bottom-[calc(5.25rem+var(--sab,var(--safe-area-inset-bottom,0px)))] left-1/2 -translate-x-1/2 w-[92%] max-w-sm bg-zinc-950/95 backdrop-blur-xl border border-white/10 rounded-2xl px-2 py-1.5 flex items-center justify-between shadow-2xl z-40 select-none"
       >
         {[
           { id: 'foryou', label: 'For You', icon: <Sparkles size={14} /> },

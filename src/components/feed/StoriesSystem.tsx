@@ -2627,7 +2627,7 @@ export const StoryViewer = ({
                     disabled={!qBoxInput.trim()}
                     className="w-full py-5 rounded-2xl bg-white text-black font-black uppercase tracking-[0.2em] text-[11px] shadow-xl active:scale-95 transition-all disabled:opacity-50"
                   >
-                    Transmit Message
+                    Send Message
                   </button>
                   <p className="text-[9px] font-black uppercase tracking-widest text-white/20 text-center">
                     {activeQBoxSticker?.questionBoxData?.showAttribution 

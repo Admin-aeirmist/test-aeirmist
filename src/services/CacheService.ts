@@ -113,11 +113,35 @@ class CacheService {
 
   // --- Messages ---
   async saveMessage(message: any) {
+    if (!message || !message.id) return;
     const db = await this.db;
     return db.put('messages', {
       ...message,
+      conversationId: message.conversationId || message.chatId,
       timestamp: message.timestamp?.toMillis ? message.timestamp.toMillis() : (message.timestamp || Date.now())
     });
+  }
+
+  async saveMessages(conversationId: string, messages: any[]) {
+    if (!conversationId || !messages || messages.length === 0) return;
+    try {
+      const db = await this.db;
+      const tx = db.transaction('messages', 'readwrite');
+      for (const m of messages) {
+        if (!m || !m.id) continue;
+        const ts = typeof m.timestampMs === 'number' && m.timestampMs > 0 
+          ? m.timestampMs 
+          : (m.timestamp?.toMillis ? m.timestamp.toMillis() : (m.timestamp || Date.now()));
+        tx.store.put({
+          ...m,
+          conversationId,
+          timestamp: ts
+        });
+      }
+      await tx.done;
+    } catch (e) {
+      // ignore cache failure
+    }
   }
 
   async getMessages(conversationId: string) {

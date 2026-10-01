@@ -29,7 +29,6 @@ import type { Notification } from '../../types/notifications';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
-import { requestAllCorePermissions } from '../../utils/nativeSettings';
 
 import { 
   collection, 
@@ -57,6 +56,7 @@ interface NotificationCenterProps {
   onSettingsClick?: () => void;
   onNavigate?: (tab: 'feed' | 'discover' | 'messenger' | 'profile' | 'settings' | 'videos' | 'dashboard') => void;
   onUserClick?: (user: any) => void;
+  onPostClick?: (postId: string) => void;
 }
 
 // Map database notification types into correct visual categories
@@ -102,21 +102,33 @@ const getCategoryForType = (type: string): 'social' | 'messages' | 'marketplace'
   return 'social';
 };
 
+// Module-level in-memory cache for 0ms instant loading
+let memoryNotificationCache: any[] = [];
+try {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('aeirmist_cached_notifications');
+    if (saved) memoryNotificationCache = JSON.parse(saved);
+  }
+} catch (e) {}
+
 export const NotificationCenter: React.FC<NotificationCenterProps> = ({ 
   onClose, 
   onDashboardClick, 
   onSettingsClick,
   onNavigate,
-  onUserClick
+  onUserClick,
+  onPostClick
 }) => {
   const centerRef = useRef<HTMLDivElement>(null);
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>(() => memoryNotificationCache);
+  const [isLoading, setIsLoading] = useState<boolean>(() => memoryNotificationCache.length === 0);
   const { db, user, profile, canWrite, acceptFollowRequest, rejectFollowRequest, toggleFollow, isFollowing, addToast } = useAeirmist();
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
   
   const [searchQuery, setSearchQuery] = useState('');
   const [mutedUsernames, setMutedUsernames] = useState<string[]>([]);
-  const [showRequestsOnly, setShowRequestsOnly] = useState(false);
+  const [filterTab, setFilterTab] = useState<'all' | 'requests' | 'following' | 'comments' | 'follows' | 'system'>('all');
+  const [showAllRequests, setShowAllRequests] = useState(false);
 
   useEffect(() => {
     if (!db || !profile?.id) return;
@@ -158,11 +170,14 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
     try {
       if (action === 'accept_follow') {
-        const requestId = notif.metadata?.requestId;
-        const fromId = notif.fromUserId;
-        if (requestId && fromId) {
-          await acceptFollowRequest(requestId, fromId);
+        const fromId = notif.fromUserId || notif.fromUserUid || notif.metadata?.senderId || notif.metadata?.fromUserId || notif.user?.id;
+        const requestId = notif.metadata?.requestId || notif.requestId || notif.id;
+        if (fromId) {
+          if (acceptFollowRequest) {
+            await acceptFollowRequest(requestId, fromId);
+          }
           await markRead(notifId);
+          setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, type: 'follow_accept', read: true, isRead: true } : n));
           const notifUser = (notif.user?.username && notif.user.username !== 'user' && notif.user.username !== 'null') ? notif.user.username : (notif.user?.name || notif.user?.displayName || 'member');
           addToast?.({
             title: "Request Confirmed",
@@ -171,17 +186,28 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           });
         }
       } else if (action === 'reject_follow') {
-        const requestId = notif.metadata?.requestId;
-        if (requestId) {
+        const requestId = notif.metadata?.requestId || notif.requestId || notif.id;
+        if (rejectFollowRequest) {
           await rejectFollowRequest(requestId);
-          await markRead(notifId);
-          const notifUser = (notif.user?.username && notif.user.username !== 'user' && notif.user.username !== 'null') ? notif.user.username : (notif.user?.name || notif.user?.displayName || 'member');
-          addToast?.({
-            title: "Request Removed",
-            message: `You declined the follow request from @${notifUser}.`,
-            type: "info"
-          });
         }
+        await markRead(notifId);
+        setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, type: 'follow_rejected', read: true, isRead: true } : n));
+        const notifUser = (notif.user?.username && notif.user.username !== 'user' && notif.user.username !== 'null') ? notif.user.username : (notif.user?.name || notif.user?.displayName || 'member');
+        addToast?.({
+          title: "Request Removed",
+          message: `You declined the follow request from @${notifUser}.`,
+          type: "info"
+        });
+      } else if (action === 'accept_message') {
+        await markRead(notifId);
+        setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, read: true, isRead: true } : n));
+        if (onNavigate) {
+          onNavigate('messenger');
+          onClose();
+        }
+      } else if (action === 'reject_message') {
+        await markRead(notifId);
+        setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, read: true, isRead: true } : n));
       }
     } catch (e) {
       logger.error("Action execution failed", e);
@@ -205,61 +231,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     const targetUserIds = Array.from(new Set([profile?.id, user.uid].filter(Boolean)));
     if (targetUserIds.length === 0) return;
 
-    const processDocs = async (docsList: any[]) => {
-      // 1. Gather all sender IDs from non-system notifications
-      const pendingSenderIds = new Set<string>();
-
-      docsList.forEach(docSnap => {
-        const d = docSnap.data();
-        const type = String(d.type || '').toLowerCase();
-        const isSystem = ['verification', 'system', 'system_verification', 'security'].some(t => type.includes(t)) ||
-                         d.fromUserId === 'aeirmist_system' ||
-                         d.user?.username === 'aeirmist' ||
-                         d.user?.username === 'security';
-        if (!isSystem) {
-          const senderId = d.fromUserId || d.fromUserUid || d.metadata?.senderId;
-          if (senderId && !senderStatusCache.current.has(senderId)) {
-            pendingSenderIds.add(senderId);
-          }
-        }
-      });
-
-      // 2. Resolve unknown sender statuses from Firestore
-      if (pendingSenderIds.size > 0 && db) {
-        await Promise.all(
-          Array.from(pendingSenderIds).map(async (sId) => {
-            try {
-              const pSnap = await getDoc(doc(db, 'profiles', sId));
-              if (pSnap.exists()) {
-                const pData = pSnap.data();
-                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
-                senderStatusCache.current.set(sId, { exists: true, isBanned });
-                return;
-              }
-              const pAltSnap = await getDoc(doc(db, 'profiles', `profile_${sId}`));
-              if (pAltSnap.exists()) {
-                const pData = pAltSnap.data();
-                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
-                senderStatusCache.current.set(sId, { exists: true, isBanned });
-                return;
-              }
-              const uSnap = await getDoc(doc(db, 'users', sId));
-              if (uSnap.exists()) {
-                const uData = uSnap.data();
-                const isBanned = Boolean(uData.isBanned || uData.status === 'BANNED' || uData.status === 'DELETED');
-                senderStatusCache.current.set(sId, { exists: true, isBanned });
-                return;
-              }
-              // Hard deleted from database!
-              senderStatusCache.current.set(sId, { exists: false, isBanned: true });
-            } catch (e) {
-              senderStatusCache.current.set(sId, { exists: true, isBanned: false });
-            }
-          })
-        );
-      }
-
-      // 3. Map and filter notifications
+    const processDocs = (docsList: any[]) => {
+      // 1. Immediately map and render notifications (0 latency!)
       const mapped = docsList
         .map(docSnap => {
           const d = docSnap.data();
@@ -278,18 +251,16 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                            d.user?.username === 'security' ||
                            isSecurityAlert;
 
-          // Check if sender is banned or hard-deleted
+          // Check if sender is banned
           if (!isSystem) {
             const senderId = d.fromUserId || d.fromUserUid || d.metadata?.senderId;
             if (senderId && senderStatusCache.current.has(senderId)) {
               const status = senderStatusCache.current.get(senderId)!;
-              if (!status.exists || status.isBanned) {
-                deleteDoc(doc(db, 'notifications', docSnap.id)).catch(() => {});
+              if (status.isBanned) {
                 return null;
               }
             }
             if (d.user?.isBanned || d.metadata?.isBanned || d.fromUser?.isBanned) {
-              deleteDoc(doc(db, 'notifications', docSnap.id)).catch(() => {});
               return null;
             }
           }
@@ -319,54 +290,82 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         })
         .filter(Boolean) as any[];
 
-      // Sort in-memory to guarantee correct descending timeline even if index is not ready
+      // Sort in-memory to guarantee correct descending timeline instantly
       mapped.sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0));
 
       if (!isCancelled) {
         setNotifications(mapped);
+        setIsLoading(false);
+        memoryNotificationCache = mapped.slice(0, 50);
+        try {
+          localStorage.setItem('aeirmist_cached_notifications', JSON.stringify(memoryNotificationCache));
+        } catch (e) {}
+      }
+
+      // 2. Resolve unknown sender statuses asynchronously in background without blocking
+      const pendingSenderIds = new Set<string>();
+      docsList.forEach(docSnap => {
+        const d = docSnap.data();
+        const senderId = d.fromUserId || d.fromUserUid || d.metadata?.senderId;
+        if (senderId && !senderStatusCache.current.has(senderId)) {
+          pendingSenderIds.add(senderId);
+        }
+      });
+
+      if (pendingSenderIds.size > 0 && db) {
+        Promise.all(
+          Array.from(pendingSenderIds).map(async (sId) => {
+            try {
+              const pSnap = await getDoc(doc(db, 'profiles', sId));
+              if (pSnap.exists()) {
+                const pData = pSnap.data();
+                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
+                senderStatusCache.current.set(sId, { exists: true, isBanned });
+                return;
+              }
+              const pAltSnap = await getDoc(doc(db, 'profiles', `profile_${sId}`));
+              if (pAltSnap.exists()) {
+                const pData = pAltSnap.data();
+                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
+                senderStatusCache.current.set(sId, { exists: true, isBanned });
+                return;
+              }
+              senderStatusCache.current.set(sId, { exists: true, isBanned: false });
+            } catch (e) {
+              senderStatusCache.current.set(sId, { exists: true, isBanned: false });
+            }
+          })
+        ).then(() => {
+          if (!isCancelled) {
+            setNotifications(prev => prev.filter(n => {
+              const sId = n.fromUserId || n.fromUserUid || n.metadata?.senderId;
+              if (sId && senderStatusCache.current.get(sId)?.isBanned) return false;
+              return true;
+            }));
+          }
+        });
       }
     };
 
-    const qPrimary = query(
+    // Query notifications directly without requiring a composite index
+    const qNotifications = query(
       collection(db, 'notifications'),
       where('userId', 'in', targetUserIds),
-      orderBy('createdAt', 'desc'),
-      limit(50)
+      limit(60)
     );
 
-    const primaryUnsub = onSnapshot(qPrimary, (snapshot) => {
+    const unsubscribe = onSnapshot(qNotifications, (snapshot) => {
       processDocs(snapshot.docs);
     }, (error: any) => {
-      logger.warn("Notification center primary index query fallback triggered:", error);
-      if (!isCancelled) {
-        const qFallback = query(
-          collection(db, 'notifications'),
-          where('userId', 'in', targetUserIds),
-          limit(50)
-        );
-        fallbackUnsub = onSnapshot(qFallback, (fallbackSnap) => {
-          processDocs(fallbackSnap.docs);
-        }, (fallbackErr) => {
-          logger.warn("Notification center fallback sync failed:", fallbackErr);
-        });
-      }
+      logger.warn("Notification center query failed:", error);
+      setIsLoading(false);
     });
 
     return () => {
       isCancelled = true;
-      primaryUnsub();
-      if (fallbackUnsub) fallbackUnsub();
+      unsubscribe();
     };
   }, [db, user?.uid, profile?.id]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const requested = sessionStorage.getItem('aeirmist_batch_permissions_prompted');
-    if (!requested) {
-      sessionStorage.setItem('aeirmist_batch_permissions_prompted', 'true');
-      requestAllCorePermissions(addToast).catch(e => logger.warn("Error in unified permissions request:", e));
-    }
-  }, [addToast]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -422,10 +421,74 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const pendingRequests = notifications.filter(n => {
     const t = String(n.type || '').toLowerCase();
-    return t === 'follow_request' || t === 'message_request' || t === 'follow_pending';
+    const isUnread = !n.read && !n.isRead;
+    return (t === 'follow_request' || t === 'message_request' || t === 'follow_pending') && isUnread;
   });
 
-  const displayNotifications = showRequestsOnly ? pendingRequests : serialNotifications;
+  const groupNotificationsByDate = (list: any[]) => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+    const startOfThisWeek = startOfToday - 6 * 86400000;
+    const startOfThisMonth = startOfToday - 29 * 86400000;
+
+    const groups: { key: string; title: string; items: any[] }[] = [
+      { key: 'today', title: 'Today', items: [] },
+      { key: 'yesterday', title: 'Yesterday', items: [] },
+      { key: 'this_week', title: 'This week', items: [] },
+      { key: 'this_month', title: 'This month', items: [] },
+      { key: 'earlier', title: 'Earlier', items: [] },
+    ];
+
+    list.forEach(item => {
+      const t = item.timestampMs || (item.createdAt?.toMillis ? item.createdAt.toMillis() : (item.createdAt ? new Date(item.createdAt).getTime() : Date.now()));
+      if (t >= startOfToday) {
+        groups[0].items.push(item);
+      } else if (t >= startOfYesterday) {
+        groups[1].items.push(item);
+      } else if (t >= startOfThisWeek) {
+        groups[2].items.push(item);
+      } else if (t >= startOfThisMonth) {
+        groups[3].items.push(item);
+      } else {
+        groups[4].items.push(item);
+      }
+    });
+
+    return groups.filter(g => g.items.length > 0);
+  };
+
+  const getFilteredNotifications = () => {
+    if (filterTab === 'requests') {
+      return pendingRequests;
+    }
+
+    return serialNotifications.filter(n => {
+      const t = String(n.type || '').toLowerCase();
+      const isSys = ['verification', 'system', 'system_verification', 'security', 'restriction', 'warning', 'policy', 'plus', 'benefit'].some(k => t.includes(k)) ||
+                    n.fromUserId === 'aeirmist_system' ||
+                    n.user?.username === 'aeirmist' ||
+                    n.user?.username === 'security';
+
+      if (filterTab === 'following') {
+        const uid = n.fromUserId || n.user?.id || n.user?.uid;
+        return uid && isFollowing ? isFollowing(uid) : false;
+      }
+      if (filterTab === 'comments') {
+        return t.includes('comment');
+      }
+      if (filterTab === 'follows') {
+        return t.includes('follow');
+      }
+      if (filterTab === 'system') {
+        return isSys;
+      }
+      return true;
+    });
+  };
+
+  const filteredNotifications = getFilteredNotifications();
+  const groupedSections = groupNotificationsByDate(filteredNotifications);
 
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true, isRead: true })));
@@ -491,6 +554,12 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   // View source click
   const handleViewSource = (notif: any) => {
+    const targetPostId = notif.metadata?.postId || notif.postId;
+    if (targetPostId && onPostClick) {
+      onPostClick(targetPostId);
+      onClose();
+      return;
+    }
     if (!onNavigate) return;
     
     const cat = getCategoryForType(notif.type);
@@ -531,7 +600,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         className="fixed inset-y-0 right-0 w-full sm:w-[480px] md:w-[460px] z-[1000] bg-[#121316] border-l border-white/[0.08] shadow-[-20px_0_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden text-[#E4E6EB]"
       >
         {/* Header */}
-        <header className="px-4 py-3.5 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] md:pt-3.5 border-b border-white/[0.08] bg-[#18191C]/90 backdrop-blur-xl relative z-10">
+        <header className="px-4 py-3.5 pt-[calc(0.875rem+var(--sat,var(--safe-area-inset-top,0px)))] md:pt-3.5 border-b border-white/[0.08] bg-[#18191C]/90 backdrop-blur-xl relative z-10">
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <h2 className="text-xl font-bold tracking-tight text-white leading-none">Notifications</h2>
@@ -567,92 +636,222 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           </div>
         </header>
 
-        {/* Notifications Serial Scroll List (Pure Serial Flow with Top Pending Requests Row) */}
-        <div className="flex-1 overflow-y-auto no-scrollbar p-2 sm:p-3 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] md:pb-6 space-y-2 bg-[#121316]">
-          {/* Top Instagram-Style Pending Requests Row / Filter View */}
-          {showRequestsOnly ? (
-            <div className="flex items-center justify-between p-2.5 px-3 rounded-xl bg-[#18191C] border border-white/[0.08] mb-2 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setShowRequestsOnly(false)}
-                className="flex items-center gap-2 text-xs font-semibold text-[#4599FF] hover:text-[#70B4FF] transition-colors cursor-pointer"
-              >
-                <ArrowLeft size={16} />
-                <span>Back to all activity</span>
-              </button>
-              <span className="text-xs text-zinc-400 font-medium">
-                {pendingRequests.length} pending
-              </span>
-            </div>
-          ) : (
-            (isPrivateAccount || pendingRequests.length > 0) && (
-              <div 
-                onClick={() => setShowRequestsOnly(true)}
-                className="p-3 rounded-xl bg-[#18191C]/90 hover:bg-[#202126] border border-white/[0.08] flex items-center justify-between gap-3 cursor-pointer transition-all active:scale-[0.99] group shadow-sm mb-2"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="relative w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600/20 to-cyan-600/20 border border-blue-500/30 flex items-center justify-center text-cyan-400 shrink-0 shadow-sm">
-                    <UserPlus size={20} />
-                    {pendingRequests.length > 0 && (
-                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#1877F2] text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[#121316]">
-                        {pendingRequests.length > 99 ? '99+' : pendingRequests.length}
-                      </span>
-                    )}
+        {/* Instagram-style Filter Pills (Horizontal Scroll) */}
+        <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 overflow-x-auto no-scrollbar border-b border-white/[0.06] bg-[#141518]/95 shrink-0">
+          {[
+            { id: 'all', label: 'All' },
+            ...(pendingRequests.length > 0 ? [{ id: 'requests', label: `Requests (${pendingRequests.length})` }] : []),
+            { id: 'following', label: 'People you follow' },
+            { id: 'comments', label: 'Comments' },
+            { id: 'follows', label: 'Follows' },
+            { id: 'system', label: 'System' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterTab(tab.id as any)}
+              className={`px-3.5 py-1.5 rounded-full text-xs whitespace-nowrap transition-all cursor-pointer ${
+                filterTab === tab.id
+                  ? 'bg-white text-black shadow-sm font-bold scale-[1.02]'
+                  : 'bg-[#242526] hover:bg-[#323436] text-[#E4E6EB] hover:text-white border border-white/[0.04] font-semibold'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Notifications Scroll List */}
+        <div className="flex-1 overflow-y-auto no-scrollbar p-2 sm:p-3 pb-[calc(2rem+var(--sab,var(--safe-area-inset-bottom,0px)))] md:pb-6 space-y-3 bg-[#121316]">
+          {/* Top Instagram-Style Pending Requests Block (Visible if private account or pending requests exist) */}
+          {(isPrivateAccount || pendingRequests.length > 0) && filterTab !== 'requests' && (
+            <div className="rounded-xl bg-[#18191C] border border-white/[0.08] p-3 shadow-md mb-2">
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/[0.06]">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-full bg-[#1877F2]/20 border border-[#1877F2]/30 flex items-center justify-center text-[#1877F2]">
+                    <UserPlus size={14} />
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-white truncate">Follow requests</span>
-                      {pendingRequests.length > 0 && (
-                        <span className="w-2 h-2 rounded-full bg-[#1877F2]" />
-                      )}
-                    </div>
-                    <p className="text-xs text-[#8A8D91] truncate">Approve or ignore requests</p>
+                  <div>
+                    <span className="text-sm font-bold text-white tracking-tight">Follow Requests</span>
+                    <span className="text-xs text-[#8A8D91] ml-2">
+                      {pendingRequests.length} pending
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-[#8A8D91] group-hover:text-white transition-colors shrink-0">
-                  {pendingRequests.length > 0 && (
-                    <span className="text-xs font-bold text-[#4599FF]">{pendingRequests.length}</span>
-                  )}
-                  <ChevronRight size={18} />
-                </div>
+                {pendingRequests.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllRequests(prev => !prev)}
+                    className="text-xs font-semibold text-[#4599FF] hover:underline"
+                  >
+                    {showAllRequests ? 'Show less' : `See all (${pendingRequests.length})`}
+                  </button>
+                )}
               </div>
-            )
+
+              {pendingRequests.length > 0 ? (
+                <div className="space-y-2">
+                  {(showAllRequests ? pendingRequests : pendingRequests.slice(0, 2)).map(req => {
+                    const reqUser = req.user?.name || req.fromUser?.displayName || req.metadata?.senderName || 'Aeirmist User';
+                    const reqUsername = req.user?.username || (req.fromUser?.displayName ? req.fromUser.displayName.toLowerCase().replace(/\s+/g, '') : (req.metadata?.senderUsername || 'user'));
+                    const reqAvatar = req.user?.avatar || req.fromUser?.photoURL || req.metadata?.senderPhoto || null;
+                    const isMsgReq = req.type === 'message_request';
+
+                    return (
+                      <div 
+                        key={req.id} 
+                        className="flex items-center justify-between gap-3 p-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+                      >
+                        <div 
+                          className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
+                          onClick={() => {
+                            if (onUserClick && (req.fromUserId || req.user?.id)) {
+                              onUserClick({
+                                id: req.fromUserId || req.user?.id,
+                                displayName: reqUser,
+                                photoURL: reqAvatar,
+                                username: reqUsername
+                              });
+                            }
+                          }}
+                        >
+                          <img 
+                            src={reqAvatar || BLANK_DP} 
+                            alt={reqUser} 
+                            className="w-10 h-10 rounded-xl object-cover bg-black/60 ring-1 ring-white/10 shrink-0"
+                            onError={(e) => { (e.target as HTMLImageElement).src = BLANK_DP; }}
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-white truncate flex items-center gap-1">
+                              <span>{reqUser}</span>
+                              {req.user?.isVerified && (
+                                <ShieldCheck size={12} className="text-aeirmist-cyan shrink-0" />
+                              )}
+                            </div>
+                            <div className="text-[11px] text-[#8A8D91] truncate">
+                              @{reqUsername} • {isMsgReq ? 'message request' : 'requested to follow you'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Inline Confirm and Delete buttons */}
+                        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => handleAction(req.id, isMsgReq ? 'accept_message' : 'accept_follow')}
+                            disabled={processingIds.has(req.id)}
+                            className="px-3.5 py-1.5 rounded-lg bg-[#0064E0] hover:bg-[#1877F2] text-white text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm active:scale-95"
+                          >
+                            {processingIds.has(req.id) ? '...' : 'Confirm'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAction(req.id, isMsgReq ? 'reject_message' : 'reject_follow')}
+                            disabled={processingIds.has(req.id)}
+                            className="px-3 py-1.5 rounded-lg bg-[#3A3B3C] hover:bg-[#4E4F50] text-[#E4E6EB] text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer active:scale-95"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-[#8A8D91] py-1 text-center">
+                  No pending requests right now.
+                </p>
+              )}
+            </div>
           )}
 
-          {displayNotifications.length > 0 ? (
-            displayNotifications.map((notif) => (
-              <NotificationItem 
-                key={notif.id} 
-                notification={notif} 
-                onMarkRead={() => markRead(notif.id)} 
-                onDelete={deleteNotification}
-                onHideType={handleHideType}
-                onMuteUser={handleMuteUser}
-                onViewSource={handleViewSource}
-                onAction={handleAction}
-                isProcessing={processingIds.has(notif.id)}
-                onUserClick={onUserClick}
-                isFollowingUser={isFollowing ? isFollowing(notif.fromUserId || notif.user?.id) : false}
-                onFollowToggle={handleFollowToggle}
-              />
-            ))
-          ) : showRequestsOnly ? (
-            <div className="h-64 flex flex-col items-center justify-center text-center py-12 px-6">
-              <div className="w-14 h-14 rounded-xl bg-[#1E1F24] border border-white/10 flex items-center justify-center mb-3 text-cyan-400">
-                <CheckCircle2 size={26} />
-              </div>
-              <p className="text-base font-bold text-white mb-1">No pending requests</p>
-              <p className="text-xs text-[#8A8D91] max-w-xs leading-relaxed mb-4">
-                When people request to follow your private account, they will appear here.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowRequestsOnly(false)}
-                className="px-4 py-2 rounded-lg bg-[#2A2B30] hover:bg-[#3A3B40] text-xs font-semibold text-white transition-colors cursor-pointer"
-              >
-                View all notifications
-              </button>
+          {/* Grouped Chronological Sections */}
+          {isLoading && notifications.length === 0 ? (
+            <div className="space-y-2 p-1 animate-pulse">
+              {[1, 2, 3, 4, 5, 6].map(i => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.04]">
+                  <div className="w-10 h-10 rounded-xl bg-white/10 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3.5 bg-white/10 rounded-md w-3/4" />
+                    <div className="h-2.5 bg-white/5 rounded-md w-1/2" />
+                  </div>
+                </div>
+              ))}
             </div>
+          ) : filterTab === 'requests' ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between p-2 px-3 rounded-xl bg-[#18191C] border border-white/[0.08] mb-2">
+                <button
+                  type="button"
+                  onClick={() => setFilterTab('all')}
+                  className="flex items-center gap-2 text-xs font-semibold text-[#4599FF] hover:text-[#70B4FF] transition-colors cursor-pointer"
+                >
+                  <ArrowLeft size={16} />
+                  <span>Back to all activity</span>
+                </button>
+                <span className="text-xs text-zinc-400 font-medium">
+                  {pendingRequests.length} pending
+                </span>
+              </div>
+              {pendingRequests.length > 0 ? (
+                pendingRequests.map(notif => (
+                  <NotificationItem 
+                    key={notif.id} 
+                    notification={notif} 
+                    onMarkRead={() => markRead(notif.id)} 
+                    onDelete={deleteNotification}
+                    onHideType={handleHideType}
+                    onMuteUser={handleMuteUser}
+                    onViewSource={handleViewSource}
+                    onAction={handleAction}
+                    isProcessing={processingIds.has(notif.id)}
+                    onUserClick={onUserClick}
+                    onPostClick={(pId) => {
+                      onPostClick?.(pId);
+                      onClose();
+                    }}
+                    isFollowingUser={isFollowing ? isFollowing(notif.fromUserId || notif.user?.id) : false}
+                    onFollowToggle={handleFollowToggle}
+                  />
+                ))
+              ) : (
+                <div className="h-64 flex flex-col items-center justify-center text-center py-12 px-6">
+                  <div className="w-14 h-14 rounded-xl bg-[#1E1F24] border border-white/10 flex items-center justify-center mb-3 text-cyan-400">
+                    <CheckCircle2 size={26} />
+                  </div>
+                  <p className="text-base font-bold text-white mb-1">No pending requests</p>
+                  <p className="text-xs text-[#8A8D91] max-w-xs leading-relaxed mb-4">
+                    When people request to follow your private account, they will appear here.
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : groupedSections.length > 0 ? (
+            groupedSections.map((group) => (
+              <div key={group.key} className="space-y-1.5 pt-2 first:pt-0">
+                <h3 className="text-sm font-bold text-white px-2 py-1 tracking-tight select-none">
+                  {group.title}
+                </h3>
+                <div className="space-y-1.5">
+                  {group.items.map((notif) => (
+                    <NotificationItem 
+                      key={notif.id} 
+                      notification={notif} 
+                      onMarkRead={() => markRead(notif.id)} 
+                      onDelete={deleteNotification}
+                      onHideType={handleHideType}
+                      onMuteUser={handleMuteUser}
+                      onViewSource={handleViewSource}
+                      onAction={handleAction}
+                      isProcessing={processingIds.has(notif.id)}
+                      onUserClick={onUserClick}
+                      isFollowingUser={isFollowing ? isFollowing(notif.fromUserId || notif.user?.id) : false}
+                      onFollowToggle={handleFollowToggle}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-center py-24 px-6">
               <div className="w-16 h-16 rounded-full bg-[#1E1F24] border border-white/10 flex items-center justify-center mb-4 text-[#1877F2]">
@@ -660,7 +859,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               </div>
               <p className="text-base font-bold text-white mb-1">No notifications</p>
               <p className="text-xs text-[#8A8D91] max-w-xs leading-relaxed">
-                When you receive likes, comments, or follow requests, they will appear here serially.
+                When you receive likes, comments, or follow requests, they will appear here.
               </p>
             </div>
           )}

@@ -6,6 +6,18 @@ import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, deleteDo
 import { logger } from '@/src/utils/logger';
 
 
+
+const extractMessageText = (val: any): string => {
+  if (!val) return 'No messages yet';
+  if (typeof val === 'string') return val;
+  if (typeof val.text === 'string') return val.text;
+  if (typeof val.latestMessagePreview === 'string') return val.latestMessagePreview;
+  if (val.mediaUrl || val.type === 'media' || val.type === 'image') return 'Sent an attachment';
+  if (val.type === 'voice') return 'Voice note';
+  if (val.type === 'call_history') return 'Call log';
+  return 'New message request';
+};
+
 export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { chats: any[], onBack: () => void, onUserClick?: (user: any) => void, onChatSelect?: (id: string) => void }) => {
   const { db, profile, toggleFollow, addToast } = useAeirmist();
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
@@ -100,7 +112,7 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
 
   return (
     <div className="flex flex-col h-full bg-aeirmist-bg">
-      <div className="p-6 pt-[calc(1rem+env(safe-area-inset-top,0px))] md:pt-6 border-b border-white/10 flex items-center gap-4">
+      <div className="p-6 pt-[calc(1rem+var(--sat,var(--safe-area-inset-top,0px)))] md:pt-6 border-b border-white/10 flex items-center gap-4">
         <button onClick={onBack} className="text-white/60 hover:text-white transition-colors">
           <ChevronLeft size={24} />
         </button>
@@ -146,7 +158,7 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
                   </h3>
                   <span className="text-[10px] text-white/30 uppercase">{req.time}</span>
                 </div>
-                <p className="text-xs text-white/60 line-clamp-2 mt-1 italic">"{req.lastMessage}"</p>
+                <p className="text-xs text-white/60 line-clamp-2 mt-1 italic">"{extractMessageText(req.lastMessage)}"</p>
               </div>
             </div>
 

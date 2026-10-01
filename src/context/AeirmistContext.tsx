@@ -17,6 +17,7 @@ import {
   signInWithEmailAndPassword,
   signInWithCustomToken,
   sendPasswordResetEmail,
+  sendEmailVerification,
   updateProfile as updateAuthProfile,
   setPersistence,
   browserLocalPersistence,
@@ -62,6 +63,7 @@ import { normalizeUsername } from '../utils/usernameUtils';
 import { migrateUsernamesNormalized } from '../utils/migrateUsernames';
 import { consolidateAndSyncUserProfiles } from '../services/accountSyncService';
 import { validateEmailDetailed, isValidEmail } from '../utils/emailValidator';
+import { sendTemplatePasswordResetEmail, sendTemplateEmailVerification } from '../services/authActionService';
 
 /**
  * Deduplicates profiles ensuring only one profile per normalized username / UID
@@ -111,7 +113,7 @@ import { LocationTrackingService } from '../services/LocationTrackingService';
 import { REWARDS, getRankInfo } from '../lib/aeirmistRanks';
 import { analytics } from '../services/AnalyticsService';
 import { followRecommService } from '../services/FollowRecommendationService';
-import { handleNotificationPermissionFlow } from '../utils/nativeSettings';
+import { handleNotificationPermissionFlow, showSystemNotification, NativeSettings } from '../utils/nativeSettings';
 import { logger } from '@/src/utils/logger';
 
 
@@ -1001,14 +1003,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     recoverUploads();
   }, []);
 
-  // Notification permission request removed from mount to prevent startup popups.
-  // Will be requested just-in-time when needed.
+  // Native Android notification permission request on start
   useEffect(() => {
-    // Permission sync logic can stay if non-intrusive, but we remove the request call.
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-       // Just syncing state, not requesting
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+      NativeSettings.requestNotificationPermission().catch(() => {});
     }
-  }, []);
+  }, [user?.uid]);
 
   const { permissions, requestPermission: _requestPermission } = usePermissions();
   const [pendingPermission, setPendingPermission] = useState<any>(null);
@@ -1371,21 +1371,31 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
          // We could add a toast here, but for now let's just log it.
       }
 
-      const resolvedOtherUid = otherProfileData?.ownerUid || otherProfileData?.uid || otherProfileData?.userId || otherParticipantUid || finalOtherProfileId;
+      const resolvedOtherUid = 
+        otherParticipantUid || 
+        otherProfileData?.ownerUid || 
+        otherProfileData?.uid || 
+        otherProfileData?.userId || 
+        (finalOtherProfileId.startsWith('profile_') ? finalOtherProfileId.replace('profile_', '') : null) || 
+        finalOtherProfileId;
 
       const otherProfile = { 
         id: finalOtherProfileId, 
         ...otherProfileData,
-        ownerUid: resolvedOtherUid
+        ownerUid: resolvedOtherUid,
+        uid: resolvedOtherUid
       } as any;
 
-      if (!otherProfile.ownerUid) {
-        throw new Error("Target identity resolution failed. Missing Account identifier.");
-      }
+      const myUid = profile.ownerUid || user?.uid || profile.uid || profile.id;
+      const myCallerProfile = {
+        ...profile,
+        ownerUid: myUid,
+        uid: myUid
+      };
 
       const { callId, stream } = await aeirmistCall.createCall(
         db, 
-        { ...profile, ownerUid: profile.ownerUid || user?.uid }, 
+        myCallerProfile, 
         otherProfile, 
         conversationId,
         type, 
@@ -1393,6 +1403,31 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       );
       
       setCallStream(stream);
+
+      // Immediately establish local activeCall state so caller UI pops up with zero delay
+      setActiveCall({
+        id: callId,
+        callerId: profile.id,
+        receiverId: otherProfile.id,
+        callerUid: myUid,
+        receiverUid: resolvedOtherUid,
+        initiatorId: profile.id,
+        targetId: otherProfile.id,
+        callerName: profile.displayName || profile.username || 'You',
+        callerPhoto: profile.photoURL || '',
+        receiverName: otherProfile.displayName || otherProfile.username || 'Aeirmist User',
+        receiverPhoto: otherProfile.photoURL || '',
+        participants: Array.from(new Set([
+          myUid,
+          profile.id,
+          resolvedOtherUid,
+          otherProfile.id
+        ].filter(Boolean) as string[])),
+        status: 'calling',
+        type,
+        conversationId,
+        createdAt: Date.now()
+      });
 
       if (existingConvRef) {
         await updateDoc(existingConvRef, {
@@ -2754,6 +2789,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const data = doc.data();
         // Skip requests in main count
         if (data.status === 'request') return;
+
+        // Skip private/vaulted chats so they are completely silent and invisible in badge
+        if (data.isVaulted?.[profile.id] === true) return;
         
         // Skip deleted chats
         const deletedAt = data.deletedFor?.[profile.id];
@@ -2821,41 +2859,26 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             const type = String(data.type).toLowerCase();
             const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
 
-            // Dispatch system/device/browser notification if permission granted
-            if (typeof window !== 'undefined' && 'Notification' in window) {
-              const title = data.fromUser?.displayName ? `@${data.fromUser.displayName}` : (isMessage ? 'New Aeirmist Message' : 'Aeirmist Notification');
-              const iconSeed = data.fromUser?.displayName || 'Aeirmist';
-              const avatar = getAvatarUrl(data.fromUser?.photoURL, iconSeed);
-              const notifOptions: any = {
-                body: data.message || '',
-                icon: avatar,
-                badge: avatar,
-                tag: data.metadata?.conversationId || `notif_${change.doc.id}`,
-                data: {
-                  url: window.location.origin
-                }
-              };
+            // Dispatch system/device/browser notification across all platforms (Android & Web)
+            const senderDisplayName = data.user?.name || data.user?.displayName || data.metadata?.senderName || data.fromUser?.displayName;
+            const senderHandle = data.user?.username || data.metadata?.senderUsername;
+            const title = senderDisplayName 
+              ? (senderHandle ? `${senderDisplayName} (@${senderHandle})` : senderDisplayName)
+              : (isMessage ? 'New Aeirmist Message' : 'Aeirmist Notification');
+            const rawSenderAvatar = data.user?.avatar || data.user?.photoURL || data.metadata?.senderPhoto || data.metadata?.photoURL || data.fromUser?.photoURL || data.fromUser?.avatar || '';
+            const avatar = getAvatarUrl(rawSenderAvatar, senderDisplayName || 'Aeirmist');
+            const targetUrl = data.metadata?.postId 
+              ? `/post/${data.metadata.postId}` 
+              : (data.metadata?.conversationId ? `/messenger` : '/');
 
-              if (Notification.permission === 'granted') {
-                if ('serviceWorker' in navigator) {
-                  navigator.serviceWorker.ready.then((reg) => {
-                    reg.showNotification(title, notifOptions);
-                  }).catch(() => {
-                    try {
-                      new Notification(title, notifOptions);
-                    } catch (e) {
-                      logger.warn("Native notification dispatch failed:", e);
-                    }
-                  });
-                } else {
-                  try {
-                    new Notification(title, notifOptions);
-                  } catch (e) {
-                    logger.warn("Direct native notification failed:", e);
-                  }
-                }
-              }
-            }
+            showSystemNotification({
+              title,
+              body: data.message || '',
+              avatarUrl: avatar,
+              targetUrl,
+              type: type,
+              tag: data.metadata?.conversationId || `notif_${change.doc.id}`,
+            }).catch((err) => logger.warn("System notification dispatch failed:", err));
           }
         }
       });
@@ -2899,6 +2922,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (change.type === 'added') {
           const data = change.doc.data();
           if (data.status !== 'request') return;
+          if (data.isVaulted?.[profile.id] === true) return;
           // Only notify if we are NOT the sender
           if (data.lastMessage?.senderId !== profile.id) {
             const senderId = data.lastMessage?.senderId;
@@ -3138,19 +3162,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
            }
         }
 
-        // Show background notification if app is hidden and it's an incoming call
-        if (document.hidden && Notification.permission === 'granted' && callDoc.status === 'calling' && (callDoc.receiverUid === user?.uid || callDoc.receiverId === profile?.id) && !notifiedCalls.current.has(callId)) {
-           notifiedCalls.current.add(callId);
-           const notification = new Notification(`Incoming ${callDoc.type} call`, {
+        // Show background/device notification if app is hidden or native and it's an incoming call
+        if ((document.hidden || (window as any).Capacitor?.isNativePlatform?.()) && callDoc.status === 'calling' && (callDoc.receiverUid === user?.uid || callDoc.receiverId === profile?.id) && !notifiedCalls.current.has(callId)) {
+          notifiedCalls.current.add(callId);
+          showSystemNotification({
+            title: `Incoming ${callDoc.type || 'audio'} call`,
             body: `from ${callDoc.callerName || 'Aeirmist User'}`,
-            icon: callDoc.callerPhoto || '/icon-192x192.png',
+            avatarUrl: callDoc.callerPhoto,
+            targetUrl: `/call/${callId}`,
+            type: 'call',
             tag: callId,
-            requireInteraction: true
-          });
-          notification.onclick = () => {
-            window.focus();
-            notification.close();
-          };
+          }).catch(() => {});
         }
 
         // Only set active call if we are a participant and it's for us
@@ -3897,6 +3919,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         newUser
       );
       
+      // Dispatch Firebase Authentication Email Verification Template
+      try {
+        await sendTemplateEmailVerification(newUser);
+      } catch (verifyErr) {
+        logger.warn("[AuthTemplate] Non-blocking: Could not send verification email on signup:", verifyErr);
+      }
+
       return newUser;
     } catch (error) {
       logger.error("Post-Auth registration failed — deleting orphaned Auth user to maintain atomicity", error);
@@ -3954,7 +3983,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         throw new Error("No account found matching this username or email.");
       }
     }
-    await sendPasswordResetEmail(auth, email);
+
+    await sendTemplatePasswordResetEmail(email);
   };
 
   const logout = async () => {
@@ -3978,6 +4008,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       localStorage.removeItem('aeirmist_active_profile_id');
       localStorage.removeItem('aeirmist_session');
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({ activeTab: 'feed', _appNav: true }, '', '/');
+        window.dispatchEvent(new CustomEvent('aeirmist-reset-to-feed'));
+      }
     } catch (e) {}
   };
 
@@ -6576,7 +6610,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           return snap.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
             .filter((c: any) => {
-              const lastMsg = (c.lastMessage || '').toLowerCase();
+              const lastMsg = (typeof c.lastMessage === 'string' ? c.lastMessage : (c.lastMessage?.text || '')).toLowerCase();
               const otherName = (c.otherParticipantName || '').toLowerCase();
               const term = trimmed.toLowerCase();
               return lastMsg.includes(term) || otherName.includes(term);

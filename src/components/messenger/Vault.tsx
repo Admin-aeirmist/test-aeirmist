@@ -809,7 +809,7 @@ export const Vault: React.FC<VaultProps> = ({
     const q = vaultSearchQuery.toLowerCase().trim();
     return vaultChats.filter(chat => 
       (chat.name || '').toLowerCase().includes(q) ||
-      (chat.lastMessage || '').toLowerCase().includes(q)
+      (typeof chat.lastMessage === 'string' ? chat.lastMessage : (chat.lastMessage?.text || chat.latestMessagePreview || '')).toLowerCase().includes(q)
     );
   }, [vaultChats, vaultSearchQuery]);
 
@@ -831,11 +831,11 @@ export const Vault: React.FC<VaultProps> = ({
     try {
       const convRef = doc(db, 'conversations', chatId);
       await updateDoc(convRef, {
-        [`isVaulted.${profile.id}`]: true
+        [`isVaulted.${profile.id}`]: true,
+        [`isMuted.${profile.id}`]: true
       });
       onSelectChat(chatId);
-      addToast({ title: 'Moved to Vault', message: 'Conversation secured.', type: 'success' });
-    } catch (err: any) { logger.error("Failed to vault conversation:", err); addToast({ title: "Failed", message: "Failed to vault conversation", type: "warning" }); }
+    } catch (err: any) { logger.error("Failed to vault conversation:", err); }
   };
 
   const handleRestoreChat = async (chatId: string) => {
@@ -871,6 +871,7 @@ export const Vault: React.FC<VaultProps> = ({
         profileIds,
         status: 'active',
         [`isVaulted.${profile.id}`]: true,
+        [`isMuted.${profile.id}`]: true,
         lastMessage: {
           text: "Secure metadata established.",
           senderId: profile.id,
@@ -899,7 +900,8 @@ export const Vault: React.FC<VaultProps> = ({
         await setDoc(convRef, convData);
       } else {
         await updateDoc(convRef, {
-          [`isVaulted.${profile.id}`]: true
+          [`isVaulted.${profile.id}`]: true,
+          [`isMuted.${profile.id}`]: true
         });
       }
 
@@ -2084,20 +2086,6 @@ export const Vault: React.FC<VaultProps> = ({
                   </div>
                 </div>
               </main>
-
-              {/* Floating ADD CHAT trigger button */}
-              {!loading && (
-                <motion.button
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => setView('private_chats')}
-                  className="fixed bottom-10 right-10 w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#7b2cbf] to-[#c77dff] flex items-center justify-center text-white shadow-2xl shadow-[#c77dff]/30 z-30 border border-white/20"
-                >
-                  <MessageSquare size={24} strokeWidth={2} />
-                </motion.button>
-              )}
             </motion.div>
           )}
 
@@ -2142,7 +2130,9 @@ export const Vault: React.FC<VaultProps> = ({
                           <h4 className="text-sm font-bold text-white truncate">{chat.name}</h4>
                           <span className="text-[9px] font-mono text-white/30">{chat.time}</span>
                         </div>
-                        <p className="text-xs text-white/40 truncate font-medium">{chat.lastMessage}</p>
+                        <p className="text-xs text-white/40 truncate font-medium">
+                          {typeof chat.lastMessage === 'string' ? chat.lastMessage : (chat.lastMessage?.text || chat.latestMessagePreview || 'Encrypted conversation')}
+                        </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <button

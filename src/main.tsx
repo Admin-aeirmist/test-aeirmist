@@ -27,8 +27,30 @@ applyDeviceOptimizations();
 // ============================================================
 const isNativeCapacitor = typeof window !== 'undefined' && Boolean(
   (window as any).Capacitor?.isNativePlatform?.() || 
-  navigator?.userAgent?.includes('Capacitor')
+  navigator?.userAgent?.includes('Capacitor') ||
+  /Android.*(wv|Mobile)/i.test(navigator?.userAgent)
 );
+
+if (typeof window !== 'undefined' && isNativeCapacitor) {
+  document.documentElement.classList.add('is-native-app');
+  const curSat = getComputedStyle(document.documentElement).getPropertyValue('--sat');
+  if (!curSat || curSat.trim() === '' || curSat.trim() === '0px') {
+    document.documentElement.style.setProperty('--sat', '38px');
+    document.documentElement.style.setProperty('--sab', '16px');
+  }
+  import('./utils/nativeSettings').then(({ NativeSettings }) => {
+    NativeSettings.getSystemInsets().then(insets => {
+      if (insets && insets.top > 0) {
+        document.documentElement.style.setProperty('--sat', `${insets.top}px`);
+        document.documentElement.style.setProperty('--safe-area-inset-top', `${insets.top}px`);
+      }
+      if (insets && insets.bottom > 0) {
+        document.documentElement.style.setProperty('--sab', `${insets.bottom}px`);
+        document.documentElement.style.setProperty('--safe-area-inset-bottom', `${insets.bottom}px`);
+      }
+    }).catch(() => {});
+  }).catch(() => {});
+}
 
 if ('serviceWorker' in navigator && !isNativeCapacitor) {
   window.addEventListener('load', () => {

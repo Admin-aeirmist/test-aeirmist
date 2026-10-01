@@ -82,10 +82,19 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
   const savedProgress = progressMap[video.id];
   const initialTime = savedProgress?.currentTime || 0;
 
-  // Add video to watch history
+  // Add video to watch history and broadcast author for public preview
   useEffect(() => {
     addToWatchHistory(video.id);
-  }, [video.id]);
+    if (video) {
+      window.dispatchEvent(new CustomEvent('aeirmist-preview-author', {
+        detail: {
+          name: video.creatorName || (video as any).authorName || 'Aeirmist Creator',
+          username: (video as any).creatorUsername || (video as any).username,
+          avatar: video.creatorPhoto || (video as any).authorPhoto
+        }
+      }));
+    }
+  }, [video]);
 
   // Sync likes/saves
   useEffect(() => {
@@ -118,7 +127,11 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   // Like Toggle
   const handleToggleLike = async () => {
-    if (!profile?.id || !db) return;
+    if (!profile?.id || !user) {
+      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      return;
+    }
+    if (!db) return;
     const nextLiked = !isLiked;
     setIsLiked(nextLiked);
     setLikeCount(prev => prev + (nextLiked ? 1 : -1));
@@ -138,7 +151,11 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   // Save Toggle
   const handleToggleSave = async () => {
-    if (!profile?.id || !db) return;
+    if (!profile?.id || !user) {
+      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      return;
+    }
+    if (!db) return;
     const nextSaved = !isSaved;
     setIsSaved(nextSaved);
 
@@ -161,7 +178,11 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   // Follow Toggle
   const handleToggleFollow = async () => {
-    if (!profile?.id || !db) return;
+    if (!profile?.id || !user) {
+      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      return;
+    }
+    if (!db) return;
     const nextFollowing = !isFollowing;
     setIsFollowing(nextFollowing);
 
@@ -184,7 +205,11 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
   // Submit Comment
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commentInput.trim() || !profile || !db) return;
+    if (!profile || !user) {
+      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      return;
+    }
+    if (!commentInput.trim() || !db) return;
     setIsSubmittingComment(true);
 
     try {

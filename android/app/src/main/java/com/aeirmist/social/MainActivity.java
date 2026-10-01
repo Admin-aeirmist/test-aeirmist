@@ -19,19 +19,51 @@ import java.util.ArrayList;
 import java.util.List;
 import android.media.AudioManager;
 import android.media.AudioDeviceInfo;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.ActivityCallback;
+import android.view.WindowManager;
+import android.graphics.Color;
+import java.util.Locale;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.core.view.ViewCompat;
 
 public class MainActivity extends BridgeActivity {
     private static final int NOTIFICATION_PERMISSION_CODE = 1001;
     private static final int ALL_PERMISSIONS_CODE = 1002;
+    private static final int LOCATION_PERMISSION_CODE = 1003;
+    private static PluginCall pendingCallPermissionPluginCall = null;
+    private static PluginCall pendingNotificationPermissionPluginCall = null;
+    private static PluginCall pendingLocationPermissionPluginCall = null;
+    private static android.webkit.GeolocationPermissions.Callback pendingGeolocationCallback = null;
+    private static String pendingGeolocationOrigin = null;
+    private static String pendingCallType = "audio";
+    public static final String NOTIFICATION_CHANNEL_GENERAL = "aeirmist_channel_general";
+    public static final String NOTIFICATION_CHANNEL_MESSAGES = "aeirmist_channel_messages";
 
     @CapacitorPlugin(name = "NativeSettings")
     public static class NativeSettingsPlugin extends Plugin {
+        private AudioFocusRequest audioFocusRequest = null;
+
         @PluginMethod
         public void openNotificationSettings(PluginCall call) {
             try {
@@ -60,16 +92,166 @@ public class MainActivity extends BridgeActivity {
         }
 
         @PluginMethod
+        public void openAppPermissionSettings(PluginCall call) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                intent.setData(Uri.fromParts("package", getContext().getPackageName(), null));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(intent);
+                call.resolve();
+            } catch (Exception ex) {
+                call.reject("Failed to open app settings: " + ex.getMessage());
+            }
+        }
+
+        private static final ExecutorService notifExecutor = Executors.newFixedThreadPool(3);
+
+        @PluginMethod
+        public void checkNotificationPermission(PluginCall call) {
+            boolean granted;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                granted = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+            } else {
+                granted = NotificationManagerCompat.from(getContext()).areNotificationsEnabled();
+            }
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            ret.put("granted", granted);
+            call.resolve(ret);
+        }
+
+        @PluginMethod
         public void requestNotificationPermission(PluginCall call) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        pendingNotificationPermissionPluginCall = call;
                         ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_CODE);
+                        return;
                     }
                 }
-                call.resolve();
+                boolean granted = NotificationManagerCompat.from(getContext()).areNotificationsEnabled();
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("granted", granted);
+                ret.put("alreadyGranted", true);
+                ret.put("requested", false);
+                call.resolve(ret);
             } catch (Exception ex) {
                 call.reject("Permission request error: " + ex.getMessage());
+            }
+        }
+
+        @PluginMethod
+        public void checkLocationPermission(PluginCall call) {
+            boolean fine = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            boolean coarse = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            ret.put("granted", fine || coarse);
+            ret.put("fine", fine);
+            ret.put("coarse", coarse);
+            call.resolve(ret);
+        }
+
+        @PluginMethod
+        public void requestLocationPermission(PluginCall call) {
+            try {
+                boolean fine = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                boolean coarse = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                if (fine || coarse) {
+                    com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                    ret.put("alreadyGranted", true);
+                    ret.put("granted", true);
+                    ret.put("fine", fine);
+                    ret.put("coarse", coarse);
+                    call.resolve(ret);
+                    return;
+                }
+                pendingLocationPermissionPluginCall = call;
+                ActivityCompat.requestPermissions(getActivity(), new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                }, LOCATION_PERMISSION_CODE);
+            } catch (Exception ex) {
+                call.reject("Location permission request error: " + ex.getMessage());
+            }
+        }
+
+        @PluginMethod
+        @SuppressWarnings("MissingPermission")
+        public void showDeviceNotification(PluginCall call) {
+            final String title = call.getString("title", "Aeirmist");
+            final String body = call.getString("body", "");
+            final String avatarUrl = call.getString("avatarUrl", null);
+            final String targetUrl = call.getString("targetUrl", null);
+            final String type = call.getString("type", "general");
+            final int id = call.getInt("id", (int) (System.currentTimeMillis() & 0x0fffffff));
+
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        call.reject("POST_NOTIFICATIONS permission not granted");
+                        return;
+                    }
+                }
+
+                boolean isMsg = "message".equalsIgnoreCase(type) || "chat".equalsIgnoreCase(type) || "call".equalsIgnoreCase(type) || (type != null && type.contains("msg"));
+                String channelId = isMsg ? MainActivity.NOTIFICATION_CHANNEL_MESSAGES : MainActivity.NOTIFICATION_CHANNEL_GENERAL;
+
+                Intent intent = new Intent(getContext(), MainActivity.class);
+                intent.setAction(Intent.ACTION_VIEW);
+                intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                if (targetUrl != null && !targetUrl.isEmpty()) {
+                    intent.putExtra("targetUrl", targetUrl);
+                }
+
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                PendingIntent pendingIntent = PendingIntent.getActivity(getContext(), id, intent, flags);
+
+                final NotificationCompat.Builder builder = new NotificationCompat.Builder(getContext(), channelId)
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setContentTitle(title)
+                    .setContentText(body)
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(isMsg ? NotificationCompat.CATEGORY_MESSAGE : NotificationCompat.CATEGORY_SOCIAL)
+                    .setAutoCancel(true)
+                    .setContentIntent(pendingIntent)
+                    .setDefaults(NotificationCompat.DEFAULT_ALL);
+
+                if (avatarUrl != null && !avatarUrl.isEmpty() && (avatarUrl.startsWith("http://") || avatarUrl.startsWith("https://"))) {
+                    notifExecutor.execute(() -> {
+                        try {
+                            URL url = new URL(avatarUrl);
+                            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                            connection.setConnectTimeout(2500);
+                            connection.setReadTimeout(2500);
+                            connection.setDoInput(true);
+                            connection.connect();
+                            InputStream input = connection.getInputStream();
+                            Bitmap myBitmap = BitmapFactory.decodeStream(input);
+                            if (myBitmap != null) {
+                                builder.setLargeIcon(myBitmap);
+                            }
+                        } catch (Exception ignored) {
+                        } finally {
+                            try {
+                                NotificationManagerCompat.from(getContext()).notify(id, builder.build());
+                            } catch (SecurityException ignored) {
+                            } catch (Exception ignored) {}
+                        }
+                    });
+                } else {
+                    NotificationManagerCompat.from(getContext()).notify(id, builder.build());
+                }
+
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("success", true);
+                ret.put("id", id);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Failed to display device notification: " + e.getMessage());
             }
         }
 
@@ -94,6 +276,34 @@ public class MainActivity extends BridgeActivity {
         }
 
         @PluginMethod
+        public void getSystemInsets(PluginCall call) {
+            try {
+                int topDp = 38;
+                int bottomDp = 16;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && getActivity() != null) {
+                    WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(getActivity().getWindow().getDecorView());
+                    if (insets != null) {
+                        float density = getContext().getResources().getDisplayMetrics().density;
+                        androidx.core.graphics.Insets status = insets.getInsets(
+                            WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
+                        );
+                        androidx.core.graphics.Insets nav = insets.getInsets(
+                            WindowInsetsCompat.Type.navigationBars()
+                        );
+                        if (status.top > 0) topDp = Math.max(Math.round(status.top / density), 28);
+                        if (nav.bottom > 0) bottomDp = Math.round(nav.bottom / density);
+                    }
+                }
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("top", topDp);
+                ret.put("bottom", bottomDp);
+                call.resolve(ret);
+            } catch (Exception ex) {
+                call.reject("Failed to get system insets: " + ex.getMessage());
+            }
+        }
+
+        @PluginMethod
         public void requestCallPermissions(PluginCall call) {
             try {
                 String type = call.getString("type", "audio");
@@ -112,79 +322,24 @@ public class MainActivity extends BridgeActivity {
                 }
 
                 if (!needed.isEmpty()) {
+                    pendingCallPermissionPluginCall = call;
+                    pendingCallType = type;
                     ActivityCompat.requestPermissions(getActivity(), needed.toArray(new String[0]), ALL_PERMISSIONS_CODE);
+                } else {
+                    com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                    ret.put("alreadyGranted", true);
+                    ret.put("granted", true);
+                    ret.put("microphone", true);
+                    ret.put("camera", true);
+                    ret.put("type", type);
+                    ret.put("success", true);
+                    call.resolve(ret);
                 }
-
-                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
-                ret.put("alreadyGranted", needed.isEmpty());
-                ret.put("requestedCount", needed.size());
-                ret.put("type", type);
-                ret.put("success", true);
-                call.resolve(ret);
             } catch (Exception ex) {
                 call.reject("Call permission request error: " + ex.getMessage());
             }
         }
 
-        @PluginMethod
-        public void requestAllPermissions(PluginCall call) {
-            try {
-                List<String> neededPermissions = new ArrayList<>();
-
-                // Camera
-                if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                    neededPermissions.add(Manifest.permission.CAMERA);
-                }
-
-                // Microphone
-                if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                    neededPermissions.add(Manifest.permission.RECORD_AUDIO);
-                }
-
-                // Location
-                if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                    neededPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
-                }
-                if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                    neededPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-                }
-
-                // Storage & Media
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-                        neededPermissions.add(Manifest.permission.READ_MEDIA_IMAGES);
-                    }
-                    if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED) {
-                        neededPermissions.add(Manifest.permission.READ_MEDIA_VIDEO);
-                    }
-                    // Notifications on Android 13+
-                    if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                        neededPermissions.add(Manifest.permission.POST_NOTIFICATIONS);
-                    }
-                } else {
-                    if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                        neededPermissions.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-                    }
-                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-                        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                            neededPermissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-                        }
-                    }
-                }
-
-                if (!neededPermissions.isEmpty()) {
-                    String[] permArray = neededPermissions.toArray(new String[0]);
-                    ActivityCompat.requestPermissions(getActivity(), permArray, ALL_PERMISSIONS_CODE);
-                }
-
-                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
-                ret.put("requestedCount", neededPermissions.size());
-                ret.put("success", true);
-                call.resolve(ret);
-            } catch (Exception ex) {
-                call.reject("All permissions request error: " + ex.getMessage());
-            }
-        }
 
         @PluginMethod
         public void saveMediaToDevice(PluginCall call) {
@@ -345,27 +500,69 @@ public class MainActivity extends BridgeActivity {
                 if (am != null) {
                     if ("communication".equals(mode)) {
                         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                if (audioFocusRequest == null) {
+                                    AudioAttributes playbackAttributes = new AudioAttributes.Builder()
+                                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                        .build();
+                                    audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                                        .setAudioAttributes(playbackAttributes)
+                                        .setAcceptsDelayedFocusGain(true)
+                                        .setOnAudioFocusChangeListener(focusChange -> {})
+                                        .build();
+                                }
+                                am.requestAudioFocus(audioFocusRequest);
+                            } else {
+                                am.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+                            }
+                        } catch (Exception ignored) {}
+
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
                             AudioDeviceInfo targetDevice = null;
-                            for (AudioDeviceInfo d : devices) {
-                                if (speaker && d.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
-                                    targetDevice = d;
-                                    break;
-                                } else if (!speaker && (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE || d.getType() == AudioDeviceInfo.TYPE_WIRED_HEADSET || d.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO)) {
-                                    targetDevice = d;
-                                    break;
+                            if (speaker) {
+                                for (AudioDeviceInfo d : devices) {
+                                    if (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                                        targetDevice = d;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                for (AudioDeviceInfo d : devices) {
+                                    int type = d.getType();
+                                    if (type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE ||
+                                        type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                                        type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                                        type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                                        type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
+                                        targetDevice = d;
+                                        break;
+                                    }
                                 }
                             }
                             if (targetDevice != null) {
                                 am.setCommunicationDevice(targetDevice);
                             } else {
-                                am.setSpeakerphoneOn(speaker);
+                                am.clearCommunicationDevice();
                             }
+                            am.setSpeakerphoneOn(speaker);
                         } else {
                             am.setSpeakerphoneOn(speaker);
                         }
                     } else {
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                if (audioFocusRequest != null) {
+                                    am.abandonAudioFocusRequest(audioFocusRequest);
+                                    audioFocusRequest = null;
+                                }
+                            } else {
+                                am.abandonAudioFocus(null);
+                            }
+                        } catch (Exception ignored) {}
+
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             am.clearCommunicationDevice();
                         }
@@ -373,7 +570,11 @@ public class MainActivity extends BridgeActivity {
                         am.setMode(AudioManager.MODE_NORMAL);
                     }
                 }
-                call.resolve();
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("success", true);
+                ret.put("speaker", speaker);
+                ret.put("mode", mode);
+                call.resolve(ret);
             } catch (Exception e) {
                 call.reject("Failed to set audio mode: " + e.getMessage());
             }
@@ -382,10 +583,119 @@ public class MainActivity extends BridgeActivity {
 
     private android.webkit.PermissionRequest pendingPermissionRequest = null;
 
+    private void createNotificationChannels() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (notificationManager != null) {
+                NotificationChannel channelGeneral = new NotificationChannel(
+                    NOTIFICATION_CHANNEL_GENERAL,
+                    "Aeirmist Notifications",
+                    NotificationManager.IMPORTANCE_HIGH
+                );
+                channelGeneral.setDescription("Real-time notifications for likes, comments, mentions, and updates");
+                channelGeneral.enableLights(true);
+                channelGeneral.setLightColor(0xFF00F2FE);
+                channelGeneral.enableVibration(true);
+                channelGeneral.setVibrationPattern(new long[]{0, 200, 100, 200});
+                channelGeneral.setShowBadge(true);
+
+                NotificationChannel channelMessages = new NotificationChannel(
+                    NOTIFICATION_CHANNEL_MESSAGES,
+                    "Aeirmist Messages",
+                    NotificationManager.IMPORTANCE_HIGH
+                );
+                channelMessages.setDescription("Direct messages, chats and call alerts");
+                channelMessages.enableLights(true);
+                channelMessages.setLightColor(0xFF4FACFE);
+                channelMessages.enableVibration(true);
+                channelMessages.setVibrationPattern(new long[]{0, 250, 150, 250});
+                channelMessages.setShowBadge(true);
+
+                notificationManager.createNotificationChannel(channelGeneral);
+                notificationManager.createNotificationChannel(channelMessages);
+            }
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null) return;
+        String targetUrl = intent.getStringExtra("targetUrl");
+        if (targetUrl != null && !targetUrl.isEmpty()) {
+            runOnUiThread(() -> {
+                try {
+                    if (this.bridge != null && this.bridge.getWebView() != null) {
+                        String js = "window.dispatchEvent(new CustomEvent('aeirmist_notification_click', { detail: { url: '" + targetUrl.replace("'", "\\'") + "' } }));";
+                        this.bridge.getWebView().evaluateJavascript(js, null);
+                    }
+                } catch (Exception ignored) {}
+            });
+        }
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeSettingsPlugin.class);
         super.onCreate(savedInstanceState);
+        createNotificationChannels();
+
+        // Configure camera cutout and edge-to-edge insets
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                WindowManager.LayoutParams lp = getWindow().getAttributes();
+                lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                getWindow().setAttributes(lp);
+            }
+
+            WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+            getWindow().setStatusBarColor(Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(Color.TRANSPARENT);
+
+            WindowInsetsControllerCompat insetsController = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+            if (insetsController != null) {
+                insetsController.setAppearanceLightStatusBars(false);
+                insetsController.setAppearanceLightNavigationBars(false);
+            }
+
+            ViewCompat.setOnApplyWindowInsetsListener(getWindow().getDecorView(), (v, windowInsets) -> {
+                androidx.core.graphics.Insets statusBarInsets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
+                );
+                androidx.core.graphics.Insets navInsets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.navigationBars()
+                );
+                float density = getResources().getDisplayMetrics().density;
+                int topDp = Math.max(Math.round(statusBarInsets.top / density), 38);
+                int bottomDp = Math.max(Math.round(navInsets.bottom / density), 16);
+
+                runOnUiThread(() -> {
+                    try {
+                        if (this.bridge != null && this.bridge.getWebView() != null) {
+                            String js = String.format(Locale.US,
+                                "(function(){" +
+                                "document.documentElement.style.setProperty('--sat', '%dpx');" +
+                                "document.documentElement.style.setProperty('--sab', '%dpx');" +
+                                "document.documentElement.style.setProperty('--safe-area-inset-top', '%dpx');" +
+                                "document.documentElement.style.setProperty('--safe-area-inset-bottom', '%dpx');" +
+                                "document.documentElement.classList.add('is-native-app');" +
+                                "})();",
+                                topDp, bottomDp, topDp, bottomDp);
+                            this.bridge.getWebView().evaluateJavascript(js, null);
+                        }
+                    } catch (Exception ignored) {}
+                });
+                return windowInsets;
+            });
+        } catch (Exception ignored) {}
+
+        // Cold start notification intent check
+        handleNotificationIntent(getIntent());
 
         try {
             if (this.bridge != null && this.bridge.getWebView() != null) {
@@ -408,6 +718,30 @@ public class MainActivity extends BridgeActivity {
 
                 final android.webkit.WebChromeClient defaultChromeClient = webView.getWebChromeClient();
                 webView.setWebChromeClient(new android.webkit.WebChromeClient() {
+                    @Override
+                    public void onGeolocationPermissionsShowPrompt(final String origin, final android.webkit.GeolocationPermissions.Callback callback) {
+                        runOnUiThread(() -> {
+                            boolean hasLocation = ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                                                  ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                            if (hasLocation) {
+                                callback.invoke(origin, true, false);
+                            } else {
+                                pendingGeolocationCallback = callback;
+                                pendingGeolocationOrigin = origin;
+                                ActivityCompat.requestPermissions(MainActivity.this, new String[]{
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                }, LOCATION_PERMISSION_CODE);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onGeolocationPermissionsHidePrompt() {
+                        pendingGeolocationCallback = null;
+                        pendingGeolocationOrigin = null;
+                    }
+
                     @Override
                     public void onPermissionRequest(final android.webkit.PermissionRequest request) {
                         runOnUiThread(() -> {
@@ -457,42 +791,165 @@ public class MainActivity extends BridgeActivity {
                         return super.onConsoleMessage(consoleMessage);
                     }
                 });
+
+                webView.post(() -> injectSystemInsets());
+                webView.postDelayed(() -> injectSystemInsets(), 400);
+                webView.postDelayed(() -> injectSystemInsets(), 1200);
             }
         } catch (Exception ignored) {
         }
+        handleNotificationIntent(getIntent());
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        injectSystemInsets();
+    }
+
+    private void injectSystemInsets() {
+        try {
+            if (this.bridge != null && this.bridge.getWebView() != null) {
+                WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(getWindow().getDecorView());
+                int topDp = 38;
+                int bottomDp = 16;
+                if (insets != null) {
+                    float density = getResources().getDisplayMetrics().density;
+                    androidx.core.graphics.Insets status = insets.getInsets(
+                        WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
+                    );
+                    androidx.core.graphics.Insets nav = insets.getInsets(
+                        WindowInsetsCompat.Type.navigationBars()
+                    );
+                    if (status.top > 0) topDp = Math.max(Math.round(status.top / density), 28);
+                    if (nav.bottom > 0) bottomDp = Math.max(Math.round(nav.bottom / density), 16);
+                }
+                String js = String.format(Locale.US,
+                    "(function(){" +
+                    "document.documentElement.style.setProperty('--sat', '%dpx');" +
+                    "document.documentElement.style.setProperty('--sab', '%dpx');" +
+                    "document.documentElement.style.setProperty('--safe-area-inset-top', '%dpx');" +
+                    "document.documentElement.style.setProperty('--safe-area-inset-bottom', '%dpx');" +
+                    "document.documentElement.classList.add('is-native-app');" +
+                    "window.dispatchEvent(new CustomEvent('aeirmist_insets_changed', { detail: { top: %d, bottom: %d } }));" +
+                    "})();",
+                    topDp, bottomDp, topDp, bottomDp, topDp, bottomDp);
+                this.bridge.getWebView().evaluateJavascript(js, null);
+            }
+        } catch (Exception ignored) {}
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == ALL_PERMISSIONS_CODE && pendingPermissionRequest != null) {
-            runOnUiThread(() -> {
-                try {
-                    List<String> grantedResources = new ArrayList<>();
-                    for (String res : pendingPermissionRequest.getResources()) {
-                        if (android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res)) {
-                            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                grantedResources.add(res);
-                            }
-                        } else if (android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res)) {
-                            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                grantedResources.add(res);
-                            }
-                        }
-                    }
-                    if (!grantedResources.isEmpty()) {
-                        pendingPermissionRequest.grant(grantedResources.toArray(new String[0]));
-                    } else {
-                        pendingPermissionRequest.deny();
-                    }
-                } catch (Exception ignored) {
+
+        if (requestCode == NOTIFICATION_PERMISSION_CODE) {
+            if (pendingNotificationPermissionPluginCall != null) {
+                runOnUiThread(() -> {
                     try {
-                        pendingPermissionRequest.deny();
-                    } catch (Exception ignored2) {}
-                } finally {
-                    pendingPermissionRequest = null;
+                        boolean granted;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+                        } else {
+                            granted = NotificationManagerCompat.from(this).areNotificationsEnabled();
+                        }
+                        com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                        ret.put("granted", granted);
+                        ret.put("requested", true);
+                        if (pendingNotificationPermissionPluginCall != null) {
+                            pendingNotificationPermissionPluginCall.resolve(ret);
+                        }
+                    } catch (Exception ignored) {
+                    } finally {
+                        pendingNotificationPermissionPluginCall = null;
+                    }
+                });
+            }
+        }
+
+        if (requestCode == LOCATION_PERMISSION_CODE) {
+            runOnUiThread(() -> {
+                boolean fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                boolean coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                boolean granted = fine || coarse;
+
+                if (pendingGeolocationCallback != null && pendingGeolocationOrigin != null) {
+                    try {
+                        pendingGeolocationCallback.invoke(pendingGeolocationOrigin, granted, false);
+                    } catch (Exception ignored) {}
+                    pendingGeolocationCallback = null;
+                    pendingGeolocationOrigin = null;
+                }
+
+                if (pendingLocationPermissionPluginCall != null) {
+                    try {
+                        com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                        ret.put("granted", granted);
+                        ret.put("fine", fine);
+                        ret.put("coarse", coarse);
+                        ret.put("requested", true);
+                        pendingLocationPermissionPluginCall.resolve(ret);
+                    } catch (Exception ignored) {
+                    } finally {
+                        pendingLocationPermissionPluginCall = null;
+                    }
                 }
             });
+        }
+
+        if (requestCode == ALL_PERMISSIONS_CODE) {
+            if (pendingCallPermissionPluginCall != null) {
+                runOnUiThread(() -> {
+                    try {
+                        boolean hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+                        boolean hasCam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+                        boolean granted = "video".equals(pendingCallType) ? (hasMic && hasCam) : hasMic;
+                        com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                        ret.put("granted", granted);
+                        ret.put("microphone", hasMic);
+                        ret.put("camera", hasCam);
+                        ret.put("type", pendingCallType);
+                        ret.put("alreadyGranted", false);
+                        ret.put("success", true);
+                        if (pendingCallPermissionPluginCall != null) {
+                            pendingCallPermissionPluginCall.resolve(ret);
+                        }
+                    } catch (Exception ignored) {
+                    } finally {
+                        pendingCallPermissionPluginCall = null;
+                    }
+                });
+            }
+
+            if (pendingPermissionRequest != null) {
+                runOnUiThread(() -> {
+                    try {
+                        List<String> grantedResources = new ArrayList<>();
+                        for (String res : pendingPermissionRequest.getResources()) {
+                            if (android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res)) {
+                                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                    grantedResources.add(res);
+                                }
+                            } else if (android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res)) {
+                                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                    grantedResources.add(res);
+                                }
+                            }
+                        }
+                        if (!grantedResources.isEmpty()) {
+                            pendingPermissionRequest.grant(grantedResources.toArray(new String[0]));
+                        } else {
+                            pendingPermissionRequest.deny();
+                        }
+                    } catch (Exception ignored) {
+                        try {
+                            pendingPermissionRequest.deny();
+                        } catch (Exception ignored2) {}
+                    } finally {
+                        pendingPermissionRequest = null;
+                    }
+                });
+            }
         }
     }
 

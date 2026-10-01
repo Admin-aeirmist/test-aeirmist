@@ -639,7 +639,13 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                   <motion.button 
                     whileHover={{ scale: 1.02, backgroundColor: isFollowingUser ? 'rgba(255,255,255,0.08)' : 'rgba(0,242,255,1)', color: isFollowingUser ? '#fff' : '#000' }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => toggleFollow(displayUser.id, displayUser)}
+                    onClick={() => {
+                      if (!profile?.id) {
+                        window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+                        return;
+                      }
+                      toggleFollow(displayUser.id, displayUser);
+                    }}
                     className={`px-8 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-xl cursor-pointer ${isFollowingUser ? 'bg-white/5 border border-white/10 text-white hover:border-red-500/30 hover:text-red-500' : 'bg-aeirmist-cyan text-black'}`}
                   >
                     {isPendingUser 
@@ -651,6 +657,10 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                   <motion.button 
                     whileHover={{ scale: 1.02, border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'rgba(255,255,255,0.05)' }}
                     onClick={() => {
+                      if (!profile?.id) {
+                        window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+                        return;
+                      }
                       if (isMessageLocked) {
                         addToast?.({
                           title: 'Message Blocked',
@@ -665,7 +675,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                   >
                     <MessageSquare size={14} />
                     <span className="text-[10px] font-black uppercase tracking-widest font-mono">
-                      {isMessageLocked ? "Follow To Message" : "Transmit DM"}
+                      {isMessageLocked ? "Follow To Message" : "Message"}
                     </span>
                   </motion.button>
                   
@@ -738,25 +748,21 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
           {/* subtle background mesh glow */}
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-aeirmist-cyan/5 blur-[50px] rounded-full pointer-events-none" />
           
-          <h3 className="text-[10px] font-black text-slate-500 dark:text-white/40 uppercase tracking-[0.25em] mb-5 select-none pl-2 border-l-2 border-aeirmist-cyan flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-aeirmist-cyan opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-aeirmist-cyan"></span>
-            </span>
-            <span>Signals & Highlights Corridor</span>
+          <h3 className="text-[11px] font-bold text-slate-500 dark:text-white/50 uppercase tracking-widest mb-4 select-none flex items-center gap-2">
+            <span>Story Highlights</span>
           </h3>
 
-          <div className="flex gap-8 overflow-x-auto pb-2 mask-fade-right scrollbar-hide px-2">
+          <div className="flex gap-6 overflow-x-auto pb-2 mask-fade-right scrollbar-hide px-1 items-start">
             {isOwnProfile && (
-              <div className="flex flex-col items-center gap-3 shrink-0">
+              <div className="flex flex-col items-center gap-2 shrink-0 select-none cursor-pointer">
                 <button 
                   onClick={handleCreateHighlight}
-                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl border-2 border-dashed border-slate-300 dark:border-white/10 flex items-center justify-center text-slate-400 dark:text-white/20 hover:border-aeirmist-cyan hover:text-aeirmist-cyan transition-all bg-slate-50 dark:bg-white/[0.01] hover:bg-aeirmist-cyan/5 group cursor-pointer shadow-sm"
-                  title="Create new highlight"
+                  className="w-20 h-20 rounded-2xl border border-white/20 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/40 flex items-center justify-center text-white/70 hover:text-white transition-all group shadow-sm active:scale-95"
+                  title="New Highlight"
                 >
-                  <Plus size={28} className="group-hover:rotate-90 transition-transform duration-500" />
+                  <Plus size={28} strokeWidth={1.75} className="group-hover:rotate-90 transition-transform duration-300" />
                 </button>
-                <span className="text-[9px] font-black uppercase text-slate-400 dark:text-white/35 tracking-widest">Initiate</span>
+                <span className="text-xs font-medium text-white/70 tracking-tight text-center truncate max-w-[80px]">New</span>
               </div>
             )}
             
@@ -766,34 +772,30 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 <div 
                   key={h.id} 
                   onClick={(e) => { e.stopPropagation(); handleHighlightClick?.(h); }}
-                  className="flex flex-col items-center gap-3 shrink-0 group cursor-pointer"
+                  className="flex flex-col items-center gap-2 shrink-0 group cursor-pointer select-none active:scale-95 transition-transform"
                 >
-                  <div className="relative p-1">
-                    {/* Rotating holographic light ring */}
-                    {!isEmpty && <div className="absolute inset-[-4px] bg-gradient-to-tr from-aeirmist-cyan via-white/5 to-aeirmist-magenta rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-700 animate-[spin_8s_linear_infinite]" />}
-                    <div className="absolute inset-[-2px] bg-white dark:bg-[#01050a] rounded-2xl" />
-                    
-                    <div className={`relative z-10 w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-slate-100 dark:bg-neutral-900 group-hover:border-aeirmist-cyan/40 transition-colors duration-500 shadow-xl border ${
-                      isEmpty ? 'border-dashed border-red-500/40 bg-red-50 dark:bg-red-950/5' : 'border-slate-200 dark:border-white/10'
-                    }`}>
-                      {h.coverUrl ? (
-                        <img src={h.coverUrl} className={`w-full h-full object-cover transition-all duration-700 group-hover:scale-110 ${isEmpty ? 'opacity-40 grayscale' : 'grayscale-[0.5] group-hover:grayscale-0'}`} alt={h.label} />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-red-400/50">
-                          <span className="text-[9px] font-black uppercase">Empty</span>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                      {isEmpty && (
-                        <div className="absolute inset-0 bg-red-950/20 flex items-center justify-center">
-                          <span className="text-[8px] font-black uppercase tracking-wider text-red-400">Empty</span>
-                        </div>
-                      )}
+                  {/* Square Instagram Double Ring */}
+                  <div className="p-[2.5px] rounded-2xl bg-gradient-to-tr from-white/20 via-white/10 to-white/5 group-hover:from-[#00E5FF] group-hover:to-[#d8bbff] transition-all shadow-md">
+                    <div className="p-[2px] bg-[#030712] rounded-2xl">
+                      <div className={`relative z-10 w-[72px] h-[72px] rounded-[13px] overflow-hidden bg-slate-100 dark:bg-neutral-900 transition-colors duration-300 ${
+                        isEmpty ? 'border-dashed border-red-500/40 bg-red-50 dark:bg-red-950/5' : ''
+                      }`}>
+                        {h.coverUrl ? (
+                          <img src={h.coverUrl} className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${isEmpty ? 'opacity-40 grayscale' : ''}`} alt={h.label} />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-white/30 text-sm font-bold">
+                            {h.label?.charAt(0) || 'H'}
+                          </div>
+                        )}
+                        {isEmpty && (
+                          <div className="absolute inset-0 bg-red-950/20 flex items-center justify-center">
+                            <span className="text-[8px] font-black uppercase tracking-wider text-red-400">Empty</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  <span className={`text-[9px] font-black uppercase tracking-[0.2em] font-sans transition-colors duration-500 text-center truncate max-w-[80px] ${
-                    isEmpty ? 'text-red-400/50 group-hover:text-red-400' : 'text-slate-600 dark:text-white/45 group-hover:text-aeirmist-cyan'
-                  }`}>
+                  <span className="text-xs font-medium text-white/90 group-hover:text-white transition-colors duration-300 text-center truncate max-w-[80px] tracking-tight">
                     {h.label}
                   </span>
                 </div>

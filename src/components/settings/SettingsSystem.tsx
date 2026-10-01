@@ -180,6 +180,18 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({ activeTab: 'feed', _appNav: true }, '', '/');
+        window.dispatchEvent(new CustomEvent('aeirmist-reset-to-feed'));
+      }
+      await logout();
+    } catch (e) {
+      logger.warn("Settings logout error:", e);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<SettingsTab | null>(() => {
     if (initialSection) return initialSection;
     if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
@@ -513,7 +525,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
           </div>
 
           {/* Mobile Settings Home Header */}
-          <div className={`p-5 pt-[calc(1rem+env(safe-area-inset-top,0px))] lg:hidden border-b flex items-center justify-between ${
+          <div className={`p-5 pt-[calc(1rem+var(--sat,var(--safe-area-inset-top,0px)))] lg:hidden border-b flex items-center justify-between ${
             isLight ? 'border-slate-200 bg-slate-100/80' : 'border-white/10 bg-white/[0.02]'
           }`}>
             <div>
@@ -657,7 +669,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
                 <div className="pt-4 lg:hidden">
                   <button 
                     type="button"
-                    onClick={logout}
+                    onClick={handleLogout}
                     className="w-full flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5 text-white/60 hover:text-aeirmist-magenta hover:border-aeirmist-magenta/30 hover:bg-aeirmist-magenta/5 transition-all group"
                   >
                     <div className="flex items-center gap-3">
@@ -675,7 +687,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
           <div className="hidden lg:block p-6 border-t border-white/5 mt-auto">
             <button 
               type="button"
-              onClick={logout}
+              onClick={handleLogout}
               className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all group ${
                 isLight 
                   ? 'bg-slate-100/90 border-slate-200 text-slate-700 hover:text-red-600 hover:border-red-300 hover:bg-red-50' 
@@ -696,7 +708,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
           activeTab === null ? 'hidden lg:flex' : 'flex'
         }`}>
           {/* Header Bar */}
-          <div className={`h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] lg:h-16 lg:pt-0 border-b flex items-center justify-between px-4 lg:px-8 backdrop-blur-md shrink-0 sticky top-0 z-30 ${
+          <div className={`h-[calc(3.5rem+var(--sat,var(--safe-area-inset-top,0px)))] pt-[var(--sat,var(--safe-area-inset-top,0px))] lg:h-16 lg:pt-0 border-b flex items-center justify-between px-4 lg:px-8 backdrop-blur-md shrink-0 sticky top-0 z-30 ${
             isLight ? 'border-slate-200 bg-white/90' : 'border-white/10 bg-black/40'
           }`}>
             <div className="flex items-center gap-2 lg:gap-4">

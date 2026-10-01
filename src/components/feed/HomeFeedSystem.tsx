@@ -362,14 +362,13 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
       unsubscribes.push(onSnapshot(q2, (s) => processSnapshot(s, `batch_${batchIndex}_uid`), handleError));
     });
 
-    // In smart mode, also discover high-quality public posts
-    if (feedMode === 'smart') {
-      const qPublic = query(
+    // In smart and latest modes, also stream general platform posts directly (deduped and ranked client-side)
+    if (feedMode === 'smart' || feedMode === 'latest') {
+      const qGeneral = query(
         collection(db, 'posts'),
-        where('audience', '==', 'public'),
-        limit(20)
+        limit(postLimit)
       );
-      unsubscribes.push(onSnapshot(qPublic, (s) => processSnapshot(s, 'public_discovery'), handleError));
+      unsubscribes.push(onSnapshot(qGeneral, (s) => processSnapshot(s, 'general_discovery'), handleError));
     }
 
     return () => {
@@ -402,11 +401,11 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
 
   return (
     <div className={`w-full min-h-full relative flex flex-col ${isGlobalBgActive ? 'bg-black/20 backdrop-blur-sm' : ''}`}>
-      <div className="w-full pb-32">
+      <div className="w-full pb-[calc(7rem+var(--sab,var(--safe-area-inset-bottom,0px)))]">
         {/* Mobile Header with Marketplace Link */}
         <div 
           role="banner"
-          className={`sticky top-0 z-[100] ${isGlobalBgActive ? 'bg-transparent' : 'bg-[#050505]/95'} backdrop-blur-md flex md:hidden items-center justify-between pb-2.5 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] mb-1 px-4 border-b border-white/5`}
+          className={`sticky top-0 z-[100] ${isGlobalBgActive ? 'bg-[#050505]/80 backdrop-blur-3xl border-b border-white/10 shadow-[0_4px_24px_rgba(0,0,0,0.6)]' : 'bg-[#050505]/95 backdrop-blur-md border-b border-white/5'} flex md:hidden items-center justify-between pb-2.5 pt-[calc(0.875rem+var(--sat,var(--safe-area-inset-top,0px)))] mb-1 px-4 transition-colors duration-200`}
         >
            <div className="flex items-center justify-start gap-1.5 w-24 shrink-0">
              <button 
@@ -415,7 +414,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
               onClick={() => {
                 window.dispatchEvent(new CustomEvent('aeirmist-navigate', { detail: 'discover' }));
               }}
-              className="w-10 h-10 rounded-xl bg-[#00f2ff]/10 border border-[#00f2ff]/30 flex items-center justify-center text-aeirmist-cyan shadow-lg active:scale-95 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan"
+              className={`w-10 h-10 rounded-xl ${isGlobalBgActive ? 'bg-[#00f2ff]/15 border-[#00f2ff]/40 shadow-[0_2px_12px_rgba(0,0,0,0.5)]' : 'bg-[#00f2ff]/10 border-[#00f2ff]/30'} border flex items-center justify-center text-aeirmist-cyan shadow-lg active:scale-95 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
               title="Marketplace"
            >
              <ShoppingBag size={18} className="drop-shadow-[0_0_6px_rgba(0,242,255,0.4)]" aria-hidden="true" />
@@ -426,7 +425,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
                <AeirmistLogo 
                  variant="text-only" 
                  glow={false} 
-                 colorClass="text-aeirmist-cyan font-black text-lg tracking-[0.25em]" 
+                 colorClass={`text-aeirmist-cyan font-black text-lg tracking-[0.25em] ${isGlobalBgActive ? 'drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)]' : ''}`} 
                />
                {/* Decorative holographic hairline underline */}
                <div className="absolute -bottom-1 left-0 w-full h-[1.5px] bg-gradient-to-r from-transparent via-aeirmist-cyan/50 to-transparent" />
@@ -442,7 +441,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
               type="button"
               aria-label="Create new post"
               onClick={onCreate}
-              className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-aeirmist-cyan transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan"
+              className={`w-10 h-10 rounded-xl ${isGlobalBgActive ? 'bg-white/10 border-white/20 text-white/80 shadow-[0_2px_8px_rgba(0,0,0,0.4)]' : 'bg-white/5 border-white/10 text-white/40'} border flex items-center justify-center hover:text-aeirmist-cyan transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
              >
                <Plus size={16} aria-hidden="true" />
              </button>
@@ -453,7 +452,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
                 const navEvent = new CustomEvent('aeirmist-navigate', { detail: 'notifications' });
                 window.dispatchEvent(navEvent);
               }}
-              className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-aeirmist-cyan transition-all relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan"
+              className={`w-10 h-10 rounded-xl ${isGlobalBgActive ? 'bg-white/10 border-white/20 text-white/80 shadow-[0_2px_8px_rgba(0,0,0,0.4)]' : 'bg-white/5 border-white/10 text-white/40'} border flex items-center justify-center hover:text-aeirmist-cyan transition-all relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
              >
                <Bell size={16} aria-hidden="true" />
                {unreadNotificationsCount > 0 && (

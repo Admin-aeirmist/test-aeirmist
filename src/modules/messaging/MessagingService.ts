@@ -64,6 +64,39 @@ class MessagingService {
   private lastDeliveryUpdate: Map<string, number> = new Map();
   private recentOptimisticIds: Map<string, number> = new Map();
   private isSafeMode: boolean = false;
+  private messageMemoryCache: Map<string, Message[]> = new Map();
+
+  public getCachedMessages(conversationId: string): Message[] | undefined {
+    if (!conversationId) return undefined;
+    const inMem = this.messageMemoryCache.get(conversationId);
+    if (inMem && inMem.length > 0) return inMem;
+    
+    // Synchronous localStorage fallback for instant zero-latency cold-start
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const stored = localStorage.getItem(`aeirmist_msgs_${conversationId}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            this.messageMemoryCache.set(conversationId, parsed);
+            return parsed;
+          }
+        }
+      } catch (e) {}
+    }
+    return undefined;
+  }
+
+  public setCachedMessages(conversationId: string, messages: Message[]) {
+    if (!conversationId || !messages) return;
+    this.messageMemoryCache.set(conversationId, messages);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const slice = messages.slice(-40);
+        localStorage.setItem(`aeirmist_msgs_${conversationId}`, JSON.stringify(slice));
+      } catch (e) {}
+    }
+  }
 
   public setSafeMode(enabled: boolean) {
     this.isSafeMode = enabled;
@@ -376,12 +409,14 @@ class MessagingService {
         }
       } else {
         logger.info(`[MessagingService] Updating existing chat: ${finalConvId}`);
-        const receiverId = targetProfileId || metadata.recipientId || (convSnap.data()?.profileIds?.find((id: string) => id !== profile.id)) || null;
-        const receiverUid = targetOwnerUid || metadata.receiverUid || (convSnap.data()?.participants?.find((uid: string) => uid !== user.uid)) || null;
+        const cData = convSnap.data();
+        const receiverId = targetProfileId || metadata.recipientId || (cData?.profileIds?.find((id: string) => id !== profile.id)) || null;
+        const receiverUid = targetOwnerUid || metadata.receiverUid || (cData?.participants?.find((uid: string) => uid !== user.uid)) || null;
         
         const shouldNotify = true;
         this.updateExistingConversation(batch, db, finalConvId, profile.id, receiverId, receiverUid, text, type, mediaUrl, { 
           ...metadata, 
+          convData: cData,
           senderName: metadata.senderName || profile.displayName || profile.username,
           senderPhoto: metadata.senderPhoto || profile.photoURL || '',
           shouldNotify, 
@@ -495,10 +530,17 @@ class MessagingService {
 
     batch.update(convRef, cleanUndefined(updates));
 
-    // Write notification for receiver if not self and not in safe mode
+    // Write notification for receiver if not self, not in safe mode, and NOT vaulted/muted by receiver
     const targetUserId = receiverId || receiverUid;
     const isSelf = (receiverId && receiverId === senderId) || (receiverUid && metadata.senderUid && metadata.senderUid === receiverUid);
-    if (targetUserId && !this.isSafeMode && !isSelf) {
+    const isReceiverVaulted = Boolean(
+      (receiverId && metadata.convData?.isVaulted?.[receiverId] === true) || 
+      (receiverUid && metadata.convData?.isVaulted?.[receiverUid] === true) ||
+      (receiverId && metadata.convData?.isMuted?.[receiverId] === true) ||
+      (receiverUid && metadata.convData?.isMuted?.[receiverUid] === true) ||
+      metadata.isVaulted
+    );
+    if (targetUserId && !this.isSafeMode && !isSelf && !isReceiverVaulted) {
       const notifRef = doc(collection(db, 'notifications'));
       batch.set(notifRef, cleanUndefined({
         userId: targetUserId, // Use Profile ID if available, else Auth UID
@@ -528,24 +570,33 @@ class MessagingService {
     
     let isCancelled = false;
 
-    // 1. Instant Cache Load
-    try {
-      aeirmistCache.getMessages(conversationId).then(cached => {
-        if (isCancelled) return;
-        if (cached && cached.length > 0) {
-          logger.info(`[MessagingService] Instant Cache Hit: ${cached.length} messages for ${conversationId}`);
-          const formatted = cached.map(m => ({
-            ...m,
-            timestamp: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            timestampMs: m.timestamp
-          })).sort((a, b) => a.timestampMs - b.timestampMs);
-          if (!isCancelled) {
-            callback(formatted as any);
+    // 1. Instant Synchronous Cache Check (0ms latency!)
+    const syncCached = this.getCachedMessages(conversationId);
+    if (syncCached && syncCached.length > 0) {
+      logger.info(`[MessagingService] Instant Cache Hit: ${syncCached.length} messages for ${conversationId}`);
+      callback(syncCached);
+    } else {
+      // 1b. Asynchronous IndexedDB fallback
+      try {
+        aeirmistCache.getMessages(conversationId).then(cached => {
+          if (isCancelled) return;
+          if (cached && cached.length > 0) {
+            logger.info(`[MessagingService] Instant IndexedDB Hit: ${cached.length} messages for ${conversationId}`);
+            const formatted = cached.map(m => ({
+              ...m,
+              conversationId,
+              timestamp: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestampMs: m.timestamp
+            })).sort((a, b) => a.timestampMs - b.timestampMs);
+            if (!isCancelled) {
+              this.setCachedMessages(conversationId, formatted as any);
+              callback(formatted as any);
+            }
           }
-        }
-      }).catch(err => logger.warn("[MessagingService] Cache retrieval failure:", err));
-    } catch (e) {
-      logger.warn("[MessagingService] Cache logic error:", e);
+        }).catch(err => logger.warn("[MessagingService] Cache retrieval failure:", err));
+      } catch (e) {
+        logger.warn("[MessagingService] Cache logic error:", e);
+      }
     }
 
     const key = `messages_${conversationId}`;
@@ -609,6 +660,7 @@ class MessagingService {
           return {
             ...data,
             id: doc.id,
+            conversationId,
             timestamp: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             timestampMs,
             isSeen: isSeenVal,
@@ -649,14 +701,9 @@ class MessagingService {
       deduped.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
       const reversed = deduped;
 
-      // 2. Persist to Cache (Async)
-      try {
-        reversed.forEach(m => {
-          // Prepare for cache storage (ensure timestamp is number)
-          const cacheItem = { ...m, timestamp: m.timestampMs };
-          aeirmistCache.saveMessage(cacheItem).catch(() => {});
-        });
-      } catch (e) {}
+      // 2. Persist to Instant Cache & IndexedDB Vault
+      this.setCachedMessages(conversationId, reversed);
+      aeirmistCache.saveMessages(conversationId, reversed).catch(() => {});
 
       // Update my delivered status if I've received messages from others
       const myLastDeliveredMs = parseTimestampMs(chatData?.lastDelivered?.[currentProfileId]);
@@ -701,6 +748,19 @@ class MessagingService {
 
   subscribeToChats(db: Firestore, userUid: string, profileId: string, callback: (chats: Chat[]) => void) {
     logger.info(`[MessagingService] Subscribing to inbox for UID: ${userUid}`);
+
+    // 0. Synchronous Instant Cache Load (0ms frame-0 rendering)
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(`aeirmist_chats_${userUid}`) || localStorage.getItem('aeirmist_cached_inbox_chats');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            callback(parsed);
+          }
+        }
+      } catch (e) {}
+    }
 
     // 1. Instant Cache Load
     try {
@@ -812,10 +872,46 @@ class MessagingService {
         return true;
       });
 
-      // 2. Persist to Cache (Async)
+      // 2. Persist to Cache (Async) & Pre-warm Recent Chat Rooms
       try {
+        if (typeof window !== 'undefined' && currentProfileChats.length > 0) {
+          try {
+            const trimmed = currentProfileChats.slice(0, 40);
+            localStorage.setItem(`aeirmist_chats_${userUid}`, JSON.stringify(trimmed));
+            localStorage.setItem('aeirmist_cached_inbox_chats', JSON.stringify(trimmed));
+          } catch (e) {}
+        }
+
         currentProfileChats.forEach(chat => {
           aeirmistCache.saveConversation(chat).catch(() => {});
+        });
+
+        // Pre-warm top 5 recent conversation messages in memory so opening them is instantaneous (0ms delay)
+        currentProfileChats.slice(0, 5).forEach(c => {
+          if (c.id && !this.messageMemoryCache.has(c.id)) {
+            if (typeof window !== 'undefined' && window.localStorage) {
+              try {
+                const stored = localStorage.getItem(`aeirmist_msgs_${c.id}`);
+                if (stored) {
+                  const parsed = JSON.parse(stored);
+                  if (Array.isArray(parsed) && parsed.length > 0) {
+                    this.messageMemoryCache.set(c.id, parsed);
+                  }
+                }
+              } catch (e) {}
+            }
+            aeirmistCache.getMessages(c.id).then(msgs => {
+              if (msgs && msgs.length > 0 && !this.messageMemoryCache.has(c.id)) {
+                const formatted = msgs.map(m => ({
+                  ...m,
+                  conversationId: c.id,
+                  timestamp: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  timestampMs: m.timestamp
+                })).sort((a, b) => a.timestampMs - b.timestampMs);
+                this.messageMemoryCache.set(c.id, formatted as any);
+              }
+            }).catch(() => {});
+          }
         });
       } catch (e) {}
 

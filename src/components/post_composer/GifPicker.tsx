@@ -115,7 +115,7 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect }) => {
                 onClick={() => onSelect(gif)}
                 className="relative aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/10 hover:border-[#00f3ff] hover:scale-[1.02] transition-all group"
               >
-                <img src={gif} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" loading="lazy" />
+                <img src={gif} width={200} height={112} style={{ aspectRatio: '16 / 9' }} className="w-full h-full aspect-video object-cover" alt="" referrerPolicy="no-referrer" loading="lazy" />
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <span className="text-[9px] font-black uppercase text-white bg-black/80 px-2 py-0.5 rounded">Select</span>
                 </div>

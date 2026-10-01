@@ -1107,7 +1107,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
                   disabled={!replyText.trim() || submittingComment}
                   className="px-3.5 py-1.5 bg-white text-black font-black uppercase text-[8px] tracking-wider hover:bg-aeirmist-cyan disabled:bg-white/10 disabled:text-white/20 rounded-lg transition-all active:scale-95 shrink-0"
                 >
-                  Transmit
+                  Reply
                 </button>
               </div>
             </form>
@@ -1441,9 +1441,12 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
             <img 
               src={author.avatar || BLANK_DP} 
               alt={author.name} 
+              width={44}
+              height={44}
               loading="lazy" 
               referrerPolicy="no-referrer" 
-              className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl object-cover bg-neutral-900 border border-white/10 shadow-sm transition-transform duration-200 group-hover/avatar:scale-105" 
+              style={{ aspectRatio: '1 / 1' }}
+              className="w-10 h-10 sm:w-11 sm:h-11 aspect-square rounded-xl object-cover bg-neutral-900 border border-white/10 shadow-sm transition-transform duration-200 group-hover/avatar:scale-105" 
             />
             
             {!(isDeletedAuthor || author.name === 'Aeirmist User') && (

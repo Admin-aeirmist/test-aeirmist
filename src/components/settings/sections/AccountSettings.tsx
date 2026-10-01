@@ -268,7 +268,13 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
         await reloadAuthUser();
         return;
       }
-      await sendEmailVerification(auth.currentUser);
+      const origin = typeof window !== 'undefined' && window.location.origin
+        ? window.location.origin
+        : 'https://aeirmist.com';
+      await sendEmailVerification(auth.currentUser, {
+        url: `${origin}/?mode=verifyEmail`,
+        handleCodeInApp: true,
+      });
       addToast?.({
         title: 'VERIFICATION SENT',
         message: 'A verification link has been sent to your primary email.',
@@ -295,8 +301,15 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
 
     setIsEmailChanging(true);
     try {
+      const origin = typeof window !== 'undefined' && window.location.origin
+        ? window.location.origin
+        : 'https://aeirmist.com';
+      const actionCodeSettings = {
+        url: `${origin}/?mode=verifyAndChangeEmail`,
+        handleCodeInApp: true,
+      };
       try {
-        await verifyBeforeUpdateEmail(auth.currentUser, newEmail);
+        await verifyBeforeUpdateEmail(auth.currentUser, newEmail, actionCodeSettings);
       } catch (err: any) {
         if (err.code === 'auth/requires-recent-login' || err.code === 'auth/recent-login-required') {
           const hasPasswordProvider = auth.currentUser.providerData.some(p => p.providerId === 'password');

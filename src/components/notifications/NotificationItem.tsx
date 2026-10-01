@@ -33,6 +33,7 @@ interface NotificationItemProps {
   onAction?: (id: string, action: string) => void;
   isProcessing?: boolean;
   onUserClick?: (user: any) => void;
+  onPostClick?: (postId: string) => void;
   isFollowingUser?: boolean;
   onFollowToggle?: (userId: string) => void;
 }
@@ -47,6 +48,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
   onAction,
   isProcessing,
   onUserClick,
+  onPostClick,
   isFollowingUser,
   onFollowToggle
 }) => {
@@ -348,20 +350,37 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
   const displayName = getUserDisplayName();
   const targetUserId = notification.fromUserId || notification.user?.id || notification.user?.uid;
 
+  const rawSenderAvatar = 
+    notification.user?.avatar || 
+    notification.user?.photoURL || 
+    notification.metadata?.senderPhoto || 
+    notification.metadata?.photoURL || 
+    notification.fromUser?.photoURL || 
+    notification.fromUser?.avatar || 
+    notification.userAvatar || 
+    '';
+  const avatarUrl = getAvatarUrlHelper(rawSenderAvatar);
+
   // Handle row click
   const handleCardClick = (e: React.MouseEvent) => {
     onMarkRead?.(notification.id);
 
-    const isProfileType = [
-      'follow', 'follow_accept', 'follow_back', 'store_follow', 'video_follower',
-      'like', 'comment_like', 'post_like', 'comment', 'comment_reply', 'mention', 'story_mention'
+    // Direct routing: If this notification is tied to a post (comments, likes, mentions on post)
+    const targetPostId = notification.metadata?.postId || notification.postId;
+    if (targetPostId && onPostClick) {
+      onPostClick(targetPostId);
+      return;
+    }
+
+    const isProfileOnlyType = [
+      'follow', 'follow_accept', 'follow_back', 'store_follow', 'video_follower'
     ].includes(String(notification.type).toLowerCase());
 
-    if (isProfileType && onUserClick && targetUserId) {
+    if (isProfileOnlyType && onUserClick && targetUserId) {
       const targetUser = {
         id: targetUserId,
         displayName: notification.user?.name || notification.user?.displayName || 'Aeirmist User',
-        photoURL: getAvatarUrl(),
+        photoURL: avatarUrl,
         username: notification.user?.username || 'user'
       };
       onUserClick(targetUser);
@@ -385,7 +404,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
     >
       <div className="flex items-center gap-3 min-w-0">
         
-        {/* Left: Square Avatar with Overlapping Meta Action Badge */}
+        {/* Left: Square Avatar / System Icon with Overlapping Action Badge */}
         <div className="relative shrink-0">
           {isBenefit ? (
             <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#1E1F24] to-[#121316] border border-white/10 ring-1 ring-white/10 flex items-center justify-center shadow-sm">
@@ -394,17 +413,13 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                 <path d="M12 7L13.2 10.2L16.5 10.5L14 12.6L14.8 15.8L12 14.1L9.2 15.8L10 12.6L7.5 10.5L10.8 10.2L12 7Z" fill="currentColor" />
               </svg>
             </div>
-          ) : isRestriction ? (
-            <div className="w-11 h-11 rounded-xl bg-[#18191C] border border-amber-500/30 ring-1 ring-amber-500/20 flex items-center justify-center shadow-sm">
-              <div className="w-6 h-6 rounded-full border-2 border-white/80 flex items-center justify-center font-serif text-xs font-bold text-white shadow-sm">
+          ) : isRestriction || isSecurity || isSystemAnnouncement ? (
+            <div className="w-11 h-11 rounded-xl border border-white/15 bg-white/[0.04] flex items-center justify-center text-white shrink-0 shadow-sm">
+              <div className="w-6 h-6 rounded-full border-[1.5px] border-white/70 flex items-center justify-center font-serif text-xs font-bold text-white shadow-sm">
                 i
               </div>
             </div>
-          ) : isSecurity ? (
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-950/70 to-blue-950/60 border border-cyan-500/30 ring-1 ring-cyan-500/20 flex items-center justify-center text-cyan-300 shadow-sm">
-              <ShieldCheck size={22} />
-            </div>
-          ) : isVerification || isSystemAnnouncement ? (
+          ) : isVerification ? (
             <div className="w-11 h-11 rounded-xl bg-black/90 border border-aeirmist-cyan/40 ring-1 ring-white/10 flex items-center justify-center p-1.5 shadow-sm overflow-hidden">
               <img 
                 src="/favicon.png" 
@@ -414,7 +429,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             </div>
           ) : (
             <img 
-              src={getAvatarUrl() || BLANK_DP} 
+              src={avatarUrl || BLANK_DP} 
               alt={displayName} 
               referrerPolicy="no-referrer"
               className="w-11 h-11 rounded-xl object-cover bg-black/60 ring-1 ring-white/10 shadow-sm"
@@ -422,48 +437,57 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             />
           )}
 
-          {/* Overlapping Meta Action Badge */}
-          <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-md ${badgeBg} ring-2 ring-[#18191A] flex items-center justify-center shadow-md`}>
-            {badgeIcon}
-          </div>
+          {/* Overlapping Action Badge */}
+          {!isRestriction && !isSecurity && !isSystemAnnouncement && (
+            <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-md ${badgeBg} ring-2 ring-[#18191A] flex items-center justify-center shadow-md`}>
+              {badgeIcon}
+            </div>
+          )}
         </div>
 
         {/* Center: Typography Single-Sentence Flow */}
         <div className="flex-1 min-w-0 pr-1">
           <p className="text-[13px] sm:text-[13.5px] leading-snug text-[#E4E6EB]">
-            <strong 
-              className="font-bold text-white hover:underline cursor-pointer inline-flex items-center gap-1.5 mr-1"
-              onClick={(e) => {
-                if (onUserClick && targetUserId && !isSystem) {
-                  e.stopPropagation();
-                  onUserClick({
-                    id: targetUserId,
-                    displayName,
-                    photoURL: getAvatarUrl(),
-                    username: notification.user?.username || 'user'
-                  });
-                }
-              }}
-            >
-              {displayName}
-              {/* Separate Official Badge for System vs Verified Badge for User */}
-              {isSystem ? (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-aeirmist-cyan/15 border border-aeirmist-cyan/30 text-[10px] font-bold text-aeirmist-cyan uppercase tracking-wider shrink-0" title="Aeirmist Official">
-                  <ShieldCheck size={11} className="text-aeirmist-cyan shrink-0" />
-                  Official
+            {isRestriction ? (
+              <>
+                <span className="font-semibold text-white">{actionText}</span>
+                <span className="text-xs text-[#8A8D91] font-normal whitespace-nowrap ml-1.5">
+                  {displayTime}
                 </span>
-              ) : (notification.user?.isVerified || notification.user?.verified || notification.fromUser?.isVerified) ? (
-                <span className="inline-flex items-center justify-center shrink-0" title="Verified Account">
-                  <svg className="w-3.5 h-3.5 text-[#1877F2]" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.2 14.2l-3.5-3.5 1.41-1.41 2.09 2.08 5.69-5.69 1.41 1.41-7.1 7.11z" />
-                  </svg>
+              </>
+            ) : (
+              <>
+                <strong 
+                  className="font-bold text-white hover:underline cursor-pointer inline-flex items-center gap-1.5 mr-1"
+                  onClick={(e) => {
+                    if (onUserClick && targetUserId && !isSystem) {
+                      e.stopPropagation();
+                      onUserClick({
+                        id: targetUserId,
+                        displayName,
+                        photoURL: avatarUrl,
+                        username: notification.user?.username || 'user'
+                      });
+                    }
+                  }}
+                >
+                  {displayName}
+                  {/* Separate Official Badge for System vs Verified Badge for User */}
+                  {isSystem ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-aeirmist-cyan/15 border border-aeirmist-cyan/30 text-[9px] font-bold text-aeirmist-cyan uppercase tracking-wider shrink-0" title="Aeirmist Official">
+                      <ShieldCheck size={10} className="text-aeirmist-cyan shrink-0" />
+                      Official
+                    </span>
+                  ) : (notification.user?.isVerified || notification.user?.verified || notification.fromUser?.isVerified) ? (
+                    <ShieldCheck size={13} className="text-aeirmist-cyan shrink-0" title="Aeirmist Verified" />
+                  ) : null}
+                </strong>
+                <span className="text-[#D8DADF]">{actionText}</span>
+                <span className="text-xs text-[#8A8D91] font-normal whitespace-nowrap ml-1.5">
+                  {displayTime}
                 </span>
-              ) : null}
-            </strong>
-            <span className="text-[#D8DADF]">{actionText}</span>
-            <span className="text-xs text-[#8A8D91] font-normal whitespace-nowrap ml-1.5">
-              {displayTime}
-            </span>
+              </>
+            )}
           </p>
 
           {/* Optional snippet (e.g. comment text) */}

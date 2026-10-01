@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { logger } from '@/src/utils/logger';
+import { PermissionService } from '@/src/services/PermissionService';
 
 export type PermissionType = 
   | 'camera' 
@@ -31,20 +32,14 @@ export const usePermissions = () => {
     if (typeof window === 'undefined') return;
     
     try {
-      if (type === 'notifications') {
-        if ('Notification' in window) {
-          const status = Notification.permission === 'default' ? 'prompt' : 
-                        Notification.permission === 'granted' ? 'granted' : 'denied';
-          setPermissions(prev => ({ ...prev, notifications: { status } }));
-        }
+      if (type === 'notifications' || type === 'location' || type === 'microphone' || type === 'camera') {
+        const state = await PermissionService.checkPermission(type);
+        setPermissions(prev => ({ ...prev, [type]: { status: state } }));
         return;
       }
 
       if (navigator.permissions && navigator.permissions.query) {
         const nameMap: any = {
-          camera: 'camera',
-          microphone: 'microphone',
-          location: 'geolocation',
           photos: 'notifications',
           contacts: 'contacts',
           bluetooth: 'bluetooth'
@@ -71,7 +66,7 @@ export const usePermissions = () => {
               [type]: { status: statusMap[result.state] || 'prompt' } 
             }));
           };
-        } catch (e) {
+        } catch {
           // Some permissions might not be queryable in all browsers
         }
       }
@@ -88,100 +83,64 @@ export const usePermissions = () => {
 
     setPermissions(prev => ({ ...prev, [type]: { ...prev[type], status: 'checking' } }));
     logger.info(`[Permissions] Requesting ${type}...`);
-    
-    // Proactively invoke native Android OS permissions dialog if on Android APK for the specific resource
-    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
-      try {
-        const plugins = (window as any).Capacitor.Plugins;
-        if (plugins?.NativeSettings?.requestCallPermissions) {
-          if (type === 'microphone') {
-            await plugins.NativeSettings.requestCallPermissions({ type: 'audio' });
-          } else if (type === 'camera') {
-            await plugins.NativeSettings.requestCallPermissions({ type: 'video' });
-          }
-        }
-      } catch (e) {
-        logger.warn("Native permission check in usePermissions ignored", e);
-      }
-    }
 
     try {
       if (type === 'camera') {
-        let stream: MediaStream | null = null;
-        try {
-          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            stream = await navigator.mediaDevices.getUserMedia({ 
-              video: { facingMode: 'user' },
-              audio: true 
-            });
-          }
-        } catch (e) {
-          try {
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-              stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            }
-          } catch (e2) {
-            // Fallback to video only if audio is unavailable
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-              stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            }
-          }
-        }
-
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
+        // Strictly request video-only (isolated from microphone!)
+        const res = await PermissionService.requestCameraStream({ withAudio: false, facingMode: 'user' });
+        if (res.granted && res.stream) {
+          res.stream.getTracks().forEach(t => t.stop());
           setPermissions(prev => ({ 
             ...prev, 
-            camera: { status: 'granted', lastRequested: Date.now() },
-            microphone: { status: 'granted', lastRequested: Date.now() }
+            camera: { status: 'granted', lastRequested: Date.now() } 
           }));
           return true;
         } else {
-          throw new Error('Could not open camera device stream.');
+          setPermissions(prev => ({ 
+            ...prev, 
+            camera: { status: 'denied', error: res.error, lastRequested: Date.now() } 
+          }));
+          return false;
         }
       }
 
       if (type === 'microphone') {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error("Microphone access is not supported on this device.");
+        // Strictly request audio-only (isolated from camera!)
+        const res = await PermissionService.requestMicrophoneStream();
+        if (res.granted && res.stream) {
+          res.stream.getTracks().forEach(t => t.stop());
+          setPermissions(prev => ({ 
+            ...prev, 
+            microphone: { status: 'granted', lastRequested: Date.now() } 
+          }));
+          return true;
+        } else {
+          setPermissions(prev => ({ 
+            ...prev, 
+            microphone: { status: 'denied', error: res.error, lastRequested: Date.now() } 
+          }));
+          return false;
         }
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
-        setPermissions(prev => ({ ...prev, microphone: { status: 'granted', lastRequested: Date.now() } }));
-        return true;
       }
 
       if (type === 'notifications') {
-        if (!('Notification' in window)) {
-          setPermissions(prev => ({ ...prev, notifications: { status: 'unavailable' } }));
-          return false;
-        }
-        const result = await Notification.requestPermission();
-        const status = result === 'granted' ? 'granted' : 'denied';
-        setPermissions(prev => ({ ...prev, notifications: { status, lastRequested: Date.now() } }));
-        return result === 'granted';
+        const granted = await PermissionService.requestNotificationPermission();
+        setPermissions(prev => ({ 
+          ...prev, 
+          notifications: { status: granted ? 'granted' : 'denied', lastRequested: Date.now() } 
+        }));
+        return granted;
       }
 
       if (type === 'location') {
-        return new Promise((resolve) => {
-          if (!('geolocation' in navigator)) {
-            setPermissions(prev => ({ ...prev, location: { status: 'unavailable' } }));
-            resolve(false);
-            return;
-          }
-          navigator.geolocation.getCurrentPosition(
-            () => {
-              setPermissions(prev => ({ ...prev, location: { status: 'granted', lastRequested: Date.now() } }));
-              resolve(true);
-            },
-            (err) => {
-              const status = err.code === 1 ? 'denied' : 'unavailable';
-              setPermissions(prev => ({ ...prev, location: { status, error: err.message, lastRequested: Date.now() } }));
-              resolve(false);
-            },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-          );
-        });
+        const loc = await PermissionService.getPreciseLocation({ timeoutMs: 8000, highAccuracy: true });
+        const granted = loc.isPrecise || loc.locationType === 'approximate_network';
+        const status = granted ? 'granted' : (loc.locationType === 'denied' ? 'denied' : 'unavailable');
+        setPermissions(prev => ({ 
+          ...prev, 
+          location: { status, lastRequested: Date.now() } 
+        }));
+        return granted;
       }
 
       if (type === 'photos') {
@@ -229,6 +188,7 @@ export const usePermissions = () => {
   }, [permissions]);
 
   useEffect(() => {
+    // Non-intrusive status check on mount (does not prompt!)
     const permissionsToCheck: PermissionType[] = ['camera', 'microphone', 'notifications', 'location'];
     permissionsToCheck.forEach(checkPermissionStatus);
   }, [checkPermissionStatus]);

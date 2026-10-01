@@ -647,7 +647,9 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onFocusChange, o
                             </div>
                             <div className="min-w-0">
                               <p className="text-sm font-bold text-white truncate">{msg.otherParticipantName}</p>
-                              <p className="text-[10px] text-white/40 line-clamp-1 mt-1 font-medium">{msg.lastMessage}</p>
+                              <p className="text-[10px] text-white/40 line-clamp-1 mt-1 font-medium">
+                                {typeof msg.lastMessage === 'string' ? msg.lastMessage : (msg.lastMessage?.text || msg.latestMessagePreview || 'Connected conversation')}
+                              </p>
                               <p className="text-[8px] font-black text-aeirmist-magenta uppercase tracking-widest mt-2">
                                 Last Sync: {msg.updatedAt ? new Date(msg.updatedAt.seconds * 1000).toLocaleDateString() : 'Recent'}
                               </p>

@@ -187,6 +187,19 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     setLiveTargetProfile(null);
   }, [db, targetProfile?.id, targetProfile?.username, profile?.id]);
 
+  // Broadcast author details for public preview gateway if visitor is unauthenticated
+  useEffect(() => {
+    if (displayUser && !user) {
+      window.dispatchEvent(new CustomEvent('aeirmist-preview-author', {
+        detail: {
+          name: displayUser.displayName || displayUser.fullName || displayUser.name || 'Aeirmist User',
+          username: displayUser.username,
+          avatar: displayUser.photoURL || displayUser.avatar
+        }
+      }));
+    }
+  }, [displayUser, user]);
+
   useEffect(() => {
     if (isOwnProfile && profile?.id) {
       recalculateFollowCounts(profile.id);
@@ -638,14 +651,6 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   const handleHighlightClick = async (highlight: any) => {
     if (!db) return;
-    
-    // For owner of the profile, let's open an interactive choice sheet
-    if (isOwnProfile) {
-      setActiveHighlightActionSheet(highlight);
-      return;
-    }
-
-    // For other users, view directly
     await viewHighlightDirectly(highlight);
   };
 
@@ -1698,11 +1703,11 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                         }
                       }}
                       className="grow sm:grow-0 px-5 py-2.5 bg-white/[0.03] border border-white/5 rounded-xl text-white/70 hover:bg-white/[0.05] transition-all flex items-center justify-center gap-2"
-                      title={isMessageLocked ? "Follow to message" : "Transmit direct message"}
+                      title={isMessageLocked ? "Follow to message" : "Send direct message"}
                     >
                       <MessageSquare size={14} />
                       <span className="text-[10px] font-black uppercase tracking-widest font-mono">
-                        {isMessageLocked ? "Follow To Message" : "Transmit"}
+                        {isMessageLocked ? "Follow To Message" : "Message"}
                       </span>
                     </motion.button>
                     {displayUser?.nglSettings?.enabled !== false && (
@@ -1749,7 +1754,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         {/* Mobile Instagram-styled Profile Header View */}
         <div className="block lg:hidden mb-1 px-1">
           {/* Top Navigation Bar with Premium Layout */}
-          <div className="flex items-center justify-between pt-[calc(0.625rem+env(safe-area-inset-top,0px))] pb-2.5 px-4 border-b border-white/5 bg-[#01050a]/95 backdrop-blur-xl z-40 sticky top-0">
+          <div className="flex items-center justify-between pt-[calc(0.625rem+var(--sat,var(--safe-area-inset-top,0px)))] pb-2.5 px-4 border-b border-white/5 bg-[#01050a]/95 backdrop-blur-xl z-40 sticky top-0">
             {/* Left: Account Switcher if own profile */}
             <div className="flex items-center shrink-0 z-10 relative w-24">
               {isOwnProfile && (
@@ -2206,7 +2211,13 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                 <button 
                   onMouseEnter={() => setIsHoveringFollow(true)}
                   onMouseLeave={() => setIsHoveringFollow(false)}
-                  onClick={() => toggleFollow(displayUser.id, displayUser)}
+                  onClick={() => {
+                    if (!user) {
+                      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+                      return;
+                    }
+                    toggleFollow(displayUser.id, displayUser);
+                  }}
                   className={`flex-1 py-2 rounded-xl text-xs font-black tracking-wider uppercase transition-all ${
                     isFollowingUser 
                       ? 'bg-white/5 border border-white/10 text-white hover:border-red-500/30 hover:text-red-500' 
@@ -2221,6 +2232,10 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                 </button>
                 <button 
                   onClick={() => {
+                    if (!user) {
+                      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+                      return;
+                    }
                     if (isMessageLocked) {
                       addToast?.({
                         title: 'Message Blocked',
@@ -2232,10 +2247,10 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                     }
                   }}
                   className="flex-1 py-2 bg-white/5 border border-white/10 text-white rounded-xl text-xs font-black tracking-wider uppercase transition-all flex items-center justify-center gap-1.5 hover:bg-white/10"
-                  title={isMessageLocked ? "Follow to message" : "Transmit direct message"}
+                  title={isMessageLocked ? "Follow to message" : "Send direct message"}
                 >
                   <MessageSquare size={12} />
-                  <span>{isMessageLocked ? "Follow To Message" : "Transmit"}</span>
+                  <span>{isMessageLocked ? "Follow To Message" : "Message"}</span>
                 </button>
                 {displayUser?.nglSettings?.enabled !== false && (
                   <button 
@@ -2249,56 +2264,77 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               </div>
             )}
 
-            {/* Stories & Highlights specifically for Mobile view */}
+            {/* Stories & Highlights specifically for Mobile view (Instagram Style with Square Frames) */}
             {!isLocked && (
-              <div className="pt-3.5 border-t border-white/5 space-y-2.5 px-4 font-sans">
-                <h3 className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em] select-none">Signals & Highlights</h3>
-                <div className="flex gap-4 overflow-x-auto pb-1.5 mask-fade-right scrollbar-hide -mx-4 px-4">
+              <div className="pt-2 border-t border-white/5 space-y-2 px-3 font-sans">
+                <div className="flex gap-3.5 overflow-x-auto pb-1 scrollbar-hide -mx-3 px-3 items-start">
+                  {/* New Highlight Button (Instagram Style) */}
                   {isOwnProfile && (
-                    <div className="flex flex-col items-center gap-1.5 shrink-0 select-none">
+                    <div className="flex flex-col items-center gap-1.5 shrink-0 select-none cursor-pointer">
                       <button 
                         onClick={handleCreateHighlight}
-                        className="w-14 h-14 rounded-2xl border border-dashed border-white/20 flex items-center justify-center text-white/30 hover:border-aeirmist-cyan hover:text-aeirmist-cyan transition-all bg-white/[0.01]"
+                        className="w-[66px] h-[66px] rounded-2xl border border-white/20 bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/40 flex items-center justify-center text-white/70 hover:text-white transition-all active:scale-95 shadow-sm"
+                        title="New Highlight"
                       >
-                        <Plus size={20} />
+                        <Plus size={24} strokeWidth={1.75} />
                       </button>
-                      <span className="text-[9px] font-bold text-white/30 tracking-wider">New</span>
+                      <span className="text-[11px] font-medium text-white/70 tracking-tight text-center truncate max-w-[66px]">New</span>
                     </div>
                   )}
+
+                  {/* Highlights List */}
                   {highlights.map(h => {
                     const isEmpty = !h.stories || h.stories.length === 0;
                     return (
                       <div 
                         key={h.id} 
-                        onClick={(e) => { e.stopPropagation(); handleHighlightClick(h); }} 
-                        className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group animate-fade-in"
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          handleHighlightClick(h); 
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          if (isOwnProfile) setActiveHighlightActionSheet(h);
+                        }}
+                        className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group select-none active:scale-95 transition-transform"
                       >
-                        <div className={`relative w-14 h-14 rounded-2xl overflow-hidden p-[1px] bg-neutral-900 shadow-md border ${
-                          isEmpty ? 'border-dashed border-red-500/40 bg-red-950/5' : 'border-white/10'
-                        }`}>
-                          {h.coverUrl ? (
-                            <img src={h.coverUrl} className={`w-full h-full object-cover rounded-2xl group-hover:scale-105 transition-transform ${isEmpty ? 'opacity-40 grayscale' : ''}`} />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-red-400/50">
-                              <span className="text-[8px] font-black uppercase">Empty</span>
+                        {/* Instagram Double Ring with Square Frame */}
+                        <div className="p-[2px] rounded-2xl bg-gradient-to-tr from-white/25 via-white/10 to-white/5 group-hover:from-[#00E5FF] group-hover:to-[#d8bbff] transition-all shadow-md">
+                          <div className="p-[2px] bg-[#030712] rounded-2xl">
+                            <div className="w-[60px] h-[60px] rounded-[13px] overflow-hidden bg-neutral-900 flex items-center justify-center relative">
+                              {h.coverUrl ? (
+                                <img 
+                                  src={h.coverUrl} 
+                                  alt={h.label} 
+                                  className={`w-full h-full object-cover rounded-[13px] group-hover:scale-105 transition-transform duration-300 ${isEmpty ? 'opacity-40 grayscale' : ''}`} 
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-white/30 text-[10px] font-bold">
+                                  {h.label?.charAt(0)?.toUpperCase() || 'H'}
+                                </div>
+                              )}
+                              {isEmpty && (
+                                <div className="absolute inset-0 bg-red-950/30 flex items-center justify-center">
+                                  <span className="text-[8px] font-bold uppercase tracking-wider text-red-400">Empty</span>
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {isEmpty && (
-                            <div className="absolute inset-0 bg-red-950/20 flex items-center justify-center">
-                              <span className="text-[7px] font-black uppercase tracking-wider text-red-400">Empty</span>
-                            </div>
-                          )}
+                          </div>
                         </div>
-                        <span className={`text-[9px] font-bold tracking-wider group-hover:text-aeirmist-cyan transition-colors truncate max-w-[64px] ${
-                          isEmpty ? 'text-red-400/50' : 'text-white/40'
-                        }`}>
+
+                        {/* Highlight Label */}
+                        <span className="text-[11px] font-medium text-white/90 group-hover:text-white transition-colors truncate max-w-[66px] text-center tracking-tight">
                           {h.label}
                         </span>
                       </div>
                     );
                   })}
+
                   {loadingHighlights && highlights.length === 0 && Array(4).fill(0).map((_, i) => (
-                    <div key={i} className="w-14 h-14 rounded-2xl bg-white/5 animate-pulse shrink-0" />
+                    <div key={i} className="flex flex-col items-center gap-1.5 shrink-0">
+                      <div className="w-[66px] h-[66px] rounded-2xl bg-white/5 animate-pulse" />
+                      <div className="w-10 h-2 bg-white/5 rounded animate-pulse" />
+                    </div>
                   ))}
                 </div>
               </div>
@@ -2654,13 +2690,14 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
           existingHighlight={highlightManagerState.highlight}
           onClose={() => setHighlightManagerState(null)}
           onSaved={() => setHighlightManagerState(null)}
+          userPosts={posts}
         />
       )}
 
-      {/* Highlight Quick Action Sheet */}
+      {/* Highlight Quick Action Sheet (Instagram Style) */}
       <AnimatePresence>
         {activeHighlightActionSheet && (
-          <div className="fixed inset-0 z-[1100] flex items-end justify-center p-4 sm:items-center">
+          <div className="fixed inset-0 z-[1100] flex items-end sm:items-center justify-center p-0 sm:p-4">
             <motion.div 
               initial={{ opacity: 0 }} 
               animate={{ opacity: 1 }} 
@@ -2669,27 +2706,41 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               className="absolute inset-0 bg-black/80 backdrop-blur-sm" 
             />
             <motion.div 
-              initial={{ y: 100, opacity: 0 }} 
+              initial={{ y: "100%", opacity: 0 }} 
               animate={{ y: 0, opacity: 1 }} 
-              exit={{ y: 100, opacity: 0 }} 
-              className="relative w-full max-w-sm bg-[#090a0f] border border-white/10 rounded-3xl p-6 shadow-2xl z-10 flex flex-col space-y-4 font-sans"
+              exit={{ y: "100%", opacity: 0 }} 
+              className="relative w-full max-w-sm bg-[#1e1e1e] border-t sm:border border-white/10 rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl z-10 flex flex-col space-y-2 font-sans"
             >
-              <div className="text-center pb-2">
-                <h4 className="text-xs font-black uppercase tracking-[0.2em] text-white/40">Highlight Options</h4>
-                <p className="text-sm font-bold text-white mt-1">"{activeHighlightActionSheet.label}"</p>
+              {/* Highlight preview info */}
+              <div className="flex items-center gap-3 pb-3 border-b border-white/10 px-2">
+                <div className="w-12 h-12 rounded-xl overflow-hidden bg-neutral-900 border border-white/10 shrink-0">
+                  {activeHighlightActionSheet.coverUrl ? (
+                    <img src={activeHighlightActionSheet.coverUrl} className="w-full h-full object-cover" alt="" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white/40 text-xs font-bold">
+                      {activeHighlightActionSheet.label?.charAt(0) || 'H'}
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-sm font-bold text-white truncate">{activeHighlightActionSheet.label}</h4>
+                  <p className="text-[11px] text-white/50">{activeHighlightActionSheet.stories?.length || 0} stories</p>
+                </div>
               </div>
 
+              {/* View Highlight */}
               <button
                 onClick={async () => {
                   const targetHighlight = activeHighlightActionSheet;
                   setActiveHighlightActionSheet(null);
                   await viewHighlightDirectly(targetHighlight);
                 }}
-                className="w-full py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-white font-bold text-xs uppercase tracking-wider transition-all border border-white/5 flex items-center justify-center gap-2"
+                className="w-full py-3 px-4 rounded-xl hover:bg-white/5 text-white font-semibold text-xs transition-all flex items-center gap-3 text-left"
               >
-                <span>View Highlight</span>
+                <span>Play Highlight</span>
               </button>
 
+              {/* Edit Highlight */}
               <button
                 onClick={() => {
                   const targetHighlight = activeHighlightActionSheet;
@@ -2704,17 +2755,37 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                     }
                   });
                 }}
-                className="w-full py-3.5 rounded-2xl bg-aeirmist-cyan hover:bg-opacity-90 text-black font-bold text-xs uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(0,242,255,0.3)] flex items-center justify-center gap-2"
+                className="w-full py-3 px-4 rounded-xl hover:bg-white/5 text-white font-semibold text-xs transition-all flex items-center gap-3 text-left"
               >
                 <span>Edit Highlight</span>
               </button>
 
+              {/* Delete Highlight */}
               <button
-                onClick={() => setActiveHighlightActionSheet(null)}
-                className="w-full py-3 text-white/40 hover:text-white/60 font-bold text-[10px] uppercase tracking-widest transition-all"
+                onClick={async () => {
+                  const targetHighlight = activeHighlightActionSheet;
+                  if (!window.confirm(`Delete highlight "${targetHighlight.label}"?`)) return;
+                  setActiveHighlightActionSheet(null);
+                  try {
+                    await deleteDoc(doc(db, 'highlights', targetHighlight.id));
+                    addToast?.({ title: "Highlight Removed", message: "Highlight deleted from profile.", type: "success" });
+                  } catch (e) {
+                    console.error("Delete highlight error:", e);
+                  }
+                }}
+                className="w-full py-3 px-4 rounded-xl hover:bg-red-500/10 text-red-400 font-semibold text-xs transition-all flex items-center gap-3 text-left"
               >
-                Dismiss
+                <span>Delete Highlight</span>
               </button>
+
+              <div className="pt-1 border-t border-white/10">
+                <button
+                  onClick={() => setActiveHighlightActionSheet(null)}
+                  className="w-full py-2.5 text-white/60 hover:text-white font-semibold text-xs transition-all text-center"
+                >
+                  Cancel
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

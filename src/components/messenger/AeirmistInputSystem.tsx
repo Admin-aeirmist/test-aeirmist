@@ -32,6 +32,7 @@ import {
 import { VoiceVisualizer } from './VoiceVisualizer';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
+import { PermissionService } from '../../services/PermissionService';
 
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
 
@@ -269,18 +270,19 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   };
 
   const startRecording = async () => {
-    const granted = await requestPermission('microphone');
-    if (!granted) {
+    // Phase 6: Request microphone permission only when user taps recording
+    const micRes = await PermissionService.requestMicrophoneStream();
+    if (!micRes.granted || !micRes.stream) {
       addToast({
-        title: "Microphone Blocked",
-        message: "Please allow microphone access in your browser, or open the app in a new tab if you are using an iframe.",
+        title: "Microphone Access Required",
+        message: micRes.error || "Please allow microphone access to record voice messages.",
         type: "warning"
       });
       return;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = micRes.stream;
       setAudioStream(stream);
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
@@ -303,6 +305,14 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
       setRecordingTime(0);
     } catch (err) {
       logger.error("Failed to start recording:", err);
+      if (micRes.stream) {
+        micRes.stream.getTracks().forEach(track => track.stop());
+      }
+      addToast({
+        title: "Recording Failed",
+        message: "Could not initialize audio recorder on this device.",
+        type: "error"
+      });
     }
   };
 

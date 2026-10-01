@@ -205,9 +205,9 @@ export const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ x, y, onClose,
               try {
                 const convRef = doc(db, 'conversations', chatId);
                 await updateDoc(convRef, {
-                  [`isVaulted.${profile.id}`]: true
+                  [`isVaulted.${profile.id}`]: true,
+                  [`isMuted.${profile.id}`]: true
                 });
-                addToast({ title: 'Moved to Vault', message: 'Chat is now secured in your private vault.', type: 'success' });
               } catch (e) {
                 logger.error("Vault move error", e);
               }

@@ -9,7 +9,7 @@ import {
     Image as ImageLucide, Film, Bookmark, HardDrive,
     Trash2, CheckCircle2, Circle, ArrowLeft, EyeOff,
     BookOpen, Edit3, Shield, Sparkles, FolderPlus,
-    UploadCloud, Lock, Check, ExternalLink, RefreshCw
+    UploadCloud, Lock, Check, ExternalLink, RefreshCw, CheckSquare
 } from 'lucide-react';
 import { 
     collection, 
@@ -152,7 +152,7 @@ export const PrivacyFolderLayout = ({
                     category: noteCategory,
                     updatedAt: serverTimestamp()
                 });
-                addToast({ title: "Note Saved", message: "Cloud diary note updated.", type: "success" });
+                addToast({ title: "Note Saved", message: "Notepad note updated.", type: "success" });
             } else {
                 await addDoc(collection(db, 'vault_media'), {
                     userId: currentAuthUid,
@@ -166,7 +166,7 @@ export const PrivacyFolderLayout = ({
                     isFavorite: false,
                     folderId: selectedFolder || null
                 });
-                addToast({ title: "Note Created", message: "Private note secured in Cloud Diary.", type: "success" });
+                addToast({ title: "Note Created", message: "Private note secured in Notepad.", type: "success" });
             }
             setNoteModalOpen(false);
             setNoteTitle('');
@@ -180,64 +180,73 @@ export const PrivacyFolderLayout = ({
 
     // Direct File Processing (images, videos, documents)
     const handleDirectFiles = async (files: FileList | null) => {
+        setIsFabOpen(false);
         if (!files || files.length === 0 || !db || !profile?.id) return;
         setIsUploadingDirect(true);
         const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile.id;
 
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            try {
-                let mediaUrl = '';
-                if (uploadMedia) {
-                    try {
-                        mediaUrl = await uploadMedia(file, `vault/${currentAuthUid}`);
-                    } catch (e) {
-                        logger.warn("Storage upload fallback:", e);
+        try {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                try {
+                    let mediaUrl = '';
+                    if (uploadMedia) {
+                        try {
+                            mediaUrl = await uploadMedia(file, `vault/${currentAuthUid}`);
+                        } catch (e) {
+                            logger.warn("Storage upload fallback:", e);
+                        }
                     }
-                }
-                if (!mediaUrl) {
-                    mediaUrl = await new Promise<string>((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = (e) => resolve(e.target?.result as string);
-                        reader.onerror = reject;
-                        reader.readAsDataURL(file);
+                    if (!mediaUrl) {
+                        mediaUrl = await new Promise<string>((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = (e) => resolve(e.target?.result as string);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(file);
+                        });
+                    }
+
+                    const isVideo = file.type.startsWith('video');
+                    const isImage = file.type.startsWith('image');
+                    const isDoc = !isVideo && !isImage;
+
+                    await addDoc(collection(db, 'vault_media'), {
+                        userId: currentAuthUid,
+                        ownerUid: currentAuthUid,
+                        profileId: profile.id,
+                        url: mediaUrl,
+                        type: isVideo ? 'video' : isImage ? 'image' : 'file',
+                        name: file.name,
+                        size: file.size,
+                        mimeType: file.type,
+                        createdAt: serverTimestamp(),
+                        isFavorite: false,
+                        folderId: selectedFolder || null
+                    });
+
+                    addToast({
+                        title: "Encrypted & Saved",
+                        message: `${file.name} added to your Private Safe.`,
+                        type: "success"
+                    });
+                } catch (err: any) {
+                    logger.error("Direct file save error:", err);
+                    addToast({
+                        title: "Upload Issue",
+                        message: err?.message || "Failed to save file.",
+                        type: "warning"
                     });
                 }
-
-                const isVideo = file.type.startsWith('video');
-                const isImage = file.type.startsWith('image');
-                const isDoc = !isVideo && !isImage;
-
-                await addDoc(collection(db, 'vault_media'), {
-                    userId: currentAuthUid,
-                    ownerUid: currentAuthUid,
-                    profileId: profile.id,
-                    url: mediaUrl,
-                    type: isVideo ? 'video' : isImage ? 'image' : 'file',
-                    name: file.name,
-                    size: file.size,
-                    mimeType: file.type,
-                    createdAt: serverTimestamp(),
-                    isFavorite: false,
-                    folderId: selectedFolder || null
-                });
-
-                addToast({
-                    title: "Encrypted & Saved",
-                    message: `${file.name} added to your Private Safe.`,
-                    type: "success"
-                });
-            } catch (err: any) {
-                logger.error("Direct file save error:", err);
-                addToast({
-                    title: "Upload Issue",
-                    message: err?.message || "Failed to save file.",
-                    type: "warning"
-                });
             }
+        } finally {
+            setIsUploadingDirect(false);
+            setIsFabOpen(false);
+            try {
+                if (fileInputRef.current) fileInputRef.current.value = '';
+                if (videoInputRef.current) videoInputRef.current.value = '';
+                if (anyFileInputRef.current) anyFileInputRef.current.value = '';
+            } catch {}
         }
-        setIsUploadingDirect(false);
-        setIsFabOpen(false);
     };
 
     // Move Selected Items to Folder
@@ -352,6 +361,15 @@ export const PrivacyFolderLayout = ({
         return items;
     }, [privacyMedia, activeTab, selectedFolder, searchQuery, sortOrder]);
 
+    // Bulk selection handlers
+    const handleSelectAll = () => {
+        if (selectedIds.length === filteredMedia.length && filteredMedia.length > 0) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(filteredMedia.map(m => m.id));
+        }
+    };
+
     const currentFolderName = useMemo(() => {
         if (!selectedFolder) return null;
         return folders.find(f => f.id === selectedFolder)?.name || 'Album';
@@ -425,9 +443,23 @@ export const PrivacyFolderLayout = ({
 
                     {/* Top Right Action Icons */}
                     <div className="flex items-center gap-1.5">
+                        {selectionMode && (
+                            <button
+                                type="button"
+                                onClick={handleSelectAll}
+                                className="px-2.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white/90 border border-white/10 transition-colors"
+                            >
+                                {selectedIds.length === filteredMedia.length && filteredMedia.length > 0 ? 'Deselect All' : 'Select All'}
+                            </button>
+                        )}
                         <button 
-                            onClick={() => setSelectionMode(prev => !prev)}
-                            className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-colors ${selectionMode ? 'bg-[#00E5FF] text-black' : 'bg-white/5 hover:bg-white/10 text-white/80'}`}
+                            onClick={() => {
+                                setSelectionMode(prev => {
+                                    if (prev) setSelectedIds([]);
+                                    return !prev;
+                                });
+                            }}
+                            className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-colors ${selectionMode ? 'bg-[#00E5FF] text-black shadow-md' : 'bg-white/5 hover:bg-white/10 text-white/80'}`}
                         >
                             {selectionMode ? 'Done' : 'Select'}
                         </button>
@@ -453,11 +485,11 @@ export const PrivacyFolderLayout = ({
                                 { id: 'photos', label: 'Photos', count: stats.photos, icon: ImageLucide, color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
                                 { id: 'videos', label: 'Videos', count: stats.videos, icon: Film, color: 'text-purple-400', bg: 'bg-purple-500/10' },
                                 { id: 'albums', label: 'Albums', count: stats.albums, icon: Folder, color: 'text-amber-400', bg: 'bg-amber-500/10' },
-                                { id: 'diary', label: 'Cloud Diary', count: stats.notes, icon: BookOpen, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+                                { id: 'diary', label: 'Notepad', count: stats.notes, icon: BookOpen, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
                                 { id: 'favorites', label: 'Favorites', count: stats.favorites, icon: Heart, color: 'text-red-400', bg: 'bg-red-500/10' }
                             ].map((stat) => (
                                 <motion.button 
-                                    key={stat.id}
+                                    key={stat.id} 
                                     whileTap={{ scale: 0.97 }}
                                     onClick={() => {
                                         setActiveTab(stat.id as any);
@@ -488,7 +520,7 @@ export const PrivacyFolderLayout = ({
                                 { id: 'photos', label: 'Photos', icon: ImageLucide },
                                 { id: 'videos', label: 'Videos', icon: Film },
                                 { id: 'albums', label: 'Albums', icon: Folder },
-                                { id: 'diary', label: 'Cloud Diary', icon: BookOpen },
+                                { id: 'diary', label: 'Notepad', icon: BookOpen },
                                 { id: 'favorites', label: 'Favorites', icon: Heart }
                             ].map(tab => (
                                 <button
@@ -594,8 +626,8 @@ export const PrivacyFolderLayout = ({
                             <div>
                                 <div className="flex justify-between items-center mb-4">
                                     <div>
-                                        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Cloud Diary & Secret Notes</h3>
-                                        <p className="text-[10px] font-mono text-white/40">Encrypted personal journal entries and confidential thoughts.</p>
+                                        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Notepad & Secret Notes</h3>
+                                        <p className="text-[10px] font-mono text-white/40">Encrypted personal notes and confidential thoughts.</p>
                                     </div>
                                     <button
                                         onClick={() => {
@@ -608,15 +640,15 @@ export const PrivacyFolderLayout = ({
                                         className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-lg shadow-emerald-500/20"
                                     >
                                         <Edit3 size={14} />
-                                        <span>New Entry</span>
+                                        <span>New Note</span>
                                     </button>
                                 </div>
 
                                 {filteredMedia.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-16 text-center space-y-3 bg-white/[0.02] border border-white/5 rounded-3xl p-8">
                                         <BookOpen size={48} className="text-emerald-400/40 mb-1" />
-                                        <h4 className="text-sm font-bold text-white uppercase tracking-wider">Your Diary is Empty</h4>
-                                        <p className="text-xs text-white/40 max-w-sm">Write down your private thoughts, passwords, ideas or journal entries protected by your vault PIN.</p>
+                                        <h4 className="text-sm font-bold text-white uppercase tracking-wider">Your Notepad is Empty</h4>
+                                        <p className="text-xs text-white/40 max-w-sm">Write down your private thoughts, passwords, ideas or notes protected by your vault PIN.</p>
                                         <button
                                             onClick={() => {
                                                 setEditingNoteId(null);
@@ -655,7 +687,7 @@ export const PrivacyFolderLayout = ({
                                                 <div>
                                                     <div className="flex justify-between items-start mb-2">
                                                         <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                                            {note.category || 'Diary'}
+                                                            {note.category || 'Note'}
                                                         </span>
                                                         <div className="flex items-center gap-1">
                                                             <button 
@@ -712,7 +744,7 @@ export const PrivacyFolderLayout = ({
                                             <div className="w-full h-full p-3 bg-gradient-to-br from-[#1b1429] to-[#0a0712] flex flex-col justify-between">
                                                 <div className="flex items-center gap-1.5 text-emerald-400">
                                                     <BookOpen size={14} />
-                                                    <span className="text-[8px] font-mono font-bold uppercase truncate">{item.name || 'Diary'}</span>
+                                                    <span className="text-[8px] font-mono font-bold uppercase truncate">{item.name || 'Note'}</span>
                                                 </div>
                                                 <p className="text-[10px] text-white/80 line-clamp-3 font-sans leading-tight">
                                                     {item.content}
@@ -720,7 +752,7 @@ export const PrivacyFolderLayout = ({
                                                 <span className="text-[8px] font-mono text-white/30">NOTE</span>
                                             </div>
                                         ) : item.type === 'image' ? (
-                                            <img src={item.url} loading="lazy" alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                                            <img src={item.url} loading="lazy" alt="" width={300} height={300} style={{ aspectRatio: '1 / 1' }} className="w-full h-full aspect-square object-cover group-hover:scale-105 transition-transform duration-300" />
                                         ) : (
                                             <div className="relative w-full h-full bg-black">
                                                 <video src={`${item.url}#t=0.5`} className="w-full h-full object-cover" muted preload="metadata" playsInline />
@@ -764,7 +796,7 @@ export const PrivacyFolderLayout = ({
                                         {activeTab === 'favorites' ? 'No Favorites Saved' : 'This Folder is Empty'}
                                     </h3>
                                     <p className="text-xs text-white/40 max-w-xs">
-                                        Protect your private photos, videos, and diary notes securely in your personal vault.
+                                        Protect your private photos, videos, and notes securely in your personal vault.
                                     </p>
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-center pt-2">
@@ -815,55 +847,85 @@ export const PrivacyFolderLayout = ({
                 onChange={(e) => handleDirectFiles(e.target.files)} 
             />
 
-            {/* Selection Floating Toolbar */}
+            {/* Selection Floating Action Toolbar */}
             <AnimatePresence>
-                {selectionMode && selectedIds.length > 0 && (
+                {selectionMode && (
                     <motion.div 
                         initial={{ y: 80, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         exit={{ y: 80, opacity: 0 }}
-                        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#12101a]/98 backdrop-blur-2xl border border-white/15 rounded-full px-6 py-3 flex items-center gap-6 shadow-2xl"
+                        className="fixed bottom-20 md:bottom-8 left-1/2 -translate-x-1/2 z-[120] w-[94%] max-w-lg bg-[#0e0d16]/98 backdrop-blur-2xl border border-white/20 rounded-2xl md:rounded-full px-4 py-3 flex items-center justify-between shadow-[0_12px_45px_rgba(0,0,0,0.9)] ring-1 ring-white/10"
                     >
-                        <div className="flex items-center gap-2 pr-3 border-r border-white/10">
-                            <span className="text-xs font-black uppercase tracking-wider text-[#00E5FF]">{selectedIds.length}</span>
-                            <span className="text-[10px] font-bold text-white/40 uppercase">Selected</span>
+                        {/* Left: Select All Button & Count */}
+                        <div className="flex items-center gap-2.5">
+                            <button
+                                type="button"
+                                onClick={handleSelectAll}
+                                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                            >
+                                <CheckSquare size={14} className="text-[#00E5FF]" />
+                                <span>{selectedIds.length === filteredMedia.length && filteredMedia.length > 0 ? "Deselect All" : "Select All"}</span>
+                            </button>
+                            <span className="text-[11px] font-black text-[#00E5FF] px-1.5 py-0.5 rounded bg-[#00E5FF]/10 border border-[#00E5FF]/20">
+                                {selectedIds.length}
+                            </span>
                         </div>
-                        <div className="flex items-center gap-5">
+
+                        {/* Action Buttons: Move to Folder, Download, Favorite, Delete */}
+                        <div className="flex items-center gap-2 sm:gap-3">
                             <button 
+                                type="button"
+                                disabled={selectedIds.length === 0}
                                 onClick={() => setMoveModalOpen(true)}
-                                className="flex flex-col items-center gap-1 text-white/70 hover:text-white transition-colors"
+                                className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl text-white/80 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer"
+                                title="Move to Folder"
                             >
-                                <Folder size={17} />
-                                <span className="text-[8px] font-bold uppercase">Move</span>
+                                <Folder size={17} className="text-amber-400" />
+                                <span className="text-[8px] font-black uppercase tracking-wider">Move</span>
                             </button>
+
                             <button 
+                                type="button"
+                                disabled={selectedIds.length === 0}
                                 onClick={handleBulkDownload}
-                                className="flex flex-col items-center gap-1 text-white/70 hover:text-white transition-colors"
+                                className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl text-white/80 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer"
+                                title="Download / Save"
                             >
-                                <Download size={17} />
-                                <span className="text-[8px] font-bold uppercase">Save</span>
+                                <Download size={17} className="text-cyan-400" />
+                                <span className="text-[8px] font-black uppercase tracking-wider">Download</span>
                             </button>
+
                             <button 
+                                type="button"
+                                disabled={selectedIds.length === 0}
                                 onClick={handleBulkFavorite}
-                                className="flex flex-col items-center gap-1 text-white/70 hover:text-red-400 transition-colors"
+                                className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl text-white/80 hover:text-red-400 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer"
+                                title="Favorite"
                             >
-                                <Heart size={17} />
-                                <span className="text-[8px] font-bold uppercase">Favorite</span>
+                                <Heart size={17} className="text-rose-400" />
+                                <span className="text-[8px] font-black uppercase tracking-wider">Fav</span>
                             </button>
+
                             <button 
+                                type="button"
+                                disabled={selectedIds.length === 0}
                                 onClick={handleBulkDelete}
-                                className="flex flex-col items-center gap-1 text-red-400 hover:text-red-300 transition-colors"
+                                className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer"
+                                title="Delete Selected"
                             >
                                 <Trash2 size={17} />
-                                <span className="text-[8px] font-bold uppercase">Delete</span>
+                                <span className="text-[8px] font-black uppercase tracking-wider">Delete</span>
+                            </button>
+
+                            <button 
+                                type="button"
+                                onClick={() => { setSelectionMode(false); setSelectedIds([]); }}
+                                className="p-1.5 ml-1 hover:bg-white/10 rounded-full transition-colors text-white/60 hover:text-white cursor-pointer"
+                                title="Close"
+                            >
+                                <X size={16} />
                             </button>
                         </div>
-                        <button 
-                            onClick={() => { setSelectionMode(false); setSelectedIds([]); }}
-                            className="p-1.5 hover:bg-white/10 rounded-full transition-colors text-white/50"
-                        >
-                            <X size={16} />
-                        </button>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -891,7 +953,10 @@ export const PrivacyFolderLayout = ({
                             </div>
 
                             <button 
-                                onClick={() => fileInputRef.current?.click()}
+                                onClick={() => {
+                                    setIsFabOpen(false);
+                                    fileInputRef.current?.click();
+                                }}
                                 className="flex w-full items-center justify-between p-3.5 bg-white/5 hover:bg-white/10 rounded-2xl transition-all group"
                             >
                                 <div className="flex items-center gap-3.5">
@@ -907,7 +972,10 @@ export const PrivacyFolderLayout = ({
                             </button>
 
                             <button 
-                                onClick={() => videoInputRef.current?.click()}
+                                onClick={() => {
+                                    setIsFabOpen(false);
+                                    videoInputRef.current?.click();
+                                }}
                                 className="flex w-full items-center justify-between p-3.5 bg-white/5 hover:bg-white/10 rounded-2xl transition-all group"
                             >
                                 <div className="flex items-center gap-3.5">
@@ -938,8 +1006,8 @@ export const PrivacyFolderLayout = ({
                                         <BookOpen size={18} />
                                     </div>
                                     <div className="text-left">
-                                        <div className="text-xs font-bold">New Cloud Diary Note</div>
-                                        <div className="text-[9px] text-white/40 font-mono">Secret text / journal</div>
+                                        <div className="text-xs font-bold">New Notepad Note</div>
+                                        <div className="text-[9px] text-white/40 font-mono">Secret text / notes</div>
                                     </div>
                                 </div>
                                 <ChevronRight size={16} className="text-white/20 group-hover:text-white" />
@@ -1000,6 +1068,10 @@ export const PrivacyFolderLayout = ({
                     }}
                     onFavorite={onFavorite}
                     onRestore={onRestore}
+                    onMoveToFolder={(id) => {
+                        setSelectedIds([id]);
+                        setMoveModalOpen(true);
+                    }}
                 />
             )}
 
@@ -1061,7 +1133,7 @@ export const PrivacyFolderLayout = ({
                             <div className="flex items-center gap-2">
                                 <BookOpen size={18} className="text-emerald-400" />
                                 <h3 className="text-sm font-black uppercase tracking-wider">
-                                    {editingNoteId ? 'Edit Cloud Diary Note' : 'New Cloud Diary Note'}
+                                    {editingNoteId ? 'Edit Notepad Note' : 'New Notepad Note'}
                                 </h3>
                             </div>
                             <button onClick={() => setNoteModalOpen(false)} className="p-1 text-white/40 hover:text-white">

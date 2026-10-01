@@ -249,7 +249,8 @@ export const ChatInfoPanel = ({
     try {
       const chatRef = doc(db, 'conversations', chat.id);
       await updateDoc(chatRef, {
-        [`isVaulted.${profile.id}`]: !currentVaultStatus
+        [`isVaulted.${profile.id}`]: !currentVaultStatus,
+        ...(!currentVaultStatus ? { [`isMuted.${profile.id}`]: true } : {})
       });
     } catch (e) {
       logger.error("Failed to toggle vault status", e);

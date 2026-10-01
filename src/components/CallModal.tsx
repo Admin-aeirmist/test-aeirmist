@@ -41,6 +41,15 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(type === 'audio');
   const [isSpeaker, setIsSpeaker] = useState(true);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' ? window.innerWidth >= 768 : false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [isMinimized, setIsMinimized] = useState(false);
   const [callStatus, setCallStatus] = useState<'ringing' | 'connecting' | 'connected' | 'reconnecting' | 'ended' | 'error'>('ringing');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -85,6 +94,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     localVideoRef.current = el;
     if (el) {
       el.muted = true;
+      el.defaultMuted = true;
       if (callStream && el.srcObject !== callStream) {
         el.srcObject = callStream;
       }
@@ -97,7 +107,8 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   const setRemoteVideoNode = useCallback((el: HTMLVideoElement | null) => {
     remoteVideoRef.current = el;
     if (el) {
-      el.muted = true;
+      el.muted = true; // Remote video element MUST ALWAYS be muted to prevent duplicate audio playback
+      el.defaultMuted = true;
       if (remoteStream && remoteStream.getVideoTracks().length > 0) {
         const videoOnly = new MediaStream(remoteStream.getVideoTracks());
         if (!el.srcObject || (el.srcObject as MediaStream).getVideoTracks()[0]?.id !== videoOnly.getVideoTracks()[0]?.id) {
@@ -161,12 +172,20 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
   }, []);
 
   // Fallback chat details
+  const isCallerFallback = activeCall ? (activeCall.callerUid === user?.uid || activeCall.callerId === profile?.id) : false;
   const safeChat = chat || {
-    id: activeCall?.conversationId || '',
-    name: activeCall?.callerName || (activeCall as any)?.participantDetails?.[activeCall?.callerId || '']?.displayName || 'Aeirmist User',
-    photo: getAvatarUrl(activeCall?.callerPhoto || (activeCall as any)?.participantDetails?.[activeCall?.callerId || '']?.photoURL, activeCall?.callerId),
-    participants: activeCall?.callerId ? [activeCall.callerId, profile?.id].filter(Boolean) : [],
-    otherParticipantUid: activeCall?.callerUid || ''
+    id: activeCall?.conversationId || activeCall?.id || '',
+    name: isCallerFallback 
+      ? (activeCall?.receiverName || 'Aeirmist User') 
+      : (activeCall?.callerName || (activeCall as any)?.participantDetails?.[activeCall?.callerId || '']?.displayName || 'Aeirmist User'),
+    photo: getAvatarUrl(
+      isCallerFallback 
+        ? (activeCall?.receiverPhoto || '') 
+        : (activeCall?.callerPhoto || (activeCall as any)?.participantDetails?.[activeCall?.callerId || '']?.photoURL), 
+      isCallerFallback ? activeCall?.receiverId : activeCall?.callerId
+    ),
+    participants: activeCall ? [activeCall.callerId, activeCall.receiverId, profile?.id].filter(Boolean) : [],
+    otherParticipantUid: isCallerFallback ? activeCall?.receiverUid : activeCall?.callerUid
   };
 
   const participantId = safeChat.participants?.find((id: string) => id !== profile?.id && id !== user?.uid && id !== ('profile_' + user?.uid)) || safeChat.otherParticipantUid || '';
@@ -176,22 +195,16 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     aeirmistCall.toggleAudio(!isMuted);
   }, [isMuted]);
 
-  useEffect(() => {
-    aeirmistCall.toggleVideo(!isVideoOff);
-  }, [isVideoOff]);
+  // NOTE: Do NOT call aeirmistCall.toggleVideo here. handleToggleVideo already calls it
+  // and awaits the result to update callStream. A second fire from useEffect causes
+  // duplicate getUserMedia calls, race conditions, and broken camera-on state.
 
-  // Safe one-time audio monitoring registration per stream
+  // Safe one-time audio monitoring registration for local mic
   useEffect(() => {
     if (callStream && callStream.getAudioTracks().length > 0) {
       aeirmistCall.setupAudioMonitoring(callStream, 'local');
     }
   }, [callStream]);
-
-  useEffect(() => {
-    if (remoteStream && remoteStream.getAudioTracks().length > 0) {
-      aeirmistCall.setupAudioMonitoring(remoteStream, 'remote');
-    }
-  }, [remoteStream]);
 
   // Synchronise remote audio playback without muting audio element (routing handled via native communication mode)
   useEffect(() => {
@@ -201,13 +214,14 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     audio.volume = 1.0;
 
     if (remoteStream && remoteStream.getAudioTracks().length > 0) {
+      const audioTracks = remoteStream.getAudioTracks();
       const currentSrcObject = audio.srcObject as MediaStream | null;
       const currentTrackId = currentSrcObject?.getAudioTracks()[0]?.id;
-      const newTrackId = remoteStream.getAudioTracks()[0]?.id;
+      const newTrackId = audioTracks[0]?.id;
 
       // Only assign if the audio track ID actually changed, preventing decoder reset
       if (!currentSrcObject || (newTrackId && currentTrackId !== newTrackId)) {
-        audio.srcObject = remoteStream;
+        audio.srcObject = new MediaStream(audioTracks); // audio.srcObject = remoteStream
       }
       
       audio.play().then(() => {
@@ -219,12 +233,15 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     }
   }, [remoteStream, callStatus]);
 
-  // Bind WebRTC media streams safely across all active rendering video tags without reset loops
+  // Bind WebRTC VIDEO streams to all active video elements without reset loops.
+  // AUDIO is managed exclusively by the single useEffect above (lines ~202-226).
+  // Do NOT manage audio here — doing so creates a second playback path causing echo.
   useEffect(() => {
-    const bindStreams = () => {
+    const bindVideoStreams = () => {
       const localVideos = document.querySelectorAll('.aeirmist-local-video') as NodeListOf<HTMLVideoElement>;
       localVideos.forEach(v => {
         v.muted = true;
+        v.defaultMuted = true;
         const currentTrackId = (v.srcObject as MediaStream)?.getVideoTracks()[0]?.id;
         const newTrackId = callStream?.getVideoTracks()[0]?.id;
         if (newTrackId && currentTrackId !== newTrackId) {
@@ -240,6 +257,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       remoteVideos.forEach(v => {
         if (v instanceof HTMLVideoElement) {
           v.muted = true;
+          v.defaultMuted = true;
           const currentTrackId = (v.srcObject as MediaStream)?.getVideoTracks()[0]?.id;
           const newTrackId = remoteStream?.getVideoTracks()[0]?.id;
           if (newTrackId && currentTrackId !== newTrackId) {
@@ -251,33 +269,11 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           }
         }
       });
-
-      if (remoteAudioRef.current && remoteStream && remoteStream.getAudioTracks().length > 0) {
-        const a = remoteAudioRef.current;
-        a.muted = false;
-        a.volume = 1.0;
-        
-        const currentSrcObject = a.srcObject as MediaStream | null;
-        const currentTrackId = currentSrcObject?.getAudioTracks()[0]?.id;
-        const newTrackId = remoteStream.getAudioTracks()[0]?.id;
-
-        if (!currentSrcObject || (newTrackId && currentTrackId !== newTrackId)) {
-          a.srcObject = remoteStream;
-        }
-        if (a.paused && !isAutoplayBlocked) {
-          a.play().then(() => {
-            setIsAutoplayBlocked(false);
-          }).catch(() => {
-            setIsAutoplayBlocked(true);
-          });
-        }
-      }
     };
 
-    bindStreams();
-    const interval = setInterval(bindStreams, 1000);
-    return () => clearInterval(interval);
-  }, [callStream, remoteStream, callStatus, isVideoOff, isMinimized, isAutoplayBlocked]);
+    bindVideoStreams();
+  // isAutoplayBlocked intentionally NOT included here — audio is managed in its own effect
+  }, [callStream, remoteStream, callStatus, isVideoOff, isMinimized]);
 
   const handleSwitchCamera = async () => {
     try {
@@ -344,14 +340,19 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         if (!isIncomingCall && safeChat.id && !hasInitiatedCall.current) {
           hasInitiatedCall.current = true;
           unlockAudio();
-          try {
-            await ensureCallPermissions(type);
-          } catch (permErr) {
-            logger.warn("[CallModal] Permission check on init:", permErr);
+          // Only trigger startCall if activeCall does NOT already exist for this session
+          if (!activeCall || activeCall.status === 'ended') {
+            try {
+              await ensureCallPermissions(type);
+            } catch (permErr) {
+              logger.warn("[CallModal] Permission check on init:", permErr);
+            }
+            const targetUid = safeChat.otherParticipantUid || safeChat.participants?.find((id: string) => id !== profile?.id && id !== user?.uid && id !== ('profile_' + user?.uid));
+            await startCall(safeChat.id, type, targetUid);
           }
-          const targetUid = safeChat.otherParticipantUid || safeChat.participants?.find((id: string) => id !== profile?.id && id !== user?.uid && id !== ('profile_' + user?.uid));
-          await startCall(safeChat.id, type, targetUid);
-          aeirmistRingtone.playDialTone();
+          if (!activeCall || activeCall.status === 'calling') {
+            aeirmistRingtone.playDialTone();
+          }
         }
       } catch (e: any) {
         setCallStatus('error');
@@ -448,8 +449,8 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
       const audio = remoteAudioRef.current;
       const handleStall = () => {
-        logger.warn("[WebRTC Audio] Buffer underrun / stall detected, auto-resuming playback...");
-        if (audio) {
+        if (audio && audio.paused && !isAutoplayBlocked) {
+          logger.warn("[WebRTC Audio] Buffer underrun / stall detected, auto-resuming playback...");
           audio.play().catch(() => {});
         }
       };
@@ -818,7 +819,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           </div>
 
           {/* Top Bar */}
-          <div className="relative z-10 flex items-center justify-between pt-4 px-5 pb-2">
+          <div className="relative z-10 flex items-center justify-between pt-[calc(1rem+var(--sat,env(safe-area-inset-top,0px)))] px-5 pb-2">
             <button 
               onClick={() => setIsMinimized(true)}
               className="w-10 h-10 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white active:scale-95 transition-all"
@@ -860,13 +861,13 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
           {/* Bottom Call Action buttons / Controls dock */}
           {isIncomingCall ? (
-            <div className="relative z-10 w-full flex flex-col items-center gap-4 pb-6 px-4">
+            <div className="relative z-10 w-full flex flex-col items-center gap-4 pb-[calc(1.5rem+var(--sab,env(safe-area-inset-bottom,0px)))] px-4">
               {/* Core quick controls for incoming call */}
               <div className="flex items-center justify-center gap-3 bg-[#08090d]/80 backdrop-blur-xl border border-white/10 px-4 py-2.5 rounded-2xl">
                 <button
                   onClick={handleToggleSpeaker}
                   className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
-                    !isSpeaker ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/10 text-white'
+                    isSpeaker ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/10 text-white'
                   }`}
                   title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
                 >
@@ -928,12 +929,12 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
             </div>
           ) : (
             /* 5-Icon Control Dock for Outgoing Calling Screen */
-            <div className="relative z-10 w-full bg-[#08090d]/95 backdrop-blur-2xl border-t border-white/10 px-3 py-3.5 flex items-center justify-evenly gap-2 shrink-0">
+            <div className="relative z-10 w-full bg-[#08090d]/95 backdrop-blur-2xl border-t border-white/10 px-3 pt-3.5 pb-[calc(1.25rem+var(--sab,env(safe-area-inset-bottom,0px)))] flex items-center justify-evenly gap-2 shrink-0">
               {/* 1. Speaker / Audio */}
               <button
                 onClick={handleToggleSpeaker}
                 className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all active:scale-90 shrink-0 ${
-                  !isSpeaker ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/10 text-white hover:bg-white/20'
+                  isSpeaker ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/10 text-white hover:bg-white/20'
                 }`}
                 title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
               >
@@ -1044,7 +1045,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
             )}
 
             {/* TOP HEADER OVERLAY (Down Chevron & Red End Call Button) */}
-            <div className="absolute top-0 inset-x-0 pt-4 pb-8 px-4 z-30 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-auto">
+            <div className="absolute top-0 inset-x-0 pt-[calc(1rem+var(--sat,env(safe-area-inset-top,0px)))] pb-8 px-4 z-30 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-auto">
               <button 
                 onClick={() => setIsMinimized(true)}
                 className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white hover:bg-white/20 active:scale-95 transition-all shadow-lg"
@@ -1070,7 +1071,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           <div className="relative flex-1 bg-black overflow-hidden border-t border-white/10 shadow-2xl min-h-0">
             <video 
               ref={setLocalVideoNode}
-              className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" 
+              className={`aeirmist-local-video w-full h-full object-cover ${aeirmistCall.getFacingMode() === 'user' ? 'scale-x-[-1]' : 'scale-x-100'}`} 
               autoPlay 
               playsInline 
               muted 
@@ -1151,7 +1152,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
                 title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
               >
                 <div className={`w-full h-full rounded-xl flex items-center justify-center transition-all duration-300 border relative overflow-hidden ${
-                  !isSpeaker 
+                  isSpeaker 
                     ? 'bg-amber-500/20 border-amber-500/35 text-amber-400' 
                     : 'bg-white/10 border-white/25 text-white shadow-sm'
                 }`}>
@@ -1231,7 +1232,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         </div>
 
         {/* TOP BAR */}
-        <div className="relative z-10 pt-4 px-4 flex items-center justify-between">
+        <div className="relative z-10 pt-[calc(1rem+var(--sat,env(safe-area-inset-top,0px)))] px-4 flex items-center justify-between">
           <button 
             onClick={() => setIsMinimized(true)}
             className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white"
@@ -1274,7 +1275,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         </div>
 
         {/* BOTTOM AUDIO DOCK (Home UI Navigation Bar Style) */}
-        <div className="relative z-10 w-full px-3 pb-5 pt-2 flex items-center justify-center shrink-0">
+        <div className="relative z-10 w-full px-3 pt-2 pb-[calc(1.25rem+var(--sab,env(safe-area-inset-bottom,0px)))] flex items-center justify-center shrink-0">
           <div className="relative w-full max-w-[390px] rounded-2xl border border-white/10 px-2 py-1.5 flex justify-around items-center shadow-[0_12px_30px_rgba(0,0,0,0.85)] bg-black/85 backdrop-blur-3xl overflow-hidden">
             {/* Metallic Glass sheen highlights */}
             <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
@@ -1287,7 +1288,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
             >
               <div className={`w-full h-full rounded-xl flex items-center justify-center transition-all duration-300 border relative overflow-hidden ${
-                !isSpeaker 
+                isSpeaker 
                   ? 'bg-amber-500/20 border-amber-500/35 text-amber-400' 
                   : 'bg-white/10 border-white/25 text-white shadow-sm'
               }`}>
@@ -1584,7 +1585,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               {/* Tile 2: Local User */}
               <div className="relative rounded-xl bg-[#222327] border border-white/10 overflow-hidden flex items-center justify-center group shadow-xl">
                 {hasLocalVideo ? (
-                  <video ref={setLocalVideoNode} className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
+                  <video ref={setLocalVideoNode} className={`aeirmist-local-video w-full h-full object-cover ${aeirmistCall.getFacingMode() === 'user' ? 'scale-x-[-1]' : 'scale-x-100'}`} autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
                 ) : (
                   <div className="flex flex-col items-center justify-center p-4">
                     <img src={getAvatarUrl(profile?.photoURL, profile?.id)} className="w-28 h-28 rounded-2xl object-cover border-2 border-white/15 shadow-2xl mb-2" referrerPolicy="no-referrer" />
@@ -1605,7 +1606,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
                 <div key={p.id} className="relative rounded-xl bg-[#222327] border border-white/10 overflow-hidden flex items-center justify-center group shadow-xl">
                   {p.isLocal ? (
                     hasLocalVideo ? (
-                      <video className="aeirmist-local-video w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
+                      <video className={`aeirmist-local-video w-full h-full object-cover ${aeirmistCall.getFacingMode() === 'user' ? 'scale-x-[-1]' : 'scale-x-100'}`} autoPlay playsInline muted style={{ filter: getLocalFilterCss() }} />
                     ) : (
                       <img src={p.photo} className="w-24 h-24 rounded-2xl object-cover border-2 border-white/15 shadow-2xl" referrerPolicy="no-referrer" />
                     )
@@ -1678,7 +1679,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               title={isSpeaker ? 'Audio: Loudspeaker (Tap for Earpiece)' : 'Audio: Earpiece (Tap for Loudspeaker)'}
             >
               <div className={`w-full h-full rounded-xl flex items-center justify-center transition-all duration-300 border relative overflow-hidden ${
-                !isSpeaker 
+                isSpeaker 
                   ? 'bg-amber-500/20 border-amber-500/35 text-amber-400' 
                   : 'bg-white/10 border-white/25 text-white shadow-sm'
               }`}>
@@ -1836,15 +1837,17 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               </motion.button>
             )}
 
-            {/* Mobile Phone Frame View */}
-            <div className="flex md:hidden w-full h-full overflow-hidden bg-black relative flex-col justify-between">
-              {renderPhoneCallContent()}
-            </div>
-
-            {/* Desktop Meeting Window Frame View */}
-            <div className="hidden md:flex w-full max-w-6xl h-[88vh] max-h-[820px] rounded-2xl border border-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] overflow-hidden bg-[#121316] relative flex-col justify-between p-4 gap-3">
-              {renderDesktopCallContent()}
-            </div>
+            {isDesktop ? (
+              /* Desktop Meeting Window Frame View */
+              <div className="w-full max-w-6xl h-[88vh] max-h-[820px] rounded-2xl border border-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] overflow-hidden bg-[#121316] relative flex flex-col justify-between p-4 gap-3">
+                {renderDesktopCallContent()}
+              </div>
+            ) : (
+              /* Mobile Phone Frame View */
+              <div className="w-full h-full overflow-hidden bg-black relative flex flex-col justify-between">
+                {renderPhoneCallContent()}
+              </div>
+            )}
           </motion.div>
         </AnimatePresence>
       )}

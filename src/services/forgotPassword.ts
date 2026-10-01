@@ -1,10 +1,10 @@
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { sendTemplatePasswordResetEmail } from "./authActionService";
 
 /**
- * Sends a password reset email to the given address via Firebase Auth.
+ * Sends a password reset email using the configured Firebase Authentication template.
  * Throws on failure — callers should catch and display their own UI feedback.
  */
 export async function handleForgotPassword(userEmail: string): Promise<void> {
-  await sendPasswordResetEmail(auth, userEmail);
+  await sendTemplatePasswordResetEmail(userEmail);
 }
+

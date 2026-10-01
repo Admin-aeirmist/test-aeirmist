@@ -137,9 +137,12 @@ export const Avatar: React.FC<AvatarProps> = React.memo(({
         <img 
           src={finalAvatarUrl} 
           alt={alt}
+          width="100%"
+          height="100%"
           loading="lazy"
           decoding="async"
-          className={`w-full h-full object-cover transition-all duration-300 contrast-[1.02] brightness-[1.01] dark:contrast-100 dark:brightness-100 ${imgClassName}`}
+          style={{ aspectRatio: '1 / 1' }}
+          className={`w-full h-full aspect-square object-cover transition-all duration-300 contrast-[1.02] brightness-[1.01] dark:contrast-100 dark:brightness-100 ${imgClassName}`}
           onError={(e) => {
             (e.target as HTMLImageElement).src = getAvatarUrl(null);
           }}

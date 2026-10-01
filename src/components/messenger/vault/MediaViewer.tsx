@@ -15,14 +15,16 @@ export const MediaViewer = ({
     onClose, 
     onDelete, 
     onFavorite,
-    onRestore
+    onRestore,
+    onMoveToFolder
 }: { 
     media: any, 
     allMedia: any[], 
     onClose: () => void,
     onDelete: (id: string) => void,
     onFavorite: (id: string) => void,
-    onRestore?: (id: string) => Promise<void>
+    onRestore?: (id: string) => Promise<void>,
+    onMoveToFolder?: (id: string) => void
 }) => {
     const { addToast } = useAeirmist();
     const currentIndex = allMedia.findIndex(m => m.id === media.id);
@@ -30,6 +32,7 @@ export const MediaViewer = ({
     const [isZoomed, setIsZoomed] = useState(false);
     const [showDetails, setShowDetails] = useState(false);
     const [isRestoring, setIsRestoring] = useState(false);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
     
     const currentMedia = allMedia[current] || media;
     const dragX = useMotionValue(0);
@@ -37,11 +40,44 @@ export const MediaViewer = ({
     const next = () => setCurrent(prev => (prev + 1) % allMedia.length);
     const prev = () => setCurrent(prev => (prev - 1 + allMedia.length) % allMedia.length);
 
+    const formatMediaDate = (rawDate: any): string => {
+        if (!rawDate) return 'Recent';
+        try {
+            let dateObj: Date;
+            if (typeof rawDate?.toDate === 'function') {
+                dateObj = rawDate.toDate();
+            } else if (rawDate instanceof Date) {
+                dateObj = rawDate;
+            } else if (typeof rawDate === 'number' || typeof rawDate === 'string') {
+                dateObj = new Date(rawDate);
+            } else {
+                return 'Recent';
+            }
+            if (isNaN(dateObj.getTime())) return 'Recent';
+            return dateObj.toLocaleDateString(undefined, {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch {
+            return 'Recent';
+        }
+    };
+
+    const formatFileSize = (bytes?: number): string => {
+        if (!bytes || bytes <= 0) return 'Vault File';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    };
+
     const handleDownload = async () => {
         if (!currentMedia?.url) return;
         try {
             const ext = currentMedia.type === 'video' ? 'mp4' : 'jpg';
-            const filename = currentMedia.name || `vault_media_${Date.now()}.${ext}`;
+            const filename = currentMedia.name || `Aeirmist_${Date.now()}.${ext}`;
             const res = await DownloadManagerService.downloadMediaFile(currentMedia.url, filename);
             if (res.success) {
                 addToast({ title: "Saved to Device", message: "Media saved directly to device storage.", type: "success" });
@@ -125,38 +161,80 @@ export const MediaViewer = ({
                         </div>
                     </div>
                     
-                    <div className="flex items-center gap-1 md:gap-4">
+                    <div className="flex items-center gap-1 md:gap-3">
+                        {/* Delete button (replaces Heart) */}
                         <button 
-                            onClick={() => onFavorite(currentMedia.id)}
-                            className={`p-2 hover:bg-white/10 rounded-full transition-all ${currentMedia.isFavorite ? 'text-red-500 fill-red-500' : 'text-white/60'}`}
+                            onClick={() => {
+                                onDelete(currentMedia.id);
+                                onClose();
+                            }}
+                            className="p-2 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-full transition-colors"
+                            title="Delete"
                         >
-                            <Heart size={22} />
+                            <Trash2 size={22} />
                         </button>
+                        
+                        {/* Info details button */}
                         <button 
                             onClick={() => setShowDetails(!showDetails)}
-                            className="p-2 hover:bg-white/10 rounded-full text-white/60 transition-colors"
+                            className={`p-2 rounded-full transition-colors ${showDetails ? 'bg-[#00E5FF]/20 text-[#00E5FF]' : 'hover:bg-white/10 text-white/70 hover:text-white'}`}
+                            title="Information"
                         >
                             <Info size={22} />
                         </button>
-                        <div className="relative group">
-                            <button className="p-2 hover:bg-white/10 rounded-full text-white/60 transition-colors">
+
+                        {/* Three Dots Menu */}
+                        <div className="relative">
+                            <button 
+                                onClick={() => setIsMenuOpen(prev => !prev)}
+                                className={`p-2 rounded-full transition-colors ${isMenuOpen ? 'bg-white/20 text-white' : 'hover:bg-white/10 text-white/70 hover:text-white'}`}
+                                title="More options"
+                            >
                                 <MoreVertical size={22} />
                             </button>
-                            <div className="absolute top-full right-0 mt-2 w-48 bg-[#1a1128] border border-white/10 rounded-2xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                                <div className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/30 border-b border-white/5 mb-1">Tools</div>
-                                <button className="w-full flex items-center gap-3 px-4 py-2 hover:bg-white/5 text-xs font-bold text-white/80">
-                                    <Edit2 size={14} /> Adjust Colors
-                                </button>
-                                <button className="w-full flex items-center gap-3 px-4 py-2 hover:bg-white/5 text-xs font-bold text-white/80">
-                                    <Maximize2 size={14} /> Enhanced View
-                                </button>
-                                <button className="w-full flex items-center gap-3 px-4 py-2 hover:bg-white/5 text-xs font-bold text-white/80">
-                                    <Move size={14} /> Move to Album
-                                </button>
-                                <button onClick={() => onDelete(currentMedia.id)} className="w-full flex items-center gap-3 px-4 py-2 hover:bg-red-500/10 text-xs font-bold text-red-400">
-                                    <Trash2 size={14} /> Delete Forever
-                                </button>
-                            </div>
+
+                            {isMenuOpen && (
+                                <>
+                                    <div 
+                                        className="fixed inset-0 z-40" 
+                                        onClick={() => setIsMenuOpen(false)} 
+                                    />
+                                    <div className="absolute top-full right-0 mt-2 w-52 bg-[#161224] border border-white/15 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                                        <div className="px-4 py-1.5 text-[10px] font-black uppercase tracking-widest text-white/30 border-b border-white/5 mb-1">Actions</div>
+                                        <button 
+                                            onClick={() => {
+                                                setIsMenuOpen(false);
+                                                if (onMoveToFolder) {
+                                                    onMoveToFolder(currentMedia.id);
+                                                }
+                                            }}
+                                            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/10 text-xs font-bold text-white transition-colors"
+                                        >
+                                            <Move size={15} className="text-[#00E5FF]" /> Move to Folder
+                                        </button>
+                                        <button 
+                                            onClick={() => {
+                                                setIsMenuOpen(false);
+                                                handleDownload();
+                                            }}
+                                            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/10 text-xs font-bold text-white transition-colors"
+                                        >
+                                            <Download size={15} className="text-emerald-400" /> Download to Device
+                                        </button>
+                                        <div className="my-1 border-t border-white/5" />
+                                        <button 
+                                            onClick={() => {
+                                                setIsMenuOpen(false);
+                                                onDelete(currentMedia.id);
+                                                onClose();
+                                            }}
+                                            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-red-500/15 text-xs font-bold text-red-400 transition-colors"
+                                        >
+                                            <Trash2 size={15} /> Delete Forever
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -269,48 +347,76 @@ export const MediaViewer = ({
                     </div>
                 </div>
 
-                {/* Media Details Sidebar/Overlay */}
+                {/* Media Details Sidebar / Bottom Sheet */}
                 <AnimatePresence>
                     {showDetails && (
-                        <motion.div
-                            initial={{ x: 400 }}
-                            animate={{ x: 0 }}
-                            exit={{ x: 400 }}
-                            className="fixed right-0 top-0 bottom-0 w-full max-w-sm bg-[#0a0a0f] border-l border-white/10 z-[110] shadow-2xl p-8 space-y-8"
-                        >
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-xl font-display font-black tracking-widest uppercase">Information</h3>
-                                <button onClick={() => setShowDetails(false)} className="p-2 hover:bg-white/5 rounded-full"><X size={20} /></button>
-                            </div>
+                        <>
+                            {/* Backdrop on mobile */}
+                            <div 
+                                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[109] md:hidden"
+                                onClick={() => setShowDetails(false)}
+                            />
+                            <motion.div
+                                initial={{ x: 400, opacity: 0 }}
+                                animate={{ x: 0, opacity: 1 }}
+                                exit={{ x: 400, opacity: 0 }}
+                                transition={{ type: "spring", damping: 30, stiffness: 300 }}
+                                className="fixed right-0 top-0 bottom-0 w-full max-w-sm bg-[#0d0b14] border-l border-white/10 z-[110] shadow-2xl p-6 md:p-8 space-y-6 overflow-y-auto"
+                            >
+                                <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="p-2 rounded-xl bg-[#00E5FF]/10 text-[#00E5FF]">
+                                            <Info size={18} />
+                                        </div>
+                                        <h3 className="text-base font-bold text-white tracking-wide">File Information</h3>
+                                    </div>
+                                    <button 
+                                        onClick={() => setShowDetails(false)} 
+                                        className="p-2 hover:bg-white/10 rounded-full text-white/60 hover:text-white transition-colors"
+                                    >
+                                        <X size={20} />
+                                    </button>
+                                </div>
 
-                            <div className="space-y-6">
-                                <div className="space-y-1">
-                                    <p className="text-[10px] uppercase font-black tracking-widest text-white/30">Filename</p>
-                                    <p className="text-sm font-bold text-white break-all">{currentMedia.name || 'unnamed_file.media'}</p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-[10px] uppercase font-black tracking-widest text-white/30">Type</p>
-                                    <p className="text-sm font-bold text-white capitalize">{currentMedia.type}</p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-[10px] uppercase font-black tracking-widest text-white/30">Added on</p>
-                                    <p className="text-sm font-bold text-white">July 16, 2026 • 10:11 AM</p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-[10px] uppercase font-black tracking-widest text-white/30">Location</p>
-                                    <p className="text-sm font-bold text-white">Private Folder Storage</p>
-                                </div>
-                                <div className="pt-4 border-t border-white/5">
-                                    <div className="p-4 rounded-2xl bg-[#c77dff]/5 border border-[#c77dff]/10 flex items-center gap-4">
-                                        <ShieldCheck className="text-[#c77dff]" size={24} />
-                                        <div>
-                                            <p className="text-[10px] font-black uppercase text-[#c77dff] tracking-widest">End-to-End Encrypted</p>
-                                            <p className="text-[9px] text-[#c77dff]/60">This file is only viewable within the Vault.</p>
+                                <div className="space-y-4">
+                                    <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 space-y-1">
+                                        <p className="text-[10px] uppercase font-mono font-bold tracking-widest text-[#00E5FF]">File Name</p>
+                                        <p className="text-sm font-semibold text-white break-all leading-snug">{currentMedia.name || 'Unnamed media'}</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/5 space-y-1">
+                                            <p className="text-[10px] uppercase font-mono font-bold tracking-widest text-white/40">Type</p>
+                                            <p className="text-xs font-bold text-white capitalize">{currentMedia.type || (currentMedia.url?.includes('.mp4') ? 'Video' : 'Image')}</p>
+                                        </div>
+                                        <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/5 space-y-1">
+                                            <p className="text-[10px] uppercase font-mono font-bold tracking-widest text-white/40">Size</p>
+                                            <p className="text-xs font-bold text-white font-mono">{formatFileSize(currentMedia.size)}</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 space-y-1">
+                                        <p className="text-[10px] uppercase font-mono font-bold tracking-widest text-white/40">Date & Time</p>
+                                        <p className="text-xs font-bold text-white">{formatMediaDate(currentMedia.createdAt)}</p>
+                                    </div>
+
+                                    <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 space-y-1">
+                                        <p className="text-[10px] uppercase font-mono font-bold tracking-widest text-white/40">Location</p>
+                                        <p className="text-xs font-bold text-white truncate">{currentMedia.folderName || 'Private Safe (Vault)'}</p>
+                                    </div>
+
+                                    <div className="pt-2">
+                                        <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-3.5">
+                                            <ShieldCheck className="text-emerald-400 shrink-0" size={24} />
+                                            <div>
+                                                <p className="text-[11px] font-black uppercase text-emerald-400 tracking-wider">End-to-End Encrypted</p>
+                                                <p className="text-[10px] text-emerald-400/70 mt-0.5 leading-relaxed">Secured in Private Safe with authenticated hardware PIN protection.</p>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        </motion.div>
+                            </motion.div>
+                        </>
                     )}
                 </AnimatePresence>
             </motion.div>

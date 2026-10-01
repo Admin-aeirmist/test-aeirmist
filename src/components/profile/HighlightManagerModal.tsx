@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { 
@@ -12,36 +12,60 @@ import {
   doc, 
   serverTimestamp 
 } from 'firebase/firestore';
-import { X, Check, Loader2, AlertTriangle } from 'lucide-react';
+import { 
+  X, Check, Loader2, AlertTriangle, Plus, Upload, 
+  ChevronLeft, Camera, Image as ImageIcon, Film, Trash2, Edit3 
+} from 'lucide-react';
 import { logger } from '@/src/utils/logger';
-
 
 interface HighlightManagerModalProps {
   mode: 'create' | 'edit';
   existingHighlight?: { id: string; label: string; coverUrl: string; stories: string[] };
   onClose: () => void;
   onSaved: () => void;
+  userPosts?: any[];
 }
 
 export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
   mode,
   existingHighlight,
   onClose,
-  onSaved
+  onSaved,
+  userPosts = []
 }) => {
-  const { db, user, addToast } = useAeirmist();
+  const { db, user, uploadMedia, addToast } = useAeirmist();
 
-  // Local state
+  // Navigation steps: 1 = Select Media, 2 = Name & Edit Cover
+  const [step, setStep] = useState<1 | 2>(mode === 'edit' ? 2 : 1);
+  const [activeTab, setActiveTab] = useState<'stories' | 'upload' | 'posts'>('stories');
+
+  // Form State
   const [label, setLabel] = useState(existingHighlight?.label || '');
   const [userStories, setUserStories] = useState<any[]>([]);
   const [loadingStories, setLoadingStories] = useState(true);
+
+  // Selected story IDs & local uploaded media items
   const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>(existingHighlight?.stories || []);
+  const [localUploadedFiles, setLocalUploadedFiles] = useState<{ id: string; file: File; previewUrl: string; type: 'image' | 'video' }[]>([]);
+  const [selectedPostItems, setSelectedPostItems] = useState<{ id: string; url: string; type: 'image' | 'video' }[]>([]);
+
+  // Cover Photo
   const [coverStoryId, setCoverStoryId] = useState<string | null>(null);
+  const [customCoverUrl, setCustomCoverUrl] = useState<string>(existingHighlight?.coverUrl || '');
+  const [customCoverFile, setCustomCoverFile] = useState<File | null>(null);
+  const [isCoverPickerOpen, setIsCoverPickerOpen] = useState(false);
+
+  // Loading / Deleting
   const [isSaving, setIsSaving] = useState(false);
+  const [savingProgress, setSavingProgress] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Fetch the current user's own stories (expired or not, ordered by createdAt desc)
+  // Hidden File Inputs
+  const deviceFileInputRef = useRef<HTMLInputElement>(null);
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch the current user's own stories (archived or active)
   useEffect(() => {
     if (!db || !user?.uid) return;
 
@@ -55,7 +79,7 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
         ...docSnap.data()
       }));
 
-      // Sort client-side by createdAt descending to avoid composite index requirements
+      // Sort client-side by createdAt descending
       fetched.sort((a: any, b: any) => {
         const getMs = (val: any) => {
           if (!val) return 0;
@@ -78,84 +102,270 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
     return () => unsub();
   }, [db, user?.uid]);
 
-  // Set initial cover story based on existingHighlight.coverUrl if editing
+  // Set initial cover
   useEffect(() => {
-    if (mode === 'edit' && existingHighlight && userStories.length > 0) {
-      const match = userStories.find(s => s.mediaUrl === existingHighlight.coverUrl);
-      if (match) {
-        setCoverStoryId(match.id);
-      } else if (existingHighlight.stories.length > 0) {
-        setCoverStoryId(existingHighlight.stories[0]);
-      }
+    if (existingHighlight?.coverUrl) {
+      setCustomCoverUrl(existingHighlight.coverUrl);
     }
-  }, [mode, existingHighlight, userStories]);
+  }, [existingHighlight]);
 
-  // If coverStoryId is no longer in selectedStoryIds, reset it to the first selected story ID
-  useEffect(() => {
-    if (selectedStoryIds.length > 0) {
-      if (!coverStoryId || !selectedStoryIds.includes(coverStoryId)) {
-        setCoverStoryId(selectedStoryIds[0]);
-      }
-    } else {
-      setCoverStoryId(null);
+  // Handle device file selection
+  const handleDeviceFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newItems: { id: string; file: File; previewUrl: string; type: 'image' | 'video' }[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const previewUrl = URL.createObjectURL(file);
+      const isVideo = file.type.startsWith('video');
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      newItems.push({
+        id: tempId,
+        file,
+        previewUrl,
+        type: isVideo ? 'video' : 'image'
+      });
     }
-  }, [selectedStoryIds, coverStoryId]);
 
-  // Map selectedStoryIds to actual story objects
-  const selectedStories = useMemo(() => {
-    return userStories.filter(s => selectedStoryIds.includes(s.id));
-  }, [userStories, selectedStoryIds]);
+    setLocalUploadedFiles(prev => [...prev, ...newItems]);
+    // Automatically select newly picked files
+    setSelectedStoryIds(prev => [...prev, ...newItems.map(item => item.id)]);
 
-  // Toggle selected story
-  const toggleStory = (storyId: string) => {
+    // Reset input
+    if (deviceFileInputRef.current) deviceFileInputRef.current.value = '';
+  };
+
+  // Handle custom cover image selection
+  const handleCoverFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setCustomCoverFile(file);
+    const previewUrl = URL.createObjectURL(file);
+    setCustomCoverUrl(previewUrl);
+    setCoverStoryId(null);
+    setIsCoverPickerOpen(false);
+
+    if (coverFileInputRef.current) coverFileInputRef.current.value = '';
+  };
+
+  // Toggle selection for an item
+  const toggleSelection = (itemId: string) => {
     setSelectedStoryIds(prev => {
-      if (prev.includes(storyId)) {
-        return prev.filter(id => id !== storyId);
+      if (prev.includes(itemId)) {
+        return prev.filter(id => id !== itemId);
       } else {
-        return [...prev, storyId];
+        return [...prev, itemId];
       }
     });
   };
 
-  // Determine chosen cover URL
-  const chosenCoverUrl = useMemo(() => {
-    if (!coverStoryId) {
-      return selectedStories[0]?.mediaUrl || '';
-    }
-    const match = selectedStories.find(s => s.id === coverStoryId);
-    return match?.mediaUrl || selectedStories[0]?.mediaUrl || '';
-  }, [coverStoryId, selectedStories]);
+  // Toggle selection for a post item
+  const togglePostSelection = (post: any) => {
+    const mediaUrl = post.mediaUrl || post.mediaUrls?.[0] || post.photo || post.imageUrl;
+    if (!mediaUrl) return;
 
-  // Create or edit handler
+    const postId = `post_${post.id}`;
+    if (selectedStoryIds.includes(postId)) {
+      setSelectedStoryIds(prev => prev.filter(id => id !== postId));
+      setSelectedPostItems(prev => prev.filter(p => p.id !== postId));
+    } else {
+      setSelectedStoryIds(prev => [...prev, postId]);
+      setSelectedPostItems(prev => [
+        ...prev,
+        {
+          id: postId,
+          url: mediaUrl,
+          type: (post.mediaType === 'video' || post.videoUrl) ? 'video' : 'image'
+        }
+      ]);
+    }
+  };
+
+  // Total selected items count
+  const totalSelectedCount = selectedStoryIds.length;
+
+  // Determine active cover preview URL
+  const activeCoverPreview = useMemo(() => {
+    if (customCoverUrl) return customCoverUrl;
+
+    if (coverStoryId) {
+      const storyMatch = userStories.find(s => s.id === coverStoryId);
+      if (storyMatch?.mediaUrl) return storyMatch.mediaUrl;
+
+      const localMatch = localUploadedFiles.find(f => f.id === coverStoryId);
+      if (localMatch?.previewUrl) return localMatch.previewUrl;
+
+      const postMatch = selectedPostItems.find(p => p.id === coverStoryId);
+      if (postMatch?.url) return postMatch.url;
+    }
+
+    // Default to the first selected item
+    if (selectedStoryIds.length > 0) {
+      const firstId = selectedStoryIds[0];
+      const storyMatch = userStories.find(s => s.id === firstId);
+      if (storyMatch?.mediaUrl) return storyMatch.mediaUrl;
+
+      const localMatch = localUploadedFiles.find(f => f.id === firstId);
+      if (localMatch?.previewUrl) return localMatch.previewUrl;
+
+      const postMatch = selectedPostItems.find(p => p.id === firstId);
+      if (postMatch?.url) return postMatch.url;
+    }
+
+    return '';
+  }, [customCoverUrl, coverStoryId, selectedStoryIds, userStories, localUploadedFiles, selectedPostItems]);
+
+  // Combined selected list for cover picker
+  const allSelectedMediaList = useMemo(() => {
+    const list: { id: string; url: string; type: 'image' | 'video' }[] = [];
+
+    selectedStoryIds.forEach(id => {
+      const storyMatch = userStories.find(s => s.id === id);
+      if (storyMatch?.mediaUrl) {
+        list.push({ id: storyMatch.id, url: storyMatch.mediaUrl, type: storyMatch.mediaType || 'image' });
+        return;
+      }
+      const localMatch = localUploadedFiles.find(f => f.id === id);
+      if (localMatch) {
+        list.push({ id: localMatch.id, url: localMatch.previewUrl, type: localMatch.type });
+        return;
+      }
+      const postMatch = selectedPostItems.find(p => p.id === id);
+      if (postMatch) {
+        list.push(postMatch);
+      }
+    });
+
+    return list;
+  }, [selectedStoryIds, userStories, localUploadedFiles, selectedPostItems]);
+
+  // Save / Publish Highlight Handler
   const handleSave = async () => {
     if (!db || !user?.uid) return;
-    if (!label.trim()) {
-      addToast?.({ title: "Validation Error", message: "Please enter a highlight name.", type: "warning" });
-      return;
-    }
-    if (selectedStoryIds.length === 0) {
-      addToast?.({ title: "Validation Error", message: "Please select at least 1 story.", type: "warning" });
+
+    const highlightTitle = label.trim() || 'Highlights';
+    if (totalSelectedCount === 0 && mode === 'create') {
+      addToast?.({ title: "Select Media", message: "Please select at least 1 photo or video for your highlight.", type: "warning" });
       return;
     }
 
     setIsSaving(true);
+    setSavingProgress('Processing media...');
+
     try {
+      const finalStoryIds: string[] = [];
+
+      // 1. Process existing stories
+      for (const id of selectedStoryIds) {
+        if (!id.startsWith('local_') && !id.startsWith('post_')) {
+          finalStoryIds.push(id);
+        }
+      }
+
+      // 2. Upload any local files directly and create story records
+      for (let i = 0; i < localUploadedFiles.length; i++) {
+        const item = localUploadedFiles[i];
+        if (!selectedStoryIds.includes(item.id)) continue;
+
+        setSavingProgress(`Uploading ${i + 1} of ${localUploadedFiles.length}...`);
+        let uploadedUrl = '';
+        if (uploadMedia) {
+          try {
+            uploadedUrl = await uploadMedia(item.file, `users/${user.uid}/highlights`);
+          } catch (e) {
+            logger.warn("Storage upload fallback:", e);
+          }
+        }
+
+        if (!uploadedUrl) {
+          uploadedUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target?.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(item.file);
+          });
+        }
+
+        const storyDoc = await addDoc(collection(db, 'stories'), {
+          userId: user.uid,
+          userName: user.displayName || 'Aeirmist User',
+          userPhoto: user.photoURL || '',
+          mediaUrl: uploadedUrl,
+          mediaType: item.type,
+          isHighlight: true,
+          createdAt: serverTimestamp()
+        });
+
+        finalStoryIds.push(storyDoc.id);
+
+        // If this was chosen as cover
+        if (coverStoryId === item.id) {
+          setCustomCoverUrl(uploadedUrl);
+        }
+      }
+
+      // 3. Convert any post items into story references
+      for (const postItem of selectedPostItems) {
+        if (!selectedStoryIds.includes(postItem.id)) continue;
+
+        const storyDoc = await addDoc(collection(db, 'stories'), {
+          userId: user.uid,
+          userName: user.displayName || 'Aeirmist User',
+          userPhoto: user.photoURL || '',
+          mediaUrl: postItem.url,
+          mediaType: postItem.type,
+          isHighlight: true,
+          createdAt: serverTimestamp()
+        });
+
+        finalStoryIds.push(storyDoc.id);
+
+        if (coverStoryId === postItem.id) {
+          setCustomCoverUrl(postItem.url);
+        }
+      }
+
+      // 4. Upload custom cover file if provided
+      let finalCoverUrl = customCoverUrl;
+      if (customCoverFile && uploadMedia) {
+        setSavingProgress('Saving cover photo...');
+        try {
+          finalCoverUrl = await uploadMedia(customCoverFile, `users/${user.uid}/highlights/covers`);
+        } catch (e) {
+          logger.warn("Cover upload failed, falling back:", e);
+        }
+      }
+
+      // Fallback cover if none set
+      if (!finalCoverUrl) {
+        if (finalStoryIds.length > 0) {
+          const firstStory = userStories.find(s => s.id === finalStoryIds[0]);
+          finalCoverUrl = firstStory?.mediaUrl || activeCoverPreview;
+        } else {
+          finalCoverUrl = activeCoverPreview;
+        }
+      }
+
+      // 5. Save or update highlight document
+      setSavingProgress('Finalizing highlight...');
       if (mode === 'create') {
         await addDoc(collection(db, 'highlights'), {
           userId: user.uid,
-          label: label.trim(),
-          coverUrl: chosenCoverUrl,
-          stories: selectedStoryIds,
-          isHighlight: true, // Tag as highlight
+          label: highlightTitle,
+          coverUrl: finalCoverUrl,
+          stories: finalStoryIds,
+          isHighlight: true,
           createdAt: serverTimestamp()
         });
-        addToast?.({ title: "Highlight Created", message: "Your new highlight has been published.", type: "success" });
+        addToast?.({ title: "Highlight Published", message: `"${highlightTitle}" added to your profile highlights.`, type: "success" });
       } else {
         if (!existingHighlight?.id) throw new Error("Missing highlight ID");
         await updateDoc(doc(db, 'highlights', existingHighlight.id), {
-          label: label.trim(),
-          coverUrl: chosenCoverUrl,
-          stories: selectedStoryIds,
+          label: highlightTitle,
+          coverUrl: finalCoverUrl,
+          stories: finalStoryIds,
           updatedAt: serverTimestamp()
         });
         addToast?.({ title: "Highlight Updated", message: "Changes saved successfully.", type: "success" });
@@ -165,225 +375,479 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
       onClose();
     } catch (error) {
       logger.error("Failed to save highlight:", error);
-      addToast?.({ title: "Operation Failed", message: "Error writing database updates.", type: "warning" });
+      addToast?.({ title: "Operation Failed", message: "Could not save highlight. Please try again.", type: "warning" });
     } finally {
       setIsSaving(false);
+      setSavingProgress('');
     }
   };
 
-  // Delete handler
+  // Delete Highlight Handler
   const handleDelete = async () => {
     if (!db || !existingHighlight?.id) return;
     setIsDeleting(true);
     try {
       await deleteDoc(doc(db, 'highlights', existingHighlight.id));
-      addToast?.({ title: "Highlight Deleted", message: "Highlight container removed.", type: "success" });
+      addToast?.({ title: "Highlight Deleted", message: "Highlight removed from profile.", type: "success" });
       onSaved();
       onClose();
     } catch (error) {
       logger.error("Failed to delete highlight:", error);
-      addToast?.({ title: "Operation Failed", message: "Error deleting from database.", type: "warning" });
+      addToast?.({ title: "Error", message: "Failed to delete highlight.", type: "warning" });
     } finally {
       setIsDeleting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[1000] flex flex-col justify-end font-sans">
+    <div className="fixed inset-0 z-[1000] flex flex-col justify-end sm:justify-center font-sans">
+      {/* Hidden File Pickers */}
+      <input 
+        ref={deviceFileInputRef} 
+        type="file" 
+        multiple 
+        accept="image/*,video/*" 
+        className="hidden" 
+        onChange={handleDeviceFilesSelected} 
+      />
+      <input 
+        ref={coverFileInputRef} 
+        type="file" 
+        accept="image/*" 
+        className="hidden" 
+        onChange={handleCoverFileSelected} 
+      />
+
       {/* Dark backdrop overlay */}
       <motion.div 
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="absolute inset-0 bg-black/90 backdrop-blur-md"
+        className="absolute inset-0 bg-black/85 backdrop-blur-md"
         onClick={onClose}
       />
 
-      {/* Main Bottom Sheet Container */}
+      {/* Main Modal Container (Instagram Style) */}
       <motion.div 
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        exit={{ y: "100%" }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
-        className="relative bg-[#090a0f] rounded-t-[2.5rem] border-t border-white/10 p-6 flex flex-col max-h-[90vh] overflow-hidden z-10 w-full max-w-lg mx-auto shadow-2xl"
+        initial={{ y: "100%", opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: "100%", opacity: 0 }}
+        transition={{ type: "spring", damping: 28, stiffness: 300 }}
+        className="relative bg-[#121212] sm:rounded-3xl rounded-t-3xl border border-white/10 flex flex-col max-h-[92vh] sm:max-h-[85vh] h-[92vh] sm:h-[680px] overflow-hidden z-10 w-full max-w-lg mx-auto shadow-2xl text-white"
       >
-        {/* Drag handle line */}
-        <div className="w-12 h-1 bg-white/10 rounded-full mx-auto mb-4 shrink-0" />
-
-        {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4 shrink-0">
-          <h4 className="text-xs font-black uppercase tracking-[0.22em] text-aeirmist-cyan">
-            {mode === 'create' ? 'Create New Highlight' : 'Edit Highlight'}
-          </h4>
-          <button 
-            onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-white/5 text-white/50 hover:text-white transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Scrollable Form Body */}
-        <div className="flex-1 overflow-y-auto pr-1 space-y-6">
-          
-          {/* Label Input */}
-          <div className="space-y-2">
-            <label className="text-[9px] font-black uppercase tracking-[0.18em] text-white/40 block">
-              Highlight Name
-            </label>
-            <input 
-              type="text"
-              maxLength={15}
-              placeholder="e.g. Vibe, Memories..."
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-xs text-white focus:outline-none focus:border-aeirmist-cyan focus:ring-1 focus:ring-aeirmist-cyan/30 transition-all tracking-wider font-semibold placeholder:text-white/20"
-            />
-          </div>
-
-          {/* Stories Grid Picker */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-[9px] font-black uppercase tracking-[0.18em] text-white/40 block">
-                Select Stories ({selectedStoryIds.length} Selected)
-              </label>
-              {selectedStoryIds.length > 0 && (
-                <button 
-                  onClick={() => setSelectedStoryIds([])}
-                  className="text-[8px] font-black uppercase tracking-wider text-red-400 hover:text-red-300 transition-colors"
-                >
-                  Clear All
-                </button>
-              )}
-            </div>
-
-            {loadingStories ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <Loader2 className="animate-spin text-aeirmist-cyan" size={20} />
-                <span className="text-[8px] font-black uppercase tracking-[0.18em] text-white/30">Loading Storyboard...</span>
-              </div>
-            ) : userStories.length === 0 ? (
-              <div className="py-12 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-center p-6 bg-black/20">
-                <span className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">No Stories Archive Found</span>
-                <p className="text-[10px] text-white/45 max-w-xs">You need to upload at least one story first to create a custom highlight container.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 max-h-[32vh] overflow-y-auto pr-1">
-                {userStories.map(story => {
-                  const isSelected = selectedStoryIds.includes(story.id);
-                  return (
-                    <div 
-                      key={story.id}
-                      onClick={() => toggleStory(story.id)}
-                      className={`relative aspect-square rounded-2xl overflow-hidden cursor-pointer border transition-all group ${
-                        isSelected ? 'border-aeirmist-cyan scale-[0.98]' : 'border-white/5 hover:border-white/20'
-                      }`}
-                    >
-                      <img 
-                        src={story.mediaUrl} 
-                        className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${
-                          isSelected ? 'opacity-80' : 'opacity-55 group-hover:opacity-75'
-                        }`} 
-                        alt="" 
-                      />
-                      
-                      {/* Selection overlay */}
-                      <div className={`absolute inset-0 transition-opacity ${isSelected ? 'bg-aeirmist-cyan/10' : 'bg-black/20 opacity-0 group-hover:opacity-100'}`} />
-
-                      {/* Checkmark Indicator */}
-                      <div className={`absolute top-2 right-2 w-5 h-5 rounded-lg border flex items-center justify-center transition-all ${
-                        isSelected 
-                          ? 'bg-aeirmist-cyan border-aeirmist-cyan text-black shadow-[0_0_8px_rgba(0,242,255,0.5)]' 
-                          : 'bg-black/40 border-white/20 text-transparent'
-                      }`}>
-                        <Check size={12} className="stroke-[3]" />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Cover Selector Row (only visible if 2+ selected) */}
-          {selectedStoryIds.length >= 2 && (
-            <div className="space-y-3 animate-fade-in pt-2 border-t border-white/5">
-              <label className="text-[9px] font-black uppercase tracking-[0.18em] text-white/40 block">
-                Choose Cover Image
-              </label>
-              <div className="flex items-center gap-3 overflow-x-auto py-1 pr-2 scrollbar-thin">
-                {selectedStories.map(story => {
-                  const isCover = coverStoryId === story.id;
-                  return (
-                    <div 
-                      key={story.id}
-                      onClick={() => setCoverStoryId(story.id)}
-                      className={`relative w-16 h-16 rounded-xl overflow-hidden cursor-pointer border transition-all shrink-0 p-[2px] ${
-                        isCover ? 'border-aeirmist-cyan scale-105 bg-aeirmist-cyan/20 shadow-[0_0_8px_rgba(0,242,255,0.3)]' : 'border-white/10 hover:border-white/35'
-                      }`}
-                    >
-                      <img src={story.mediaUrl} className="w-full h-full object-cover rounded-[10px]" alt="" />
-                      
-                      {isCover && (
-                        <div className="absolute top-1 right-1 w-4 h-4 rounded-md bg-aeirmist-cyan text-black flex items-center justify-center">
-                          <Check size={10} className="stroke-[3]" />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-        </div>
-
-        {/* Actions Footer */}
-        <div className="pt-4 border-t border-white/5 mt-4 flex flex-col gap-2 shrink-0">
-          <div className="flex gap-3">
-            <button
+        {/* Top Instagram-Style Navigation Bar */}
+        <div className="flex items-center justify-between px-4 py-3.5 border-b border-white/10 shrink-0 bg-[#121212]">
+          {step === 2 && mode === 'create' ? (
+            <button 
+              onClick={() => setStep(1)} 
+              disabled={isSaving}
+              className="text-xs font-semibold text-white/80 hover:text-white flex items-center gap-1 transition-colors"
+            >
+              <ChevronLeft size={18} />
+              <span>Back</span>
+            </button>
+          ) : (
+            <button 
               onClick={onClose}
               disabled={isSaving}
-              className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border border-white/5"
+              className="text-xs font-medium text-white/70 hover:text-white transition-colors"
             >
               Cancel
             </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving || !label.trim() || selectedStoryIds.length === 0}
-              className={`flex-1 py-3 rounded-2xl text-black text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
-                !label.trim() || selectedStoryIds.length === 0
-                  ? 'bg-neutral-800 text-white/30 cursor-not-allowed border border-white/5'
-                  : 'bg-aeirmist-cyan hover:opacity-90 shadow-[0_0_15px_rgba(0,242,255,0.3)]'
+          )}
+
+          <h3 className="text-sm font-bold tracking-tight text-white">
+            {mode === 'edit' ? 'Edit Highlight' : (step === 1 ? 'New Highlight' : 'Title & Cover')}
+          </h3>
+
+          {step === 1 ? (
+            <button 
+              onClick={() => setStep(2)}
+              disabled={totalSelectedCount === 0}
+              className={`text-xs font-bold transition-all px-2 py-1 rounded-lg ${
+                totalSelectedCount > 0 
+                  ? 'text-[#0095F6] hover:text-[#1877F2]' 
+                  : 'text-white/20 cursor-not-allowed'
               }`}
             >
-              {isSaving ? (
-                <>
-                  <Loader2 size={12} className="animate-spin" />
-                  <span>Saving...</span>
-                </>
-              ) : (
-                <span>{mode === 'create' ? 'Create' : 'Save Changes'}</span>
-              )}
+              Next
             </button>
-          </div>
-
-          {/* Delete Highlight Button (Edit mode only) */}
-          {mode === 'edit' && (
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="w-full py-3 mt-1 bg-red-950/20 border border-red-500/15 hover:bg-red-500/10 hover:border-red-500/30 text-red-400 hover:text-red-300 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+          ) : (
+            <button 
+              onClick={handleSave}
+              disabled={isSaving}
+              className="text-xs font-bold text-[#0095F6] hover:text-[#1877F2] transition-all flex items-center gap-1.5 px-2 py-1"
             >
-              Terminate Highlight
+              {isSaving ? <Loader2 size={14} className="animate-spin text-[#0095F6]" /> : (mode === 'create' ? 'Done' : 'Save')}
             </button>
           )}
         </div>
+
+        {/* STEP 1: SELECT STORIES / PHOTOS (INSTAGRAM GRID) */}
+        {step === 1 && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Instagram Segmented Tabs */}
+            <div className="flex border-b border-white/10 shrink-0 bg-[#121212]">
+              {[
+                { id: 'stories', label: 'Stories', count: userStories.length, icon: Film },
+                { id: 'upload', label: 'Device / Gallery', count: localUploadedFiles.length, icon: Camera },
+                { id: 'posts', label: 'Posts', count: userPosts.length, icon: ImageIcon }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex-1 py-3 text-xs font-semibold flex items-center justify-center gap-1.5 border-b-2 transition-all ${
+                    activeTab === tab.id 
+                      ? 'border-white text-white' 
+                      : 'border-transparent text-white/40 hover:text-white/70'
+                  }`}
+                >
+                  <tab.icon size={14} />
+                  <span>{tab.label}</span>
+                  {tab.count > 0 && (
+                    <span className="text-[10px] font-mono opacity-60">({tab.count})</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Selection Counter Pill */}
+            <div className="px-4 py-2 bg-black/40 flex items-center justify-between text-[11px] text-white/50 border-b border-white/5 shrink-0">
+              <span>{totalSelectedCount} selected</span>
+              <button 
+                onClick={() => deviceFileInputRef.current?.click()}
+                className="text-[#0095F6] hover:underline font-semibold flex items-center gap-1"
+              >
+                <Plus size={13} />
+                <span>Add from Phone</span>
+              </button>
+            </div>
+
+            {/* TAB CONTENT */}
+            <div className="flex-1 overflow-y-auto p-2 sm:p-3 custom-scrollbar">
+              
+              {/* TAB 1: ARCHIVED STORIES */}
+              {activeTab === 'stories' && (
+                <>
+                  {loadingStories ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-3">
+                      <Loader2 className="animate-spin text-[#0095F6]" size={24} />
+                      <span className="text-xs text-white/50">Loading archived stories...</span>
+                    </div>
+                  ) : userStories.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 px-6 text-center space-y-4">
+                      <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/30">
+                        <Film size={28} />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-white">No Stories Found</h4>
+                        <p className="text-xs text-white/50 max-w-xs">
+                          You haven't posted any stories yet, but you can create a highlight right now by picking photos or videos from your device!
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => deviceFileInputRef.current?.click()}
+                        className="px-5 py-2.5 rounded-xl bg-[#0095F6] hover:bg-[#1877F2] text-white text-xs font-bold transition-all shadow-lg flex items-center gap-2"
+                      >
+                        <Upload size={14} />
+                        <span>Pick Photos / Videos from Device</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                      {/* Upload Tile at Front */}
+                      <button 
+                        onClick={() => deviceFileInputRef.current?.click()}
+                        className="aspect-[3/4] rounded-xl border border-dashed border-white/20 bg-white/[0.02] hover:bg-white/[0.06] hover:border-[#0095F6] flex flex-col items-center justify-center gap-2 text-white/40 hover:text-white transition-all group"
+                      >
+                        <div className="p-3 rounded-full bg-white/5 group-hover:scale-110 transition-transform">
+                          <Plus size={20} className="text-[#0095F6]" />
+                        </div>
+                        <span className="text-[10px] font-bold">Add from Device</span>
+                      </button>
+
+                      {userStories.map(story => {
+                        const isSelected = selectedStoryIds.includes(story.id);
+                        const selectIndex = selectedStoryIds.indexOf(story.id) + 1;
+                        return (
+                          <div 
+                            key={story.id}
+                            onClick={() => toggleStory(story.id)}
+                            className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer border transition-all group select-none ${
+                              isSelected ? 'border-[#0095F6] ring-2 ring-[#0095F6]' : 'border-white/10 hover:border-white/30'
+                            }`}
+                          >
+                            <img 
+                              src={story.mediaUrl} 
+                              className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${
+                                isSelected ? 'opacity-90' : 'opacity-70 group-hover:opacity-100'
+                              }`} 
+                              alt="" 
+                            />
+
+                            {/* Instagram Selection Bubble */}
+                            <div className="absolute top-2 right-2 z-10">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                                isSelected 
+                                  ? 'bg-[#0095F6] border-2 border-[#0095F6] text-white shadow-md' 
+                                  : 'border-2 border-white/70 bg-black/40 text-transparent'
+                              }`}>
+                                {isSelected ? (totalSelectedCount > 1 ? selectIndex : <Check size={13} className="stroke-[3]" />) : null}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* TAB 2: DEVICE UPLOADS */}
+              {activeTab === 'upload' && (
+                <div className="space-y-4">
+                  <div 
+                    onClick={() => deviceFileInputRef.current?.click()}
+                    className="p-8 border-2 border-dashed border-white/20 hover:border-[#0095F6] rounded-2xl bg-white/[0.02] hover:bg-white/[0.05] cursor-pointer flex flex-col items-center justify-center text-center transition-all group"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-[#0095F6]/10 text-[#0095F6] flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                      <Upload size={24} />
+                    </div>
+                    <h4 className="text-sm font-bold text-white mb-1">Select from Phone / Device</h4>
+                    <p className="text-xs text-white/40 max-w-xs">Tap to open your gallery and select photos or videos to include in this highlight.</p>
+                  </div>
+
+                  {localUploadedFiles.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-2">Picked from Device ({localUploadedFiles.length})</p>
+                      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                        {localUploadedFiles.map(fileItem => {
+                          const isSelected = selectedStoryIds.includes(fileItem.id);
+                          return (
+                            <div
+                              key={fileItem.id}
+                              onClick={() => toggleSelection(fileItem.id)}
+                              className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer border transition-all ${
+                                isSelected ? 'border-[#0095F6] ring-2 ring-[#0095F6]' : 'border-white/10 opacity-70'
+                              }`}
+                            >
+                              <img src={fileItem.previewUrl} className="w-full h-full object-cover" alt="" />
+                              <div className="absolute top-2 right-2">
+                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                  isSelected ? 'bg-[#0095F6] text-white' : 'border-2 border-white/70 bg-black/40'
+                                }`}>
+                                  {isSelected && <Check size={13} className="stroke-[3]" />}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: USER POSTS */}
+              {activeTab === 'posts' && (
+                <div>
+                  {userPosts.length === 0 ? (
+                    <div className="py-16 text-center text-white/40 text-xs">No posts available to add.</div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                      {userPosts.map(post => {
+                        const mediaUrl = post.mediaUrl || post.mediaUrls?.[0] || post.photo || post.imageUrl;
+                        if (!mediaUrl) return null;
+                        const postId = `post_${post.id}`;
+                        const isSelected = selectedStoryIds.includes(postId);
+                        return (
+                          <div 
+                            key={post.id}
+                            onClick={() => togglePostSelection(post)}
+                            className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer border transition-all group ${
+                              isSelected ? 'border-[#0095F6] ring-2 ring-[#0095F6]' : 'border-white/10 hover:border-white/30'
+                            }`}
+                          >
+                            <img src={mediaUrl} className="w-full h-full object-cover" alt="" />
+                            <div className="absolute top-2 right-2">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                isSelected ? 'bg-[#0095F6] text-white' : 'border-2 border-white/70 bg-black/40'
+                              }`}>
+                                {isSelected && <Check size={13} className="stroke-[3]" />}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* STEP 2: EDIT COVER & HIGHLIGHT TITLE (EXACTLY LIKE INSTAGRAM) */}
+        {step === 2 && (
+          <div className="flex-1 flex flex-col items-center justify-between p-6 sm:p-8 overflow-y-auto">
+            <div className="w-full max-w-sm flex flex-col items-center space-y-6 my-auto">
+              
+              {/* Highlight Cover Preview Frame (SQUARE with rounded corners as requested!) */}
+              <div className="flex flex-col items-center space-y-3">
+                <div className="relative p-1 rounded-2xl bg-gradient-to-tr from-[#00E5FF] via-purple-500 to-[#FF0080] shadow-xl group">
+                  <div className="p-1 bg-[#121212] rounded-2xl">
+                    <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-xl overflow-hidden bg-neutral-900 flex items-center justify-center relative">
+                      {activeCoverPreview ? (
+                        <img 
+                          src={activeCoverPreview} 
+                          alt="Cover" 
+                          className="w-full h-full object-cover" 
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-white/30">
+                          <ImageIcon size={28} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Edit Cover Blue Link Button */}
+                <button
+                  type="button"
+                  onClick={() => setIsCoverPickerOpen(true)}
+                  className="text-xs font-bold text-[#0095F6] hover:text-[#1877F2] transition-colors"
+                >
+                  Edit Cover
+                </button>
+              </div>
+
+              {/* Highlight Name Input */}
+              <div className="w-full space-y-2">
+                <input
+                  autoFocus
+                  type="text"
+                  maxLength={15}
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  placeholder="Highlights"
+                  className="w-full bg-[#1e1e1e] border border-white/10 rounded-2xl px-4 py-3 text-center text-sm font-semibold text-white placeholder:text-white/30 focus:outline-none focus:border-[#0095F6] focus:ring-1 focus:ring-[#0095F6] transition-all"
+                />
+                <p className="text-[10px] text-center text-white/30 font-mono">Max 15 characters</p>
+              </div>
+
+              {/* Selected Stories Count & Edit Stories button */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white/70 hover:text-white transition-all flex items-center gap-2"
+                >
+                  <Edit3 size={13} />
+                  <span>Select / Change Stories ({totalSelectedCount})</span>
+                </button>
+              </div>
+
+              {/* Progress indicator while saving */}
+              {isSaving && (
+                <div className="flex items-center gap-2 text-xs text-[#0095F6] font-semibold animate-pulse">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>{savingProgress || 'Publishing highlight...'}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="w-full max-w-sm space-y-3 pt-6 border-t border-white/10 shrink-0">
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="w-full py-3.5 rounded-2xl bg-[#0095F6] hover:bg-[#1877F2] text-white text-xs font-bold uppercase tracking-wider transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={16} className="animate-spin" /> : (mode === 'create' ? 'Done' : 'Save Changes')}
+              </button>
+
+              {mode === 'edit' && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="w-full py-2.5 text-red-400 hover:text-red-300 text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 size={14} />
+                  <span>Delete Highlight</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </motion.div>
+
+      {/* COVER PICKER BOTTOM SHEET / MODAL */}
+      <AnimatePresence>
+        {isCoverPickerOpen && (
+          <div className="fixed inset-0 z-[1100] flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              onClick={() => setIsCoverPickerOpen(false)}
+            />
+            <motion.div 
+              initial={{ y: "100%", opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "100%", opacity: 0 }}
+              className="relative w-full max-w-md bg-[#181818] border border-white/10 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl z-10 flex flex-col space-y-4 max-h-[80vh] overflow-hidden"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                <h4 className="text-sm font-bold text-white">Choose Cover</h4>
+                <button onClick={() => setIsCoverPickerOpen(false)} className="p-1 text-white/50 hover:text-white">
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Upload Custom Cover Button */}
+              <button
+                onClick={() => coverFileInputRef.current?.click()}
+                className="w-full py-3 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-white flex items-center justify-center gap-2 transition-all"
+              >
+                <Camera size={16} className="text-[#0095F6]" />
+                <span>Upload Custom Photo from Gallery</span>
+              </button>
+
+              <p className="text-[11px] font-bold uppercase tracking-wider text-white/40 pt-2">Or choose from selected items:</p>
+              
+              <div className="grid grid-cols-4 gap-2 overflow-y-auto max-h-56 pr-1 custom-scrollbar">
+                {allSelectedMediaList.map(item => (
+                  <div
+                    key={item.id}
+                    onClick={() => {
+                      setCoverStoryId(item.id);
+                      setCustomCoverUrl(item.url);
+                      setIsCoverPickerOpen(false);
+                    }}
+                    className="relative aspect-square rounded-xl overflow-hidden cursor-pointer border border-white/10 hover:border-[#0095F6] group"
+                  >
+                    <img src={item.url} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="" />
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={() => setIsCoverPickerOpen(false)}
+                className="w-full py-2.5 text-xs font-semibold text-white/50 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {showDeleteConfirm && (
-          <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4 font-sans">
+          <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -396,28 +860,28 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-sm rounded-[2rem] bg-[#0c0d12] border border-white/10 p-6 flex flex-col items-center text-center shadow-2xl z-10"
+              className="relative w-full max-w-sm rounded-3xl bg-[#181818] border border-white/10 p-6 flex flex-col items-center text-center shadow-2xl z-10"
             >
               <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mb-4 animate-pulse">
                 <AlertTriangle size={24} />
               </div>
               
-              <h4 className="text-sm font-black uppercase tracking-[0.2em] text-red-400 mb-2">Delete Highlight</h4>
+              <h4 className="text-base font-bold text-white mb-2">Delete Highlight?</h4>
               <p className="text-xs text-white/60 mb-6 leading-relaxed">
-                Are you sure you want to permanently delete this highlight container? This action is irreversible.
+                This highlight will be permanently removed from your profile. Your original stories and posts will not be deleted.
               </p>
               
               <div className="flex flex-col gap-2 w-full">
                 <button 
                   onClick={handleDelete}
                   disabled={isDeleting}
-                  className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white text-[10px] font-black uppercase tracking-widest transition-all shadow-[0_0_12px_rgba(239,68,68,0.4)] flex items-center justify-center gap-2"
+                  className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold uppercase tracking-wider transition-all shadow-lg flex items-center justify-center gap-2"
                 >
-                  {isDeleting ? <Loader2 size={12} className="animate-spin" /> : 'Yes, Delete Highlight'}
+                  {isDeleting ? <Loader2 size={14} className="animate-spin" /> : 'Delete Highlight'}
                 </button>
                 <button 
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="w-full py-3 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-white/5"
+                  className="w-full py-3 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white rounded-xl text-xs font-semibold transition-all border border-white/5"
                 >
                   Cancel
                 </button>

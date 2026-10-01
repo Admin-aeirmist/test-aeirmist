@@ -460,7 +460,6 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       /* Glass panel, cards, and dynamic blur & opacity across the app */
       .messenger-sidebar-glass,
       .messenger-header-glass,
-      .nav-sidebar-glass,
       .glass-panel, 
       .glass-card, 
       .glass-button,
@@ -472,7 +471,6 @@ export const AppearanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       .glass-panel,
       .glass-card,
-      .nav-sidebar-glass,
       .messenger-sidebar-glass,
       .messenger-header-glass {
         background-color: var(--glass-bg) !important;

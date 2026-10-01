@@ -129,7 +129,10 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           <img 
             src={video.thumbnailURL || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600'} 
             alt={video.title || video.caption}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            width={600}
+            height={338}
+            style={{ aspectRatio: '16 / 9' }}
+            className="w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-300"
             loading="lazy"
           />
           {/* Duration Badge */}
@@ -206,7 +209,10 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         <img 
           src={video.thumbnailURL || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=800'} 
           alt={video.title || video.caption}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          width={800}
+          height={450}
+          style={{ aspectRatio: '16 / 9' }}
+          className="w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-300"
           loading="lazy"
         />
 
