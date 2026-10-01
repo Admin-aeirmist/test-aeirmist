@@ -1330,7 +1330,10 @@ export const StoryViewer = ({
         className="fixed inset-0 z-[1000] bg-[#0c0d14] flex items-center justify-center select-none overflow-hidden"
       >
         {/* Top-Left Facebook-style Exit and App Branding */}
-        <div className="absolute top-4 left-4 z-[1010] flex items-center gap-3">
+        <div 
+          className="absolute left-4 z-[1010] flex items-center gap-3"
+          style={{ top: 'calc(1rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+        >
           <button 
             onClick={onClose} 
             className="w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 backdrop-blur-md flex items-center justify-center text-white transition-all cursor-pointer border border-white/10 shadow-lg"
@@ -1360,7 +1363,10 @@ export const StoryViewer = ({
           {/* CENTER MAIN STORY CARD (Facebook 9:16 Aspect) */}
           <div className="relative w-full h-full md:w-[420px] md:h-[90vh] md:max-h-[820px] md:rounded-2xl bg-black overflow-hidden shadow-2xl flex flex-col border border-white/10 shrink-0">
           {/* Progress Bars */}
-          <div className="absolute top-[calc(1rem+var(--spacing-safe-top))] inset-x-4 z-50 flex gap-1.5 px-2">
+          <div 
+            className="absolute inset-x-4 z-50 flex gap-1.5 px-2"
+            style={{ top: 'calc(0.75rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+          >
             {group.stories.map((_: any, i: number) => (
               <div key={i} className="flex-1 h-1 bg-white/20 rounded-full overflow-hidden">
                 <motion.div 
@@ -1994,7 +2000,10 @@ export const StoryViewer = ({
 
           {/* Facebook-style Bottom Action Bar */}
           {!isOwner && (
-            <div className="p-3 bg-gradient-to-t from-black via-black/95 to-black/40 flex flex-col gap-2.5 z-40">
+            <div 
+              className="p-3 bg-gradient-to-t from-black via-black/95 to-black/40 flex flex-col gap-2.5 z-40"
+              style={{ paddingBottom: 'calc(0.75rem + var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
+            >
               {/* Facebook 6 Quick Reactions Row */}
               <div className="flex items-center justify-around px-2">
                 {['👍', '❤️', '😂', '😮', '😢', '👏'].map(emoji => (
@@ -2051,7 +2060,10 @@ export const StoryViewer = ({
           )}
 
           {isOwner && (
-            <div className="p-3 bg-gradient-to-t from-black via-black/95 to-black/40 flex items-center justify-between px-4 z-40">
+            <div 
+              className="p-3 bg-gradient-to-t from-black via-black/95 to-black/40 flex items-center justify-between px-4 z-40"
+              style={{ paddingBottom: 'calc(0.75rem + var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
+            >
               <button 
                 onClick={() => {
                   setIsPaused(true);

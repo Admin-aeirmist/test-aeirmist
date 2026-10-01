@@ -705,7 +705,10 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="fixed bottom-0 left-0 right-0 md:absolute md:bottom-20 md:right-0 z-[91] bg-[#111318]/98 backdrop-blur-2xl border-t md:border border-white/10 rounded-t-[32px] md:rounded-[32px] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] w-full md:w-[420px] overflow-hidden"
             >
-              <div className="p-6">
+              <div 
+                className="p-6"
+                style={{ paddingBottom: 'calc(1.5rem + var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
+              >
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-white/40">Share to Chat</h3>
                   <button onClick={() => setShowAttachments(false)} className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/40 hover:text-white"><X size={18}/></button>

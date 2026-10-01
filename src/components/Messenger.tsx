@@ -3575,7 +3575,10 @@ const ChatWindow = ({
       </div>
 
       {/* Input Area - Docked at Bottom cleanly without artificial void gaps */}
-      <footer className="flex-shrink-0 w-full px-2 sm:px-4 md:px-8 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] md:pb-4 z-30 transition-all duration-150">
+      <footer 
+        className="flex-shrink-0 w-full px-2 sm:px-4 md:px-8 z-30 transition-all duration-150"
+        style={{ paddingBottom: 'max(0.5rem, var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
+      >
         <div className="w-full">
           {(() => {
             const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
