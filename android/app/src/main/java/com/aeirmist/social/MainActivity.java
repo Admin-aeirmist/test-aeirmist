@@ -64,8 +64,6 @@ public class MainActivity extends BridgeActivity {
     private static String pendingCallType = "audio";
     public static final String NOTIFICATION_CHANNEL_GENERAL = "aeirmist_channel_general";
     public static final String NOTIFICATION_CHANNEL_MESSAGES = "aeirmist_channel_messages";
-    private int lastInjectedTopDp = -1;
-    private int lastInjectedBottomDp = -1;
 
     @CapacitorPlugin(name = "NativeSettings")
     public static class NativeSettingsPlugin extends Plugin {
@@ -801,21 +799,6 @@ public class MainActivity extends BridgeActivity {
                 insetsController.setAppearanceLightStatusBars(false);
                 insetsController.setAppearanceLightNavigationBars(false);
             }
-
-            ViewCompat.setOnApplyWindowInsetsListener(getWindow().getDecorView(), (v, windowInsets) -> {
-                androidx.core.graphics.Insets statusBarInsets = windowInsets.getInsets(
-                    WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
-                );
-                androidx.core.graphics.Insets navInsets = windowInsets.getInsets(
-                    WindowInsetsCompat.Type.navigationBars()
-                );
-                float density = getResources().getDisplayMetrics().density;
-                int topDp = Math.max(Math.round(statusBarInsets.top / density), 38);
-                int bottomDp = Math.max(Math.round(navInsets.bottom / density), 16);
-
-                applySystemInsets(topDp, bottomDp);
-                return windowInsets;
-            });
         } catch (Exception ignored) {}
 
         // Cold start notification intent check
@@ -824,9 +807,6 @@ public class MainActivity extends BridgeActivity {
         try {
             if (this.bridge != null && this.bridge.getWebView() != null) {
                 WebView webView = this.bridge.getWebView();
-                // Let Chromium handle GPU compositing dynamically to save VRAM on budget Mali/PowerVR GPUs
-                webView.setLayerType(View.LAYER_TYPE_NONE, null);
-                // Prevent white flash during cold start or configuration change
                 webView.setBackgroundColor(0xFF050508);
 
                 WebSettings settings = webView.getSettings();
@@ -835,7 +815,6 @@ public class MainActivity extends BridgeActivity {
                 settings.setLoadsImagesAutomatically(true);
                 settings.setGeolocationEnabled(true);
                 settings.setAllowFileAccess(true);
-                // HTML5 video autoplay handles muted stories/reels; keep user gesture policy clean
                 settings.setMediaPlaybackRequiresUserGesture(false);
                 settings.setCacheMode(WebSettings.LOAD_DEFAULT);
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -915,66 +894,9 @@ public class MainActivity extends BridgeActivity {
                         return super.onConsoleMessage(consoleMessage);
                     }
                 });
-
-                webView.post(() -> injectSystemInsets());
-                webView.postDelayed(() -> injectSystemInsets(), 400);
-                webView.postDelayed(() -> injectSystemInsets(), 1200);
             }
         } catch (Exception ignored) {
         }
-        handleNotificationIntent(getIntent());
-    }
-
-    @Override
-    public void onResume() {
-        super.onResume();
-        injectSystemInsets();
-    }
-
-    private void applySystemInsets(int topDp, int bottomDp) {
-        if (topDp == lastInjectedTopDp && bottomDp == lastInjectedBottomDp) {
-            return;
-        }
-        lastInjectedTopDp = topDp;
-        lastInjectedBottomDp = bottomDp;
-
-        runOnUiThread(() -> {
-            try {
-                if (this.bridge != null && this.bridge.getWebView() != null) {
-                    String js = String.format(Locale.US,
-                        "(function(){" +
-                        "document.documentElement.style.setProperty('--sat', '%dpx');" +
-                        "document.documentElement.style.setProperty('--sab', '%dpx');" +
-                        "document.documentElement.style.setProperty('--safe-area-inset-top', '%dpx');" +
-                        "document.documentElement.style.setProperty('--safe-area-inset-bottom', '%dpx');" +
-                        "document.documentElement.classList.add('is-native-app');" +
-                        "window.dispatchEvent(new CustomEvent('aeirmist_insets_changed', { detail: { top: %d, bottom: %d } }));" +
-                        "})();",
-                        topDp, bottomDp, topDp, bottomDp, topDp, bottomDp);
-                    this.bridge.getWebView().evaluateJavascript(js, null);
-                }
-            } catch (Exception ignored) {}
-        });
-    }
-
-    private void injectSystemInsets() {
-        try {
-            WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(getWindow().getDecorView());
-            int topDp = 38;
-            int bottomDp = 16;
-            if (insets != null) {
-                float density = getResources().getDisplayMetrics().density;
-                androidx.core.graphics.Insets status = insets.getInsets(
-                    WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
-                );
-                androidx.core.graphics.Insets nav = insets.getInsets(
-                    WindowInsetsCompat.Type.navigationBars()
-                );
-                if (status.top > 0) topDp = Math.max(Math.round(status.top / density), 28);
-                if (nav.bottom > 0) bottomDp = Math.max(Math.round(nav.bottom / density), 16);
-            }
-            applySystemInsets(topDp, bottomDp);
-        } catch (Exception ignored) {}
     }
 
     @Override
