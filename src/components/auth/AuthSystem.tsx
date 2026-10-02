@@ -369,42 +369,17 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const handleFocusIn = (e: FocusEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) {
-        setIsKeyboardOpen(true);
-        setTimeout(() => {
-          try {
-            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } catch {}
-        }, 280);
-      }
-    };
-
-    const handleFocusOut = () => {
-      setTimeout(() => {
-        const active = document.activeElement;
-        if (!active || !['INPUT', 'TEXTAREA'].includes(active.tagName)) {
-          setIsKeyboardOpen(false);
-        }
-      }, 150);
-    };
-
     const handleViewportResize = () => {
       if (window.visualViewport) {
-        const isShrunk = window.visualViewport.height < window.innerHeight * 0.78;
-        const hasFocusedInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName || '');
-        setIsKeyboardOpen(isShrunk || hasFocusedInput);
+        // Only consider keyboard open if visualViewport shrinks heavily (e.g. less than 55% of height)
+        const isShrunk = window.visualViewport.height < window.innerHeight * 0.55;
+        setIsKeyboardOpen(isShrunk);
       }
     };
 
-    window.addEventListener('focusin', handleFocusIn);
-    window.addEventListener('focusout', handleFocusOut);
     window.visualViewport?.addEventListener('resize', handleViewportResize);
 
     return () => {
-      window.removeEventListener('focusin', handleFocusIn);
-      window.removeEventListener('focusout', handleFocusOut);
       window.visualViewport?.removeEventListener('resize', handleViewportResize);
     };
   }, []);
@@ -779,19 +754,13 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
         <AuthPoster />
 
         {/* Right Side: Interactive Auth Cards & Notices */}
-        <div className={`flex-1 flex flex-col items-center ${
-          isKeyboardOpen ? 'justify-start pt-2 pb-24' : 'justify-start lg:justify-center py-4 sm:py-6'
-        } px-3 sm:px-6 lg:px-8 overflow-y-auto overscroll-contain z-10 relative w-full min-h-[100dvh] lg:min-h-0`}>
+        <div className="flex-1 flex flex-col items-center justify-center py-4 sm:py-6 px-3 sm:px-6 lg:px-8 overflow-y-auto overscroll-contain z-10 relative w-full min-h-[100dvh] lg:min-h-0">
           
           {/* Keyboard safe, responsive card container */}
-          <div className={`w-full max-w-[440px] flex flex-col items-center ${
-            isKeyboardOpen ? 'my-0 pb-16' : 'my-2 lg:my-auto py-1 sm:py-2'
-          } transition-all duration-200`}>
+          <div className="w-full max-w-[440px] flex flex-col items-center my-auto py-1 sm:py-2 transition-all duration-200">
             
-            {/* Mobile Header Branding (Auto-collapses when software keyboard is open) */}
-            <div className={`lg:hidden flex flex-col items-center text-center transition-all duration-200 ${
-              isKeyboardOpen ? 'hidden' : 'mb-3 sm:mb-5'
-            }`}>
+            {/* Mobile Header Branding */}
+            <div className="lg:hidden flex flex-col items-center text-center mb-3 sm:mb-5 transition-all duration-200">
               <AeirmistLogo className="w-11 h-11 sm:w-12 sm:h-12 drop-shadow-[0_0_30px_rgba(0,242,255,0.7)] mb-2" variant="compact" />
               <h1 className="font-display font-black text-2xl sm:text-3xl tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-[var(--color-aeirmist-cyan)] to-[var(--color-aeirmist-magenta)]">
                 AEIRMIST
