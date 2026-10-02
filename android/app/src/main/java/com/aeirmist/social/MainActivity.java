@@ -699,6 +699,25 @@ public class MainActivity extends BridgeActivity {
                 call.reject("Failed to trigger biometrics: " + e.getMessage());
             }
         }
+
+        @PluginMethod
+        public void setKeepScreenOn(PluginCall call) {
+            try {
+                final boolean keepOn = call.getBoolean("enabled", true);
+                getActivity().runOnUiThread(() -> {
+                    try {
+                        if (keepOn) {
+                            getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        } else {
+                            getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        }
+                    } catch (Exception ignored) {}
+                });
+                call.resolve();
+            } catch (Exception e) {
+                call.resolve();
+            }
+        }
     }
 
     private android.webkit.PermissionRequest pendingPermissionRequest = null;

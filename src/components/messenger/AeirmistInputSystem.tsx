@@ -33,6 +33,7 @@ import { VoiceVisualizer } from './VoiceVisualizer';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
 import { PermissionService } from '../../services/PermissionService';
+import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
 
@@ -451,6 +452,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   }, [isRecording, isPaused]);
 
   const handleSend = () => {
+    triggerNativeHaptic('medium');
     if (editingMessage && onSaveEdit) {
       if (inputText.trim()) {
         onSaveEdit(editingMessage.id, inputText);

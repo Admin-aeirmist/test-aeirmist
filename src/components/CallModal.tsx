@@ -434,6 +434,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
         try {
           (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'communication', speaker: isSpeaker });
+          (window as any).Capacitor.Plugins?.NativeSettings?.setKeepScreenOn?.({ enabled: true });
         } catch (e) {}
       }
 
@@ -476,6 +477,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
         try {
           (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'normal', speaker: false });
+          (window as any).Capacitor.Plugins?.NativeSettings?.setKeepScreenOn?.({ enabled: false });
         } catch (e) {}
       }
     }
@@ -485,6 +487,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
       try {
         (window as any).Capacitor.Plugins?.NativeSettings?.setAudioMode?.({ mode: 'normal', speaker: false });
+        (window as any).Capacitor.Plugins?.NativeSettings?.setKeepScreenOn?.({ enabled: false });
       } catch (e) {}
     }
     if (activeCall?.id) {

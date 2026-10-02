@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppearance } from '../context/AppearanceContext';
 import { MESSENGER_THEMES } from './messenger/ChatWallpaperController';
+import { triggerNativeHaptic } from '../lib/nativeHaptics';
 
 const MESSENGER_ACCENT_COLORS = [
   { id: 'cyan', color: '#00f2ff', label: 'Neon Cyber' },
@@ -146,6 +147,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
   }, [isInstallable, install]);
 
   const handleItemClick = React.useCallback((callback?: () => void) => {
+    triggerNativeHaptic('selection');
     setIsHovered(false);
     if (collapseTimeoutRef.current) {
       clearTimeout(collapseTimeoutRef.current);

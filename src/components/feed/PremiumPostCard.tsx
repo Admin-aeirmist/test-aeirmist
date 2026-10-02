@@ -28,6 +28,7 @@ import { feedRankingService } from '../../services/FeedRankingService';
 import { Poll } from './Poll';
 import { usePostAnalytics } from '../../hooks/usePostAnalytics';
 import { postAnalytics } from '../../services/PostAnalyticsService';
+import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { writingAssistant } from '../../services/WritingAssistantService';
 import { WritingToolsMenu } from '../common/WritingToolsMenu';
 import { ModerationWarningModal } from '../common/ModerationWarningModal';
@@ -748,6 +749,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   const handleLike = async () => {
     if (!profile || !db) return;
+    triggerNativeHaptic('medium');
     const newLikedState = !isLiked;
     setIsLiked(newLikedState);
     try {
@@ -760,6 +762,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   const handleBookmarkToggle = async () => {
     if (!profile || !db) return;
+    triggerNativeHaptic('selection');
     const newBookmarkState = !isBookmarked;
     setIsBookmarked(newBookmarkState);
     try {
