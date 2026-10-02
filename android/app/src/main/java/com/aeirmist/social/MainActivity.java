@@ -64,6 +64,8 @@ public class MainActivity extends BridgeActivity {
     private static String pendingCallType = "audio";
     public static final String NOTIFICATION_CHANNEL_GENERAL = "aeirmist_channel_general";
     public static final String NOTIFICATION_CHANNEL_MESSAGES = "aeirmist_channel_messages";
+    private int lastInjectedTopDp = -1;
+    private int lastInjectedBottomDp = -1;
 
     @CapacitorPlugin(name = "NativeSettings")
     public static class NativeSettingsPlugin extends Plugin {
@@ -792,22 +794,7 @@ public class MainActivity extends BridgeActivity {
                 int topDp = Math.max(Math.round(statusBarInsets.top / density), 38);
                 int bottomDp = Math.max(Math.round(navInsets.bottom / density), 16);
 
-                runOnUiThread(() -> {
-                    try {
-                        if (this.bridge != null && this.bridge.getWebView() != null) {
-                            String js = String.format(Locale.US,
-                                "(function(){" +
-                                "document.documentElement.style.setProperty('--sat', '%dpx');" +
-                                "document.documentElement.style.setProperty('--sab', '%dpx');" +
-                                "document.documentElement.style.setProperty('--safe-area-inset-top', '%dpx');" +
-                                "document.documentElement.style.setProperty('--safe-area-inset-bottom', '%dpx');" +
-                                "document.documentElement.classList.add('is-native-app');" +
-                                "})();",
-                                topDp, bottomDp, topDp, bottomDp);
-                            this.bridge.getWebView().evaluateJavascript(js, null);
-                        }
-                    } catch (Exception ignored) {}
-                });
+                applySystemInsets(topDp, bottomDp);
                 return windowInsets;
             });
         } catch (Exception ignored) {}
@@ -925,35 +912,49 @@ public class MainActivity extends BridgeActivity {
         injectSystemInsets();
     }
 
+    private void applySystemInsets(int topDp, int bottomDp) {
+        if (topDp == lastInjectedTopDp && bottomDp == lastInjectedBottomDp) {
+            return;
+        }
+        lastInjectedTopDp = topDp;
+        lastInjectedBottomDp = bottomDp;
+
+        runOnUiThread(() -> {
+            try {
+                if (this.bridge != null && this.bridge.getWebView() != null) {
+                    String js = String.format(Locale.US,
+                        "(function(){" +
+                        "document.documentElement.style.setProperty('--sat', '%dpx');" +
+                        "document.documentElement.style.setProperty('--sab', '%dpx');" +
+                        "document.documentElement.style.setProperty('--safe-area-inset-top', '%dpx');" +
+                        "document.documentElement.style.setProperty('--safe-area-inset-bottom', '%dpx');" +
+                        "document.documentElement.classList.add('is-native-app');" +
+                        "window.dispatchEvent(new CustomEvent('aeirmist_insets_changed', { detail: { top: %d, bottom: %d } }));" +
+                        "})();",
+                        topDp, bottomDp, topDp, bottomDp, topDp, bottomDp);
+                    this.bridge.getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
     private void injectSystemInsets() {
         try {
-            if (this.bridge != null && this.bridge.getWebView() != null) {
-                WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(getWindow().getDecorView());
-                int topDp = 38;
-                int bottomDp = 16;
-                if (insets != null) {
-                    float density = getResources().getDisplayMetrics().density;
-                    androidx.core.graphics.Insets status = insets.getInsets(
-                        WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
-                    );
-                    androidx.core.graphics.Insets nav = insets.getInsets(
-                        WindowInsetsCompat.Type.navigationBars()
-                    );
-                    if (status.top > 0) topDp = Math.max(Math.round(status.top / density), 28);
-                    if (nav.bottom > 0) bottomDp = Math.max(Math.round(nav.bottom / density), 16);
-                }
-                String js = String.format(Locale.US,
-                    "(function(){" +
-                    "document.documentElement.style.setProperty('--sat', '%dpx');" +
-                    "document.documentElement.style.setProperty('--sab', '%dpx');" +
-                    "document.documentElement.style.setProperty('--safe-area-inset-top', '%dpx');" +
-                    "document.documentElement.style.setProperty('--safe-area-inset-bottom', '%dpx');" +
-                    "document.documentElement.classList.add('is-native-app');" +
-                    "window.dispatchEvent(new CustomEvent('aeirmist_insets_changed', { detail: { top: %d, bottom: %d } }));" +
-                    "})();",
-                    topDp, bottomDp, topDp, bottomDp, topDp, bottomDp);
-                this.bridge.getWebView().evaluateJavascript(js, null);
+            WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(getWindow().getDecorView());
+            int topDp = 38;
+            int bottomDp = 16;
+            if (insets != null) {
+                float density = getResources().getDisplayMetrics().density;
+                androidx.core.graphics.Insets status = insets.getInsets(
+                    WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
+                );
+                androidx.core.graphics.Insets nav = insets.getInsets(
+                    WindowInsetsCompat.Type.navigationBars()
+                );
+                if (status.top > 0) topDp = Math.max(Math.round(status.top / density), 28);
+                if (nav.bottom > 0) bottomDp = Math.max(Math.round(nav.bottom / density), 16);
             }
+            applySystemInsets(topDp, bottomDp);
         } catch (Exception ignored) {}
     }
 
