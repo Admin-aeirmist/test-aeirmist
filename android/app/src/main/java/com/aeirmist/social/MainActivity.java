@@ -46,6 +46,11 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.core.view.ViewCompat;
+import androidx.biometric.BiometricManager;
+import androidx.biometric.BiometricPrompt;
+import android.os.Vibrator;
+import android.os.VibratorManager;
+import android.os.VibrationEffect;
 
 public class MainActivity extends BridgeActivity {
     private static final int NOTIFICATION_PERMISSION_CODE = 1001;
@@ -577,6 +582,119 @@ public class MainActivity extends BridgeActivity {
                 call.resolve(ret);
             } catch (Exception e) {
                 call.reject("Failed to set audio mode: " + e.getMessage());
+            }
+        }
+
+        @PluginMethod
+        public void performHaptics(PluginCall call) {
+            try {
+                String type = call.getString("type", "light");
+                Vibrator vibrator = null;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    VibratorManager vm = (VibratorManager) getContext().getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                    if (vm != null) vibrator = vm.getDefaultVibrator();
+                }
+                if (vibrator == null) {
+                    vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+                }
+
+                if (vibrator != null && vibrator.hasVibrator()) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        int effectId = VibrationEffect.EFFECT_CLICK;
+                        if ("heavy".equalsIgnoreCase(type)) {
+                            effectId = VibrationEffect.EFFECT_HEAVY_CLICK;
+                        } else if ("tick".equalsIgnoreCase(type) || "light".equalsIgnoreCase(type) || "selection".equalsIgnoreCase(type)) {
+                            effectId = VibrationEffect.EFFECT_TICK;
+                        } else if ("double_click".equalsIgnoreCase(type) || "medium".equalsIgnoreCase(type) || "success".equalsIgnoreCase(type)) {
+                            effectId = VibrationEffect.EFFECT_DOUBLE_CLICK;
+                        }
+                        vibrator.vibrate(VibrationEffect.createPredefined(effectId));
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        long duration = "heavy".equalsIgnoreCase(type) ? 35 : ("medium".equalsIgnoreCase(type) ? 22 : 12);
+                        int amplitude = "heavy".equalsIgnoreCase(type) ? 255 : ("medium".equalsIgnoreCase(type) ? 180 : 90);
+                        vibrator.vibrate(VibrationEffect.createOneShot(duration, amplitude));
+                    } else {
+                        vibrator.vibrate(15);
+                    }
+                }
+                call.resolve();
+            } catch (Exception ignored) {
+                call.resolve();
+            }
+        }
+
+        @PluginMethod
+        public void checkBiometrics(PluginCall call) {
+            try {
+                BiometricManager bm = BiometricManager.from(getContext());
+                int canAuth = bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK);
+                boolean available = (canAuth == BiometricManager.BIOMETRIC_SUCCESS);
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("available", available);
+                ret.put("status", canAuth);
+                call.resolve(ret);
+            } catch (Exception e) {
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("available", false);
+                ret.put("error", e.getMessage());
+                call.resolve(ret);
+            }
+        }
+
+        @PluginMethod
+        public void authenticateBiometrics(PluginCall call) {
+            try {
+                final String title = call.getString("title", "Aeirmist Vault");
+                final String subtitle = call.getString("subtitle", "Verify your fingerprint or face to unlock");
+                final String cancelText = call.getString("cancelText", "Use Passcode");
+
+                getActivity().runOnUiThread(() -> {
+                    try {
+                        BiometricManager bm = BiometricManager.from(getContext());
+                        int canAuth = bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK);
+                        if (canAuth != BiometricManager.BIOMETRIC_SUCCESS) {
+                            call.reject("Biometrics not available or not configured on this device");
+                            return;
+                        }
+
+                        BiometricPrompt.PromptInfo promptInfo = new BiometricPrompt.PromptInfo.Builder()
+                            .setTitle(title)
+                            .setSubtitle(subtitle)
+                            .setNegativeButtonText(cancelText)
+                            .build();
+
+                        BiometricPrompt biometricPrompt = new BiometricPrompt(
+                            getActivity(),
+                            ContextCompat.getMainExecutor(getContext()),
+                            new BiometricPrompt.AuthenticationCallback() {
+                                @Override
+                                public void onAuthenticationError(int errorCode, CharSequence errString) {
+                                    super.onAuthenticationError(errorCode, errString);
+                                    call.reject(errString.toString());
+                                }
+
+                                @Override
+                                public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                                    super.onAuthenticationSucceeded(result);
+                                    com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                                    ret.put("success", true);
+                                    call.resolve(ret);
+                                }
+
+                                @Override
+                                public void onAuthenticationFailed() {
+                                    super.onAuthenticationFailed();
+                                }
+                            }
+                        );
+
+                        biometricPrompt.authenticate(promptInfo);
+                    } catch (Exception ex) {
+                        call.reject("Biometric prompt error: " + ex.getMessage());
+                    }
+                });
+            } catch (Exception e) {
+                call.reject("Failed to trigger biometrics: " + e.getMessage());
             }
         }
     }

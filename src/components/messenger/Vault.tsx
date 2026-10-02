@@ -49,6 +49,8 @@ import { PrivacyFolderLayout } from './vault/PrivacyFolderLayout';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
 import { auth } from '../../lib/firebase';
+import { triggerNativeHaptic } from '../../lib/nativeHaptics';
+import { checkDeviceBiometrics, authenticateWithBiometrics } from '../../lib/nativeBiometrics';
 
 
 interface VaultProps {
@@ -109,18 +111,21 @@ interface NumericKeypadProps {
 const NumericKeypad: React.FC<NumericKeypadProps> = ({ value, onChange, maxLength, disabled = false }) => {
   const handleNumClick = (num: string) => {
     if (!disabled && value.length < maxLength) {
+      triggerNativeHaptic('light');
       onChange(value + num);
     }
   };
 
   const handleBackspace = () => {
     if (!disabled) {
+      triggerNativeHaptic('selection');
       onChange(value.slice(0, -1));
     }
   };
 
   const handleClear = () => {
     if (!disabled) {
+      triggerNativeHaptic('medium');
       onChange('');
     }
   };
@@ -249,6 +254,7 @@ export const Vault: React.FC<VaultProps> = ({
   
   // Device protection state
   const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [deviceBiometricsAvailable, setDeviceBiometricsAvailable] = useState(false);
   const [autoLockDuration, setAutoLockDuration] = useState<string>('300'); // Default 5 mins (300s)
   const [silentNotifications, setSilentNotifications] = useState(false);
 
@@ -552,6 +558,53 @@ export const Vault: React.FC<VaultProps> = ({
       setErrorText("Something went wrong. Please try again.");
     }
   };
+
+  // Check device biometrics availability on mount
+  useEffect(() => {
+    checkDeviceBiometrics().then(res => {
+      setDeviceBiometricsAvailable(!!res?.available);
+    }).catch(() => {
+      setDeviceBiometricsAvailable(false);
+    });
+  }, []);
+
+  // Biometric Unlock Handler
+  const handleBiometricUnlock = async () => {
+    if (lockedUntil) return;
+    try {
+      triggerNativeHaptic('medium');
+      const success = await authenticateWithBiometrics(
+        "Aeirmist Vault Unlock",
+        "Confirm your fingerprint or face to open Private Folder"
+      );
+      if (success) {
+        setIsAppLoading(true);
+        triggerNativeHaptic('success');
+        setTimeout(() => {
+          setIsUnlocked(true);
+          setAttempts(0);
+          setPasscodeInput('');
+          if (profile?.id) {
+            localStorage.setItem(`vault_attempts_${profile.id}`, '0');
+          }
+          setView('home');
+          setIsAppLoading(false);
+        }, 350);
+      }
+    } catch (e) {
+      logger.error("Biometric unlock failed:", e);
+    }
+  };
+
+  // Auto prompt biometric on entering login view if configured
+  useEffect(() => {
+    if (view === 'login' && biometricEnabled && deviceBiometricsAvailable && !lockedUntil && !isUnlocked) {
+      const timer = setTimeout(() => {
+        handleBiometricUnlock();
+      }, 450);
+      return () => clearTimeout(timer);
+    }
+  }, [view, biometricEnabled, deviceBiometricsAvailable, lockedUntil, isUnlocked]);
 
   // Login unlock vault
   const handleUnlock = async (e: React.FormEvent) => {
@@ -1658,6 +1711,17 @@ export const Vault: React.FC<VaultProps> = ({
                           >
                             Unlock Chats
                           </button>
+
+                          {deviceBiometricsAvailable && biometricEnabled && !lockedUntil && (
+                            <button
+                              type="button"
+                              onClick={handleBiometricUnlock}
+                              className="w-full h-[50px] rounded-2xl bg-white/[0.04] border border-[#c77dff]/30 hover:bg-[#7b2cbf]/20 active:scale-[0.98] text-[#e2afff] text-xs font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all cursor-pointer"
+                            >
+                              <Fingerprint size={16} className="text-[#c77dff]" />
+                              <span>Unlock with Biometrics</span>
+                            </button>
+                          )}
                         </form>
                       ) : (
                         <div className="space-y-6 flex flex-col items-center">
@@ -1682,6 +1746,19 @@ export const Vault: React.FC<VaultProps> = ({
                             maxLength={passcodeType === 'pin6' ? 6 : 8}
                             disabled={!!lockedUntil}
                           />
+
+                          {deviceBiometricsAvailable && biometricEnabled && !lockedUntil && (
+                            <motion.button
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              type="button"
+                              onClick={handleBiometricUnlock}
+                              className="flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-2xl bg-white/[0.04] border border-[#c77dff]/30 text-[#e2afff] text-xs font-bold uppercase tracking-wider hover:bg-[#7b2cbf]/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(199,125,255,0.1)] cursor-pointer"
+                            >
+                              <Fingerprint size={16} className="text-[#c77dff]" />
+                              <span>Use Biometrics</span>
+                            </motion.button>
+                          )}
                         </div>
                       )}
                     </div>
