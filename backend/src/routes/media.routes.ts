@@ -18,7 +18,7 @@ const upload = multer({
   },
 });
 
-router.post('/upload', optionalAuthToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/upload', authenticateToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const file = req.file;
     if (!file) {

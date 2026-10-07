@@ -74,6 +74,21 @@ router.patch('/profile', authenticateToken, async (req: AuthenticatedRequest, re
   }
 });
 
+// Increment User Points
+router.post('/points', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const pointsToAdd = Math.max(0, Math.min(parseInt(req.body.points || '0', 10), 1000));
+    if (pointsToAdd > 0) {
+      const updated = await UserDAL.incrementPoints(req.user!.userId, pointsToAdd);
+      return res.json({ success: true, points: updated?.points });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Add Points Error]', err);
+    res.status(500).json({ error: 'Failed to update points' });
+  }
+});
+
 // Follow / Unfollow User
 router.post('/:id/follow', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {

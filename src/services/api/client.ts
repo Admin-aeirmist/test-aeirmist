@@ -153,6 +153,11 @@ export const api = {
       request<{ success: boolean }>('/api/v1/users/deactivate', {
         method: 'POST',
       }),
+    addPoints: (points: number) =>
+      request<{ success: boolean; points?: number }>('/api/v1/users/points', {
+        method: 'POST',
+        body: JSON.stringify({ points }),
+      }),
   },
 
   // Notifications

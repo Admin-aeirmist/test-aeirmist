@@ -436,7 +436,15 @@ const handleFirestoreError = (error: any, op: any, path: string | null) => {
 const AeirmistContext = createContext<AeirmistContextType | undefined>(undefined);
 
 export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>(DEFAULT_FEATURE_FLAGS);
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('aeirmist_feature_flags');
+        if (cached) return { ...DEFAULT_FEATURE_FLAGS, ...JSON.parse(cached) };
+      } catch (e) {}
+    }
+    return DEFAULT_FEATURE_FLAGS;
+  });
   const [user, setUser] = useState<User | null>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -500,7 +508,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Meta-Style Automated Verification Lifecycle & Monthly Deadline Monitor
   useEffect(() => {
-    if (!_db || !profile?.id || !profile?.isVerified) return;
+    if (!profile?.id || !profile?.isVerified) return;
 
     const checkVerificationLifecycle = async () => {
       try {
@@ -529,34 +537,21 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (typeof window !== 'undefined' && !localStorage.getItem(expiredStorageKey)) {
             localStorage.setItem(expiredStorageKey, 'true');
 
-            // Deactivate expired badge in Firestore
-            await updateDoc(doc(_db, 'profiles', profile.id), {
+            // Deactivate expired badge in profile
+            setProfile((prev: any) => prev ? {
+              ...prev,
               isVerified: false,
               verified: false,
               subscriptionStatus: 'expired'
-            }).catch(() => {});
+            } : prev);
 
-            if (user?.uid) {
-              await updateDoc(doc(_db, 'users', user.uid), {
-                isVerified: false,
-                verified: false,
-                subscriptionStatus: 'expired'
-              }).catch(() => {});
-            }
+            api.users.updateProfile({ privacySettings: { ...(profile.privacySettings || {}), subscriptionStatus: 'expired' } }).catch(() => {});
 
-            // Send expiration notification
-            await addDoc(collection(_db, 'notifications'), {
-              userId: user?.uid || profile.id,
-              type: 'verification',
+            addToast?.({
+              title: 'Verification Expired',
               message: `Your monthly Aeirmist Verified (${planDisplay}) subscription expired on ${deadlineDateStr}. Renew now in Settings to reactivate your badge.`,
-              metadata: {
-                plan,
-                status: 'expired',
-                deadlineDateStr
-              },
-              read: false,
-              createdAt: serverTimestamp()
-            }).catch(() => {});
+              type: 'info'
+            });
           }
         } 
         // 2. 3-Day Approaching Deadline Notification
@@ -565,19 +560,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (typeof window !== 'undefined' && !localStorage.getItem(warningStorageKey)) {
             localStorage.setItem(warningStorageKey, 'true');
 
-            await addDoc(collection(_db, 'notifications'), {
-              userId: user?.uid || profile.id,
-              type: 'verification',
+            addToast?.({
+              title: 'Renewal Reminder',
               message: `Monthly Renewal Reminder: Your verification subscription (${planDisplay}) deadline is in ${diffDays} day${diffDays > 1 ? 's' : ''} (${deadlineDateStr}). Renew your plan to keep your badge active.`,
-              metadata: {
-                plan,
-                status: 'approaching_deadline',
-                daysRemaining: diffDays,
-                deadlineDateStr
-              },
-              read: false,
-              createdAt: serverTimestamp()
-            }).catch(() => {});
+              type: 'info'
+            });
           }
         }
       } catch (lifecycleErr) {
@@ -609,29 +596,14 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     success: false
   });
 
-  useEffect(() => {
-    if (!_db) return;
-    const flagsRef = doc(_db, 'system_config', 'feature_flags');
-    const unsub = onSnapshot(flagsRef, (snap) => {
-      if (snap.exists()) {
-        setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS, ...snap.data() });
-      } else {
-        setDoc(flagsRef, DEFAULT_FEATURE_FLAGS, { merge: true }).catch(() => {});
-      }
-    }, (err) => {
-      logger.warn("Feature flags snapshot listener warning:", err);
-    });
-    return () => unsub();
-  }, []);
-
   const updateFeatureFlag = useCallback(async (key: string, enabled: boolean) => {
-    setFeatureFlags(prev => ({ ...prev, [key]: enabled }));
-    try {
-      const flagsRef = doc(_db, 'system_config', 'feature_flags');
-      await setDoc(flagsRef, { [key]: enabled }, { merge: true });
-    } catch (err) {
-      logger.error("Failed to update feature flag in Firestore:", err);
-    }
+    setFeatureFlags(prev => {
+      const updated = { ...prev, [key]: enabled };
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('aeirmist_feature_flags', JSON.stringify(updated));
+      }
+      return updated;
+    });
   }, []);
 
   const [appBranding, setAppBranding] = useState<AppBranding>(() => {
@@ -643,23 +615,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     return {};
   });
-
-  useEffect(() => {
-    if (!_db) return;
-    const brandingRef = doc(_db, 'system_config', 'app_branding');
-    const unsub = onSnapshot(brandingRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data() as AppBranding;
-        setAppBranding(prev => ({ ...prev, ...data }));
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('aeirmist_app_branding', JSON.stringify(data));
-        }
-      }
-    }, (err) => {
-      logger.warn("App branding snapshot listener warning:", err);
-    });
-    return () => unsub();
-  }, []);
 
   useEffect(() => {
     const activeLogo = appBranding?.darkLogoUrl || appBranding?.lightLogoUrl;
@@ -674,17 +629,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       return updated;
     });
-    if (_db) {
-      try {
-        const brandingRef = doc(_db, 'system_config', 'app_branding');
-        await setDoc(brandingRef, {
-          ...newBranding,
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-      } catch (err) {
-        logger.error("Failed to update app branding in Firestore:", err);
-      }
-    }
   }, []);
 
   useEffect(() => {
@@ -849,7 +793,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!user) throw new Error("Aeirmist Link: User authentication token unavailable.");
     
     // Request raw ID token for authentication
-    const idToken = await user.getIdToken();
+    const idToken = (typeof user?.getIdToken === 'function' ? await user.getIdToken() : '') || (typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : '') || '';
     
     const response = await fetch('/api/auth/device-link/generate', {
       method: 'POST',
@@ -937,7 +881,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, profile?.id]);
 
   const earnPoints = useCallback(async (points: number) => {
-    if (!db || !profile?.id || !user?.uid || isOffline) return;
+    if (!profile?.id || isOffline) return;
     
     // Simple throttle: don't update same profile more than once every 5 seconds for points
     const now = Date.now();
@@ -945,15 +889,26 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (now - lastUpdate < 5000) return;
     (window as any)._last_points_update = now;
 
+    // Optimistically update local profile points & aeirmistLevel
+    setProfile((prev: any) => {
+      if (!prev) return prev;
+      const currentPoints = Number(prev.points || prev.aeirmistLevel || 0);
+      return {
+        ...prev,
+        points: currentPoints + points,
+        aeirmistLevel: currentPoints + points
+      };
+    });
+
     try {
-      const profileRef = doc(db, 'profiles', profile.id);
-      await updateDoc(profileRef, {
-        aeirmistLevel: increment(points)
-      });
+      const res = await api.users.addPoints(points);
+      if (res?.points !== undefined) {
+        setProfile((prev: any) => prev ? { ...prev, points: res.points, aeirmistLevel: res.points } : prev);
+      }
     } catch (e) {
       logger.warn("Points sync failed", e);
     }
-  }, [db, profile?.id, user?.uid, isOffline]);
+  }, [profile?.id, isOffline]);
 
   const rank = getRankInfo(profile?.aeirmistLevel || 0);
 

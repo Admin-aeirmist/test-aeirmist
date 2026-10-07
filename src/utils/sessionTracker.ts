@@ -113,7 +113,8 @@ export async function trackUserSession(
   const sessionKey = getOrCreateSessionKey();
   const uaInfo = parseUserAgent();
   const maskedIp = maskIpAddress();
-  const location = 'San Francisco, US';
+  const timeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '';
+  const location = timeZone ? timeZone.replace(/_/g, ' ') : 'Local Device';
 
   const sessionData: DeviceSessionInfo = {
     sessionKey,

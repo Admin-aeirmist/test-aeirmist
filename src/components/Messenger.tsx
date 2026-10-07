@@ -780,8 +780,12 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         const rawLastText = typeof rawLastMsg === 'string' 
           ? rawLastMsg 
           : (data.latestMessagePreview || rawLastMsg?.text || ((data as any).lastMessageText || 'No messages yet'));
-        const lastSenderId = data.latestMessageSenderId || rawLastMsg?.senderId || (data as any).lastSenderId;
-        const isSentByMe = !!(lastSenderId && (lastSenderId === profile.id || lastSenderId === user.uid));
+        const isSentByMe = !!(lastSenderId && (
+          lastSenderId === profile.id || 
+          lastSenderId === user.uid || 
+          lastSenderId === (profile as any)?.userId || 
+          lastSenderId === (user as any)?.id
+        ));
 
         let displayLastMsg = rawLastText;
         if (isSentByMe && rawLastText && rawLastText !== 'No messages yet' && rawLastText !== 'Tap to chat' && rawLastText !== 'Group created') {
@@ -2503,6 +2507,43 @@ const ChatWindow = ({
   const [otherProfile, setOtherProfile] = useState<any>(null);
   const [otherProfileLoaded, setOtherProfileLoaded] = useState(false);
 
+  // Unified multi-identity resolution for sender identity
+  const myIds = useMemo(() => {
+    return [
+      profile?.id,
+      (profile as any)?.userId,
+      (profile as any)?.ownerUid,
+      (profile as any)?.uid,
+      user?.uid,
+      user?.id,
+      (user as any)?._id
+    ].filter(Boolean) as string[];
+  }, [profile, user]);
+
+  const isMessageFromMe = useCallback((senderId?: string) => {
+    if (!senderId) return false;
+    if (myIds.includes(senderId)) return true;
+
+    const isGroup = Boolean(chat.isGroup || (chat as any).type === 'group' || (chat.participants && chat.participants.length > 2));
+    if (!isGroup) {
+      const otherIds = [
+        chat.otherParticipantId,
+        chat.otherParticipantUid,
+        otherProfile?.id,
+        (otherProfile as any)?.userId,
+        (otherProfile as any)?.uid
+      ].filter(Boolean) as string[];
+
+      if (otherIds.length > 0) {
+        if (otherIds.includes(senderId)) return false;
+        // In 1-on-1 chat, if sender is not the other person, it is me
+        return true;
+      }
+    }
+
+    return false;
+  }, [myIds, chat.isGroup, (chat as any).type, chat.participants, chat.otherParticipantId, chat.otherParticipantUid, otherProfile]);
+
   // Live presence ticker so relative active status ("Active 5m ago", etc.) updates automatically in real time
   const [, setPresenceTicker] = useState(0);
   useEffect(() => {
@@ -2522,7 +2563,7 @@ const ChatWindow = ({
           .map(item => ({
             id: item.id,
             text: item.text,
-            senderId: profile?.id,
+            senderId: user?.uid || profile?.id,
             type: item.type as any,
             mediaUrl: item.mediaUrl || undefined,
             timestamp: item.status === 'failed' ? 'Failed to send' : 'Sending...',
@@ -2540,11 +2581,11 @@ const ChatWindow = ({
         return next;
       });
     }
-  }, [chat.id, profile?.id]);
+  }, [chat.id, profile?.id, user?.uid]);
 
   const showTheirPresence = otherProfile?.privacySettings?.showActivity !== false;
   const isMySpace = chat.id.startsWith('myspace_');
-  const isSelfChat = chat.otherParticipantId === profile?.id;
+  const isSelfChat = isMessageFromMe(chat.otherParticipantId);
   const isPrivateSpace = isMySpace || isSelfChat;
 
   const isGroupChat = Boolean(chat.isGroup || (chat as any).type === 'group' || (chat.participants && chat.participants.length > 2));
@@ -2692,14 +2733,14 @@ const ChatWindow = ({
 
     // Check if there are any unread messages from the other user
     const hasUnread = messages.some(m => {
-      if (m.senderId === profile.id) return false;
+      if (isMessageFromMe(m.senderId)) return false;
       return !m.isSeen;
     });
     
     if (hasUnread) {
       updateSeenStatus(chat.id);
     }
-  }, [messages, chat.id, profile?.id, updateSeenStatus]);
+  }, [messages, chat.id, profile?.id, isMessageFromMe, updateSeenStatus]);
 
   // Message Listener
   useEffect(() => {
@@ -2732,7 +2773,7 @@ const ChatWindow = ({
       setMessages(fetchedMessages);
       setLoading(false);
       requestAnimationFrame(() => scrollToBottom('auto'));
-    });
+    }, 50, user?.uid);
 
     return () => {
       isCurrent = false;
@@ -2778,8 +2819,8 @@ const ChatWindow = ({
          ...m,
          timestampMs,
          _originalIndex: originalIndex,
-         isSeen: m.isSeen || (m.senderId === profile?.id && timestampMs <= lastRead),
-         isDelivered: m.isDelivered || (m.senderId === profile?.id && timestampMs <= lastDelivered),
+         isSeen: m.isSeen || (isMessageFromMe(m.senderId) && timestampMs <= lastRead),
+         isDelivered: m.isDelivered || (isMessageFromMe(m.senderId) && timestampMs <= lastDelivered),
          isFailed: failedMessages.has(m.id)
        };
     }).sort((a, b) => {
@@ -2964,7 +3005,7 @@ const ChatWindow = ({
     const optimisticMsg: Message = {
       id: optimisticId,
       text: `Sent a ${type}`,
-      senderId: profile.id,
+      senderId: user?.uid || profile.id,
       type: type,
       mediaUrl,
       timestamp: 'Sending...',
@@ -3048,7 +3089,7 @@ const ChatWindow = ({
     const optimisticMsg = {
       id: optimisticId,
       text,
-      senderId: profile.id,
+      senderId: user?.uid || profile.id,
       type: 'text',
       timestamp: 'Sending...',
       timestampMs: Date.now(),
@@ -3106,7 +3147,7 @@ const ChatWindow = ({
           id: replyingTo.id,
           text: replyingTo.text,
           senderId: replyingTo.senderId || null,
-          senderName: replyingTo.senderId === profile?.id ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || otherProfile?.username || chat.name || "Sizuka")
+          senderName: isMessageFromMe(replyingTo.senderId) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || otherProfile?.username || chat.name || "Sizuka")
         } : null
       });
       
@@ -3183,7 +3224,7 @@ const ChatWindow = ({
       const optimisticMsg: any = {
         id: optimisticId,
         text: type === 'file' ? file.name : (useHD ? 'Sending Ultra HD Connections...' : `Sending ${type}...`),
-        senderId: profile.id,
+        senderId: user?.uid || profile.id,
         type: type === 'voice' ? 'voice' : (type === 'file' ? 'file' : 'media'),
         mediaUrl: localUrl,
         thumbnail: thumbnail,
@@ -3254,7 +3295,7 @@ const ChatWindow = ({
           id: replyingTo.id,
           text: replyingTo.text,
           senderId: replyingTo.senderId || null,
-          senderName: replyingTo.senderId === profile?.id ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
+          senderName: isMessageFromMe(replyingTo.senderId) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
         } : null)
       });
       
@@ -3292,7 +3333,7 @@ const ChatWindow = ({
     const optimisticMsg: Message = {
       id: optimisticId,
       text: text || `Sent a ${type}`,
-      senderId: profile.id,
+      senderId: user?.uid || profile.id,
       type,
       mediaUrl,
       timestamp: 'Sending...',
@@ -3335,7 +3376,7 @@ const ChatWindow = ({
           id: replyingTo.id,
           text: replyingTo.text,
           senderId: replyingTo.senderId || null,
-          senderName: replyingTo.senderId === profile?.id ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
+          senderName: isMessageFromMe(replyingTo.senderId) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
         } : null)
       });
 
@@ -3587,10 +3628,10 @@ const ChatWindow = ({
                 <MessageItem 
                   message={msg} 
                   albumItems={albumItems}
-                  isMe={msg.senderId === profile?.id} 
+                  isMe={isMessageFromMe(msg.senderId)} 
                   theme={chat.theme}
                   bubbleGradient={currentChatTheme?.bubbleGradient}
-                  senderPhoto={msg.senderId === profile?.id ? (localAvatarURL || profile?.photoURL) : (otherProfile?.photoURL || chat.photo)}
+                  senderPhoto={isMessageFromMe(msg.senderId) ? (localAvatarURL || profile?.photoURL) : (otherProfile?.photoURL || chat.photo)}
                   onRetry={() => handleRetry(msg)} 
                   conversationId={chat.id}
                   onImageClick={(url, imgIdx, allUrls) => {
@@ -3606,15 +3647,15 @@ const ChatWindow = ({
                   onPin={(message) => togglePinMessage(chat.id, message.id, message.text || '', (chat as any).pinnedMessage?.id === message.id)}
                   otherUserRestricted={isRestricted(chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || '')}
                   seenAt={(() => {
-                    const isSelf = chat.otherParticipantId === profile?.id;
+                    const isSelf = isMessageFromMe(chat.otherParticipantId);
                     if (isSelf) return null;
                     const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
                     if (!otherId || !chat.lastRead) return null;
                     return chat.lastRead[otherId];
                   })()}
                   otherParticipantName={otherProfile?.displayName || otherProfile?.username || chat.name}
-                  isFirstInSequence={idx === 0 || self[idx-1].msg.senderId !== msg.senderId}
-                  isLastInSequence={idx === self.length - 1 || self[idx+1].msg.senderId !== msg.senderId}
+                  isFirstInSequence={idx === 0 || isMessageFromMe(self[idx-1].msg.senderId) !== isMessageFromMe(msg.senderId)}
+                  isLastInSequence={idx === self.length - 1 || isMessageFromMe(self[idx+1].msg.senderId) !== isMessageFromMe(msg.senderId)}
                 />
               </div>
             );
@@ -3676,7 +3717,7 @@ const ChatWindow = ({
             const isOtherBlocked = otherId ? isBlocked(otherId) : false;
 
             // Check for inbound message requests first
-            const isIncomingRequest = chat.status === 'request' && chat.lastMessageSenderId !== profile?.id;
+            const isIncomingRequest = chat.status === 'request' && !isMessageFromMe(chat.lastMessageSenderId);
             if (isIncomingRequest) {
               return (
                 <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center">

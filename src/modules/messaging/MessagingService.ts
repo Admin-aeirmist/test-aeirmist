@@ -184,11 +184,27 @@ class MessagingService {
     currentProfileId: string,
     chatData: any,
     callback: (messages: Message[]) => void,
-    limitCount: number = 50
+    limitCount: number = 50,
+    currentUserId?: string
   ) {
     logger.info(`[MessagingService] Subscribed to messages for ${conversationId}`);
     
     let isCancelled = false;
+
+    const isMe = (senderId?: string) => {
+      if (!senderId) return false;
+      const ids = [currentProfileId, currentUserId].filter(Boolean);
+      if (ids.some(id => id === senderId || (typeof id === 'string' && (senderId.includes(id) || id.includes(senderId))))) {
+        return true;
+      }
+      const otherId = chatData?.otherParticipantId || chatData?.otherParticipantUid;
+      if (otherId && otherId === senderId) return false;
+      const isGroup = Boolean(chatData?.isGroup || chatData?.type === 'group' || (chatData?.participants && chatData.participants.length > 2));
+      if (!isGroup && otherId && otherId !== senderId) {
+        return true;
+      }
+      return false;
+    };
 
     // 1. Instant Synchronous Cache Check (0ms latency!)
     const syncCached = this.getCachedMessages(conversationId);
@@ -284,7 +300,7 @@ class MessagingService {
           callback(updated);
 
           // If incoming message from other user and chat is currently open, immediately mark seen
-          if (m.senderId !== currentProfileId) {
+          if (!isMe(m.senderId)) {
             api.chat.markSeen(conversationId).catch(() => {});
           }
         }
@@ -299,8 +315,8 @@ class MessagingService {
         if (!isCancelled) {
           const prev = this.getCachedMessages(conversationId) || [];
           const updated = prev.map(m => {
-            // If the message was sent by current user, or sent by someone other than the person who read it, mark it seen!
-            if (m.senderId === currentProfileId || m.senderId !== data?.userId) {
+            // If the message was sent by current user, it's now seen by the recipient!
+            if (isMe(m.senderId) || m.senderId !== data?.userId) {
               return { ...m, isSeen: true, status: 'read' as any };
             }
             return m;
@@ -313,8 +329,8 @@ class MessagingService {
     socket.on('seen_update', handleSeenUpdate);
 
     const otherParticipantId = chatData.otherParticipantId ||
-                             chatData.profileIds?.find((id: string) => id !== currentProfileId) || 
-                             chatData.participants?.find((uid: string) => uid !== currentProfileId); // Fallback uid
+                             chatData.profileIds?.find((id: string) => !isMe(id)) || 
+                             chatData.participants?.find((uid: string) => !isMe(uid)); // Fallback uid
 
     const parseTimestampMs = (val: any): number => {
       if (!val) return 0;

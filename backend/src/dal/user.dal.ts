@@ -152,6 +152,18 @@ export class UserDAL {
     return updated || null;
   }
 
+  static async incrementPoints(userId: string, points: number) {
+    const [updated] = await db
+      .update(profiles)
+      .set({
+        points: sql`${profiles.points} + ${points}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(profiles.userId, userId))
+      .returning();
+    return updated || null;
+  }
+
   static async followUser(followerId: string, followingId: string) {
     if (followerId === followingId) return null;
     const [follow] = await db
