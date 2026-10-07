@@ -14,7 +14,7 @@ const SendMessageSchema = z.object({
   fileName: z.string().optional(),
   fileSize: z.number().optional(),
   duration: z.number().optional(),
-  replyToId: z.string().uuid().optional(),
+  replyToId: z.string().nullish().transform(v => (v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v : undefined)),
   metadata: z.any().optional(),
 });
 

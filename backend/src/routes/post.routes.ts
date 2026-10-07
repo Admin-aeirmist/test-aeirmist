@@ -12,7 +12,7 @@ const router = Router();
 const CreatePostSchema = z.object({
   content: z.string().min(1).max(5000),
   mediaKeys: z.array(z.string()).optional(),
-  mediaType: z.enum(['none', 'image', 'video', 'collage']).optional(),
+  mediaType: z.enum(['none', 'text', 'image', 'video', 'collage']).optional(),
   tags: z.array(z.string()).optional(),
   location: z.string().optional(),
   pollData: z.any().optional(),
@@ -20,7 +20,7 @@ const CreatePostSchema = z.object({
 
 const AddCommentSchema = z.object({
   content: z.string().min(1).max(1000),
-  parentId: z.string().uuid().optional(),
+  parentId: z.string().nullish().transform(v => (v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v : undefined)),
 });
 
 async function resolveUserId(rawId: string): Promise<string> {

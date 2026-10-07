@@ -2080,11 +2080,21 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const fetchSuggestions = useCallback(async () => {
-    if (!db || !profile?.id) return;
+    if (!profile?.id) return;
     try {
-      const q = query(collection(db, 'profiles'), limit(45));
-      const snapshot = await getDocs(q);
-      const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const res = await api.users.search('', 45).catch(() => ({ users: [] }));
+      const allUsers = (res?.users || []).map((u: any) => ({
+        id: u.id,
+        uid: u.id,
+        ownerUid: u.id,
+        username: u.username,
+        displayName: u.displayName || u.username,
+        photoURL: u.avatarKey ? (u.avatarKey.startsWith('http') ? u.avatarKey : `/media/${u.avatarKey}`) : null,
+        avatarUrl: u.avatarKey ? (u.avatarKey.startsWith('http') ? u.avatarKey : `/media/${u.avatarKey}`) : null,
+        bio: u.bio || '',
+        isVerified: u.isVerified || false,
+        followersCount: u.followersCount || 0,
+      }));
       
       const dismissed = followRecommService.getDismissedSuggestions();
       const following = profile.social?.following || [];
@@ -2123,11 +2133,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (e) {
        logger.warn("Follow recommendation system failed", e);
     }
-  }, [db, profile?.id, user?.uid]);
+  }, [profile?.id, user?.uid]);
 
   // Reactive listener to refresh suggestions periodically or when following status changes
   useEffect(() => {
-    if (!db || !profile?.id) return;
+    if (!profile?.id) return;
     const followingStr = JSON.stringify(profile.social?.following || []);
     const triggerId = `${profile.id}_${followingStr}_${suggestionsFetched.current === profile.id ? "done" : "init"}`;
     
@@ -2136,7 +2146,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     suggestionsFetched.current = triggerId;
 
     fetchSuggestions();
-  }, [db, profile?.id, fetchSuggestions, JSON.stringify(profile?.social?.following || [])]);
+  }, [profile?.id, fetchSuggestions, JSON.stringify(profile?.social?.following || [])]);
 
   const toggleNotification = async (type: 'mute' | 'pin' | 'archive', targetId: string) => {
     if (type === 'archive') {

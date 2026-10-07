@@ -74,6 +74,10 @@ router.post('/items', authenticateToken, async (req: AuthenticatedRequest, res: 
 // Get single item
 router.get('/items/:id', async (req, res: Response) => {
   try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id);
+    if (!isUuid) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
     const item = await MarketplaceDAL.getById(req.params.id);
     if (!item) {
       return res.status(404).json({ error: 'Item not found' });
@@ -139,6 +143,19 @@ router.post('/stores', authenticateToken, async (req: AuthenticatedRequest, res:
     }
     console.error('[Store Create Error]', err);
     res.status(500).json({ error: 'Failed to create store' });
+  }
+});
+
+// List stores
+router.get('/stores', async (req, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const stores = await MarketplaceDAL.getStores(limit, offset);
+    res.json({ stores });
+  } catch (err) {
+    console.error('[Marketplace Stores Error]', err);
+    res.status(500).json({ error: 'Failed to fetch stores' });
   }
 });
 

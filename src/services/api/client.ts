@@ -147,6 +147,8 @@ export const api = {
       }),
     search: (query: string, limit = 20) =>
       request<{ users: any[] }>(`/api/v1/users/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+    getSuggestions: (limit = 20) =>
+      request<{ users: any[] }>(`/api/v1/users/suggestions?limit=${limit}`),
     deactivate: () =>
       request<{ success: boolean }>('/api/v1/users/deactivate', {
         method: 'POST',

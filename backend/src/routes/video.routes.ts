@@ -20,8 +20,8 @@ const CommentSchema = z.object({
   content: z.string().min(1).max(2000),
 });
 
-// Video Feed
-router.get('/feed', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
+// Video Feed (available on / and /feed)
+router.get(['/', '/feed'], optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
     const offset = parseInt(req.query.offset as string) || 0;
@@ -38,6 +38,10 @@ router.get('/feed', optionalAuthToken, async (req: AuthenticatedRequest, res: Re
 // Single Video
 router.get('/:id', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id);
+    if (!isUuid) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
     const viewerId = req.user?.userId;
     const video = await VideoDAL.getById(req.params.id, viewerId);
     if (!video) {

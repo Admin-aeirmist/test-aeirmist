@@ -1,4 +1,4 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, desc } from 'drizzle-orm';
 import { db } from '../db';
 import { users, profiles, follows, blocks, loginSessions } from '../db/schema';
 
@@ -98,6 +98,15 @@ export class UserDAL {
     return newProfile;
   }
 
+  static async getProfileById(profileId: string) {
+    const [profile] = await db
+      .select()
+      .from(profiles)
+      .where(eq(profiles.id, profileId))
+      .limit(1);
+    return profile || null;
+  }
+
   static async getProfileByUserId(userId: string) {
     const [profile] = await db
       .select()
@@ -114,6 +123,24 @@ export class UserDAL {
       .where(eq(profiles.username, username.toLowerCase().trim()))
       .limit(1);
     return profile || null;
+  }
+
+  static async getProfileByIdentifier(identifier: string) {
+    const clean = identifier.trim().replace(/^@+/, '');
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clean);
+    if (isUuid) {
+      const byUser = await this.getProfileByUserId(clean);
+      if (byUser) return byUser;
+      const byProfile = await this.getProfileById(clean);
+      if (byProfile) return byProfile;
+    }
+    const byUsername = await this.getProfileByUsername(clean);
+    if (byUsername) return byUsername;
+    const byFb = await this.findByFirebaseUid(clean);
+    if (byFb) {
+      return this.getProfileByUserId(byFb.id);
+    }
+    return null;
   }
 
   static async updateProfile(userId: string, updates: Partial<typeof profiles.$inferInsert>) {
@@ -168,7 +195,9 @@ export class UserDAL {
 
   static async searchUsers(queryText: string, limit = 20) {
     const clean = queryText.trim().replace(/^@+/, '');
-    if (!clean) return [];
+    if (!clean) {
+      return this.getSuggestedUsers(undefined, limit);
+    }
 
     const searchPattern = `%${clean.toLowerCase()}%`;
     return db
@@ -191,6 +220,31 @@ export class UserDAL {
           sql`(LOWER(${profiles.username}) LIKE ${searchPattern} OR LOWER(${profiles.displayName}) LIKE ${searchPattern})`
         )
       )
+      .limit(limit);
+  }
+
+  static async getSuggestedUsers(currentUserId?: string, limit = 20) {
+    return db
+      .select({
+        id: users.id,
+        email: users.email,
+        username: profiles.username,
+        displayName: profiles.displayName,
+        avatarKey: profiles.avatarKey,
+        bio: profiles.bio,
+        isVerified: profiles.isVerified,
+        followersCount: profiles.followersCount,
+      })
+      .from(profiles)
+      .innerJoin(users, eq(profiles.userId, users.id))
+      .where(
+        and(
+          eq(users.status, 'ACTIVE'),
+          eq(users.isBanned, false),
+          currentUserId ? sql`${users.id} != ${currentUserId}` : sql`1=1`
+        )
+      )
+      .orderBy(desc(profiles.followersCount), desc(profiles.createdAt))
       .limit(limit);
   }
 

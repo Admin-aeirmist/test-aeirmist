@@ -21,9 +21,6 @@ const UpdateProfileSchema = z.object({
 router.get('/search', async (req, res: Response) => {
   try {
     const q = ((req.query.q as string) || '').trim();
-    if (!q) {
-      return res.json({ users: [] });
-    }
     const limit = Math.min(parseInt((req.query.limit as string) || '20', 10), 50);
     const results = await UserDAL.searchUsers(q, limit);
     res.json({ users: results });
@@ -33,20 +30,23 @@ router.get('/search', async (req, res: Response) => {
   }
 });
 
-// Get User Profile by Username or User ID
+// Follow Suggestions
+router.get('/suggestions', async (req, res: Response) => {
+  try {
+    const limit = Math.min(parseInt((req.query.limit as string) || '20', 10), 50);
+    const results = await UserDAL.getSuggestedUsers(undefined, limit);
+    res.json({ users: results });
+  } catch (err) {
+    console.error('[Suggestions Error]', err);
+    res.status(500).json({ error: 'Failed to fetch suggestions' });
+  }
+});
+
+// Get User Profile by Username, User ID, or Profile ID
 router.get('/:identifier', async (req, res: Response) => {
   try {
     const identifier = req.params.identifier;
-    let profile = null;
-
-    // Check UUID
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
-    if (isUuid) {
-      profile = await UserDAL.getProfileByUserId(identifier);
-    }
-    if (!profile) {
-      profile = await UserDAL.getProfileByUsername(identifier);
-    }
+    const profile = await UserDAL.getProfileByIdentifier(identifier);
 
     if (!profile) {
       return res.status(404).json({ error: 'Profile not found' });

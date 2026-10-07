@@ -151,6 +151,16 @@ export class MarketplaceDAL {
     return store;
   }
 
+  static async getStores(limit: number = 20, offset: number = 0) {
+    return db
+      .select()
+      .from(marketplaceStores)
+      .where(eq(marketplaceStores.status, 'active'))
+      .orderBy(desc(marketplaceStores.createdAt))
+      .limit(limit)
+      .offset(offset);
+  }
+
   static async getStoreByHandle(handle: string) {
     const [store] = await db
       .select()

@@ -6,14 +6,18 @@ interface ReportContextType {
   closeReportModal: () => void;
 }
 
-const ReportContext = createContext<ReportContextType | undefined>(undefined);
+const defaultReportContext: ReportContextType = {
+  openReportModal: (_targetType: string, _targetId: string, _reportedUid: string, _meta?: any) => {
+    console.warn('[Report] openReportModal called outside ReportProvider');
+  },
+  closeReportModal: () => {},
+};
+
+const ReportContext = createContext<ReportContextType>(defaultReportContext);
 
 export const useReport = () => {
   const context = useContext(ReportContext);
-  if (!context) {
-    throw new Error('useReport must be used within a ReportProvider');
-  }
-  return context;
+  return context || defaultReportContext;
 };
 
 export const ReportProvider: React.FC<{ children: ReactNode }> = ({ children }) => {

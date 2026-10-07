@@ -19,8 +19,8 @@ const CreateHighlightSchema = z.object({
   storyIds: z.array(z.string()).default([]),
 });
 
-// Get Active Stories
-router.get('/', async (_req, res: Response) => {
+// Get Active Stories (also accessible via /feed)
+router.get(['/', '/feed'], async (_req, res: Response) => {
   try {
     const list = await StoryDAL.getActiveStories();
     res.json({ stories: list });
