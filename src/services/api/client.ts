@@ -75,7 +75,9 @@ export const api = {
         body: JSON.stringify(data),
       }),
     toggleLike: (id: string) =>
-      request<{ liked: boolean }>(`/api/v1/posts/${id}/like`, { method: 'POST' }),
+      request<{ liked: boolean; likesCount: number }>(`/api/v1/posts/${id}/like`, { method: 'POST' }),
+    toggleBookmark: (id: string) =>
+      request<{ bookmarked: boolean }>(`/api/v1/posts/${id}/bookmark`, { method: 'POST' }),
     delete: (id: string) =>
       request<{ success: boolean }>(`/api/v1/posts/${id}`, { method: 'DELETE' }),
     getComments: (postId: string) =>
@@ -84,6 +86,43 @@ export const api = {
       request<{ comment: any }>(`/api/v1/posts/${postId}/comments`, {
         method: 'POST',
         body: JSON.stringify({ content, parentId }),
+      }),
+  },
+
+  // Users & Profiles
+  users: {
+    getProfile: (identifier: string) =>
+      request<{ profile: any }>(`/api/v1/users/${encodeURIComponent(identifier)}`),
+    updateProfile: (data: {
+      displayName?: string;
+      bio?: string;
+      location?: string;
+      avatarKey?: string;
+      bannerKey?: string;
+      socialLinks?: any;
+      privacySettings?: any;
+    }) =>
+      request<{ profile: any }>('/api/v1/users/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    toggleFollow: (targetUserId: string) =>
+      request<{ following: boolean }>(`/api/v1/users/${targetUserId}/follow`, {
+        method: 'POST',
+      }),
+  },
+
+  // Notifications
+  notifications: {
+    get: (limit = 30) =>
+      request<{ notifications: any[]; unreadCount: number }>(`/api/v1/notifications?limit=${limit}`),
+    markRead: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/notifications/${id}/read`, {
+        method: 'POST',
+      }),
+    markAllRead: () =>
+      request<{ success: boolean }>('/api/v1/notifications/read-all', {
+        method: 'POST',
       }),
   },
 

@@ -85,15 +85,19 @@ import postRoutes from './routes/post.routes';
 import chatRoutes from './routes/chat.routes';
 import mediaRoutes from './routes/media.routes';
 import marketplaceRoutes from './routes/marketplace.routes';
+import userRoutes from './routes/user.routes';
+import notificationRoutes from './routes/notification.routes';
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/posts', postRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/media', mediaRoutes);
 app.use('/api/v1/marketplace', marketplaceRoutes);
+app.use('/api/v1/users', userRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // -------------------------------------------------------------
-// Socket.IO Setup with Redis Pub/Sub
+// Socket.IO Setup with Redis Pub/Sub & WebRTC Signaling
 // -------------------------------------------------------------
 export const io = new SocketIOServer(server, {
   cors: {
@@ -116,12 +120,52 @@ try {
 io.on('connection', (socket) => {
   console.log(`🔌 [Socket.IO] Client connected: ${socket.id}`);
 
+  // User identification for personal notifications
+  socket.on('identify_user', (userId: string) => {
+    socket.join(`user:${userId}`);
+    console.log(`👤 [Socket.IO] User ${userId} joined personal channel`);
+  });
+
+  // Room management for chats
   socket.on('join_room', (roomId: string) => {
     socket.join(roomId);
   });
 
   socket.on('leave_room', (roomId: string) => {
     socket.leave(roomId);
+  });
+
+  // Real-time chat message broadcast
+  socket.on('send_message', (data: { conversationId: string; content?: string; type?: string; mediaUrl?: string }) => {
+    if (data?.conversationId) {
+      socket.to(`conv:${data.conversationId}`).emit('new_message', data);
+    }
+  });
+
+  // WebRTC Calling Signaling Gateway (Ultra Low-Latency)
+  socket.on('call_user', (data: { targetUserId: string; signalData: any; callerInfo: any; callType: 'audio' | 'video' }) => {
+    io.to(`user:${data.targetUserId}`).emit('incoming_call', {
+      fromSocketId: socket.id,
+      signalData: data.signalData,
+      callerInfo: data.callerInfo,
+      callType: data.callType,
+    });
+  });
+
+  socket.on('accept_call', (data: { toSocketId: string; signalData: any }) => {
+    io.to(data.toSocketId).emit('call_accepted', { signalData: data.signalData });
+  });
+
+  socket.on('reject_call', (data: { toSocketId: string }) => {
+    io.to(data.toSocketId).emit('call_rejected');
+  });
+
+  socket.on('ice_candidate', (data: { toSocketId: string; candidate: any }) => {
+    io.to(data.toSocketId).emit('ice_candidate', { candidate: data.candidate });
+  });
+
+  socket.on('end_call', (data: { toSocketId: string }) => {
+    io.to(data.toSocketId).emit('call_ended');
   });
 
   socket.on('disconnect', () => {

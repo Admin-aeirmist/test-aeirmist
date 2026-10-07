@@ -29,6 +29,7 @@ import type { Notification } from '../../types/notifications';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 import { 
   collection, 
@@ -492,6 +493,11 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true, isRead: true })));
+    // Primary backend API mark all read
+    api.notifications.markAllRead().catch(err => {
+      logger.warn('[NotificationCenter] API markAllRead fallback:', err);
+    });
+
     if (!db || !user || !canWrite('mark_all_read', 5000)) return;
     try {
       const batch = writeBatch(db);
@@ -508,6 +514,11 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const markRead = async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true, isRead: true } : n));
+    // Primary backend API mark read
+    api.notifications.markRead(id).catch(err => {
+      logger.warn('[NotificationCenter] API markRead fallback:', err);
+    });
+
     if (!db || !canWrite(`mark_read_${id}`, 2000)) return;
     try {
       await updateDoc(doc(db, 'notifications', id), { read: true });

@@ -114,6 +114,7 @@ import { LocationTrackingService } from '../services/LocationTrackingService';
 import { REWARDS, getRankInfo } from '../lib/aeirmistRanks';
 import { analytics } from '../services/AnalyticsService';
 import { api, setAuthToken, getAuthToken } from '../services/api/client';
+import { getSocket } from '../services/api/socket';
 import { followRecommService } from '../services/FollowRecommendationService';
 import { handleNotificationPermissionFlow, showSystemNotification, NativeSettings } from '../utils/nativeSettings';
 import { logger } from '@/src/utils/logger';
@@ -1019,6 +1020,61 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [db, user?.uid]);
 
+  // Real-time WebSockets Identification, Notifications & Call Signaling (Redis Pub/Sub backed)
+  useEffect(() => {
+    if (!user?.uid) return;
+    try {
+      const socket = getSocket();
+      socket.emit('identify_user', user.uid);
+
+      const handleNewNotification = (data: any) => {
+        setUnreadNotificationsCount(prev => prev + 1);
+        playNotificationSound();
+        if (data?.notification) {
+          addToast({
+            title: data.notification.title || 'New Notification',
+            message: data.notification.body || data.notification.content || '',
+            type: 'info',
+          });
+        }
+      };
+
+      const handleIncomingCall = (data: any) => {
+        logger.info('[Socket.IO] Incoming WebRTC call received:', data);
+        if (data?.callerInfo) {
+          setActiveCall({
+            id: data.callerInfo.callId || `call_${Date.now()}`,
+            callerId: data.callerInfo.callerId,
+            receiverId: profile?.id,
+            callerUid: data.callerInfo.callerUid,
+            receiverUid: user?.uid,
+            initiatorId: data.callerInfo.callerId,
+            targetId: profile?.id,
+            callerName: data.callerInfo.callerName,
+            callerPhoto: data.callerInfo.callerPhoto,
+            receiverName: profile?.displayName || profile?.username || 'You',
+            receiverPhoto: profile?.photoURL || '',
+            participants: [data.callerInfo.callerUid, user?.uid].filter(Boolean),
+            status: 'calling',
+            type: data.callType || 'audio',
+            conversationId: data.callerInfo.conversationId,
+            createdAt: Date.now(),
+          });
+        }
+      };
+
+      socket.on('new_notification', handleNewNotification);
+      socket.on('incoming_call', handleIncomingCall);
+
+      return () => {
+        socket.off('new_notification', handleNewNotification);
+        socket.off('incoming_call', handleIncomingCall);
+      };
+    } catch (err) {
+      logger.warn('[Socket.IO] Notification/Call subscription error:', err);
+    }
+  }, [user?.uid, profile?.id, profile?.displayName, profile?.username, profile?.photoURL, addToast]);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).__triggerSafeMode = () => {
@@ -1503,6 +1559,26 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         conversationId,
         createdAt: Date.now()
       });
+
+      // Realtime WebSockets Signaling broadcast (Instant Ringing)
+      try {
+        const socket = getSocket();
+        socket.emit('call_user', {
+          targetUserId: resolvedOtherUid || otherProfile.id,
+          signalData: { callId, type, conversationId },
+          callerInfo: {
+            callId,
+            callerId: profile.id,
+            callerUid: myUid,
+            callerName: profile.displayName || profile.username || 'You',
+            callerPhoto: profile.photoURL || '',
+            conversationId,
+          },
+          callType: type,
+        });
+      } catch (sockErr) {
+        logger.warn('[AeirmistContext] Socket call_user signal error:', sockErr);
+      }
 
       if (existingConvRef) {
         await updateDoc(existingConvRef, {
@@ -4538,6 +4614,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         await batch.commit();
         logger.info("[AeirmistContext] Profile Update Success committed to chain.");
 
+        // Sync to backend PostgreSQL API
+        api.users.updateProfile({
+          displayName: updateData.displayName,
+          bio: updateData.bio,
+          location: updateData.location,
+          socialLinks: updateData.socialLinks,
+          privacySettings: updateData.privacySettings,
+        }).catch((err) => {
+          logger.warn("[AeirmistContext] API updateProfile dual-sync fallback:", err);
+        });
+
         // Ensure state is updated across active profiles
         setAllProfiles((prev: any[]) => 
           prev.map(p => p.id === targetProfileId || p.ownerUid === user.uid ? { ...p, ...updateData } : p)
@@ -6329,6 +6416,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const isPending = (profile.social?.pendingFollowing || []).includes(targetId);
     logger.info("Toggle follow state:", { isFollowing, isPending });                
     
+    // Primary sync to backend PostgreSQL follow system
+    api.users.toggleFollow(targetId).catch((err) => {
+      logger.warn("[AeirmistContext] API toggleFollow dual-sync fallback:", err);
+    });
+
     try {
       if (isFollowing) {
         // Optimistic Unfollow
@@ -7091,54 +7183,74 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const toggleLike = async (postId: string, isLiked: boolean, postAuthorId?: string) => {
-    if (!db || !profile || !canWrite(`like_${postId}`, 600)) return;
+    if (!profile) return;
     try {
-      await updateDoc(doc(db, 'posts', postId), {
-        likesCount: increment(isLiked ? -1 : 1),
-        likedBy: isLiked ? arrayRemove(profile.id) : arrayUnion(profile.id),
-        updatedAt: serverTimestamp()
+      // 1. Primary high-speed backend API (PostgreSQL + Redis + Socket.IO)
+      await api.posts.toggleLike(postId).catch((e) => {
+        logger.warn("[AeirmistContext] API toggleLike dual-sync fallback:", e);
       });
-      if (!isLiked) {
-        await earnPoints(REWARDS.LIKE_GIVEN);
-        
-        // Notify post author
-        let targetAuthorId = postAuthorId;
-        if (!targetAuthorId) {
-          try {
-            const postDoc = await getDoc(doc(db, 'posts', postId));
-            if (postDoc.exists()) {
-              const d = postDoc.data();
-              targetAuthorId = d.authorId || d.userId || d.author?.id || d.author?.uid;
-            }
-          } catch (e) {}
-        }
+    } catch (e) {}
 
-        if (targetAuthorId && targetAuthorId !== profile.id) {
-          await createNotification(
-            targetAuthorId,
-            'like',
-            `${profile.displayName || profile.username || 'Someone'} liked your post.`,
-            { postId }
-          );
+    // 2. Dual-sync to Firestore if available
+    if (db && canWrite(`like_${postId}`, 600)) {
+      try {
+        await updateDoc(doc(db, 'posts', postId), {
+          likesCount: increment(isLiked ? -1 : 1),
+          likedBy: isLiked ? arrayRemove(profile.id) : arrayUnion(profile.id),
+          updatedAt: serverTimestamp()
+        });
+        if (!isLiked) {
+          await earnPoints(REWARDS.LIKE_GIVEN);
+          
+          // Notify post author
+          let targetAuthorId = postAuthorId;
+          if (!targetAuthorId) {
+            try {
+              const postDoc = await getDoc(doc(db, 'posts', postId));
+              if (postDoc.exists()) {
+                const d = postDoc.data();
+                targetAuthorId = d.authorId || d.userId || d.author?.id || d.author?.uid;
+              }
+            } catch (e) {}
+          }
+
+          if (targetAuthorId && targetAuthorId !== profile.id) {
+            await createNotification(
+              targetAuthorId,
+              'like',
+              `${profile.displayName || profile.username || 'Someone'} liked your post.`,
+              { postId }
+            );
+          }
         }
+      } catch (e) {
+        logger.warn("Like toggle fallback failed", e);
       }
-    } catch (e) {
-      logger.warn("Like toggle failed", e);
     }
   };
 
   const toggleBookmark = async (postId: string, isBookmarked: boolean) => {
-    if (!db || !profile || !canWrite(`bookmark_${postId}`, 600)) return;
+    if (!profile) return;
     try {
-      await updateDoc(doc(db, 'posts', postId), {
-        savedBy: isBookmarked ? arrayRemove(profile.id) : arrayUnion(profile.id),
-        updatedAt: serverTimestamp()
+      // 1. Primary backend API (PostgreSQL)
+      await api.posts.toggleBookmark(postId).catch((e) => {
+        logger.warn("[AeirmistContext] API toggleBookmark dual-sync fallback:", e);
       });
-      if (!isBookmarked) {
-        await earnPoints(5);
+    } catch (e) {}
+
+    // 2. Dual-sync to Firestore
+    if (db && canWrite(`bookmark_${postId}`, 600)) {
+      try {
+        await updateDoc(doc(db, 'posts', postId), {
+          savedBy: isBookmarked ? arrayRemove(profile.id) : arrayUnion(profile.id),
+          updatedAt: serverTimestamp()
+        });
+        if (!isBookmarked) {
+          await earnPoints(5);
+        }
+      } catch (e) {
+        logger.warn("Bookmark toggle fallback failed", e);
       }
-    } catch (e) {
-      logger.warn("Bookmark toggle failed", e);
     }
   };
 

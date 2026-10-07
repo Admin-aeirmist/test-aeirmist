@@ -2,7 +2,10 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { PostDAL } from '../dal/post.dal';
 import { CommentDAL } from '../dal/comment.dal';
+import { UserDAL } from '../dal/user.dal';
+import { NotificationDAL } from '../dal/notification.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { io } from '../index';
 
 const router = Router();
 
@@ -88,16 +91,49 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res: 
 // Like / Unlike Post
 router.post('/:id/like', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const post = await PostDAL.getById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
     const isLiked = await PostDAL.likePost(req.params.id, req.user!.userId);
+    let liked = true;
     if (!isLiked) {
-      // Toggle to unlike if already liked
       await PostDAL.unlikePost(req.params.id, req.user!.userId);
-      return res.json({ liked: false });
+      liked = false;
+    } else if (post.userId !== req.user!.userId) {
+      // Trigger notification
+      const myProfile = await UserDAL.getProfileByUserId(req.user!.userId);
+      const notif = await NotificationDAL.create({
+        recipientId: post.userId,
+        actorId: req.user!.userId,
+        type: 'like',
+        title: 'New Like',
+        body: `${myProfile?.displayName || myProfile?.username || 'Someone'} liked your post.`,
+        actionUrl: `/post/${post.id}`,
+      });
+      io.to(`user:${post.userId}`).emit('new_notification', { notification: notif });
     }
-    res.json({ liked: true });
+
+    const updated = await PostDAL.getById(req.params.id);
+    res.json({ liked, likesCount: updated?.likesCount || 0 });
   } catch (err) {
     console.error('[Like Error]', err);
     res.status(500).json({ error: 'Failed to toggle like' });
+  }
+});
+
+// Bookmark / Unbookmark Post
+router.post('/:id/bookmark', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const isBookmarked = await PostDAL.bookmarkPost(req.params.id, req.user!.userId);
+    let bookmarked = true;
+    if (!isBookmarked) {
+      await PostDAL.unbookmarkPost(req.params.id, req.user!.userId);
+      bookmarked = false;
+    }
+    res.json({ bookmarked });
+  } catch (err) {
+    console.error('[Bookmark Error]', err);
+    res.status(500).json({ error: 'Failed to toggle bookmark' });
   }
 });
 
@@ -114,6 +150,9 @@ router.get('/:id/comments', async (req, res: Response) => {
 
 router.post('/:id/comments', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const post = await PostDAL.getById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
     const data = AddCommentSchema.parse(req.body);
     const comment = await CommentDAL.addComment({
       postId: req.params.id,
@@ -121,6 +160,20 @@ router.post('/:id/comments', authenticateToken, async (req: AuthenticatedRequest
       content: data.content,
       parentId: data.parentId,
     });
+
+    if (post.userId !== req.user!.userId) {
+      const myProfile = await UserDAL.getProfileByUserId(req.user!.userId);
+      const notif = await NotificationDAL.create({
+        recipientId: post.userId,
+        actorId: req.user!.userId,
+        type: 'comment',
+        title: 'New Comment',
+        body: `${myProfile?.displayName || myProfile?.username || 'Someone'} commented on your post: "${data.content.slice(0, 30)}..."`,
+        actionUrl: `/post/${post.id}`,
+      });
+      io.to(`user:${post.userId}`).emit('new_notification', { notification: notif });
+    }
+
     res.status(201).json({ comment });
   } catch (err: any) {
     if (err instanceof z.ZodError) {

@@ -35,6 +35,7 @@ import { ModerationWarningModal } from '../common/ModerationWarningModal';
 import { MessengerShare } from './MessengerShare';
 import { PostMusicPlayer, getPostMusicData } from './PostMusicPlayer';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 const InsightsDashboard = React.lazy(() => import('../analytics/InsightsDashboard').then(m => ({ default: m.InsightsDashboard })));
 
@@ -588,6 +589,11 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
       await addDoc(commentsRef, newCommentData);
 
+      // Primary backend API dual-write
+      api.posts.addComment(post.id, txt, activeParentId).catch((err) => {
+        logger.warn("[PremiumPostCard] API reply dual-write fallback:", err);
+      });
+
       const postRef = doc(db, 'posts', post.id);
       await updateDoc(postRef, {
         commentsCount: increment(1)
@@ -703,6 +709,11 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
         likedBy: [],
         parentId: null, // Top-level commentary wave
         createdAt: serverTimestamp()
+      });
+
+      // Primary backend API dual-write
+      api.posts.addComment(post.id, txt).catch((err) => {
+        logger.warn("[PremiumPostCard] API comment dual-write fallback:", err);
       });
 
       const postRef = doc(db, 'posts', post.id);
