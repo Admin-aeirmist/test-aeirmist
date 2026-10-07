@@ -90,7 +90,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
         detail: {
           name: video.creatorName || (video as any).authorName || 'Aeirmist Creator',
           username: (video as any).creatorUsername || (video as any).username,
-          avatar: video.creatorPhoto || (video as any).authorPhoto
+          avatar: video.creatorAvatar || (video as any).creatorPhoto || (video as any).authorPhoto
         }
       }));
     }
@@ -342,7 +342,10 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
   return (
     <div className="flex flex-col h-full bg-[#050505] text-white overflow-y-auto no-scrollbar font-sans pb-24">
       {/* Top Bar Navigation */}
-      <div className="sticky top-0 z-30 bg-[#050505]/90 backdrop-blur-xl border-b border-white/5 px-4 py-3 flex items-center justify-between">
+      <div 
+        className="sticky top-0 z-30 bg-[#050505]/90 backdrop-blur-xl border-b border-white/5 px-4 pb-3 flex items-center justify-between transition-all"
+        style={{ paddingTop: 'calc(0.75rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+      >
         <button
           onClick={onBack}
           className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs font-medium text-white/80 hover:text-white transition-colors"

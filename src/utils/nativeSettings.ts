@@ -21,9 +21,44 @@ interface NativeSettingsPlugin {
   getSystemInsets(): Promise<{ top: number; bottom: number }>;
   setAudioMode(options: { mode: 'communication' | 'normal'; speaker?: boolean }): Promise<void>;
   saveMediaToDevice(options: { url: string; filename?: string }): Promise<{ success: boolean; filename?: string; message?: string }>;
+  checkOverlayPermission(): Promise<{ granted: boolean }>;
+  requestOverlayPermission(): Promise<void>;
+  enableSystemChatHead(options: { heads: string }): Promise<void>;
+  disableSystemChatHead(): Promise<void>;
+  updateSystemChatHead(options: { name?: string; avatarUrl?: string; unread?: number }): Promise<void>;
 }
 
 export const NativeSettings = registerPlugin<NativeSettingsPlugin>('NativeSettings');
+
+const isNativeAndroid = () =>
+  typeof window !== 'undefined' &&
+  !!(window as any).Capacitor?.isNativePlatform?.() &&
+  (window as any).Capacitor?.getPlatform?.() === 'android';
+
+/** System-wide chat head (draws over other apps). All calls are safe no-ops on web/iOS. */
+export const SystemChatHead = {
+  isSupported: isNativeAndroid,
+  async hasPermission(): Promise<boolean> {
+    if (!isNativeAndroid()) return false;
+    try { return (await NativeSettings.checkOverlayPermission()).granted; } catch { return false; }
+  },
+  async requestPermission(): Promise<void> {
+    if (!isNativeAndroid()) return;
+    try { await NativeSettings.requestOverlayPermission(); } catch {}
+  },
+  async enable(opts: { heads: string }): Promise<boolean> {
+    if (!isNativeAndroid()) return false;
+    try { await NativeSettings.enableSystemChatHead(opts); return true; } catch { return false; }
+  },
+  async disable(): Promise<void> {
+    if (!isNativeAndroid()) return;
+    try { await NativeSettings.disableSystemChatHead(); } catch {}
+  },
+  async update(opts: { name?: string; avatarUrl?: string; unread?: number }): Promise<void> {
+    if (!isNativeAndroid()) return;
+    try { await NativeSettings.updateSystemChatHead(opts); } catch {}
+  },
+};
 
 export interface SystemNotificationOptions {
   title: string;
@@ -64,7 +99,7 @@ export const showSystemNotification = async (options: SystemNotificationOptions)
 
   // 2. Desktop & Mobile Browser Web Notification Fallback
   if ('Notification' in window && Notification.permission === 'granted') {
-    const notifOptions: NotificationOptions = {
+    const notifOptions: NotificationOptions & { renotify?: boolean } = {
       body: options.body,
       icon: options.avatarUrl || '/icons/icon-192x192.png',
       badge: options.avatarUrl || '/icons/icon-192x192.png',

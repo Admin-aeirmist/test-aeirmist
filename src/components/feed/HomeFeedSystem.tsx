@@ -24,6 +24,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { logger } from '@/src/utils/logger';
 import { LocalSqlService } from '../../services/LocalSqlService';
 import { feedRankingService, FeedMode } from '../../services/FeedRankingService';
+import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 
 
 export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPostClick?: (postId: string) => void, onCreate?: () => void, onNavigate?: (tab: string, param?: string) => void }> = React.memo(({ onUserClick, onPostClick, onCreate, onNavigate }) => {
@@ -48,7 +49,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
   const { settings } = useAppearance(); 
   const isGlobalBgActive = settings.globalBgType !== 'none' && !!settings.globalBgValue;
 
-  // Hydrate from Local SQLite/IndexedDB vault on mount
+  // Hydrate from Local SQLite/IndexedDB vault on mount + safety timeout
   useEffect(() => {
     LocalSqlService.getFeedPosts(20).then(cached => {
       if (cached && cached.length > 0) {
@@ -56,6 +57,13 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
         setLoading(false);
       }
     }).catch(e => logger.warn("Local DB hydration failed", e));
+
+    // Instant safety fallback: if no posts loaded within 1.2s, dismiss skeleton to prevent black blank freeze
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 1200);
+
+    return () => clearTimeout(safetyTimer);
   }, []);
 
   // Listen to external feedback events (mute creator/topic, show less, reset)
@@ -420,8 +428,20 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
              <ShoppingBag size={18} className="drop-shadow-[0_0_6px_rgba(0,242,255,0.4)]" aria-hidden="true" />
            </button>
            </div>
-           <div className="flex-1 flex items-center justify-center z-0 pointer-events-none min-w-0 px-2">
-             <div className="relative pt-1 flex items-center justify-center">
+           <div className="flex-1 flex items-center justify-center z-10 min-w-0 px-2">
+             <button
+               type="button"
+               onClick={() => {
+                 triggerNativeHaptic('tick');
+                 window.scrollTo({ top: 0, behavior: 'smooth' });
+                 setIsRefreshing(true);
+                 setTimeout(() => {
+                   triggerNativeHaptic('selection');
+                   setIsRefreshing(false);
+                 }, 800);
+               }}
+               className="relative pt-1 flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
+             >
                <AeirmistLogo 
                  variant="text-only" 
                  glow={false} 
@@ -434,7 +454,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
                  className="absolute -bottom-1 left-0 w-1/3 h-[1.5px] bg-gradient-to-r from-transparent via-white to-transparent"
                />
-             </div>
+             </button>
            </div>
            <div className="flex items-center justify-end gap-2 w-24 shrink-0">
              <button 
@@ -595,7 +615,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
                         </motion.div>
                       )}
                       {processedPosts.map((post) => (
-                        <div key={post.id} style={{ contentVisibility: 'auto', containIntrinsicSize: '0 500px' }}>
+                        <div key={post.id} className="w-full">
                           <PremiumPostCard post={post} onUserClick={onUserClick} onPostClick={onPostClick} onNavigate={onNavigate} />
                         </div>
                       ))}

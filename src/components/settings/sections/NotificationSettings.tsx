@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { useTheme } from '../../../context/ThemeContext';
@@ -127,6 +127,62 @@ const DEFAULT_SETTINGS = {
   priorityVerified: false,
 };
 
+// ── Stable sub-components — module-level to prevent recreation on every render ────────────
+interface SwitchProps { enabled: boolean; active?: boolean; onClick: () => void; isLight?: boolean; }
+const NotifSwitch = React.memo(({ enabled, active = true, onClick, isLight }: SwitchProps) => (
+  <button
+    type="button"
+    onClick={(e) => { e.stopPropagation(); if (active) onClick(); }}
+    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-aeirmist-cyan focus:ring-offset-2 ${
+      isLight ? 'focus:ring-offset-white' : 'focus:ring-offset-[#07090e]'
+    } ${
+      enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.4)]' : (isLight ? 'bg-slate-200' : 'bg-white/10')
+    } ${!active ? 'opacity-30 cursor-not-allowed' : ''}`}
+    aria-label="Toggle preference"
+  >
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+        enabled ? 'translate-x-5' : 'translate-x-0'
+      }`}
+    />
+  </button>
+));
+
+interface SettingRowProps {
+  icon: React.ComponentType<any>;
+  title: string;
+  desc: string;
+  enabled: boolean;
+  keyName: keyof typeof DEFAULT_SETTINGS;
+  disabled?: boolean;
+  masterEnabled: boolean;
+  isLight?: boolean;
+  onToggle: (key: keyof typeof DEFAULT_SETTINGS) => void;
+}
+const NotifSettingRow = React.memo(({ icon: IconComponent, title, desc, enabled, keyName, disabled = false, masterEnabled, isLight, onToggle }: SettingRowProps) => {
+  const isRowDisabled = disabled || (!masterEnabled && keyName !== 'masterEnabled');
+  return (
+    <div
+      onClick={() => { if (!isRowDisabled) onToggle(keyName); }}
+      className={`flex items-center justify-between py-2 px-3.5 rounded-xl border transition-all ${
+        isRowDisabled
+          ? 'opacity-40 cursor-not-allowed bg-black/10 border-transparent'
+          : `cursor-pointer ${isLight ? 'bg-white hover:bg-slate-50 border-slate-200 shadow-sm' : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.03]'}`
+      }`}
+    >
+      <div className="flex items-center gap-3 pr-4 min-w-0">
+        <div className={`p-1.5 rounded-lg shrink-0 ${enabled && !isRowDisabled ? 'bg-aeirmist-cyan/10 text-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.15)]' : (isLight ? 'bg-slate-100 text-slate-400' : 'bg-white/5 text-white/40')}`}>
+          <IconComponent size={14} />
+        </div>
+        <h4 className={`text-[11px] font-bold uppercase tracking-wider truncate ${isLight ? 'text-slate-700' : 'text-white/90'}`}>{title}</h4>
+      </div>
+      <NotifSwitch enabled={enabled} active={!isRowDisabled} onClick={() => onToggle(keyName)} isLight={isLight} />
+    </div>
+  );
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function NotificationSettings() {
   const { profile, updateProfile, addToast } = useAeirmist();
   const { activeTheme } = useTheme();
@@ -229,11 +285,13 @@ export default function NotificationSettings() {
     }
   };
 
-  const toggleSetting = (key: keyof typeof DEFAULT_SETTINGS) => {
+  const toggleSetting = useCallback((key: keyof typeof DEFAULT_SETTINGS) => {
     // If master is disabled, block editing of other options (except master itself)
-    if (key !== 'masterEnabled' && !settings.masterEnabled) return;
-    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
-  };
+    setSettings(prev => {
+      if (key !== 'masterEnabled' && !prev.masterEnabled) return prev;
+      return { ...prev, [key]: !prev[key] };
+    });
+  }, []);
 
   const updateField = (key: keyof typeof DEFAULT_SETTINGS, val: any) => {
     if (!settings.masterEnabled) return;
@@ -304,64 +362,6 @@ export default function NotificationSettings() {
     });
   };
 
-  // Switch UI subcomponent
-  const Switch = ({ enabled, active = true, onClick }: { enabled: boolean, active?: boolean, onClick: () => void }) => (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); if (active) onClick(); }}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-aeirmist-cyan focus:ring-offset-2 ${
-        isLight ? 'focus:ring-offset-white' : 'focus:ring-offset-[#07090e]'
-      } ${
-        enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.4)]' : (isLight ? 'bg-slate-200' : 'bg-white/10')
-      } ${!active ? 'opacity-30 cursor-not-allowed' : ''}`}
-      aria-label="Toggle preference"
-    >
-      <span
-        aria-hidden="true"
-        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-          enabled ? 'translate-x-5' : 'translate-x-0'
-        }`}
-      />
-    </button>
-  );
-
-  // Settings Row Container
-  const SettingRow = ({ 
-    icon: IconComponent, 
-    title, 
-    desc, 
-    enabled, 
-    keyName, 
-    disabled = false 
-  }: { 
-    icon: React.ComponentType<any>, 
-    title: string, 
-    desc: string, 
-    enabled: boolean, 
-    keyName: keyof typeof DEFAULT_SETTINGS, 
-    disabled?: boolean 
-  }) => {
-    const isRowDisabled = disabled || (!settings.masterEnabled && keyName !== 'masterEnabled');
-    return (
-      <div 
-        onClick={() => { if (!isRowDisabled) toggleSetting(keyName); }}
-        className={`flex items-center justify-between py-2 px-3.5 rounded-xl border transition-all ${
-          isRowDisabled 
-            ? 'opacity-40 cursor-not-allowed bg-black/10 border-transparent' 
-            : `cursor-pointer ${isLight ? 'bg-white hover:bg-slate-50 border-slate-200 shadow-sm' : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.03]'}`
-        }`}
-      >
-        <div className="flex items-center gap-3 pr-4 min-w-0">
-          <div className={`p-1.5 rounded-lg shrink-0 ${enabled && !isRowDisabled ? 'bg-aeirmist-cyan/10 text-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.15)]' : (isLight ? 'bg-slate-100 text-slate-400' : 'bg-white/5 text-white/40')}`}>
-            <IconComponent size={14} />
-          </div>
-          <h4 className={`text-[11px] font-bold uppercase tracking-wider truncate ${isLight ? 'text-slate-700' : 'text-white/90'}`}>{title}</h4>
-        </div>
-        <Switch enabled={enabled} active={!isRowDisabled} onClick={() => toggleSetting(keyName)} />
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-8 select-none">
       
@@ -404,7 +404,7 @@ export default function NotificationSettings() {
               <span className="block text-[10px] font-bold text-white uppercase tracking-wider">Master Control</span>
               <span className="block text-[8px] text-white/30 italic">Disable all incoming pings</span>
             </div>
-            <Switch 
+            <NotifSwitch isLight={isLight} 
               enabled={settings.masterEnabled} 
               onClick={() => toggleSetting('masterEnabled')} 
             />
@@ -436,7 +436,7 @@ export default function NotificationSettings() {
                 <Smartphone className="text-aeirmist-cyan shrink-0" size={16} />
                 <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Device Push Channel</h3>
               </div>
-              <Switch 
+              <NotifSwitch isLight={isLight} 
                 enabled={settings.pushEnabled && settings.masterEnabled} 
                 active={settings.masterEnabled} 
                 onClick={() => toggleSetting('pushEnabled')} 
@@ -456,14 +456,14 @@ export default function NotificationSettings() {
               <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Direct Messages</h3>
             </div>
             <div className="grid grid-cols-1 gap-1.5">
-              <SettingRow icon={MessageSquare} title="New Messages" desc="Receive notification for incoming signals" enabled={settings.newMessages} keyName="newMessages" />
-              <SettingRow icon={MessageSquare} title="Message Requests" desc="Alert for requests from untrusted profiles" enabled={settings.messageRequests} keyName="messageRequests" />
-              <SettingRow icon={MessageSquare} title="Message Reactions" desc="Reactions appended to your transmissions" enabled={settings.messageReactions} keyName="messageReactions" />
-              <SettingRow icon={MessageSquare} title="Mentions in Chat" desc="When tagged inside active communications" enabled={settings.mentionsInChat} keyName="mentionsInChat" />
-              <SettingRow icon={MessageSquare} title="Voice Call Requests" desc="Acoustic call invitations" enabled={settings.voiceCalls} keyName="voiceCalls" />
-              <SettingRow icon={MessageSquare} title="Video Call Requests" desc="Holographic feed requests" enabled={settings.videoCalls} keyName="videoCalls" />
-              <SettingRow icon={MessageSquare} title="Missed Call Logs" desc="Log missing call attempts" enabled={settings.missedCalls} keyName="missedCalls" />
-              <SettingRow icon={MessageSquare} title="Typing Indicators" desc="Show real-time typing events" enabled={settings.typingIndicators} keyName="typingIndicators" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="New Messages" desc="Receive notification for incoming signals" enabled={settings.newMessages} keyName="newMessages" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="Message Requests" desc="Alert for requests from untrusted profiles" enabled={settings.messageRequests} keyName="messageRequests" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="Message Reactions" desc="Reactions appended to your transmissions" enabled={settings.messageReactions} keyName="messageReactions" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="Mentions in Chat" desc="When tagged inside active communications" enabled={settings.mentionsInChat} keyName="mentionsInChat" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="Voice Call Requests" desc="Acoustic call invitations" enabled={settings.voiceCalls} keyName="voiceCalls" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="Video Call Requests" desc="Holographic feed requests" enabled={settings.videoCalls} keyName="videoCalls" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="Missed Call Logs" desc="Log missing call attempts" enabled={settings.missedCalls} keyName="missedCalls" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={MessageSquare} title="Typing Indicators" desc="Show real-time typing events" enabled={settings.typingIndicators} keyName="typingIndicators" />
             </div>
           </div>
         </div>
@@ -476,20 +476,20 @@ export default function NotificationSettings() {
               <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Social Dynamics</h3>
             </div>
             <div className="grid grid-cols-1 gap-1.5">
-              <SettingRow icon={UserPlus} title="New Followers" desc="Notification on successful node follow" enabled={settings.newFollowers} keyName="newFollowers" />
-              <SettingRow icon={UserPlus} title="Follow Requests" desc="Requires approval to link" enabled={settings.followRequests} keyName="followRequests" />
-              <SettingRow icon={UserPlus} title="Accepted Requests" desc="When another user accepts your follow request" enabled={settings.acceptedRequests} keyName="acceptedRequests" />
-              <SettingRow icon={UserPlus} title="Profile Visits" desc="Weekly aggregate summary of visitors" enabled={settings.profileVisits} keyName="profileVisits" />
-              <SettingRow icon={UserPlus} title="Post Likes" desc="Pings on artifact appreciation" enabled={settings.postLikes} keyName="postLikes" />
-              <SettingRow icon={UserPlus} title="Comments" desc="Comments on your posts" enabled={settings.comments} keyName="comments" />
-              <SettingRow icon={UserPlus} title="Comment Replies" desc="Responses to your threads" enabled={settings.commentReplies} keyName="commentReplies" />
-              <SettingRow icon={UserPlus} title="Mentions" desc="Explicit profile tagging on other feeds" enabled={settings.mentions} keyName="mentions" />
-              <SettingRow icon={UserPlus} title="Tags" desc="Profile tagged directly on media artifacts" enabled={settings.tags} keyName="tags" />
-              <SettingRow icon={UserPlus} title="Reposts / Shares" desc="Amplification of your original notes" enabled={settings.reposts} keyName="reposts" />
-              <SettingRow icon={UserPlus} title="Notes Reactions" desc="Quick emoji responses on micro-updates" enabled={settings.notesReactions} keyName="notesReactions" />
-              <SettingRow icon={UserPlus} title="Story Replies" desc="Direct reply messages from short-lived stories" enabled={settings.storyReplies} keyName="storyReplies" />
-              <SettingRow icon={UserPlus} title="Story Mentions" desc="Tagged in another user's story" enabled={settings.storyMentions} keyName="storyMentions" />
-              <SettingRow icon={UserPlus} title="Story Reactions" desc="Quick reaction icons on active stories" enabled={settings.storyReactions} keyName="storyReactions" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="New Followers" desc="Notification on successful node follow" enabled={settings.newFollowers} keyName="newFollowers" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Follow Requests" desc="Requires approval to link" enabled={settings.followRequests} keyName="followRequests" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Accepted Requests" desc="When another user accepts your follow request" enabled={settings.acceptedRequests} keyName="acceptedRequests" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Profile Visits" desc="Weekly aggregate summary of visitors" enabled={settings.profileVisits} keyName="profileVisits" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Post Likes" desc="Pings on artifact appreciation" enabled={settings.postLikes} keyName="postLikes" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Comments" desc="Comments on your posts" enabled={settings.comments} keyName="comments" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Comment Replies" desc="Responses to your threads" enabled={settings.commentReplies} keyName="commentReplies" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Mentions" desc="Explicit profile tagging on other feeds" enabled={settings.mentions} keyName="mentions" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Tags" desc="Profile tagged directly on media artifacts" enabled={settings.tags} keyName="tags" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Reposts / Shares" desc="Amplification of your original notes" enabled={settings.reposts} keyName="reposts" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Notes Reactions" desc="Quick emoji responses on micro-updates" enabled={settings.notesReactions} keyName="notesReactions" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Story Replies" desc="Direct reply messages from short-lived stories" enabled={settings.storyReplies} keyName="storyReplies" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Story Mentions" desc="Tagged in another user's story" enabled={settings.storyMentions} keyName="storyMentions" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={UserPlus} title="Story Reactions" desc="Quick reaction icons on active stories" enabled={settings.storyReactions} keyName="storyReactions" />
             </div>
           </div>
         </div>
@@ -502,13 +502,13 @@ export default function NotificationSettings() {
               <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Marketplace Transactions</h3>
             </div>
             <div className="grid grid-cols-1 gap-1.5">
-              <SettingRow icon={ShoppingBag} title="New Messages" desc="Incoming marketplace inquiry pings" enabled={settings.marketplaceNewMessages} keyName="marketplaceNewMessages" />
-              <SettingRow icon={ShoppingBag} title="Order Updates" desc="Tracking, shipping, and receipt details" enabled={settings.orderUpdates} keyName="orderUpdates" />
-              <SettingRow icon={ShoppingBag} title="Offer Accepted" desc="When your offer on an item is successful" enabled={settings.offerAccepted} keyName="offerAccepted" />
-              <SettingRow icon={ShoppingBag} title="Offer Declined" desc="When your bid is refused by vendor" enabled={settings.offerDeclined} keyName="offerDeclined" />
-              <SettingRow icon={ShoppingBag} title="Price Updates" desc="When an item in your wishlist goes on sale" enabled={settings.priceUpdates} keyName="priceUpdates" />
-              <SettingRow icon={ShoppingBag} title="Item Sold" desc="Confirmations of successful user item dispatch" enabled={settings.itemSold} keyName="itemSold" />
-              <SettingRow icon={ShoppingBag} title="Item Purchased" desc="Receipt confirmation for customer buy transactions" enabled={settings.itemPurchased} keyName="itemPurchased" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={ShoppingBag} title="New Messages" desc="Incoming marketplace inquiry pings" enabled={settings.marketplaceNewMessages} keyName="marketplaceNewMessages" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={ShoppingBag} title="Order Updates" desc="Tracking, shipping, and receipt details" enabled={settings.orderUpdates} keyName="orderUpdates" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={ShoppingBag} title="Offer Accepted" desc="When your offer on an item is successful" enabled={settings.offerAccepted} keyName="offerAccepted" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={ShoppingBag} title="Offer Declined" desc="When your bid is refused by vendor" enabled={settings.offerDeclined} keyName="offerDeclined" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={ShoppingBag} title="Price Updates" desc="When an item in your wishlist goes on sale" enabled={settings.priceUpdates} keyName="priceUpdates" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={ShoppingBag} title="Item Sold" desc="Confirmations of successful user item dispatch" enabled={settings.itemSold} keyName="itemSold" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={ShoppingBag} title="Item Purchased" desc="Receipt confirmation for customer buy transactions" enabled={settings.itemPurchased} keyName="itemPurchased" />
             </div>
           </div>
         </div>
@@ -521,11 +521,11 @@ export default function NotificationSettings() {
               <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Groups & Communities</h3>
             </div>
             <div className="grid grid-cols-1 gap-1.5">
-              <SettingRow icon={Users} title="Group Messages" desc="Pings on messages in multi-node groups" enabled={settings.groupMessages} keyName="groupMessages" />
-              <SettingRow icon={Users} title="Group Mentions" desc="Direct tags inside group conversations" enabled={settings.groupMentions} keyName="groupMentions" />
-              <SettingRow icon={Users} title="Role Updates" desc="Promotions/Demotions in community structures" enabled={settings.roleUpdates} keyName="roleUpdates" />
-              <SettingRow icon={Users} title="Community Invites" desc="Incoming server or group invites" enabled={settings.communityInvites} keyName="communityInvites" />
-              <SettingRow icon={Users} title="Events" desc="Scheduled broadcasts and virtual events" enabled={settings.events} keyName="events" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Users} title="Group Messages" desc="Pings on messages in multi-node groups" enabled={settings.groupMessages} keyName="groupMessages" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Users} title="Group Mentions" desc="Direct tags inside group conversations" enabled={settings.groupMentions} keyName="groupMentions" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Users} title="Role Updates" desc="Promotions/Demotions in community structures" enabled={settings.roleUpdates} keyName="roleUpdates" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Users} title="Community Invites" desc="Incoming server or group invites" enabled={settings.communityInvites} keyName="communityInvites" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Users} title="Events" desc="Scheduled broadcasts and virtual events" enabled={settings.events} keyName="events" />
             </div>
           </div>
         </div>
@@ -538,12 +538,12 @@ export default function NotificationSettings() {
               <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>App Releases</h3>
             </div>
             <div className="grid grid-cols-1 gap-1.5">
-              <SettingRow icon={RefreshCw} title="New Features" desc="Aesthetic updates & tool upgrades" enabled={settings.newFeatures} keyName="newFeatures" />
-              <SettingRow icon={RefreshCw} title="Maintenance" desc="Grid downtimes & calibration schedules" enabled={settings.maintenance} keyName="maintenance" />
-              <SettingRow icon={RefreshCw} title="Version Updates" desc="Substantial client patches and build tags" enabled={settings.versionUpdates} keyName="versionUpdates" />
-              <SettingRow icon={RefreshCw} title="Announcements" desc="General notices from Aeirmist control" enabled={settings.announcements} keyName="announcements" />
-              <SettingRow icon={RefreshCw} title="Tips & Guides" desc="Maximizing user experience walkthroughs" enabled={settings.tips} keyName="tips" />
-              <SettingRow icon={RefreshCw} title="Recommendations" desc="Relevant topics curated by matching engines" enabled={settings.recommendations} keyName="recommendations" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={RefreshCw} title="New Features" desc="Aesthetic updates & tool upgrades" enabled={settings.newFeatures} keyName="newFeatures" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={RefreshCw} title="Maintenance" desc="Grid downtimes & calibration schedules" enabled={settings.maintenance} keyName="maintenance" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={RefreshCw} title="Version Updates" desc="Substantial client patches and build tags" enabled={settings.versionUpdates} keyName="versionUpdates" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={RefreshCw} title="Announcements" desc="General notices from Aeirmist control" enabled={settings.announcements} keyName="announcements" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={RefreshCw} title="Tips & Guides" desc="Maximizing user experience walkthroughs" enabled={settings.tips} keyName="tips" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={RefreshCw} title="Recommendations" desc="Relevant topics curated by matching engines" enabled={settings.recommendations} keyName="recommendations" />
             </div>
           </div>
         </div>
@@ -557,17 +557,17 @@ export default function NotificationSettings() {
             </div>
             <div className="grid grid-cols-1 gap-1.5">
               {/* Security alerts must bypass master lock, hence disabled is false, and styled differently */}
-              <SettingRow icon={Mail} title="Security Alerts" desc="Device logs, credential changes, and logins (Bypasses silent mode)" enabled={settings.emailSecurityAlerts} keyName="emailSecurityAlerts" disabled={false} />
-              <SettingRow icon={Mail} title="Password Changes" desc="Pings when credentials are reset" enabled={settings.emailPasswordChanges} keyName="emailPasswordChanges" />
-              <SettingRow icon={Mail} title="Login Alerts" desc="Warning mails on new sessions" enabled={settings.emailLoginAlerts} keyName="emailLoginAlerts" />
-              <SettingRow icon={Mail} title="New Device Login" desc="Detailed device log summaries" enabled={settings.emailNewDeviceLogin} keyName="emailNewDeviceLogin" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="Security Alerts" desc="Device logs, credential changes, and logins (Bypasses silent mode)" enabled={settings.emailSecurityAlerts} keyName="emailSecurityAlerts" disabled={false} />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="Password Changes" desc="Pings when credentials are reset" enabled={settings.emailPasswordChanges} keyName="emailPasswordChanges" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="Login Alerts" desc="Warning mails on new sessions" enabled={settings.emailLoginAlerts} keyName="emailLoginAlerts" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="New Device Login" desc="Detailed device log summaries" enabled={settings.emailNewDeviceLogin} keyName="emailNewDeviceLogin" />
               
               <div className={!settings.masterEnabled ? 'opacity-40 pointer-events-none' : ''}>
                 <div className="grid grid-cols-1 gap-1.5">
-                  <SettingRow icon={Mail} title="Weekly Digest" desc="Weekly timeline interactions summary" enabled={settings.emailWeeklyDigest} keyName="emailWeeklyDigest" />
-                  <SettingRow icon={Mail} title="Monthly Summary" desc="Monthly growth stats, points, and earnings" enabled={settings.emailMonthlySummary} keyName="emailMonthlySummary" />
-                  <SettingRow icon={Mail} title="Marketing Emails" desc="Updates on partner nodes and credits" enabled={settings.emailMarketingEmails} keyName="emailMarketingEmails" />
-                  <SettingRow icon={Mail} title="Newsletter" desc="Insights into decentralized social webs" enabled={settings.emailNewsletter} keyName="emailNewsletter" />
+                  <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="Weekly Digest" desc="Weekly timeline interactions summary" enabled={settings.emailWeeklyDigest} keyName="emailWeeklyDigest" />
+                  <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="Monthly Summary" desc="Monthly growth stats, points, and earnings" enabled={settings.emailMonthlySummary} keyName="emailMonthlySummary" />
+                  <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="Marketing Emails" desc="Updates on partner nodes and credits" enabled={settings.emailMarketingEmails} keyName="emailMarketingEmails" />
+                  <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Mail} title="Newsletter" desc="Insights into decentralized social webs" enabled={settings.emailNewsletter} keyName="emailNewsletter" />
                 </div>
               </div>
             </div>
@@ -583,10 +583,10 @@ export default function NotificationSettings() {
             </div>
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-1.5">
-                <SettingRow icon={Volume2} title="Sound Effects" desc="Enable acoustic chimes on alerts" enabled={settings.soundEnabled} keyName="soundEnabled" />
-                <SettingRow icon={Volume2} title="Haptic Vibration" desc="Device haptic rumble pulse" enabled={settings.vibrationEnabled} keyName="vibrationEnabled" />
-                <SettingRow icon={Volume2} title="Silent Mode" desc="Mute all audio, bypass lights" enabled={settings.silentMode} keyName="silentMode" />
-                <SettingRow icon={Volume2} title="Do Not Disturb" desc="Block all interactions except critical locks" enabled={settings.doNotDisturb} keyName="doNotDisturb" />
+                <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Volume2} title="Sound Effects" desc="Enable acoustic chimes on alerts" enabled={settings.soundEnabled} keyName="soundEnabled" />
+                <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Volume2} title="Haptic Vibration" desc="Device haptic rumble pulse" enabled={settings.vibrationEnabled} keyName="vibrationEnabled" />
+                <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Volume2} title="Silent Mode" desc="Mute all audio, bypass lights" enabled={settings.silentMode} keyName="silentMode" />
+                <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Volume2} title="Do Not Disturb" desc="Block all interactions except critical locks" enabled={settings.doNotDisturb} keyName="doNotDisturb" />
               </div>
 
               {/* Sound drop down & preview */}
@@ -696,7 +696,7 @@ export default function NotificationSettings() {
                 <Moon className="text-aeirmist-cyan shrink-0" size={16} />
                 <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Quiet Hours</h3>
               </div>
-              <Switch 
+              <NotifSwitch isLight={isLight} 
                 enabled={settings.quietHoursEnabled && settings.masterEnabled} 
                 active={settings.masterEnabled} 
                 onClick={() => toggleSetting('quietHoursEnabled')} 
@@ -746,8 +746,8 @@ export default function NotificationSettings() {
               </div>
 
               <div className="grid grid-cols-1 gap-1.5 pt-2">
-                <SettingRow icon={Moon} title="Allow Calls" desc="Accept holographic transmissions in Quiet Hours" enabled={settings.allowCallsDuringQuietHours} keyName="allowCallsDuringQuietHours" />
-                <SettingRow icon={Moon} title="Emergency Bypass" desc="Allow priority alerts to punch through block" enabled={settings.emergencyNotifications} keyName="emergencyNotifications" />
+                <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Moon} title="Allow Calls" desc="Accept holographic transmissions in Quiet Hours" enabled={settings.allowCallsDuringQuietHours} keyName="allowCallsDuringQuietHours" />
+                <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Moon} title="Emergency Bypass" desc="Allow priority alerts to punch through block" enabled={settings.emergencyNotifications} keyName="emergencyNotifications" />
               </div>
             </div>
           </div>
@@ -762,8 +762,8 @@ export default function NotificationSettings() {
             </div>
             
             <div className="grid grid-cols-1 gap-1.5">
-              <SettingRow icon={Hash} title="App Icon Badge" desc="Display numerical badge on home launcher" enabled={settings.appIconBadge} keyName="appIconBadge" />
-              <SettingRow icon={Hash} title="Unread Counter" desc="Save counts across navigation rails" enabled={settings.unreadCounter} keyName="unreadCounter" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Hash} title="App Icon Badge" desc="Display numerical badge on home launcher" enabled={settings.appIconBadge} keyName="appIconBadge" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Hash} title="Unread Counter" desc="Save counts across navigation rails" enabled={settings.unreadCounter} keyName="unreadCounter" />
               
               <div className="pt-3 border-t border-white/5 flex justify-end">
                 <button
@@ -825,10 +825,10 @@ export default function NotificationSettings() {
               <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Priority Filters</h3>
             </div>
             <div className="grid grid-cols-1 gap-1.5">
-              <SettingRow icon={Sliders} title="Pinned Conversations" desc="Always ping if sender chat is pinned" enabled={settings.priorityPinned} keyName="priorityPinned" />
-              <SettingRow icon={Sliders} title="Favorite Nodes" desc="Bypass do-not-disturb for list favorites" enabled={settings.priorityFavorites} keyName="priorityFavorites" />
-              <SettingRow icon={Sliders} title="Close Friends Only" desc="Exclusive feed updates from tight circles" enabled={settings.priorityCloseFriends} keyName="priorityCloseFriends" />
-              <SettingRow icon={Sliders} title="Verified Nodes" desc="Force notifications from certified profiles" enabled={settings.priorityVerified} keyName="priorityVerified" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Sliders} title="Pinned Conversations" desc="Always ping if sender chat is pinned" enabled={settings.priorityPinned} keyName="priorityPinned" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Sliders} title="Favorite Nodes" desc="Bypass do-not-disturb for list favorites" enabled={settings.priorityFavorites} keyName="priorityFavorites" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Sliders} title="Close Friends Only" desc="Exclusive feed updates from tight circles" enabled={settings.priorityCloseFriends} keyName="priorityCloseFriends" />
+              <NotifSettingRow masterEnabled={settings.masterEnabled} isLight={isLight} onToggle={toggleSetting} icon={Sliders} title="Verified Nodes" desc="Force notifications from certified profiles" enabled={settings.priorityVerified} keyName="priorityVerified" />
             </div>
           </div>
         </div>

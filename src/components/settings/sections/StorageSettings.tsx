@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'motion/react';
 import { 
   Database, 
   Trash2, 
@@ -22,23 +21,49 @@ import { cloudinaryService } from '../../../services/cloudinaryService';
 import { DownloadManagerService, DownloadMode, DownloadPathConfig } from '../../../services/DownloadManagerService';
 
 
-const StorageSettings = () => {
-  const { addToast, mediaSettings, setMediaSettings } = useAeirmist();
+import { aeirmistCache } from '../../../services/CacheService';
+import { triggerNativeHaptic } from '../../../lib/nativeHaptics';
 
-  const handlePurgeCache = () => {
-    addToast?.({
-      title: 'CACHE CLEARED',
-      message: 'Local identity cache has been cleared.',
-      type: 'success'
-    });
+const StorageSettings = () => {
+  const { addToast, mediaSettings, setMediaSettings, clearCache } = useAeirmist();
+  const [isPurging, setIsPurging] = React.useState(false);
+  const [cacheSize, setCacheSize] = React.useState('142.8 MB');
+
+  const handlePurgeCache = async () => {
+    setIsPurging(true);
+    triggerNativeHaptic('medium');
+    try {
+      if (clearCache) {
+        await clearCache();
+      } else {
+        await aeirmistCache.clearAll();
+      }
+      // Also clear transient local storage keys
+      try {
+        localStorage.removeItem('aeirmist_cached_inbox_chats');
+        localStorage.removeItem('aeirmist_cached_active_tab');
+      } catch {}
+
+      setCacheSize('0.0 KB');
+      triggerNativeHaptic('success');
+      addToast?.({
+        title: 'CACHE PURGED',
+        message: 'All local cached media, temporary feed assets, and index artifacts have been cleared.',
+        type: 'success'
+      });
+    } catch (e) {
+      addToast?.({
+        title: 'PURGE FAILED',
+        message: 'Could not completely purge local database.',
+        type: 'warning'
+      });
+    } finally {
+      setIsPurging(false);
+    }
   };
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-12"
-    >
+    <div className="space-y-12">
       <div className="space-y-1">
         <h2 className="text-3xl font-display font-bold text-white">Data Allocation</h2>
         <p className="text-xs text-white/45 uppercase tracking-widest font-medium">Manage your digital footprint and storage vectors</p>
@@ -46,7 +71,7 @@ const StorageSettings = () => {
 
       {/* Storage Overview */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StorageMetric label="Local Cache" value="142.8 MB" color="text-aeirmist-cyan" icon={<HardDrive size={14} />} />
+        <StorageMetric label="Local Cache" value={cacheSize} color="text-aeirmist-cyan" icon={<HardDrive size={14} />} />
         <StorageMetric label="Cloud Sync" value="2.4 GB" color="text-aeirmist-magenta" icon={<Cloud size={14} />} />
         <StorageMetric label="Artifacts" value="842 KB" color="text-aeirmist-lime" icon={<Database size={14} />} />
       </section>
@@ -118,10 +143,11 @@ const StorageSettings = () => {
             </div>
             <button 
               onClick={handlePurgeCache}
-              className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-[9px] font-bold uppercase tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2"
+              disabled={isPurging}
+              className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-[9px] font-bold uppercase tracking-widest hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
-              <Trash2 size={12} />
-              Purge Local Cache
+              <Trash2 size={12} className={isPurging ? 'animate-spin' : ''} />
+              {isPurging ? 'Purging Local Vault...' : 'Purge Local Cache'}
             </button>
           </div>
 
@@ -159,11 +185,11 @@ const StorageSettings = () => {
           </button>
         </div>
       </section>
-    </motion.div>
+    </div>
   );
 };
 
-const StorageMetric = ({ label, value, color, icon }: any) => (
+const StorageMetric = React.memo(({ label, value, color, icon }: any) => (
   <div className="p-5 rounded-3xl bg-white/[0.02] border border-white/5 space-y-2">
     <div className="flex items-center gap-2 opacity-40">
       {icon}
@@ -171,9 +197,9 @@ const StorageMetric = ({ label, value, color, icon }: any) => (
     </div>
     <div className={`text-lg font-mono font-bold ${color}`}>{value}</div>
   </div>
-);
+));
 
-const ToggleItem = ({ icon, title, desc, enabled, onChange }: any) => (
+const ToggleItem = React.memo(({ icon, title, desc, enabled, onChange }: any) => (
   <button 
     onClick={() => onChange(!enabled)}
     className="w-full p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all flex items-center justify-between text-left group"
@@ -197,9 +223,9 @@ const ToggleItem = ({ icon, title, desc, enabled, onChange }: any) => (
       }`} />
     </div>
   </button>
-);
+));
 
-const CloudinaryConfigSection = ({ addToast }: { addToast: any }) => {
+const CloudinaryConfigSection = React.memo(({ addToast }: { addToast: any }) => {
   const [cloudName, setCloudName] = React.useState(cloudinaryService.getCloudName());
   const [preset, setPreset] = React.useState(cloudinaryService.getUploadPreset());
   const [isEditing, setIsEditing] = React.useState(false);
@@ -291,9 +317,9 @@ const CloudinaryConfigSection = ({ addToast }: { addToast: any }) => {
       </div>
     </section>
   );
-};
+});
 
-const DownloadPathSection = ({ addToast }: { addToast: any }) => {
+const DownloadPathSection = React.memo(({ addToast }: { addToast: any }) => {
   const [config, setConfig] = React.useState<DownloadPathConfig>({
     mode: 'system_downloads',
     displayPath: 'Downloads / Aeirmist',
@@ -447,7 +473,8 @@ const DownloadPathSection = ({ addToast }: { addToast: any }) => {
               </p>
             </button>
 
-            {/* Mode 3: Custom Folder (SAF) */}
+            {/* Mode 3: Custom Folder (SAF) — Android app only */}
+            {config.isNative && (
             <button
               onClick={() => handleSelectMode('custom')}
               className={`p-4 rounded-2xl border text-left transition-all relative cursor-pointer ${
@@ -464,10 +491,12 @@ const DownloadPathSection = ({ addToast }: { addToast: any }) => {
                 {config.customName ? `Selected: ${config.customName}` : 'Choose any accessible folder via native Android SAF picker.'}
               </p>
             </button>
+            )}
           </div>
         </div>
 
-        {/* Info footer */}
+        {/* Info footer — Android app only */}
+        {config.isNative && (
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-white/5 text-[10px] text-white/40">
           <span>Compliant with Android 10+ scoped storage. No broad storage permissions required.</span>
           <button
@@ -479,10 +508,11 @@ const DownloadPathSection = ({ addToast }: { addToast: any }) => {
             {loading ? 'Opening SAF Picker...' : 'Open Android Folder Picker'}
           </button>
         </div>
+        )}
       </div>
     </section>
   );
-};
+});
 
 export default StorageSettings;
 

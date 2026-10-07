@@ -160,6 +160,7 @@ export async function consolidateAndSyncUserProfiles(
     let mergedSocialLinks: any = {};
     let mergedPrivacySettings: any = { privateProfile: false, showActivity: true, allowMessages: 'everyone', hideFollowers: false };
     let mergedThemeSettings: any = { accentColor: '#00f2ff', glowIntensity: 0.8, noiseEffect: true };
+    let mergedDismissedWidgets: any = existingCanonical.dismissedWidgets || {};
     const mergedFollowers = new Set<string>();
     const mergedFollowing = new Set<string>();
 
@@ -235,6 +236,7 @@ export async function consolidateAndSyncUserProfiles(
       if (c.socialLinks) mergedSocialLinks = { ...mergedSocialLinks, ...c.socialLinks };
       if (c.privacySettings) mergedPrivacySettings = { ...mergedPrivacySettings, ...c.privacySettings };
       if (c.themeSettings) mergedThemeSettings = { ...mergedThemeSettings, ...c.themeSettings };
+      if (c.dismissedWidgets) mergedDismissedWidgets = { ...mergedDismissedWidgets, ...c.dismissedWidgets };
 
       // Social arrays
       if (Array.isArray(c.social?.followers)) c.social.followers.forEach((f: string) => mergedFollowers.add(f));
@@ -313,6 +315,7 @@ export async function consolidateAndSyncUserProfiles(
       socialLinks: mergedSocialLinks,
       privacySettings: mergedPrivacySettings,
       themeSettings: mergedThemeSettings,
+      dismissedWidgets: mergedDismissedWidgets,
       ...(cleanAppearance ? { appearanceSettings: cleanAppearance } : {}),
       social: {
         followers: Array.from(mergedFollowers),

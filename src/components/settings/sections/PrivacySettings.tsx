@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, 
@@ -26,6 +26,19 @@ import { doc, getDoc, collection, query, where, getDocs, limit } from 'firebase/
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { getAvatarUrl } from '../../../lib/avatar';
 
+// Stable sub-components — defined outside to avoid recreation on every render
+const PrivacyToggle = React.memo(({ enabled, onToggle, loading }: { enabled: boolean; onToggle: () => void; loading?: boolean }) => (
+  <button
+    onClick={onToggle}
+    disabled={loading}
+    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)]' : 'bg-white/10'}`}
+  >
+    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out flex items-center justify-center ${enabled ? 'translate-x-5' : 'translate-x-0'}`}>
+      {loading && <Loader2 size={10} className="animate-spin text-black" />}
+    </span>
+  </button>
+));
+
 export default function PrivacySettings() {
   const { 
     profile, 
@@ -42,6 +55,10 @@ export default function PrivacySettings() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const { logActivity } = useAeirmist();
+
+  // Privacy Checkup modal state
+  const [showCheckupModal, setShowCheckupModal] = useState(false);
+  const [checkupStep, setCheckupStep] = useState(0);
 
   // Vault state
   const [vaultPin, setVaultPin] = useState('');
@@ -293,7 +310,7 @@ export default function PrivacySettings() {
       setBlockedUsers(prev => prev.filter(u => u.id !== targetId));
       await toggleBlockUser(targetId);
       addToast({
-        title: 'Neutral Status Restored',
+        title: 'User Unblocked',
         message: `@${handle} has been removed from your blocked list. Interaction is now permitted.`,
         type: 'success',
         icon: <UserCheck size={18} />
@@ -310,7 +327,7 @@ export default function PrivacySettings() {
       await toggleRestrictUser(targetId);
       addToast({
         title: 'Restriction Lifted',
-        message: `Restrictions removed for @${handle}. Mutual interaction status normalized.`,
+        message: `Restrictions removed for @${handle}. They can now view your content again.`,
         type: 'success',
         icon: <ShieldCheck size={18} />
       });
@@ -352,18 +369,6 @@ export default function PrivacySettings() {
     }
   };
 
-  const Toggle = ({ enabled, onToggle, loading }: { enabled: boolean; onToggle: () => void; loading?: boolean }) => (
-    <button
-      onClick={onToggle}
-      disabled={loading}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)]' : 'bg-white/10'}`}
-    >
-      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out flex items-center justify-center ${enabled ? 'translate-x-5' : 'translate-x-0'}`}>
-        {loading && <Loader2 size={10} className="animate-spin text-black" />}
-      </span>
-    </button>
-  );
-
   return (
     <div className="w-full max-w-4xl mx-auto space-y-6 pb-24">
       {/* Privacy Center snapshot */}
@@ -380,6 +385,20 @@ export default function PrivacySettings() {
           <div className="p-3 rounded-2xl bg-white/[0.025] border border-white/5"><div className="text-[9px] uppercase tracking-widest text-white/35">Activity</div><div className="mt-1 text-xs font-bold text-white">{profile?.showOnlineStatus !== false ? 'Visible' : 'Hidden'}</div></div>
           <div className="p-3 rounded-2xl bg-white/[0.025] border border-white/5"><div className="text-[9px] uppercase tracking-widest text-white/35">Messages</div><div className="mt-1 text-xs font-bold text-white capitalize">{profile?.messagingSettings?.whoCanMessageMe || 'Followers'}</div></div>
           <div className="p-3 rounded-2xl bg-white/[0.025] border border-white/5"><div className="text-[9px] uppercase tracking-widest text-white/35">Protected lists</div><div className="mt-1 text-xs font-bold text-white">{blockedUserIds.length + restrictedUserIds.length}</div></div>
+        </div>
+        {/* Privacy Checkup CTA */}
+        <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold text-white">Run a Privacy Checkup</p>
+            <p className="text-[10px] text-white/40 mt-0.5">Review who can see your profile, messages, and activity in a quick 3-step walkthrough.</p>
+          </div>
+          <button
+            onClick={() => setShowCheckupModal(true)}
+            className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-aeirmist-cyan text-black font-black text-xs uppercase tracking-wider hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(0,242,255,0.25)]"
+          >
+            <Sparkles size={14} />
+            Start Checkup
+          </button>
         </div>
       </div>
 
@@ -427,8 +446,8 @@ export default function PrivacySettings() {
                 <Lock size={20} />
               </div>
               <div>
-                <h3 className="text-sm font-black uppercase tracking-wider text-white">Stealth & Profile Visibility</h3>
-                <p className="text-[10px] text-white/40 font-bold uppercase tracking-wider">Control who can discover and view your profile data</p>
+                <h3 className="text-sm font-black uppercase tracking-wider text-white">Profile &amp; Visibility</h3>
+                <p className="text-[10px] text-white/40 font-bold uppercase tracking-wider">Control who can discover and view your profile</p>
               </div>
             </div>
 
@@ -438,7 +457,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Private Profile</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Only confirmed followers can view your posts, stories, and activity</p>
                 </div>
-                <Toggle 
+                <PrivacyToggle 
                   enabled={!!profile?.isPrivate} 
                   onToggle={() => handleToggleSetting('isPrivate', !!profile?.isPrivate)} 
                   loading={isUpdating === 'isPrivate'} 
@@ -450,7 +469,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Activity Status</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Broadcast active online status across the network</p>
                 </div>
-                <Toggle 
+                <PrivacyToggle 
                   enabled={profile?.showOnlineStatus !== false} 
                   onToggle={() => handleToggleSetting('showOnlineStatus', profile?.showOnlineStatus !== false)} 
                   loading={isUpdating === 'showOnlineStatus'} 
@@ -462,7 +481,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Hide Followers & Following List</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Conceal your social connections graph from public view</p>
                 </div>
-                <Toggle 
+                <PrivacyToggle 
                   enabled={!!profile?.hideFollowers} 
                   onToggle={() => handleToggleSetting('hideFollowers', !!profile?.hideFollowers)} 
                   loading={isUpdating === 'hideFollowers'} 
@@ -474,7 +493,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Hide Likes & Views Count</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Conceal total likes and view counts on your posts</p>
                 </div>
-                <Toggle 
+                <PrivacyToggle 
                   enabled={!!profile?.hideLikes} 
                   onToggle={() => handleToggleSetting('hideLikes', !!profile?.hideLikes)} 
                   loading={isUpdating === 'hideLikes'} 
@@ -490,7 +509,7 @@ export default function PrivacySettings() {
               </div>
               <div>
                 <h3 className="text-sm font-black uppercase tracking-wider text-white">Interactions & Direct Messages</h3>
-                <p className="text-[10px] text-white/40 font-bold uppercase tracking-wider">Manage transmission rules for direct chats and mentions</p>
+                <p className="text-[10px] text-white/40 font-bold uppercase tracking-wider">Manage who can message you and tag you in posts</p>
               </div>
             </div>
 
@@ -630,7 +649,7 @@ export default function PrivacySettings() {
                 <Ghost size={32} className="mx-auto text-white/20" />
                 <h4 className="text-xs font-black uppercase tracking-widest text-white/60">No Blocked Users</h4>
                 <p className="text-[10px] text-white/30 uppercase tracking-widest">
-                  {searchQuery ? 'No blocked users match your search query.' : 'Your purge list is completely clear.'}
+                  {searchQuery ? 'No blocked users match your search query.' : 'Your blocked list is empty.'}
                 </p>
               </div>
             )}
@@ -771,7 +790,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Auto-Archive Inactive Chats</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Automatically move chats to archive after 30 days of inactivity</p>
                 </div>
-                <Toggle
+                <PrivacyToggle
                   enabled={!!profile?.messagingSettings?.autoArchiveInactive}
                   onToggle={() => handleToggleSetting('messagingSettings.autoArchiveInactive', !!profile?.messagingSettings?.autoArchiveInactive)}
                   loading={isUpdating === 'messagingSettings.autoArchiveInactive'}
@@ -783,7 +802,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Auto-Archive Spam Requests</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Route unconfirmed promotional requests directly to archives</p>
                 </div>
-                <Toggle
+                <PrivacyToggle
                   enabled={profile?.messagingSettings?.autoArchiveSpam !== false}
                   onToggle={() => handleToggleSetting('messagingSettings.autoArchiveSpam', profile?.messagingSettings?.autoArchiveSpam !== false)}
                   loading={isUpdating === 'messagingSettings.autoArchiveSpam'}
@@ -859,6 +878,128 @@ export default function PrivacySettings() {
           </div>
         </div>
       )}
+
+      {/* ── Privacy Checkup Modal ── */}
+      <AnimatePresence>
+        {showCheckupModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="w-full max-w-md bg-[#0d1117] border border-white/10 rounded-3xl overflow-hidden shadow-2xl"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-white/5">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-aeirmist-cyan/10 text-aeirmist-cyan"><ShieldCheck size={18} /></div>
+                    <h2 className="text-sm font-black uppercase tracking-wider text-white">Privacy Checkup</h2>
+                  </div>
+                  <button onClick={() => { setShowCheckupModal(false); setCheckupStep(0); }} className="p-2 rounded-xl hover:bg-white/5 text-white/40 hover:text-white transition-colors">✕</button>
+                </div>
+                {/* Step dots */}
+                <div className="flex gap-2 mt-4">
+                  {[0,1,2].map(i => (
+                    <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300 ${i <= checkupStep ? 'bg-aeirmist-cyan' : 'bg-white/10'}`} />
+                  ))}
+                </div>
+                <p className="text-[10px] text-white/40 mt-2">Step {checkupStep + 1} of 3</p>
+              </div>
+
+              {/* Step Content */}
+              <div className="p-6 space-y-4 min-h-[200px]">
+                {checkupStep === 0 && (
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2"><Eye size={14} className="text-aeirmist-cyan" /> Who can see your profile?</h3>
+                    {[
+                      { label: 'Private Profile', desc: 'Only approved followers see your posts', key: 'isPrivate', val: profile?.isPrivate ?? false },
+                      { label: 'Hide Online Status', desc: 'Others won\'t see when you\'re active', key: 'showOnlineStatus', val: !(profile?.showOnlineStatus ?? true), invert: true },
+                      { label: 'Hide Followers Count', desc: 'Keep your follower numbers to yourself', key: 'hideFollowerCount', val: profile?.hideFollowerCount ?? false },
+                    ].map(item => (
+                      <div key={item.key} className="flex items-center justify-between py-2 border-b border-white/5">
+                        <div><p className="text-xs font-bold text-white">{item.label}</p><p className="text-[10px] text-white/40">{item.desc}</p></div>
+                        <div className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${item.val ? 'bg-aeirmist-cyan' : 'bg-white/10'}`}
+                          onClick={() => handleToggleSetting(item.key, item.invert ? !item.val : item.val)}>
+                          <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${item.val ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {checkupStep === 1 && (
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2"><MessageSquare size={14} className="text-aeirmist-cyan" /> Who can contact you?</h3>
+                    <div className="flex items-center justify-between py-2 border-b border-white/5">
+                      <div><p className="text-xs font-bold text-white">Direct Messages</p><p className="text-[10px] text-white/40">Who can send you a message</p></div>
+                      <select
+                        value={profile?.messagingSettings?.whoCanMessageMe || 'followers'}
+                        onChange={e => handleSelectSetting('messagingSettings.whoCanMessageMe', e.target.value)}
+                        className="bg-white/10 text-white text-xs rounded-xl px-3 py-1.5 border border-white/10 outline-none cursor-pointer"
+                      >
+                        <option value="everyone">Everyone</option>
+                        <option value="followers">Followers</option>
+                        <option value="mutuals">Mutuals only</option>
+                        <option value="nobody">Nobody</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center justify-between py-2 border-b border-white/5">
+                      <div><p className="text-xs font-bold text-white">Mentions & Tags</p><p className="text-[10px] text-white/40">Who can tag you in posts</p></div>
+                      <select
+                        value={profile?.whoCanTagMe || 'followers'}
+                        onChange={e => handleSelectSetting('whoCanTagMe', e.target.value)}
+                        className="bg-white/10 text-white text-xs rounded-xl px-3 py-1.5 border border-white/10 outline-none cursor-pointer"
+                      >
+                        <option value="everyone">Everyone</option>
+                        <option value="followers">Followers</option>
+                        <option value="nobody">Nobody</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+                {checkupStep === 2 && (
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2"><ShieldCheck size={14} className="text-aeirmist-cyan" /> Security & Data</h3>
+                    <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/5 space-y-2">
+                      <p className="text-xs font-bold text-white">Blocked accounts</p>
+                      <p className="text-[10px] text-white/50">You have <span className="text-white font-bold">{blockedUserIds.length}</span> blocked and <span className="text-white font-bold">{restrictedUserIds.length}</span> restricted accounts.</p>
+                      <button onClick={() => { setShowCheckupModal(false); setCheckupStep(0); setActiveSubTab('blocked'); }} className="text-[10px] text-aeirmist-cyan font-bold uppercase tracking-wider hover:underline">Manage blocked list →</button>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 flex items-center gap-3">
+                      <Check size={16} className="text-emerald-400 shrink-0" />
+                      <p className="text-xs text-white/70">Your privacy settings have been reviewed. Changes are saved automatically.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer Buttons */}
+              <div className="p-6 pt-0 flex justify-between gap-3">
+                <button
+                  onClick={() => checkupStep > 0 ? setCheckupStep(s => s - 1) : (setShowCheckupModal(false), setCheckupStep(0))}
+                  className="px-5 py-2.5 rounded-xl bg-white/5 text-white/60 font-bold text-xs uppercase tracking-wider hover:bg-white/10 transition-all"
+                >
+                  {checkupStep === 0 ? 'Cancel' : '← Back'}
+                </button>
+                <button
+                  onClick={() => checkupStep < 2 ? setCheckupStep(s => s + 1) : (setShowCheckupModal(false), setCheckupStep(0))}
+                  className="px-5 py-2.5 rounded-xl bg-aeirmist-cyan text-black font-black text-xs uppercase tracking-wider hover:opacity-90 active:scale-95 transition-all"
+                >
+                  {checkupStep === 2 ? '✓ Done' : 'Next →'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+
+

@@ -716,6 +716,104 @@ public class MainActivity extends BridgeActivity {
                 call.resolve();
             }
         }
+
+        // ── System-wide Square Chat Head (overlay over other apps) ──────────
+
+        @PluginMethod
+        public void checkOverlayPermission(PluginCall call) {
+            boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(getContext());
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            ret.put("granted", granted);
+            call.resolve(ret);
+        }
+
+        @PluginMethod
+        public void requestOverlayPermission(PluginCall call) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(getContext())) {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getContext().getPackageName()));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(intent);
+                }
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Failed to open overlay settings: " + e.getMessage());
+            }
+        }
+
+        /** Enables the system chat head. Must be called while app is in foreground. */
+        @PluginMethod
+        public void enableSystemChatHead(PluginCall call) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(getContext())) {
+                    call.reject("OVERLAY_PERMISSION_REQUIRED");
+                    return;
+                }
+                getContext().getSharedPreferences("aeirmist_prefs", Context.MODE_PRIVATE)
+                        .edit().putBoolean("system_chat_head_enabled", true).apply();
+                Intent i = new Intent(getContext(), ChatHeadService.class);
+                i.setAction(ChatHeadService.ACTION_HIDE); // stays hidden while app is open
+                i.putExtra("name", call.getString("name", "Aeirmist"));
+                String avatar = call.getString("avatarUrl", null);
+                if (avatar != null) i.putExtra("avatarUrl", avatar);
+                i.putExtra("unread", call.getInt("unread", 0));
+                ContextCompat.startForegroundService(getContext(), i);
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Failed to enable chat head: " + e.getMessage());
+            }
+        }
+
+        @PluginMethod
+        public void disableSystemChatHead(PluginCall call) {
+            try {
+                getContext().getSharedPreferences("aeirmist_prefs", Context.MODE_PRIVATE)
+                        .edit().putBoolean("system_chat_head_enabled", false).apply();
+                getContext().stopService(new Intent(getContext(), ChatHeadService.class));
+            } catch (Exception ignored) {}
+            call.resolve();
+        }
+
+        /** Update avatar / unread count shown on the system chat head. */
+        @PluginMethod
+        public void updateSystemChatHead(PluginCall call) {
+            try {
+                if (!ChatHeadService.isRunning) { call.resolve(); return; }
+                Intent i = new Intent(getContext(), ChatHeadService.class);
+                i.setAction(ChatHeadService.ACTION_UPDATE);
+                if (call.hasOption("name")) i.putExtra("name", call.getString("name"));
+                if (call.hasOption("avatarUrl")) i.putExtra("avatarUrl", call.getString("avatarUrl"));
+                if (call.hasOption("unread")) i.putExtra("unread", call.getInt("unread", 0));
+                getContext().startService(i);
+            } catch (Exception ignored) {}
+            call.resolve();
+        }
+    }
+
+    // Show the system chat head when the app leaves the screen, hide it when the app returns
+    private void sendChatHeadAction(String action) {
+        try {
+            boolean enabled = getSharedPreferences("aeirmist_prefs", Context.MODE_PRIVATE)
+                    .getBoolean("system_chat_head_enabled", false);
+            if (!enabled || !ChatHeadService.isRunning) return;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) return;
+            Intent i = new Intent(this, ChatHeadService.class);
+            i.setAction(action);
+            startService(i);
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        sendChatHeadAction(ChatHeadService.ACTION_HIDE);
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        sendChatHeadAction(ChatHeadService.ACTION_SHOW);
     }
 
     private android.webkit.PermissionRequest pendingPermissionRequest = null;
@@ -764,11 +862,57 @@ public class MainActivity extends BridgeActivity {
     private void handleNotificationIntent(Intent intent) {
         if (intent == null) return;
         String targetUrl = intent.getStringExtra("targetUrl");
-        if (targetUrl != null && !targetUrl.isEmpty()) {
+        Uri dataUri = intent.getData();
+        String action = intent.getAction();
+
+        // 0. Chat Head Click
+        String chatHeadId = intent.getStringExtra("chatHeadId");
+        if (chatHeadId != null && !chatHeadId.isEmpty()) {
+            final String safeId = chatHeadId;
             runOnUiThread(() -> {
                 try {
                     if (this.bridge != null && this.bridge.getWebView() != null) {
-                        String js = "window.dispatchEvent(new CustomEvent('aeirmist_notification_click', { detail: { url: '" + targetUrl.replace("'", "\\'") + "' } }));";
+                        String js = "window.dispatchEvent(new CustomEvent('aeirmist_chathead_open', { detail: { id: '" + safeId.replace("'", "\\'") + "' } }));";
+                        this.bridge.getWebView().evaluateJavascript(js, null);
+                    }
+                } catch (Exception ignored) {}
+            });
+        }
+
+        // 1. Target URL from Notifications
+        if (targetUrl != null && !targetUrl.isEmpty()) {
+            final String safeUrl = targetUrl;
+            runOnUiThread(() -> {
+                try {
+                    if (this.bridge != null && this.bridge.getWebView() != null) {
+                        String js = "window.dispatchEvent(new CustomEvent('aeirmist_notification_click', { detail: { url: '" + safeUrl.replace("'", "\\'") + "' } }));";
+                        this.bridge.getWebView().evaluateJavascript(js, null);
+                    }
+                } catch (Exception ignored) {}
+            });
+        }
+
+        // 2. App Shortcuts & Deep Links (e.g. aeirmist://action/create_post)
+        if (dataUri != null) {
+            final String uriStr = dataUri.toString();
+            runOnUiThread(() -> {
+                try {
+                    if (this.bridge != null && this.bridge.getWebView() != null) {
+                        String js = "window.dispatchEvent(new CustomEvent('aeirmist_deep_link', { detail: { url: '" + uriStr.replace("'", "\\'") + "' } }));";
+                        this.bridge.getWebView().evaluateJavascript(js, null);
+                    }
+                } catch (Exception ignored) {}
+            });
+        }
+
+        // 3. Android Direct Share Target (SEND text/image/video)
+        if (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
+            runOnUiThread(() -> {
+                try {
+                    if (this.bridge != null && this.bridge.getWebView() != null) {
+                        String cleanText = (sharedText != null) ? sharedText.replace("'", "\\'").replace("\n", "\\n") : "";
+                        String js = "window.dispatchEvent(new CustomEvent('aeirmist_share_target', { detail: { text: '" + cleanText + "' } }));";
                         this.bridge.getWebView().evaluateJavascript(js, null);
                     }
                 } catch (Exception ignored) {}
@@ -808,6 +952,8 @@ public class MainActivity extends BridgeActivity {
             if (this.bridge != null && this.bridge.getWebView() != null) {
                 WebView webView = this.bridge.getWebView();
                 webView.setBackgroundColor(0xFF050508);
+                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                webView.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
 
                 WebSettings settings = webView.getSettings();
                 settings.setDomStorageEnabled(true);

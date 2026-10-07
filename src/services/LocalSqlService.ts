@@ -40,6 +40,40 @@ export class LocalSqlService {
   }
 
   /**
+   * Save user profile to local database vault (backed by SQLite/IndexedDB)
+   */
+  static async saveProfile(profile: any): Promise<void> {
+    try {
+      await aeirmistCache.saveProfile(profile);
+    } catch (err) {
+      console.warn('[LocalSqlService] Failed to cache profile:', err);
+    }
+  }
+
+  /**
+   * Retrieve cached user profile from local database vault
+   */
+  static async getProfile(id: string): Promise<any | null> {
+    try {
+      return await aeirmistCache.getProfile(id);
+    } catch (err) {
+      console.warn('[LocalSqlService] Failed to get profile from local DB:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Clear cached user profiles from local database vault
+   */
+  static async clearProfiles(): Promise<void> {
+    try {
+      await aeirmistCache.clearProfiles();
+    } catch (err) {
+      console.warn('[LocalSqlService] Failed to clear profiles in local DB:', err);
+    }
+  }
+
+  /**
    * Save an offline draft (post, idea note, or story draft)
    */
   static async saveDraft(draft: {

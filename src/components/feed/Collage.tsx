@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Play, Eye, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { VideoPlayer } from './VideoPlayer';
 import { motion, AnimatePresence } from 'motion/react';
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { SafeImage } from '../ui/SafeImage';
 
 export interface MediaItem {
@@ -369,13 +370,27 @@ export const Collage: React.FC<CollageProps> = ({
                         useCache
                       />
                     ) : (
-                      <SafeImage 
-                        src={items[activeIdx].url} 
-                        className="max-w-full max-h-full object-contain shadow-2xl select-none rounded-lg" 
-                        alt={`Full View ${activeIdx + 1}`} 
-                        referrerPolicy="no-referrer" 
-                        useCache
-                      />
+                      <TransformWrapper
+                        initialScale={1}
+                        minScale={0.8}
+                        maxScale={6}
+                        centerZoomedOut={true}
+                        wheel={{ step: 0.1 }}
+                        doubleClick={{ mode: "toggle", step: 2 }}
+                      >
+                        <TransformComponent
+                          wrapperClass="!w-full !h-full flex items-center justify-center"
+                          contentClass="!w-full !h-full flex items-center justify-center"
+                        >
+                          <SafeImage 
+                            src={items[activeIdx].url} 
+                            className="max-w-full max-h-full object-contain shadow-2xl select-none rounded-lg cursor-grab active:cursor-grabbing" 
+                            alt={`Full View ${activeIdx + 1}`} 
+                            referrerPolicy="no-referrer" 
+                            useCache
+                          />
+                        </TransformComponent>
+                      </TransformWrapper>
                     )}
                   </motion.div>
                 </AnimatePresence>

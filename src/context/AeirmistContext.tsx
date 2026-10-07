@@ -62,6 +62,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import { normalizeUsername } from '../utils/usernameUtils';
 import { migrateUsernamesNormalized } from '../utils/migrateUsernames';
 import { consolidateAndSyncUserProfiles } from '../services/accountSyncService';
+import { LocalSqlService } from '../services/LocalSqlService';
 import { validateEmailDetailed, isValidEmail } from '../utils/emailValidator';
 import { sendTemplatePasswordResetEmail, sendTemplateEmailVerification } from '../services/authActionService';
 
@@ -308,7 +309,7 @@ interface AeirmistContextType {
   unreadMessagesCount: number;
   unreadNotificationsCount: number;
   toasts: any[];
-  addToast: (toast: { title: string, message: string, type: 'info' | 'success' | 'warning', icon?: any }) => void;
+  addToast: (toast: { title: string, message: string, type: 'info' | 'success' | 'warning' | 'error', icon?: any }) => void;
   removeToast: (id: string) => void;
   stories: any[];
   deleteStory: (storyId: string) => Promise<void>;
@@ -357,6 +358,10 @@ interface AeirmistContextType {
   openVault: () => void;
   showVerificationCelebration: boolean;
   setShowVerificationCelebration: React.Dispatch<React.SetStateAction<boolean>>;
+  floatingChatHead: { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string } | null;
+  setFloatingChatHead: React.Dispatch<React.SetStateAction<{ id: string; name: string; photo?: string; unreadCount?: number; participantId?: string } | null>>;
+  floatingChatHeads: { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string }[];
+  removeFloatingChatHead: (id: string) => void;
 }
 
 const handleFirestoreError = (error: any, op: any, path: string | null) => {
@@ -385,7 +390,33 @@ const AeirmistContext = createContext<AeirmistContextType | undefined>(undefined
 
 export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>(DEFAULT_FEATURE_FLAGS);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawSession = localStorage.getItem('aeirmist_session');
+        const rawProfile = localStorage.getItem('aeirmist_cached_profile') || localStorage.getItem('aeirmist_user_profile');
+        if (rawSession || rawProfile) {
+          const s = rawSession ? JSON.parse(rawSession) : null;
+          const p = rawProfile ? JSON.parse(rawProfile) : null;
+          const uid = s?.uid || p?.uid || p?.ownerUid || p?.id;
+          if (uid) {
+            return {
+              uid,
+              email: s?.email || p?.email || '',
+              displayName: s?.displayName || p?.displayName || p?.username || '',
+              photoURL: p?.photoURL || '',
+              emailVerified: true,
+              isAnonymous: false,
+              providerData: [{ providerId: 'password', uid, email: s?.email || p?.email || '' }],
+              getIdToken: async () => auth.currentUser ? await auth.currentUser.getIdToken() : `token_${uid}`,
+              reload: async () => {}
+            } as any;
+          }
+        }
+      } catch (e) {}
+    }
+    return null;
+  });
   const [account, setAccount] = useState<any | null>(null);
   const [profile, setProfile] = useState<any | null>(() => {
     if (typeof window !== 'undefined') {
@@ -403,17 +434,20 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return null;
   });
 
-  // Sync profile & Id Name to localStorage for instantaneous splash hydration
+  // Sync profile & Id Name to localStorage & LocalSqlService for instantaneous hydration and offline persistence
   useEffect(() => {
     if (typeof window !== 'undefined' && profile) {
       try {
         localStorage.setItem('aeirmist_cached_profile', JSON.stringify(profile));
+        localStorage.setItem('aeirmist_user_profile', JSON.stringify(profile));
         const idName = (profile.displayName || profile.fullName || profile.name || '').trim();
         const lower = idName.toLowerCase();
         if (idName && lower !== 'aeirmist member' && lower !== 'aeirmist user' && lower !== 'user') {
           localStorage.setItem('aeirmist_cached_id_name', idName);
         }
       } catch (e) {}
+      // Asynchronously mirror to SQLite/IndexedDB Local Vault
+      LocalSqlService.saveProfile(profile).catch(() => {});
     }
   }, [profile]);
 
@@ -645,6 +679,46 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setIsVaultOpen(true);
   }, []);
 
+  type FloatingHead = { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string };
+  const MAX_CHAT_HEADS = 5;
+  const [floatingChatHeads, setFloatingChatHeads] = useState<FloatingHead[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('aeirmist_floating_heads');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch (e) {}
+    }
+    return [];
+  });
+  const floatingChatHead: FloatingHead | null = floatingChatHeads.length ? floatingChatHeads[floatingChatHeads.length - 1] : null;
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('aeirmist_floating_heads', JSON.stringify(floatingChatHeads));
+      } catch (e) {}
+    }
+  }, [floatingChatHeads]);
+
+  // Backwards-compatible setter: object → add (or move to top), null → clear all
+  const setFloatingChatHead = useCallback((action: React.SetStateAction<FloatingHead | null>) => {
+    setFloatingChatHeads(prev => {
+      const current = prev.length ? prev[prev.length - 1] : null;
+      const next = typeof action === 'function' ? (action as (p: FloatingHead | null) => FloatingHead | null)(current) : action;
+      if (!next) return [];
+      const without = prev.filter(h => h.id !== next.id);
+      const merged = [...without, next];
+      return merged.length > MAX_CHAT_HEADS ? merged.slice(merged.length - MAX_CHAT_HEADS) : merged;
+    });
+  }, []);
+
+  const removeFloatingChatHead = useCallback((id: string) => {
+    setFloatingChatHeads(prev => prev.filter(h => h.id !== id));
+  }, []);
+
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   useEffect(() => {
@@ -860,7 +934,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const addToast = useCallback((toast: { 
     title: string; 
     message: string; 
-    type: 'info' | 'success' | 'warning'; 
+    type: 'info' | 'success' | 'warning' | 'error'; 
     icon?: any;
     avatar?: string | null;
     image?: string | null;
@@ -2640,11 +2714,41 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           logger.error("[Diagnostics - Auth] Profile snapshot warning:", err);
         });
       } else {
-        setProfile(null);
-        setAllProfiles([]);
-        setIsScheduledForPurge(false);
-        setNeedsUsername(false);
-        setLoading(false);
+        // If a cached session is present in localStorage, Firebase Auth may still be reading from IndexedDB in the background.
+        // Do not immediately wipe cached profile and set loading to false.
+        const hasCachedToken = typeof window !== 'undefined' && Boolean(
+          localStorage.getItem('aeirmist_session') ||
+          localStorage.getItem('aeirmist_user_profile') ||
+          localStorage.getItem('aeirmist_cached_profile')
+        );
+
+        if (!hasCachedToken) {
+          setUser(null);
+          setProfile(null);
+          setAllProfiles([]);
+          setIsScheduledForPurge(false);
+          setNeedsUsername(false);
+          setLoading(false);
+        } else {
+          // Give Firebase Auth a grace period to verify IndexedDB tokens before concluding user is truly logged out
+          setTimeout(() => {
+            if (!auth.currentUser) {
+              const stillCached = typeof window !== 'undefined' && Boolean(
+                localStorage.getItem('aeirmist_session') ||
+                localStorage.getItem('aeirmist_user_profile') ||
+                localStorage.getItem('aeirmist_cached_profile')
+              );
+              if (!stillCached) {
+                setUser(null);
+                setProfile(null);
+                setAllProfiles([]);
+                setIsScheduledForPurge(false);
+                setNeedsUsername(false);
+                setLoading(false);
+              }
+            }
+          }, 2500);
+        }
       }
     });
 
@@ -2785,6 +2889,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const unsubscribe = onSnapshot(q, (snap) => {
       let total = 0;
+      const activeConvs: { id: string; name: string; photo: string; updatedAt: number; unreadCount: number; participantId?: string }[] = [];
       snap.docs.forEach(doc => {
         const data = doc.data();
         // Skip requests in main count
@@ -2795,18 +2900,73 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         
         // Skip deleted chats
         const deletedAt = data.deletedFor?.[profile.id];
-        const chatUpdatedAt = data.updatedAt?.toMillis?.() || Date.now();
+        const chatUpdatedAt = data.updatedAt?.toMillis?.() || (data.updatedAt?.seconds ? data.updatedAt.seconds * 1000 : Date.now());
         if (deletedAt === true) return;
         if (typeof deletedAt === 'number' && chatUpdatedAt <= deletedAt) return;
         
         const count = data.unreadCount?.[profile.id] || 0;
         total += count;
+
+        const isGroup = data.isGroup || data.type === 'group';
+        let name = isGroup ? (data.name || 'Group') : '';
+        let photo = isGroup ? (data.photo || data.groupPhotoURL || '') : '';
+        let participantId: string | undefined = undefined;
+        if (!isGroup) {
+          const otherId = (data.profileIds || []).find((pid: string) => pid !== profile.id) ||
+            Object.keys(data.participantDetails || {}).find((pid: string) => pid !== profile.id);
+          participantId = otherId;
+          const details = otherId ? data.participantDetails?.[otherId] : null;
+          name = details?.displayName || details?.name || details?.username || data.name || 'Chat';
+          photo = details?.photoURL || details?.photo || details?.avatar || data.photo || '';
+        }
+        if (name) {
+          activeConvs.push({
+            id: doc.id,
+            name,
+            photo,
+            updatedAt: chatUpdatedAt,
+            unreadCount: count,
+            participantId
+          });
+        }
       });
       setUnreadMessagesCount(total);
+
+      // Auto-populate or sync floating chat heads if enabled
+      if (profile?.messagingSettings?.enableChatHeads !== false && activeConvs.length > 0) {
+        setFloatingChatHeads(prev => {
+          // If user currently has 0 chat heads, auto-populate top 1-2 recent conversations
+          if (prev.length === 0) {
+            const sorted = [...activeConvs].sort((a, b) => b.updatedAt - a.updatedAt);
+            return sorted.slice(0, 2).map(c => ({
+              id: c.id,
+              name: c.name,
+              photo: c.photo,
+              unreadCount: c.unreadCount,
+              participantId: c.participantId
+            }));
+          }
+          // If incoming unread messages exist, ensure those chats have heads and updated badges
+          const withUnread = activeConvs.filter(c => c.unreadCount > 0);
+          if (withUnread.length > 0) {
+            let next = [...prev];
+            for (const item of withUnread) {
+              const idx = next.findIndex(h => h.id === item.id);
+              if (idx !== -1) {
+                next[idx] = { ...next[idx], unreadCount: item.unreadCount, participantId: item.participantId || next[idx].participantId };
+              } else {
+                next.push({ id: item.id, name: item.name, photo: item.photo, unreadCount: item.unreadCount, participantId: item.participantId });
+              }
+            }
+            return next.slice(-MAX_CHAT_HEADS);
+          }
+          return prev;
+        });
+      }
     }, (error) => logger.warn("Messages unread count sync failed", error));
 
     return () => unsubscribe();
-  }, [db, profile?.id]);
+  }, [db, profile?.id, profile?.messagingSettings?.enableChatHeads]);
 
   // Listen for Unread Notifications
   useEffect(() => {
@@ -2858,6 +3018,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
             const type = String(data.type).toLowerCase();
             const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
+
+            if (isMessage) {
+              const convId = data.metadata?.conversationId || data.conversationId;
+              if (convId && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('aeirmist_chathead_preview', {
+                  detail: {
+                    chatId: convId,
+                    senderName: data.user?.name || data.user?.displayName || data.metadata?.senderName || 'Message',
+                    text: data.message || 'Sent a message'
+                  }
+                }));
+              }
+            }
 
             // Dispatch system/device/browser notification across all platforms (Android & Web)
             const senderDisplayName = data.user?.name || data.user?.displayName || data.metadata?.senderName || data.fromUser?.displayName;
@@ -3003,13 +3176,24 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const data = docSnap.data();
         if (data.status === 'online') {
           const lastSeen = extractTimestampMs(data.lastSeen) || extractTimestampMs(data.lastActiveAt);
-          // Threshold: 75s (heartbeat is 30s → 2.5 missed beats = definitely offline)
-          if (lastSeen > 0 && (now - lastSeen < 75000)) {
+          // Threshold: 120s (2 minutes — stable & accurate without dropping users between heartbeats)
+          if (lastSeen > 0 && (now - lastSeen < 120000)) {
             onlineUsersMap.current.set(docSnap.id, lastSeen);
             active.add(docSnap.id);
+            if (data.uid) active.add(data.uid);
+          } else if (lastSeen === 0 || docSnap.metadata.hasPendingWrites) {
+            onlineUsersMap.current.set(docSnap.id, now);
+            active.add(docSnap.id);
+            if (data.uid) active.add(data.uid);
           }
         }
       });
+
+      // Include self if enabled
+      if (profile?.messagingSettings?.onlineStatus !== false) {
+        if (profile?.id) active.add(profile.id);
+        if (user?.uid) active.add(user.uid);
+      }
 
       setOnlineUsers(active);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'online_profiles'));
@@ -3019,13 +3203,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const now = Date.now();
       const active = new Set<string>();
       onlineUsersMap.current.forEach((lastSeen, id) => {
-        if (now - lastSeen < 75000) {
+        if (now - lastSeen < 120000) {
           active.add(id);
         } else {
           changed = true;
           onlineUsersMap.current.delete(id);
         }
       });
+      if (profile?.messagingSettings?.onlineStatus !== false) {
+        if (profile?.id) active.add(profile.id);
+        if (user?.uid) active.add(user.uid);
+      }
       if (changed || active.size !== onlineUsers.size) {
         setOnlineUsers(active);
       }
@@ -3039,17 +3227,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const lastPresenceUpdate = useRef<number>(0);
   const lastPresenceStatus = useRef<string>('');
 
-  const goOnline = async () => {
+  const goOnline = async (force: boolean = false) => {
     if (!db || !profile || !user || isSafeMode) return;
     
     const wantsOnline = profile.messagingSettings?.onlineStatus !== false;
     const status = wantsOnline ? 'online' : 'offline';
 
-    // Optimization: Don't write if already in desired state
-    if (lastPresenceStatus.current === status) return;
+    // Optimization: Don't write if already in desired state unless force heartbeat
+    if (!force && lastPresenceStatus.current === status) return;
 
-    // Throttle: max once per 30s (was 60s — too slow, causes stale "Active now")
-    if (!canWrite('presence', 30000)) return; 
+    // Throttle non-forced calls
+    if (!force && !canWrite('presence', 20000)) return; 
     
     try {
       lastPresenceStatus.current = status;
@@ -4068,7 +4256,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'website', 'category', 'pronouns', 'gender', 'dateOfBirth', 'personalEmail',
       'phoneNumber', 'phoneCountryCode', 'phoneVerified', 'recoveryEmail', 'recoveryPhone',
       'isPrivate', 'isProfileLocked', 'isProfessional', 'socialLinks', 'privacySettings',
-      'themeSettings', 'onboardingStep', 'onboardingCompleted'
+      'themeSettings', 'messagingSettings', 'notificationSettings', 'appearanceSettings',
+      'onboardingStep', 'onboardingCompleted', 'dismissedWidgets'
     ];
     const isBasicUpdate = keys.every(k => basicKeys.includes(k));
     
@@ -4091,7 +4280,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'fullName', 'phoneNumber', 'phoneCountryCode', 'phoneVerified', 'personalEmail', 'pendingEmailChange', 'gender', 'dateOfBirth',
       'hasPassword', 'passwordCreatedAt', 'lastPasswordChangedAt', 'twoFactorEnabled', 'recoveryEmail', 'recoveryPhone', 'securityQuestions', 'trustedDevices',
       'lastReactivatedAt', 'deletionRequestedAt', 'deletionScheduledFor', 'deactivatedAt', 'deactivationDuration', 'deactivationReturnDate', 'deactivationReason',
-      'onboardingStep', 'onboardingCompleted'
+      'onboardingStep', 'onboardingCompleted', 'dismissedWidgets'
     ];
     
     const updateData: any = {
@@ -4219,6 +4408,21 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAllProfiles((prev: any[]) => 
           prev.map(p => p.id === targetProfileId || p.ownerUid === user.uid ? { ...p, ...updateData } : p)
         );
+
+        // Immediate write to local cache & SQLite/IndexedDB vault
+        try {
+          const freshCached = {
+            id: targetProfileId,
+            uid: user.uid,
+            ownerUid: user.uid,
+            isActive: true,
+            ...(profile || {}),
+            ...updateData
+          };
+          localStorage.setItem('aeirmist_cached_profile', JSON.stringify(freshCached));
+          localStorage.setItem('aeirmist_user_profile', JSON.stringify(freshCached));
+          LocalSqlService.saveProfile(freshCached).catch(() => {});
+        } catch (cacheErr) {}
       } catch (e: any) {
         const errStr = String(e);
         if (errStr.includes('exceeds the maximum allowed size') || errStr.includes('size')) {
@@ -7071,6 +7275,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     openVault,
     showVerificationCelebration,
     setShowVerificationCelebration,
+    floatingChatHead,
+    setFloatingChatHead,
+    floatingChatHeads,
+    removeFloatingChatHead,
     featureFlags,
     updateFeatureFlag,
     appBranding,
@@ -7101,7 +7309,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     localAvatarURL, localCoverURL, profileUploadProgress, coverUploadProgress,
     isSafeMode, setIsSafeMode, needsPasswordOnboarding, setNeedsPasswordOnboarding,
     isVaultOpen, setIsVaultOpen, isVaultUnlocked, setIsVaultUnlocked, openVault,
-    showVerificationCelebration, setShowVerificationCelebration
+    showVerificationCelebration, setShowVerificationCelebration,
+    floatingChatHead, floatingChatHeads
   ]);
 
   return (

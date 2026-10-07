@@ -12,6 +12,68 @@ import { useTheme } from '../../../context/ThemeContext';
 import { logger } from '@/src/utils/logger';
 
 
+// -- Stable sub-components (module-level: no re-creation on every render) --
+const AppSwitch = React.memo(({ enabled, onClick, isLight }: { enabled: boolean; onClick: () => void; isLight?: boolean }) => (
+  <button
+    type="button"
+    onClick={(e) => { e.stopPropagation(); onClick(); }}
+    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-aeirmist-cyan focus:ring-offset-2 ${
+      isLight ? 'focus:ring-offset-white' : 'focus:ring-offset-[#07090e]'
+    } ${
+      enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.4)]' : (isLight ? 'bg-slate-200' : 'bg-white/10')
+    }`}
+    aria-label="Toggle preference"
+  >
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+        enabled ? 'translate-x-5' : 'translate-x-0'
+      }`}
+    />
+  </button>
+));
+
+const AppSettingRow = React.memo(({ icon: IconComponent, title, enabled, keyName, isLight, onToggle }: {
+  icon: React.ComponentType<any>; title: string; enabled: boolean; keyName: any; isLight?: boolean; onToggle: (k: any) => void;
+}) => (
+  <div
+    onClick={() => onToggle(keyName)}
+    className={`flex items-center justify-between py-2 px-3.5 rounded-xl border transition-all cursor-pointer ${
+      isLight ? 'bg-white hover:bg-slate-50 border-slate-200 shadow-sm' : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.03]'
+    }`}
+  >
+    <div className="flex items-center gap-3 pr-4 min-w-0">
+      <div className={`p-1.5 rounded-lg shrink-0 ${enabled ? 'bg-aeirmist-cyan/10 text-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.15)]' : (isLight ? 'bg-slate-100 text-slate-400' : 'bg-white/5 text-white/40')}`}>
+        <IconComponent size={14} />
+      </div>
+      <h4 className={`text-[11px] font-bold uppercase tracking-wider truncate ${isLight ? 'text-slate-700' : 'text-white/90'}`}>{title}</h4>
+    </div>
+    <AppSwitch enabled={enabled} onClick={() => onToggle(keyName)} isLight={isLight} />
+  </div>
+));
+
+const AppModalRow = React.memo(({ icon: IconComponent, title, value, onClick, isLight }: {
+  icon: React.ComponentType<any>; title: string; value: string; onClick: () => void; isLight?: boolean;
+}) => (
+  <div
+    onClick={onClick}
+    className={`flex items-center justify-between py-2 px-3.5 rounded-xl border transition-all cursor-pointer ${
+      isLight ? 'bg-white hover:bg-slate-50 border-slate-200 shadow-sm' : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.03]'
+    }`}
+  >
+    <div className="flex items-center gap-3 pr-4 min-w-0">
+      <div className={`p-1.5 rounded-lg shrink-0 ${isLight ? 'bg-slate-100 text-slate-400' : 'bg-white/5 text-white/40'}`}>
+        <IconComponent size={14} />
+      </div>
+      <h4 className={`text-[11px] font-bold uppercase tracking-wider truncate ${isLight ? 'text-slate-700' : 'text-white/90'}`}>{title}</h4>
+    </div>
+    <div className="flex items-center gap-2 shrink-0">
+      <span className={`text-[10px] font-bold uppercase tracking-widest ${isLight ? 'text-slate-500' : 'text-white/40'}`}>{value}</span>
+      <ChevronRight size={14} className={isLight ? 'text-slate-400' : 'text-white/30'} />
+    </div>
+  </div>
+));
+
 export default function AppearanceSettings() {
   const { settings, updateAppearanceSettings, resetAppearanceSettings } = useAppearance();
   const { uploadMedia, user } = useAeirmist();
@@ -155,90 +217,6 @@ export default function AppearanceSettings() {
     handleUpdate(keyName, !settings[keyName] as any);
   };
 
-  // Switch UI subcomponent
-  const Switch = ({ enabled, onClick }: { enabled: boolean, onClick: () => void }) => (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-aeirmist-cyan focus:ring-offset-2 ${
-        isLight ? 'focus:ring-offset-white' : 'focus:ring-offset-[#07090e]'
-      } ${
-        enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.4)]' : (isLight ? 'bg-slate-200' : 'bg-white/10')
-      }`}
-      aria-label="Toggle preference"
-    >
-      <span
-        aria-hidden="true"
-        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-          enabled ? 'translate-x-5' : 'translate-x-0'
-        }`}
-      />
-    </button>
-  );
-
-  // Settings Row Container
-  const SettingRow = ({ 
-    icon: IconComponent, 
-    title, 
-    enabled, 
-    keyName 
-  }: { 
-    icon: React.ComponentType<any>, 
-    title: string, 
-    enabled: boolean, 
-    keyName: keyof typeof settings 
-  }) => {
-    return (
-      <div 
-        onClick={() => toggleSetting(keyName)}
-        className={`flex items-center justify-between py-2 px-3.5 rounded-xl border transition-all cursor-pointer ${
-          isLight ? 'bg-white hover:bg-slate-50 border-slate-200 shadow-sm' : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.03]'
-        }`}
-      >
-        <div className="flex items-center gap-3 pr-4 min-w-0">
-          <div className={`p-1.5 rounded-lg shrink-0 ${enabled ? 'bg-aeirmist-cyan/10 text-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.15)]' : (isLight ? 'bg-slate-100 text-slate-400' : 'bg-white/5 text-white/40')}`}>
-            <IconComponent size={14} />
-          </div>
-          <h4 className={`text-[11px] font-bold uppercase tracking-wider truncate ${isLight ? 'text-slate-700' : 'text-white/90'}`}>{title}</h4>
-        </div>
-        <Switch enabled={enabled} onClick={() => toggleSetting(keyName)} />
-      </div>
-    );
-  };
-
-  // Interactive Modal Row Component
-  const ModalRow = ({ 
-    icon: IconComponent, 
-    title, 
-    value, 
-    onClick 
-  }: { 
-    icon: React.ComponentType<any>, 
-    title: string, 
-    value: string, 
-    onClick: () => void 
-  }) => {
-    return (
-      <div 
-        onClick={onClick}
-        className={`flex items-center justify-between py-2 px-3.5 rounded-xl border transition-all cursor-pointer ${
-          isLight ? 'bg-white hover:bg-slate-50 border-slate-200 shadow-sm' : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.03]'
-        }`}
-      >
-        <div className="flex items-center gap-3 pr-4 min-w-0">
-          <div className={`p-1.5 rounded-lg shrink-0 ${isLight ? 'bg-slate-100 text-slate-400' : 'bg-white/5 text-white/40'}`}>
-            <IconComponent size={14} />
-          </div>
-          <h4 className={`text-[11px] font-bold uppercase tracking-wider truncate ${isLight ? 'text-slate-700' : 'text-white/90'}`}>{title}</h4>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={`text-[10px] font-bold uppercase tracking-widest ${isLight ? 'text-slate-500' : 'text-white/40'}`}>{value}</span>
-          <ChevronRight size={14} className={isLight ? 'text-slate-400' : 'text-white/30'} />
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-8 select-none">
       {/* Header Container */}
@@ -268,11 +246,11 @@ export default function AppearanceSettings() {
             <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Display & Sizing</h3>
           </div>
           <div className="grid grid-cols-1 gap-1.5">
-            <ModalRow icon={Moon} title="Theme Mode" value={settings.themeMode} onClick={() => setActiveModal('theme')} />
-            <ModalRow icon={Paintbrush} title="Accent Color" value={settings.accentColor} onClick={() => setActiveModal('accent')} />
-            <ModalRow icon={ImageIcon} title="Background Wallpaper" value={settings.globalBgType} onClick={() => setActiveModal('background')} />
-            <ModalRow icon={Layers} title="Layout Density" value={settings.density} onClick={() => setActiveModal('density')} />
-            <ModalRow icon={Type} title="Font Size" value={settings.fontSize} onClick={() => setActiveModal('fontSize')} />
+            <AppModalRow isLight={isLight} icon={Moon} title="Theme Mode" value={settings.themeMode} onClick={() => setActiveModal('theme')} />
+            <AppModalRow isLight={isLight} icon={Paintbrush} title="Accent Color" value={settings.accentColor} onClick={() => setActiveModal('accent')} />
+            <AppModalRow isLight={isLight} icon={ImageIcon} title="Background Wallpaper" value={settings.globalBgType} onClick={() => setActiveModal('background')} />
+            <AppModalRow isLight={isLight} icon={Layers} title="Layout Density" value={settings.density} onClick={() => setActiveModal('density')} />
+            <AppModalRow isLight={isLight} icon={Type} title="Font Size" value={settings.fontSize} onClick={() => setActiveModal('fontSize')} />
           </div>
         </div>
 
@@ -283,10 +261,10 @@ export default function AppearanceSettings() {
             <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Effects & Animations</h3>
           </div>
           <div className="grid grid-cols-1 gap-1.5">
-            <SettingRow icon={Layers} title="Glassmorphism Effect" enabled={settings.enableGlassEffect} keyName="enableGlassEffect" />
-            <SettingRow icon={Wind} title="UI Animations" enabled={settings.enableAnimations} keyName="enableAnimations" />
-            <SettingRow icon={Activity} title="Smooth Transitions" enabled={settings.smoothTransitions} keyName="smoothTransitions" />
-            <SettingRow icon={Minimize} title="Reduce Motion" enabled={settings.reduceMotion} keyName="reduceMotion" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Layers} title="Glassmorphism Effect" enabled={settings.enableGlassEffect} keyName="enableGlassEffect" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Wind} title="UI Animations" enabled={settings.enableAnimations} keyName="enableAnimations" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Activity} title="Smooth Transitions" enabled={settings.smoothTransitions} keyName="smoothTransitions" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Minimize} title="Reduce Motion" enabled={settings.reduceMotion} keyName="reduceMotion" />
           </div>
         </div>
 
@@ -297,10 +275,10 @@ export default function AppearanceSettings() {
             <h3 className={`text-xs font-black uppercase tracking-widest ${isLight ? "text-slate-800" : "text-white/95"}`}>Accessibility</h3>
           </div>
           <div className="grid grid-cols-1 gap-1.5">
-            <SettingRow icon={Eye} title="High Contrast" enabled={settings.highContrast} keyName="highContrast" />
-            <SettingRow icon={Type} title="Improve Readability" enabled={settings.improveReadability} keyName="improveReadability" />
-            <SettingRow icon={Maximize} title="Large Target Buttons" enabled={settings.largeButtons} keyName="largeButtons" />
-            <SettingRow icon={Palette} title="Color Blind Support" enabled={settings.colorBlindFriendly} keyName="colorBlindFriendly" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Eye} title="High Contrast" enabled={settings.highContrast} keyName="highContrast" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Type} title="Improve Readability" enabled={settings.improveReadability} keyName="improveReadability" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Maximize} title="Large Target Buttons" enabled={settings.largeButtons} keyName="largeButtons" />
+            <AppSettingRow isLight={isLight} onToggle={toggleSetting} icon={Palette} title="Color Blind Support" enabled={settings.colorBlindFriendly} keyName="colorBlindFriendly" />
           </div>
         </div>
 

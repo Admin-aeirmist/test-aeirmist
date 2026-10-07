@@ -312,9 +312,15 @@ export const ChatInfoPanel = ({
       exit={{ x: 300 }}
       className="w-full md:w-80 h-full border-l border-slate-200 dark:border-white/10 bg-white/95 dark:bg-[#06111a]/95 backdrop-blur-3xl overflow-y-auto no-scrollbar shadow-[-20px_0_40px_rgba(0,0,0,0.5)] z-20 flex flex-col"
     >
-      <div className="flex-shrink-0 p-8 text-center border-b border-slate-200/80 dark:border-white/5 relative overflow-hidden flex flex-col items-center">
+      <div 
+        className="flex-shrink-0 px-8 pb-8 text-center border-b border-slate-200/80 dark:border-white/5 relative overflow-hidden flex flex-col items-center transition-all"
+        style={{ paddingTop: 'calc(2rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+      >
         {/* Mobile Close Button */}
-        <div className="md:hidden absolute top-4 left-4 z-50">
+        <div 
+          className="md:hidden absolute left-4 z-50 transition-all"
+          style={{ top: 'calc(1rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+        >
           <button onClick={onClose} className="p-2 bg-slate-100 dark:bg-white/5 rounded-full text-slate-600 dark:text-white/70 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/10 backdrop-blur border border-slate-200 dark:border-white/10">
              <ChevronLeft size={20} />
           </button>

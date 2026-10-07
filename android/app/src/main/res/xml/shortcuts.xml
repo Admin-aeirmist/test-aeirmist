@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="shortcut_create_post"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_create_post_short"
+        android:shortcutLongLabel="@string/shortcut_create_post_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.aeirmist.social"
+            android:targetClass="com.aeirmist.social.MainActivity"
+            android:data="aeirmist://action/create_post" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shortcut_messages"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_messages_short"
+        android:shortcutLongLabel="@string/shortcut_messages_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.aeirmist.social"
+            android:targetClass="com.aeirmist.social.MainActivity"
+            android:data="aeirmist://action/messages" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shortcut_explore"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_explore_short"
+        android:shortcutLongLabel="@string/shortcut_explore_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.aeirmist.social"
+            android:targetClass="com.aeirmist.social.MainActivity"
+            android:data="aeirmist://action/explore" />
+    </shortcut>
+</shortcuts>

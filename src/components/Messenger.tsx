@@ -20,6 +20,8 @@ import {
   Ghost,
   Sidebar as SidebarIcon,
   X,
+  Square,
+  AppWindow,
   Loader2,
   ArrowRight,
   Camera,
@@ -34,7 +36,8 @@ import {
   ShieldCheck,
   Settings,
   UserX,
-  ShieldAlert
+  ShieldAlert,
+  Clock
 } from 'lucide-react';
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
 import { CallModal } from './CallModal';
@@ -240,19 +243,26 @@ export const LiveParticipantName = ({ participantId, fallbackName, className = "
 };
 
 const LiveParticipantPresenceDot = ({ participantId }: { participantId: string }) => {
-  const { db, onlineUsers } = useAeirmist();
+  const { db, onlineUsers, profile } = useAeirmist();
   const profileData = useSharedProfile(db, participantId);
 
   const isDeleted = profileData?.isDeleted === true;
-  const isOnline = !!onlineUsers?.has?.(participantId);
+  const lastSeenMs = extractTimestampMs(profileData?.lastSeen) || extractTimestampMs(profileData?.lastActiveAt);
+  const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
+  const isOnline = !!(
+    (participantId && onlineUsers?.has?.(participantId)) ||
+    (profileData?.uid && onlineUsers?.has?.(profileData.uid)) ||
+    (profileData?.status === 'online' && isRecentHeartbeat)
+  );
   const hasShowActivity = profileData?.privacySettings?.showActivity !== false;
   const isOnlineStatusOn = profileData?.messagingSettings?.onlineStatus !== false;
-  const showPresence = !isDeleted && profileData != null && isOnline && hasShowActivity && isOnlineStatusOn;
+  const myOnlineStatusOn = profile?.messagingSettings?.onlineStatus !== false;
+  const showPresence = !isDeleted && profileData != null && isOnline && hasShowActivity && isOnlineStatusOn && myOnlineStatusOn;
 
   if (!showPresence) return null;
 
   return (
-    <div className="absolute bottom-1 right-1 w-4 h-4 bg-aeirmist-lime rounded-lg border-2 border-aeirmist-bg lg:border-[3px]" />
+    <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-[#0c0d12] shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
   );
 };
 
@@ -266,7 +276,7 @@ const LiveParticipantSubDetails = ({ participantId, chatId }: { participantId: s
 
   // Derive from shared cache instead of individual listener
   const username = profileData?.username || '';
-  const lastSeen = profileData?.lastSeen || null;
+  const lastSeen = profileData?.lastSeen || profileData?.lastActiveAt || null;
   const showPresence = profileData?.privacySettings?.showActivity !== false;
   const isOnlineStatusOn = profileData?.messagingSettings?.onlineStatus !== false;
 
@@ -296,7 +306,13 @@ const LiveParticipantSubDetails = ({ participantId, chatId }: { participantId: s
     return () => unsubTyping();
   }, [db, participantId, chatId]);
 
-  const isOnline = !!onlineUsers?.has?.(participantId);
+  const lastSeenMs = extractTimestampMs(lastSeen) || extractTimestampMs(profileData?.updatedAt);
+  const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
+  const isOnline = !!(
+    (participantId && onlineUsers?.has?.(participantId)) ||
+    (profileData?.uid && onlineUsers?.has?.(profileData.uid)) ||
+    (profileData?.status === 'online' && isRecentHeartbeat)
+  );
 
   let presenceText = '';
   if (showPresence) {
@@ -349,7 +365,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     localAvatarURL,
     toggleNotification,
     deleteConversation,
-    addToast
+    addToast,
+    setFloatingChatHead
   } = useAeirmist();
   const { settings } = useAppearance();
   const [chats, setChats] = useState<Chat[]>(() => {
@@ -989,7 +1006,42 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     setMessageSearchQuery('');
     setIsInfoOpen(false);
     setIsMobileList(false);
+
+    // Keep floating chat heads updated so exiting inbox into feed retains the chat head
+    if (profile?.messagingSettings?.enableChatHeads !== false && setFloatingChatHead) {
+      const isGroup = chat.isGroup || chat.type === 'group';
+      const headPhoto = isGroup ? (chat.photo || (chat as any).groupPhotoURL) : (chat.photo || '');
+      const headName = isGroup ? (chat.name || 'Group') : (chat.name || 'Chat');
+      setFloatingChatHead({
+        id: chat.id,
+        name: headName || 'Chat',
+        photo: headPhoto || '',
+        unreadCount: chat.unreadCount?.[profile?.id || ''] || 0,
+        participantId: chat.otherParticipantId || (!isGroup ? chat.participants?.find((p: string) => p !== profile?.id) : undefined)
+      });
+    }
   };
+
+  // When leaving Messenger (switching to feed or other tabs), preserve active chat as floating head
+  useEffect(() => {
+    return () => {
+      if (activeChatId && currentChat && profile?.messagingSettings?.enableChatHeads !== false && setFloatingChatHead) {
+        const isVault = currentChat.isVaulted?.[profile?.id || ''] === true;
+        if (!isVault) {
+          const isGroup = currentChat.isGroup || currentChat.type === 'group';
+          const headPhoto = isGroup ? (currentChat.photo || (currentChat as any).groupPhotoURL) : (currentChat.photo || '');
+          const headName = isGroup ? (currentChat.name || 'Group') : (currentChat.name || 'Chat');
+          setFloatingChatHead({
+            id: currentChat.id,
+            name: headName || 'Chat',
+            photo: headPhoto || '',
+            unreadCount: currentChat.unreadCount?.[profile?.id || ''] || 0,
+            participantId: currentChat.otherParticipantId || (!isGroup ? currentChat.participants?.find((p: string) => p !== profile?.id) : undefined)
+          });
+        }
+      }
+    };
+  }, [activeChatId, currentChat, profile?.id, profile?.messagingSettings?.enableChatHeads, setFloatingChatHead]);
 
   const handleOptimisticChatBump = useCallback((chatId: string, text: string, currentChatObj?: any) => {
     const now = Date.now();
@@ -1153,8 +1205,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       </AnimatePresence>
       {/* Background Gradients - Dimmed when wallpaper is active to prevent clashing */}
       <div className={`absolute inset-0 overflow-hidden pointer-events-none transition-opacity duration-500 ${activeChatTheme?.wallpaperURL ? 'opacity-10' : 'opacity-100'}`}>
-        <div className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-white/5' : 'bg-aeirmist-cyan/10'} rounded-full blur-[120px]`} />
-        <div className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-aeirmist-magenta/5' : 'bg-aeirmist-magenta/10'} rounded-full blur-[120px]`} />
+        <div className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-white/5' : 'bg-aeirmist-cyan/10'} rounded-full [-webkit-mask-image:radial-gradient(closest-side,black,transparent)] [mask-image:radial-gradient(closest-side,black,transparent)]`} />
+        <div className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-aeirmist-magenta/5' : 'bg-aeirmist-magenta/10'} rounded-full [-webkit-mask-image:radial-gradient(closest-side,black,transparent)] [mask-image:radial-gradient(closest-side,black,transparent)]`} />
       </div>
 
       <AnimatePresence>
@@ -2203,7 +2255,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-12 text-center bg-transparent relative overflow-hidden select-none min-h-0 w-full animate-fade-in">
             {/* Subtle Ambient Glow */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] h-[320px] bg-aeirmist-cyan/10 rounded-full blur-[100px]" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] h-[320px] bg-aeirmist-cyan/10 rounded-full [-webkit-mask-image:radial-gradient(closest-side,black,transparent)] [mask-image:radial-gradient(closest-side,black,transparent)]" />
             </div>
 
             <div className="relative z-10 max-w-sm mx-auto flex flex-col items-center">
@@ -2396,7 +2448,9 @@ const ChatWindow = ({
     togglePinMessage, 
     clearChat, 
     toggleFollow, 
-    addToast
+    startCall,
+    addToast,
+    setFloatingChatHead
   } = useAeirmist();
   const { settings } = useAppearance();
 
@@ -2464,6 +2518,13 @@ const ChatWindow = ({
   const [failedMessages, setFailedMessages] = useState<Set<string>>(new Set());
   const [otherProfile, setOtherProfile] = useState<any>(null);
   const [otherProfileLoaded, setOtherProfileLoaded] = useState(false);
+
+  // Live presence ticker so relative active status ("Active 5m ago", etc.) updates automatically in real time
+  const [, setPresenceTicker] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setPresenceTicker(t => t + 1), 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Messenger 2.0: Hydrate persistent local outbox on active chat selection
   useEffect(() => {
@@ -3320,6 +3381,18 @@ const ChatWindow = ({
     return profile?.themeSettings?.perChatWallpapers?.[chat.id] || chat.themeSettings;
   }, [profile?.themeSettings?.perChatWallpapers, chat.id, chat.themeSettings]);
 
+  const otherParticipantTargetId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || otherProfile?.id;
+  const otherUid = otherProfile?.uid;
+  const lastSeenMs = extractTimestampMs(otherProfile?.lastSeen) || extractTimestampMs(otherProfile?.lastActiveAt) || extractTimestampMs(otherProfile?.updatedAt);
+  const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
+  const isOtherOnline = !!(
+    (otherProfile?.status === 'online' && isRecentHeartbeat) ||
+    (otherParticipantTargetId && onlineUsers?.has(otherParticipantTargetId)) ||
+    (otherUid && onlineUsers?.has(otherUid)) ||
+    (otherProfile?.id && onlineUsers?.has(otherProfile.id))
+  ) && otherProfile?.messagingSettings?.onlineStatus !== false;
+  const showStatus = otherProfile?.messagingSettings?.onlineStatus !== false && profile?.messagingSettings?.onlineStatus !== false;
+
   return (
     <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto h-full min-h-0 overflow-hidden relative z-10 ${isVaultMode ? 'bg-[#030107]/98' : 'bg-transparent'}`}>
       {/* Direct Scoped Chat Wallpaper Layer */}
@@ -3347,8 +3420,8 @@ const ChatWindow = ({
               userId={!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable ? chat.otherParticipantId : undefined}
               className="group-hover:border-aeirmist-cyan transition-colors"
             />
-            {!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable && !!onlineUsers?.has?.(chat.otherParticipantId || '') && showTheirPresence && (
-              <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-aeirmist-lime rounded-full border-2 border-aeirmist-bg z-10" />
+            {!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable && isOtherOnline && showTheirPresence && showStatus && (
+              <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#0c0d14] ring-1 ring-emerald-400/40 z-10 shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
             )}
           </div>
           <div className={`group min-w-0 flex-1 ${!isPrivateSpace && !isOtherUnavailable ? 'cursor-pointer' : ''}`} onClick={!isPrivateSpace && !isOtherUnavailable ? (chat?.isGroup ? toggleInfo : handleVisitProfile) : undefined}>
@@ -3371,26 +3444,28 @@ const ChatWindow = ({
             )}
             {!isPrivateSpace && !isOtherUnavailable && showTheirPresence && (
               remoteTyping ? (
-                <div className="flex items-center gap-1 mt-0.5">
-                  <span className={`text-[8px] uppercase tracking-widest font-black italic ${isVaultMode ? 'text-[#c77dff]' : 'text-aeirmist-cyan'}`}>Typing...</span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="flex gap-0.5 items-center">
+                    <span className="w-1 h-1 rounded-full bg-aeirmist-cyan animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1 h-1 rounded-full bg-aeirmist-cyan animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1 h-1 rounded-full bg-aeirmist-cyan animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </span>
+                  <span className={`text-[11px] font-semibold italic ${isVaultMode ? 'text-[#c77dff]' : 'text-aeirmist-cyan'}`}>Typing...</span>
                 </div>
-              ) : (() => {
-                const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || otherProfile?.id;
-                const isOtherOnline = (otherProfile?.status === 'online' || !!onlineUsers?.has(otherId || '')) && otherProfile?.messagingSettings?.onlineStatus !== false;
-                const showStatus = otherProfile?.messagingSettings?.onlineStatus !== false && profile?.messagingSettings?.onlineStatus !== false;
-                return (
-                  <div className="flex items-center gap-1 mt-0.5 min-w-0">
-                    <p className={`text-[8px] uppercase tracking-widest font-bold ${isOtherOnline && showStatus ? 'text-aeirmist-lime flex items-center gap-1' : 'text-white/40'} truncate`}>
-                      {isOtherOnline && showStatus && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-lime animate-pulse inline-block" />}
-                      {formatActiveStatus(
-                        isOtherOnline && showStatus, 
-                        otherProfile?.lastSeen || otherProfile?.updatedAt, 
-                        !showStatus
-                      )}
-                    </p>
-                  </div>
-                );
-              })()
+              ) : (
+                <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                  {isOtherOnline && showStatus ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-emerald-500/25 shrink-0 animate-pulse" />
+                      <span className="text-[11px] font-medium text-emerald-400 truncate">Active now</span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] font-normal text-slate-500 dark:text-neutral-400 truncate">
+                      {formatActiveStatus(false, lastSeenMs || otherProfile?.lastSeen, !showStatus)}
+                    </span>
+                  )}
+                </div>
+              )
             )}
           </div>
         </div>
@@ -3410,6 +3485,26 @@ const ChatWindow = ({
                 <Video size={16} />
               </button>
             </>
+          )}
+          {/* Pop-out to Square Floating Chat Head */}
+          {profile?.messagingSettings?.enableChatHeads !== false && (
+            <button 
+              onClick={() => {
+                const headPhoto = isPrivateSpace ? profile?.photoURL : (chat?.isGroup ? chat.photo : (otherProfile?.photoURL || chat.photo));
+                const headName = isPrivateSpace ? 'My Space' : (chat?.isGroup ? chat.name : (otherProfile?.displayName || chat.name || 'Chat'));
+                setFloatingChatHead({
+                  id: chat.id,
+                  name: headName,
+                  photo: headPhoto,
+                  participantId: chat.otherParticipantId || otherProfile?.id
+                });
+                onBack?.();
+              }}
+              title="Pop out to floating Square Chat Head"
+              className="w-9 h-9 md:w-10 md:h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/60 hover:text-aeirmist-cyan hover:bg-white/10 active:scale-95 transition-all"
+            >
+              <AppWindow size={16} />
+            </button>
           )}
           <button 
             onClick={toggleInfo}
@@ -3460,7 +3555,7 @@ const ChatWindow = ({
         </div>
 
         {isOtherUnavailable && (
-          <div className="mx-auto my-6 max-w-sm px-6 py-5 bg-white/[0.03] border border-white/10 rounded-2xl text-center backdrop-blur-xl shadow-lg animate-fade-in">
+          <div className="mx-auto my-6 max-w-sm px-6 py-5 bg-white/[0.03] border border-white/10 rounded-2xl text-center shadow-lg animate-fade-in">
             <div className="w-10 h-10 rounded-full bg-white/5 mx-auto flex items-center justify-center mb-2.5 text-white/40">
               <UserX size={20} />
             </div>
@@ -3491,7 +3586,7 @@ const ChatWindow = ({
                 {showDate && (
                   <div className="flex items-center gap-4 my-8 sticky top-2 z-10 px-4 md:px-8">
                     <div className="flex-1 h-px bg-white/5" />
-                    <div className="bg-[#1A1B22]/80 backdrop-blur-xl border border-white/10 px-6 py-2 rounded-full text-[11px] font-bold uppercase tracking-[0.1em] text-white/50 shadow-xl pointer-events-auto">
+                    <div className="bg-[#1A1B22]/80 backdrop-blur-sm border border-white/10 px-6 py-2 rounded-full text-[11px] font-bold uppercase tracking-[0.1em] text-white/50 shadow-xl pointer-events-auto">
                       {formatDateSeparator(msg.timestampMs)}
                     </div>
                     <div className="flex-1 h-px bg-white/5" />
@@ -3574,10 +3669,14 @@ const ChatWindow = ({
         <div ref={messagesEndRef} className="h-4 w-full flex-shrink-0" />
       </div>
 
-      {/* Input Area - Docked at Bottom cleanly without artificial void gaps */}
+      {/* Input Area - Docked flush to Android Keyboard (Gboard) / Screen Bottom */}
       <footer 
         className="flex-shrink-0 w-full px-2 sm:px-4 md:px-8 z-30 transition-all duration-150"
-        style={{ paddingBottom: 'max(0.5rem, var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
+        style={{ 
+          paddingBottom: isKeyboardOpen 
+            ? '0.375rem' 
+            : 'max(0.5rem, var(--sab, var(--safe-area-inset-bottom, 0px)))' 
+        }}
       >
         <div className="w-full">
           {(() => {
@@ -3588,7 +3687,7 @@ const ChatWindow = ({
             const isIncomingRequest = chat.status === 'request' && chat.lastMessageSenderId !== profile?.id;
             if (isIncomingRequest) {
               return (
-                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
+                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center">
                   <span className="text-aeirmist-magenta font-black uppercase tracking-[0.2em] text-[10px] block mb-2">Inbound Signal Request</span>
                   <p className="text-white/60 text-xs mb-4">
                     Do you want to authorize connection with @{otherProfile?.username || 'user'}? They won't know you've read their message until you Accept.
@@ -3685,7 +3784,7 @@ const ChatWindow = ({
 
             if (isOtherUnavailable) {
               return (
-                <div className="w-full py-4 px-6 bg-white/[0.02] border border-white/10 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl select-none">
+                <div className="w-full py-4 px-6 bg-white/[0.02] border border-white/10 rounded-2xl md:rounded-[2rem] text-center select-none">
                   <span className="text-white/40 text-xs font-medium tracking-wide">
                     This person is unavailable on Aeirmist.
                   </span>
@@ -3695,7 +3794,7 @@ const ChatWindow = ({
 
             if (isOtherBlocked) {
               return (
-                <div className="w-full p-4 md:p-6 bg-red-500/10 border border-red-500/20 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
+                <div className="w-full p-4 md:p-6 bg-red-500/10 border border-red-500/20 rounded-2xl md:rounded-[2rem] text-center">
                   <span className="text-red-400 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Connections Severed</span>
                   <span className="text-white/60 text-xs">You have blocked this Profile. Lift the Block in the details panel to resume activity.</span>
                 </div>
@@ -3710,7 +3809,7 @@ const ChatWindow = ({
 
             if (otherParticipantId && isBlocked(otherParticipantId)) {
               return (
-                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
+                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center">
                   <span className="text-white/40 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Transmission Suspended</span>
                   <span className="text-white/60 text-xs">
                     You have blocked this user. Unblock this user to resume conversation.
@@ -3721,7 +3820,7 @@ const ChatWindow = ({
 
             if (isOtherPrivate && !amFollowingOther && chat.status !== 'active') {
               return (
-                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
+                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center">
                   <span className="text-white/40 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Connections Locked</span>
                   <span className="text-white/60 text-xs">
                     {isFollowRequestPending ? "Follow request pending" : "You can't message this user yet."}
@@ -3786,4 +3885,3 @@ const ChatWindow = ({
 };
 
 export default Messenger;
-

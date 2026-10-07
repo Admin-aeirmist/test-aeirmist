@@ -73,10 +73,14 @@ interface AeirmistDBSchema {
     value: OfflineDraftItem;
     indexes: { 'by-type': string };
   };
+  profiles: {
+    key: string;
+    value: any;
+  };
 }
 
 const DB_NAME = 'aeirmist_vault';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 class CacheService {
   private db: Promise<IDBPDatabase<AeirmistDBSchema>>;
@@ -105,6 +109,12 @@ class CacheService {
           if (!db.objectStoreNames.contains('offline_drafts')) {
             const draftsStore = db.createObjectStore('offline_drafts', { keyPath: 'id' });
             draftsStore.createIndex('by-type', 'type');
+          }
+        }
+
+        if (oldVersion < 4) {
+          if (!db.objectStoreNames.contains('profiles')) {
+            db.createObjectStore('profiles', { keyPath: 'id' });
           }
         }
       },
@@ -289,20 +299,56 @@ class CacheService {
     return db.delete('offline_drafts', id);
   }
 
+  // --- Local Vault Profiles (Persistent Profile Storage) ---
+  async saveProfile(profile: any): Promise<void> {
+    if (!profile || !profile.id) return;
+    try {
+      const db = await this.db;
+      await db.put('profiles', {
+        ...profile,
+        cachedAt: Date.now()
+      });
+    } catch (err) {
+      console.warn('[CacheService] Failed to save profile to local vault:', err);
+    }
+  }
+
+  async getProfile(id: string): Promise<any | null> {
+    if (!id) return null;
+    try {
+      const db = await this.db;
+      return (await db.get('profiles', id)) || null;
+    } catch (err) {
+      console.warn('[CacheService] Failed to get profile from local vault:', err);
+      return null;
+    }
+  }
+
+  async clearProfiles(): Promise<void> {
+    try {
+      const db = await this.db;
+      await db.clear('profiles');
+    } catch (err) {
+      console.warn('[CacheService] Failed to clear profiles in local vault:', err);
+    }
+  }
+
   // --- Metrics / Storage Stats ---
   async getDatabaseStats() {
     const db = await this.db;
-    const [postsCount, draftsCount, messagesCount, mediaCount] = await Promise.all([
+    const [postsCount, draftsCount, messagesCount, mediaCount, profilesCount] = await Promise.all([
       db.count('feed_posts').catch(() => 0),
       db.count('offline_drafts').catch(() => 0),
       db.count('messages').catch(() => 0),
-      db.count('media').catch(() => 0)
+      db.count('media').catch(() => 0),
+      db.count('profiles').catch(() => 0)
     ]);
     return {
       postsCount,
       draftsCount,
       messagesCount,
       mediaCount,
+      profilesCount,
       engine: 'SQLite / IndexedDB (Local Vault)'
     };
   }
@@ -315,6 +361,7 @@ class CacheService {
     await db.clear('pending_uploads');
     await db.clear('feed_posts');
     await db.clear('offline_drafts');
+    await db.clear('profiles');
   }
 }
 

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { 
   MessageSquare, 
@@ -82,6 +82,7 @@ const DEFAULT_MESSAGING_SETTINGS = {
   onlineStatus: true,
   lastSeen: 'followers', // 'everyone' | 'followers' | 'nobody'
   messagePreview: true,
+  enableChatHeads: true,
 
   // 3. Media & Uploads
   uploadQuality: 'high', // 'original' | 'high' | 'balanced' | 'data_saver'
@@ -148,6 +149,91 @@ const WALLPAPERS = [
   { id: 'custom', name: 'Custom Dark Map', css: 'bg-zinc-950' },
 ];
 
+// ── Stable sub-components (defined outside to avoid recreation on every render) ─────────
+
+interface SectionProps {
+  id: string;
+  title: string;
+  icon: React.ElementType;
+  children: React.ReactNode;
+  activeSection: string | null;
+  onToggle: (id: string) => void;
+}
+
+const Section = React.memo(({ id, title, icon: Icon, children, activeSection, onToggle }: SectionProps) => {
+  const isOpen = activeSection === id;
+  return (
+    <div className={`rounded-3xl border transition-colors duration-200 overflow-hidden ${isOpen ? 'bg-white/[0.03] border-white/10 shadow-2xl' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.02]'}`}>
+      <button
+        onClick={() => onToggle(id)}
+        className="w-full flex items-center justify-between p-5 text-left"
+      >
+        <div className="flex items-center gap-4">
+          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-colors duration-200 ${isOpen ? 'bg-aeirmist-cyan text-black' : 'bg-white/5 text-white/40'}`}>
+            <Icon size={20} />
+          </div>
+          <div>
+            <h3 className={`text-sm font-black uppercase tracking-wider transition-colors duration-200 ${isOpen ? 'text-white' : 'text-white/60'}`}>{title}</h3>
+            {!isOpen && <p className="text-[10px] text-white/30 uppercase font-bold tracking-tight">Configure {title.toLowerCase()} settings</p>}
+          </div>
+        </div>
+        <ChevronDown
+          size={20}
+          className={`text-white/20 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {/* CSS max-height accordion — far cheaper than Framer height:auto on mobile WebView */}
+      <div
+        style={{
+          maxHeight: isOpen ? '9999px' : '0px',
+          overflow: 'hidden',
+          transition: isOpen ? 'max-height 0.35s ease-in' : 'max-height 0.2s ease-out',
+          opacity: isOpen ? 1 : 0,
+        }}
+      >
+        <div className="p-6 pt-0 space-y-6">
+          <div className="h-[1px] w-full bg-white/5 mb-6" />
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const Row = React.memo(({ label, desc, children }: { label: string; desc?: string; children: React.ReactNode }) => (
+  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2">
+    <div className="max-w-md">
+      <h4 className="text-xs font-black uppercase tracking-widest text-white/90">{label}</h4>
+      {desc && <p className="text-[10px] text-white/40 font-bold leading-relaxed mt-1 uppercase tracking-tight">{desc}</p>}
+    </div>
+    <div className="shrink-0">{children}</div>
+  </div>
+));
+
+const Toggle = React.memo(({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) => (
+  <button
+    onClick={onToggle}
+    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${enabled ? 'bg-aeirmist-cyan' : 'bg-white/10'}`}
+  >
+    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+  </button>
+));
+
+const MsgSelect = React.memo(({ value, options, onChange }: { value: any; options: { label: string; value: any }[]; onChange: (val: any) => void }) => (
+  <div className="relative">
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-10 pl-4 pr-10 rounded-xl bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest text-white/80 focus:border-aeirmist-cyan/50 focus:bg-white/10 outline-none transition-all appearance-none cursor-pointer"
+    >
+      {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+    </select>
+    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
+  </div>
+));
+
+// ────────────────────────────────────────────────────────────────────────────
+
 export default function MessagingSettings() {
   const { profile, updateProfile, addToast } = useAeirmist();
   const [settings, setSettings] = useState<typeof DEFAULT_MESSAGING_SETTINGS>(() => ({
@@ -187,7 +273,7 @@ export default function MessagingSettings() {
         rollbackRef.current = settings;
         addToast({
           type: 'success',
-          title: 'PREFERENCES SYNCED',
+          title: 'Preferences Saved',
           message: 'Messaging settings updated successfully.'
         });
       } catch (error: any) {
@@ -196,8 +282,8 @@ export default function MessagingSettings() {
         }
         addToast({
           type: 'warning',
-          title: 'SYNC TERMINATED',
-          message: error?.message || 'Connection error detected.'
+          title: 'Sync Failed',
+          message: error?.message || 'Connection error. Please try again.'
         });
       } finally {
         setIsSyncing(false);
@@ -207,98 +293,25 @@ export default function MessagingSettings() {
     return () => clearTimeout(timer);
   }, [settings, profile?.messagingSettings, updateProfile, addToast]);
 
-  const toggleSetting = (key: keyof typeof DEFAULT_MESSAGING_SETTINGS) => {
+  const toggleSetting = useCallback((key: keyof typeof DEFAULT_MESSAGING_SETTINGS) => {
     setSettings(prev => ({ ...prev, [key]: !prev[key] }));
-  };
+  }, []);
 
-  const updateField = (key: keyof typeof DEFAULT_MESSAGING_SETTINGS, val: any) => {
+  const updateField = useCallback((key: keyof typeof DEFAULT_MESSAGING_SETTINGS, val: any) => {
     setSettings(prev => ({ ...prev, [key]: val }));
-  };
+  }, []);
 
-  const Section = ({ id, title, icon: Icon, children }: { id: string, title: string, icon: any, children: React.ReactNode }) => {
-    const isOpen = activeSection === id;
-    return (
-      <div className={`rounded-3xl border transition-all duration-500 overflow-hidden ${isOpen ? 'bg-white/[0.03] border-white/10 shadow-2xl' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.02]'}`}>
-        <button 
-          onClick={() => setActiveSection(isOpen ? null : id)}
-          className="w-full flex items-center justify-between p-5 text-left"
-        >
-          <div className="flex items-center gap-4">
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${isOpen ? 'bg-aeirmist-cyan text-black shadow-[0_0_20px_rgba(0,242,255,0.4)]' : 'bg-white/5 text-white/40'}`}>
-              <Icon size={20} />
-            </div>
-            <div>
-              <h3 className={`text-sm font-black uppercase tracking-wider transition-colors ${isOpen ? 'text-white' : 'text-white/60'}`}>{title}</h3>
-              {!isOpen && <p className="text-[10px] text-white/30 uppercase font-bold tracking-tight">Configure {title.toLowerCase()} settings</p>}
-            </div>
-          </div>
-          <motion.div
-            animate={{ rotate: isOpen ? 180 : 0 }}
-            className="text-white/20"
-          >
-            <ChevronDown size={20} />
-          </motion.div>
-        </button>
-        <AnimatePresence>
-          {isOpen && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <div className="p-6 pt-0 space-y-6">
-                <div className="h-[1px] w-full bg-white/5 mb-6" />
-                {children}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    );
-  };
-
-  const Row = ({ label, desc, children }: { label: string, desc?: string, children: React.ReactNode }) => (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2">
-      <div className="max-w-md">
-        <h4 className="text-xs font-black uppercase tracking-widest text-white/90">{label}</h4>
-        {desc && <p className="text-[10px] text-white/40 font-bold leading-relaxed mt-1 uppercase tracking-tight">{desc}</p>}
-      </div>
-      <div className="shrink-0">
-        {children}
-      </div>
-    </div>
-  );
-
-  const Toggle = ({ enabled, onToggle }: { enabled: boolean, onToggle: () => void }) => (
-    <button
-      onClick={onToggle}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)]' : 'bg-white/10'}`}
-    >
-      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${enabled ? 'translate-x-5' : 'translate-x-0'}`} />
-    </button>
-  );
-
-  const Select = ({ value, options, onChange }: { value: any, options: { label: string, value: any }[], onChange: (val: any) => void }) => (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10 pl-4 pr-10 rounded-xl bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest text-white/80 focus:border-aeirmist-cyan/50 focus:bg-white/10 outline-none transition-all appearance-none cursor-pointer"
-      >
-        {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-      </select>
-      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
-    </div>
-  );
+  const handleSectionToggle = useCallback((id: string) => {
+    setActiveSection(prev => prev === id ? null : id);
+  }, []);
 
   return (
     <div className="w-full max-w-4xl mx-auto space-y-4 pb-32">
       
       {/* Privacy & Requests */}
-      <Section id="privacy" title="Privacy & Requests" icon={Lock}>
+      <Section activeSection={activeSection} onToggle={handleSectionToggle} id="privacy" title="Privacy & Requests" icon={Lock}>
         <Row label="Who can message me" desc="Choose your who can message you">
-          <Select 
+          <MsgSelect 
             value={settings.whoCanMessageMe}
             options={[
               { label: 'Everyone', value: 'everyone' },
@@ -316,7 +329,7 @@ export default function MessagingSettings() {
           <Toggle enabled={settings.autoFilterSpam} onToggle={() => toggleSetting('autoFilterSpam')} />
         </Row>
         <Row label="Auto-delete Spam" desc="Purge spam signals after duration">
-          <Select 
+          <MsgSelect 
             value={settings.autoDeleteSpamDays}
             options={[
               { label: '7 Days', value: 7 },
@@ -351,7 +364,7 @@ export default function MessagingSettings() {
       </Section>
 
       {/* Chat Experience */}
-      <Section id="chat_exp" title="Chat Experience" icon={MessageSquare}>
+      <Section activeSection={activeSection} onToggle={handleSectionToggle} id="chat_exp" title="Chat Experience" icon={MessageSquare}>
         <Row label="Read Receipts" desc="Let others know when you've read their messages">
           <Toggle enabled={settings.readReceipts} onToggle={() => toggleSetting('readReceipts')} />
         </Row>
@@ -365,7 +378,7 @@ export default function MessagingSettings() {
           <Toggle enabled={settings.onlineStatus} onToggle={() => toggleSetting('onlineStatus')} />
         </Row>
         <Row label="Last Seen" desc="Control who can see your previous online timestamps">
-          <Select 
+          <MsgSelect 
             value={settings.lastSeen}
             options={[
               { label: 'Everyone', value: 'everyone' },
@@ -378,12 +391,15 @@ export default function MessagingSettings() {
         <Row label="Message Preview" desc="Show message previews in system notifications">
           <Toggle enabled={settings.messagePreview} onToggle={() => toggleSetting('messagePreview')} />
         </Row>
+        <Row label="Square Chat Heads" desc="Floating quick-access bubble on your screen">
+          <Toggle enabled={settings.enableChatHeads ?? true} onToggle={() => toggleSetting('enableChatHeads')} />
+        </Row>
       </Section>
 
       {/* Media & Uploads */}
-      <Section id="media" title="Media & Uploads" icon={LucideImage}>
+      <Section activeSection={activeSection} onToggle={handleSectionToggle} id="media" title="Media & Uploads" icon={LucideImage}>
         <Row label="Upload Quality" desc="Compression metrics for outgoing artifacts">
-          <Select 
+          <MsgSelect 
             value={settings.uploadQuality}
             options={[
               { label: 'Original', value: 'original' },
@@ -415,7 +431,7 @@ export default function MessagingSettings() {
           <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-4">
             <h5 className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Sync Conditions</h5>
             <Row label="Network">
-              <Select 
+              <MsgSelect 
                 value={settings.autoDownloadOn}
                 options={[
                   { label: 'Wi-Fi Only', value: 'wifi' },
@@ -426,7 +442,7 @@ export default function MessagingSettings() {
               />
             </Row>
             <Row label="Camera">
-              <Select 
+              <MsgSelect 
                 value={settings.cameraQuality}
                 options={[
                   { label: 'Standard', value: 'standard' },
@@ -441,7 +457,7 @@ export default function MessagingSettings() {
       </Section>
 
       {/* Calls */}
-      <Section id="calls" title="Calls" icon={Phone}>
+      <Section activeSection={activeSection} onToggle={handleSectionToggle} id="calls" title="Calls" icon={Phone}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-4">
             <Row label="Voice Calls" desc="Enable real-time audio streams">
@@ -451,7 +467,7 @@ export default function MessagingSettings() {
               <Toggle enabled={settings.allowVideoCalls} onToggle={() => toggleSetting('allowVideoCalls')} />
             </Row>
             <Row label="Who can call me">
-              <Select 
+              <MsgSelect 
                 value={settings.whoCanCallMe}
                 options={[
                   { label: 'Everyone', value: 'everyone' },
@@ -482,9 +498,9 @@ export default function MessagingSettings() {
       </Section>
 
       {/* Chat Organization */}
-      <Section id="organization" title="Chat Organization" icon={Archive}>
+      <Section activeSection={activeSection} onToggle={handleSectionToggle} id="organization" title="Chat Organization" icon={Archive}>
         <Row label="Default Chat Filter" desc="Primary inbox view configuration">
-          <Select 
+          <MsgSelect 
             value={settings.defaultChatFilter}
             options={[
               { label: 'All Messages', value: 'all' },
@@ -511,7 +527,7 @@ export default function MessagingSettings() {
       </Section>
 
       {/* Storage Management */}
-      <Section id="storage" title="Storage" icon={StorageIcon}>
+      <Section activeSection={activeSection} onToggle={handleSectionToggle} id="storage" title="Storage" icon={StorageIcon}>
         <div className="p-6 rounded-[2rem] bg-white/[0.02] border border-white/5 space-y-6">
           <div className="flex justify-between items-end">
             <div>
@@ -560,7 +576,7 @@ export default function MessagingSettings() {
       </Section>
 
       {/* Security */}
-      <Section id="security" title="Security" icon={Shield}>
+      <Section activeSection={activeSection} onToggle={handleSectionToggle} id="security" title="Security" icon={Shield}>
         <div className="space-y-4">
           <div className="p-5 rounded-2xl bg-aeirmist-lime/5 border border-aeirmist-lime/20 flex items-start gap-4">
             <ShieldCheck size={24} className="text-aeirmist-lime shrink-0" />
@@ -601,7 +617,7 @@ export default function MessagingSettings() {
         <div className="p-6 rounded-[2.5rem] bg-white/[0.01] border border-white/5 space-y-6">
           <h3 className="text-xs font-black uppercase tracking-widest text-aeirmist-cyan">Gesture Mapping</h3>
           <Row label="Left Swipe Action">
-            <Select 
+            <MsgSelect 
               value={settings.leftSwipeAction}
               options={[
                 { label: 'Quick Reply', value: 'reply' },
@@ -612,7 +628,7 @@ export default function MessagingSettings() {
             />
           </Row>
           <Row label="Right Swipe Action">
-            <Select 
+            <MsgSelect 
               value={settings.rightSwipeAction}
               options={[
                 { label: 'Reply', value: 'reply' },
@@ -623,7 +639,7 @@ export default function MessagingSettings() {
             />
           </Row>
           <Row label="Double Tap Reaction" desc="Default emoji for rapid feedback">
-             <Select 
+             <MsgSelect 
               value={settings.doubleTapReaction}
               options={[
                 { label: '❤️ Love', value: '❤️' },
@@ -658,7 +674,7 @@ export default function MessagingSettings() {
         <div className="p-6 rounded-[2.5rem] bg-white/[0.01] border border-white/5 space-y-6">
           <h3 className="text-xs font-black uppercase tracking-widest text-aeirmist-lime">Signal Processing</h3>
           <Row label="Voice Playback Speed">
-            <Select 
+            <MsgSelect 
               value={settings.voicePlaybackSpeed}
               options={[
                 { label: '1.0x (Standard)', value: 1 },
@@ -669,7 +685,7 @@ export default function MessagingSettings() {
             />
           </Row>
           <Row label="Auto Delete Messages" desc="Purge history based on timer">
-            <Select 
+            <MsgSelect 
               value={settings.autoDeleteMessages}
               options={[
                 { label: 'Never', value: 'never' },
@@ -719,7 +735,7 @@ export default function MessagingSettings() {
         
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <Row label="Auto Backup Frequency">
-             <Select 
+             <MsgSelect 
               value={settings.autoBackup}
               options={[
                 { label: 'Daily Sync', value: 'daily' },

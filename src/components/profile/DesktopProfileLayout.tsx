@@ -34,7 +34,8 @@ import {
   ExternalLink,
   Users,
   UserCheck,
-  Heart
+  Heart,
+  MapPin
 } from 'lucide-react';
 import { getAvatarUrl } from '../../lib/avatar';
 import { Avatar } from '../ui/Avatar';
@@ -472,6 +473,14 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 <p className="text-slate-600 dark:text-white/60 text-xs tracking-wide max-w-lg mt-3 leading-relaxed font-sans">
                   {displayUser?.bio || "No bio added yet."}
                 </p>
+              )}
+
+              {/* Location Badge */}
+              {displayUser?.location && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium mt-2 w-fit">
+                  <MapPin size={12} className="text-emerald-400 shrink-0" />
+                  <span>{displayUser.location}</span>
+                </div>
               )}
 
               {/* Website & Social Links */}

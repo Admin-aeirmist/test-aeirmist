@@ -27,9 +27,12 @@ import {
   CheckCheck,
   Camera,
   MapPin,
-  UserPlus
+  UserPlus,
+  Clock
 } from 'lucide-react';
 import { VoiceVisualizer } from './VoiceVisualizer';
+import { MiniPollCreateModal } from './MiniPollCreateModal';
+import { ScheduleMessageModal } from './ScheduleMessageModal';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
 import { PermissionService } from '../../services/PermissionService';
@@ -68,7 +71,8 @@ interface AeirmistInputSystemProps {
   chatId?: string;
   onSendMessage: (text: string, mood?: string, replyingTo?: any) => void;
   onSendMedia?: (file: File, isHD?: boolean, replyingTo?: any) => void;
-  onSendSpecialMessage?: (params: { type: 'location' | 'contact' | 'sticker' | 'file'; text?: string; mediaUrl?: string; metadata?: any; replyingTo?: any; }) => void;
+  onSendSpecialMessage?: (params: { type: 'location' | 'contact' | 'sticker' | 'file' | 'poll'; text?: string; mediaUrl?: string; metadata?: any; replyingTo?: any; }) => void;
+  onScheduleMessage?: (params: { text: string; scheduledTimeMs: number }) => void;
   onTyping?: (isTyping: boolean) => void;
   onOpenCamera?: () => void;
   onCaptureRef?: React.MutableRefObject<((file: File) => void) | null>;
@@ -87,6 +91,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   onSendMessage, 
   onSendMedia, 
   onSendSpecialMessage,
+  onScheduleMessage,
   onTyping, 
   onOpenCamera, 
   onCaptureRef, 
@@ -180,7 +185,53 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [showPollModal, setShowPollModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const { requestPermission, permissions, addToast, profile } = useAeirmist();
+
+  const handleCreatePoll = (pollData: { question: string; options: string[] }) => {
+    if (onSendSpecialMessage) {
+      onSendSpecialMessage({
+        type: 'poll',
+        text: `📊 Poll: ${pollData.question}`,
+        metadata: {
+          poll: {
+            question: pollData.question,
+            options: pollData.options,
+            votes: {}
+          }
+        },
+        replyingTo
+      });
+    }
+  };
+
+  const handleScheduleMessage = (params: { text: string; scheduledTimeMs: number }) => {
+    if (onScheduleMessage) {
+      onScheduleMessage(params);
+    } else {
+      try {
+        const key = `aeirmist_scheduled_${chatId || 'general'}`;
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        existing.push({
+          id: `sched_${Date.now()}`,
+          text: params.text,
+          scheduledTimeMs: params.scheduledTimeMs,
+          chatId,
+          createdAt: Date.now()
+        });
+        localStorage.setItem(key, JSON.stringify(existing));
+        addToast?.({
+          title: 'Message Scheduled',
+          message: `Your message has been scheduled for delivery.`,
+          type: 'success'
+        });
+      } catch (e) {
+        logger.error(e);
+      }
+    }
+    setInputText('');
+  };
 
   const handleShareLocation = () => {
     setShowAttachments(false);
@@ -285,22 +336,42 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
     try {
       const stream = micRes.stream;
       setAudioStream(stream);
-      const recorder = new MediaRecorder(stream);
+
+      // Detect best supported audio mimeType across WebView and browsers
+      let mimeType = '';
+      if (typeof MediaRecorder.isTypeSupported === 'function') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          mimeType = 'audio/webm';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/aac')) {
+          mimeType = 'audio/aac';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+          mimeType = 'audio/ogg;codecs=opus';
+        }
+      }
+
+      const recorderOptions: MediaRecorderOptions = mimeType ? { mimeType } : {};
+      const recorder = new MediaRecorder(stream, recorderOptions);
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const actualMime = recorder.mimeType || mimeType || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type: actualMime });
         setAudioBlob(blob);
         stream.getTracks().forEach(track => track.stop());
         setAudioStream(null);
       };
 
-      recorder.start();
+      // Collect data every 250ms for consistent chunk buffering
+      recorder.start(250);
       setIsRecording(true);
       setIsPaused(false);
       setRecordingTime(0);
@@ -355,14 +426,25 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   }, [audioStream]);
 
   const stopAndSendRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        if (onSendMedia) {
-          const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = () => {
+        const actualMime = recorder.mimeType || 'audio/webm';
+        const ext = actualMime.includes('mp4') || actualMime.includes('aac') ? 'm4a' : (actualMime.includes('ogg') ? 'ogg' : 'webm');
+        const blob = new Blob(chunksRef.current, { type: actualMime });
+        
+        if (blob.size > 0 && onSendMedia) {
+          const file = new File([blob], `voice_${Date.now()}.${ext}`, { type: actualMime });
           onSendMedia(file, false, replyingTo);
           onCancelReply?.();
+        } else if (blob.size === 0) {
+          addToast({
+            title: "Voice Empty",
+            message: "No audio was captured. Please try recording again.",
+            type: "warning"
+          });
         }
+        
         if (audioStream) {
           audioStream.getTracks().forEach(track => track.stop());
         }
@@ -370,8 +452,17 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
         setAudioBlob(null);
         setAudioStream(null);
         setRecordingTime(0);
+        chunksRef.current = [];
       };
-      mediaRecorderRef.current.stop();
+      
+      try {
+        if (typeof recorder.requestData === 'function') {
+          recorder.requestData();
+        }
+        recorder.stop();
+      } catch (err) {
+        logger.error("Error stopping recorder:", err);
+      }
     }
   };
 
@@ -798,6 +889,24 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
                       setShowAttachments(false); 
                     }} 
                   />
+                  <AttachmentItem 
+                    icon={<BarChart3 size={22} />} 
+                    label="Poll" 
+                    color="cyan" 
+                    onClick={() => { 
+                      setShowAttachments(false); 
+                      setShowPollModal(true); 
+                    }} 
+                  />
+                  <AttachmentItem 
+                    icon={<Clock size={22} />} 
+                    label="Schedule" 
+                    color="yellow" 
+                    onClick={() => { 
+                      setShowAttachments(false); 
+                      setShowScheduleModal(true); 
+                    }} 
+                  />
                 </div>
               </div>
             </motion.div>
@@ -963,6 +1072,21 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Mini Poll Create Modal */}
+      <MiniPollCreateModal
+        isOpen={showPollModal}
+        onClose={() => setShowPollModal(false)}
+        onCreatePoll={handleCreatePoll}
+      />
+
+      {/* Schedule Message Modal */}
+      <ScheduleMessageModal
+        isOpen={showScheduleModal}
+        onClose={() => setShowScheduleModal(false)}
+        initialText={inputText}
+        onSchedule={handleScheduleMessage}
+      />
     </div>
   );
 });

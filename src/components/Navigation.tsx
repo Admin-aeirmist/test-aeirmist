@@ -135,6 +135,24 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
   const { isStandalone, isInstallable, install } = usePWAInstall();
   const [installModalOpen, setInstallModalOpen] = React.useState(false);
 
+  // Mobile keyboard detection: hide bottom nav when keyboard opens
+  const [isKeyboardActive, setIsKeyboardActive] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let maxH = window.innerHeight;
+    const handleViewport = () => {
+      if (window.innerHeight > maxH) maxH = window.innerHeight;
+      const currentH = window.visualViewport?.height || window.innerHeight;
+      setIsKeyboardActive(maxH - currentH > 120);
+    };
+    window.visualViewport?.addEventListener('resize', handleViewport);
+    window.addEventListener('resize', handleViewport);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', handleViewport);
+      window.removeEventListener('resize', handleViewport);
+    };
+  }, []);
+
   const handleInstallClick = React.useCallback(async () => {
     if (isInstallable) {
       const res = await install();
@@ -768,7 +786,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
 
       {/* Mobile Bottom Navigation Bar - FLUID DOCK */}
       <AnimatePresence>
-        {!isNavHidden && (
+        {!isNavHidden && !isKeyboardActive && (
           <motion.div 
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

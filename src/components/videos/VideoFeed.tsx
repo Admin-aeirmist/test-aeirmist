@@ -217,7 +217,10 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
     <div className={`flex flex-col h-full ${isGlobalBgActive ? 'bg-[#050505]/40 backdrop-blur-xl' : 'bg-[#050505]'} relative overflow-y-auto overflow-x-hidden no-scrollbar font-sans text-white pb-28 min-w-0 w-full`}>
       
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-[#050505]/90 backdrop-blur-3xl border-b border-white/5 px-3.5 py-3 sm:px-6 flex flex-row items-center justify-between gap-2.5 sm:gap-4 w-full max-w-full overflow-hidden">
+      <header 
+        className="sticky top-0 z-40 bg-[#050505]/90 backdrop-blur-3xl border-b border-white/5 px-3.5 pb-3 sm:px-6 flex flex-row items-center justify-between gap-2.5 sm:gap-4 w-full max-w-full overflow-hidden transition-all"
+        style={{ paddingTop: 'calc(0.75rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+      >
         <div className="flex items-center gap-2.5 sm:gap-3 shrink min-w-0">
           <motion.button 
             whileHover={{ x: -2 }}

@@ -116,6 +116,8 @@ const PasswordOnboardingModal = lazyWithRetry(() => import('./components/auth/Pa
 const SetupRequiredScreen = lazyWithRetry(() => import('./components/auth/SetupScreens').then((m: any) => ({ default: m.SetupRequiredScreen || m.default })));
 const PairingFailedScreen = lazyWithRetry(() => import('./components/auth/SetupScreens').then((m: any) => ({ default: m.PairingFailedScreen || m.default })));
 const Vault = lazyWithRetry(() => import('./components/messenger/Vault').then((m: any) => ({ default: m.Vault || m.default })));
+import { FloatingSquareChatHead } from './components/messenger/FloatingSquareChatHead';
+import { BiometricLockScreen } from './components/auth/BiometricLockScreen';
 const PurgeScreen = lazyWithRetry(() => import('./components/auth/SetupScreens').then((m: any) => ({ default: m.PurgeScreen || m.default })));
 const DeactivatedScreen = lazyWithRetry(() => import('./components/auth/SetupScreens').then((m: any) => ({ default: m.DeactivatedScreen || m.default })));
 const BannedScreen = lazyWithRetry(() => import('./components/auth/BannedScreen').then((m: any) => ({ default: m.BannedScreen || m.default })));
@@ -431,7 +433,6 @@ function AppContent() {
     showVerificationCelebration,
     setShowVerificationCelebration
   } = useAeirmist();
-  const { isLoading: isThemeLoading } = useTheme();
 
   const [isPosting, setIsPosting] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>(() => {
@@ -476,6 +477,12 @@ function AppContent() {
   });
   const [showFullAuth, setShowFullAuth] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>('login');
+  const [isAppBiometricLocked, setIsAppBiometricLocked] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    // Biometric app lock is an Android-app-only feature; never lock a web session.
+    if (!(window as any).Capacitor?.isNativePlatform?.()) return false;
+    return localStorage.getItem('aeirmist_biometric_lock_enabled') === 'true';
+  });
   const [previewAuthor, setPreviewAuthor] = useState<{ name?: string; username?: string; avatar?: string } | null>(null);
 
   // Insets & Native Platform initialization
@@ -528,20 +535,14 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    const hasCachedProfile = typeof window !== 'undefined' && Boolean(localStorage.getItem('aeirmist_cached_profile') || localStorage.getItem('aeirmist_session'));
-    const delay = hasCachedProfile ? 200 : 400;
-    const timer = setTimeout(() => {
-      setShowSplash(false);
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [user?.uid]);
-
-  useEffect(() => {
-    if (profile && !loading) {
-      const quickTimer = setTimeout(() => setShowSplash(false), 100);
-      return () => clearTimeout(quickTimer);
+    // Only dismiss splash once Firebase Auth or local profile hydration has actually resolved
+    if (!loading && (profile || user || !localStorage.getItem('aeirmist_session'))) {
+      const timer = setTimeout(() => {
+        setShowSplash(false);
+      }, 250);
+      return () => clearTimeout(timer);
     }
-  }, [profile, loading]);
+  }, [user?.uid, profile?.id, loading]);
 
   useEffect(() => {
     // Only show safe exit if genuinely offline or real connection error
@@ -739,8 +740,40 @@ function AppContent() {
         handleTabChange(targetTab);
       }
     };
+
+    // Deep links and App Shortcuts handler (e.g. aeirmist://action/create_post)
+    const handleDeepLink = (e: any) => {
+      const url = e.detail?.url;
+      if (!url) return;
+      if (url.includes('create_post')) {
+        setIsPosting(true);
+      } else if (url.includes('messages')) {
+        handleTabChange('messenger');
+      } else if (url.includes('explore')) {
+        handleTabChange('discover');
+      }
+    };
+
+    // Android Direct Share Target handler
+    const handleShareTarget = (e: any) => {
+      const text = e.detail?.text;
+      if (text) {
+        setIsPosting(true);
+        // Dispatch to post composer to pre-fill content if open
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('aeirmist_prefill_post', { detail: { text } }));
+        }, 300);
+      }
+    };
+
     window.addEventListener('aeirmist-navigate', handleNavigate);
-    return () => window.removeEventListener('aeirmist-navigate', handleNavigate);
+    window.addEventListener('aeirmist_deep_link', handleDeepLink);
+    window.addEventListener('aeirmist_share_target', handleShareTarget);
+    return () => {
+      window.removeEventListener('aeirmist-navigate', handleNavigate);
+      window.removeEventListener('aeirmist_deep_link', handleDeepLink);
+      window.removeEventListener('aeirmist_share_target', handleShareTarget);
+    };
   }, []);
 
   useEffect(() => {
@@ -1199,7 +1232,13 @@ function AppContent() {
   }
 
   // Show unified Welcome screen ONLY on Home Feed during app opening or Home Feed reload!
-  if (isFeedRoute && (loading || (user && showSplash && !needsUsername))) {
+  const hasCachedSessionEarly = typeof window !== 'undefined' && Boolean(
+    localStorage.getItem('aeirmist_session') || 
+    localStorage.getItem('aeirmist_user_profile') || 
+    localStorage.getItem('aeirmist_cached_profile')
+  );
+
+  if (isFeedRoute && (loading || (hasCachedSessionEarly && showSplash && !needsUsername) || (user && showSplash && !needsUsername))) {
     const getPersistedIdName = () => {
       const isValid = (val?: string | null) => {
         if (!val || typeof val !== 'string') return false;
@@ -1445,10 +1484,35 @@ function AppContent() {
     new URLSearchParams(window.location.search).get('mode')
   );
 
+  // Prevent AuthSystem flashing for logged-in users while Firebase is verifying or profile is hydrating
+  const hasCachedAuth = typeof window !== 'undefined' && Boolean(
+    localStorage.getItem('aeirmist_session') || 
+    localStorage.getItem('aeirmist_user_profile') || 
+    localStorage.getItem('aeirmist_cached_profile')
+  );
+
+  if (loading && hasCachedAuth && !hasAuthActionCode) {
+    return (
+      <div className="fixed inset-0 bg-[#050508] flex items-center justify-center z-[100]">
+        <LazyFallback />
+      </div>
+    );
+  }
+
   // If user is not logged in OR an action code (email verification/password reset) needs processing:
   // If they navigated directly to root / search ("aeirmist.com") or requested full auth: show full AuthSystem interface!
   // Only show public preview gateway if an actual shared URL is being viewed!
   if ((!user || hasAuthActionCode) && (showFullAuth || !isSharedUrl || hasAuthActionCode)) {
+    // CRITICAL: If the user has a valid cached session, NEVER flash AuthSystem!
+    // Instead, continue waiting or showing the fallback screen until Firebase Auth restores or the user explicitly clicks login.
+    if (hasCachedAuth && !showFullAuth && !hasAuthActionCode) {
+      return (
+        <div className="fixed inset-0 bg-[#050508] flex items-center justify-center z-[100]">
+          <LazyFallback />
+        </div>
+      );
+    }
+
     return (
       <AuthSystem 
         initialMode={authModalMode} 
@@ -1620,101 +1684,6 @@ function AppContent() {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {(loading || isThemeLoading) && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1000] flex items-center justify-center pointer-events-none"
-          >
-            {/* Immersive Distortion Field */}
-            <motion.div 
-              initial={{ scale: 1.2, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 1.1, opacity: 0 }}
-              className="absolute inset-0 bg-aeirmist-bg/80 backdrop-blur-[32px] pointer-events-auto"
-            />
-            
-            <div className="relative flex flex-col items-center gap-12 pointer-events-none">
-              {/* Navigation Ring */}
-              <div className="relative w-48 h-48">
-                {/* Orbital Rings */}
-                {[...Array(3)].map((_, i) => (
-                  <motion.div 
-                    key={i}
-                    animate={{ 
-                      rotate: 360,
-                      scale: [1, 1.05, 1],
-                      opacity: [0.1, 0.4, 0.1]
-                    }}
-                    transition={{ 
-                      duration: 4 + i * 2, 
-                      repeat: Infinity, 
-                      ease: "linear" 
-                    }}
-                    className="absolute inset-0 rounded-full border border-aeirmist-cyan/20"
-                    style={{ padding: `${i * 12}px` }}
-                  >
-                    <div className="w-2 h-2 rounded-full bg-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,1)]" />
-                  </motion.div>
-                ))}
-
-                {/* Core Prism */}
-                <div className="absolute inset-8 rounded-full bg-aeirmist-cyan/5 border border-aeirmist-cyan/10 flex items-center justify-center overflow-hidden">
-                   <motion.div 
-                     animate={{ 
-                       rotate: [0, 90, 180, 270, 360],
-                       filter: ['hue-rotate(0deg)', 'hue-rotate(90deg)', 'hue-rotate(0deg)']
-                     }}
-                     transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-                     className="absolute inset-0 bg-gradient-to-br from-aeirmist-cyan/40 via-transparent to-aeirmist-magenta/40 opacity-30"
-                   />
-                   <Zap className="text-white w-12 h-12 relative z-10 drop-shadow-[0_0_20px_rgba(255,255,255,1)]" />
-                </div>
-
-                {/* Message Field */}
-                <motion.div 
-                  animate={{ scale: [1, 1.5], opacity: [0.3, 0] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                  className="absolute inset-4 border-2 border-aeirmist-cyan rounded-full"
-                />
-              </div>
-
-              {/* Status Modules */}
-              <div className="flex flex-col items-center gap-4">
-                <motion.div 
-                  animate={{ opacity: [0.4, 1, 0.4] }}
-                  transition={{ duration: 1.5, repeat: Infinity }}
-                  className="px-4 py-1.5 border border-aeirmist-cyan/20 bg-aeirmist-cyan/5 rounded-full"
-                >
-                  <span className="text-[10px] font-black uppercase tracking-[0.6em] text-aeirmist-cyan">
-                    {isThemeLoading ? 'LOADING THEME' : 'LOADING'}
-                  </span>
-                </motion.div>
-                
-                <div className="flex gap-2">
-                  {[...Array(5)].map((_, i) => (
-                    <motion.div 
-                      key={i}
-                      animate={{ scaleY: [1, 2, 1], opacity: [0.2, 0.6, 0.2] }}
-                      transition={{ duration: 1, repeat: Infinity, delay: i * 0.1 }}
-                      className="w-1 h-3 bg-aeirmist-cyan/40 rounded-full"
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* HUD Perimeter Lines */}
-              <div className="absolute -inset-x-64 top-[50%] h-[1px] bg-gradient-to-r from-transparent via-aeirmist-cyan/20 to-transparent" />
-            </div>
-
-            {/* Scanline Overlay */}
-            <div className="absolute inset-0 pointer-events-none opacity-20 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,3px_100%]" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <AnimatePresence mode="wait">
         <motion.div 
           key="main"
@@ -1742,20 +1711,30 @@ function AppContent() {
           )}
 
           <main id="main-content" className={`flex-1 min-w-0 h-full min-h-0 relative overflow-hidden flex flex-col ${isGlobalBgActive ? '!bg-transparent' : ''}`}>
+            {/* Sleek Offline Vault Status Bar */}
+            {isOffline && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="bg-zinc-950/90 border-b border-amber-500/20 backdrop-blur-md px-3 py-1 flex items-center justify-center gap-2 text-[10px] font-mono font-bold text-amber-400/90 select-none z-30 shrink-0"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span>OFFLINE MODE - Showing your saved data</span>
+              </motion.div>
+            )}
             <Suspense fallback={<LazyFallback />}>
               <Routes>
                 <Route path="/payment-success" element={<Suspense fallback={null}><PaymentResult status="success" /></Suspense>} />
                 <Route path="/payment-failure" element={<Suspense fallback={null}><PaymentResult status="failure" /></Suspense>} />
                 <Route path="/community-guidelines" element={<CommunityGuidelines />} />
                 <Route path="*" element={
-                  <AnimatePresence mode="popLayout" initial={false}>
-                    {activeTab === 'feed' ? (
+                  activeTab === 'feed' ? (
                   <motion.div
                     key="feed"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="h-full flex overflow-hidden lg:grid lg:grid-cols-[1fr_var(--right-panel-w)]"
                   >
                     <div className="flex-1 h-full overflow-y-auto overflow-x-hidden scroll-smooth relative min-w-0">
@@ -1784,8 +1763,7 @@ function AppContent() {
                     key="messenger"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="flex-1 overflow-hidden h-full flex flex-col min-h-0"
                   >
                     {featureFlags?.inbox === false ? (
@@ -1803,8 +1781,7 @@ function AppContent() {
                     key="discover"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="flex-1 h-full overflow-y-auto overflow-x-hidden scroll-container flex flex-col"
                   >
                     {featureFlags?.marketplace === false ? (
@@ -1829,8 +1806,7 @@ function AppContent() {
                     key="dashboard"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="flex-1 h-full min-h-0 overflow-hidden flex flex-col"
                   >
                     {featureFlags?.discover === false ? (
@@ -1850,8 +1826,7 @@ function AppContent() {
                     key="profile"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="flex-1 h-full overflow-y-auto overflow-x-hidden touch-pan-y"
                   >
                     <div className="fluid-container pt-0 pb-0">
@@ -1874,8 +1849,7 @@ function AppContent() {
                     key="settings"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="flex-1 h-full overflow-y-auto overflow-x-hidden scroll-container"
                   >
                     <div className="w-full min-h-full">
@@ -1891,8 +1865,7 @@ function AppContent() {
                     key="admin"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="flex-1 h-full overflow-hidden flex flex-col"
                   >
                     <div className="w-full h-full flex-1 overflow-hidden flex flex-col">
@@ -1908,8 +1881,7 @@ function AppContent() {
                     key="videos"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
+                    transition={{ duration: 0.12, ease: "easeOut" }}
                     className="flex-1 h-full overflow-hidden flex flex-col"
                   >
                     {featureFlags?.videos === false ? (
@@ -1943,8 +1915,7 @@ function AppContent() {
                       }} />
                     </div>
                   </motion.div>
-                    )}
-                  </AnimatePresence>
+                    )
                 } />
               </Routes>
             </Suspense>
@@ -2085,6 +2056,30 @@ function AppContent() {
                   />
                 </Suspense>
               </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Floating Square Chat Head (Facebook-style persistent chat heads across Feed and all pages) */}
+          <FloatingSquareChatHead
+            isInboxView={activeTab === 'messenger'}
+            onOpenChat={(chatId) => {
+              setMessageRecipient({ id: chatId });
+              handleTabChange('messenger');
+            }}
+            onNewMessage={() => {
+              setMessageRecipient(null);
+              handleTabChange('messenger');
+            }}
+          />
+
+          {/* Biometric App Lock Screen Overlay */}
+          <AnimatePresence>
+            {isAppBiometricLocked && (
+              <BiometricLockScreen
+                onUnlock={() => setIsAppBiometricLocked(false)}
+                userPhoto={profile?.photoURL}
+                userName={profile?.displayName || profile?.username}
+              />
             )}
           </AnimatePresence>
 

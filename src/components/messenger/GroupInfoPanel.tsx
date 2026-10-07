@@ -472,7 +472,10 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
       />
 
       {/* HEADER BAR */}
-      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-[#121820]/80 backdrop-blur-md sticky top-0 z-10">
+      <div 
+        className="px-4 pb-4 border-b border-white/10 flex items-center justify-between bg-[#121820]/80 backdrop-blur-md sticky top-0 z-10 transition-all"
+        style={{ paddingTop: 'calc(1rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+      >
         <div className="flex items-center gap-2">
           <span className="text-xs font-black uppercase tracking-widest text-aeirmist-cyan">GROUP DETAILS</span>
         </div>

@@ -10,6 +10,8 @@ import { getAvatarUrl } from '../../lib/avatar';
 import { formatShortTimestamp, formatTimeOnly } from '../../lib/date';
 import { TelegramMediaAlbum, AlbumItem, isAutoMediaPlaceholder } from './TelegramMediaAlbum';
 import { DownloadManagerService } from '../../services/DownloadManagerService';
+import { triggerNativeHaptic } from '../../lib/nativeHaptics';
+import { ChatMiniPoll } from './ChatMiniPoll';
 
 const moods = {
   ecstatic: '⚡',
@@ -82,14 +84,17 @@ export const MessageItem = React.memo<{
     }
   };
 
+  const hasVibratedThreshold = useRef(false);
+
   const handleTouchStart = (e: React.TouchEvent) => {
     const touch = e.touches[0];
     touchStartRef.current = { x: touch.clientX, y: touch.clientY };
     longPressFiredRef.current = false;
+    hasVibratedThreshold.current = false;
     clearLongPressTimer();
     longPressTimerRef.current = setTimeout(() => {
       longPressFiredRef.current = true;
-      if (navigator.vibrate) navigator.vibrate(10);
+      triggerNativeHaptic('medium');
       setShowMenu(true);
     }, LONG_PRESS_MS);
   };
@@ -102,23 +107,40 @@ export const MessageItem = React.memo<{
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
       clearLongPressTimer();
     }
-    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+    // Determine horizontal swipe vs vertical scroll
+    if (Math.abs(dx) > Math.abs(dy) * 1.2 && Math.abs(dx) > 10) {
       setIsSwiping(true);
-      // Both sent & received: swipe RIGHT (dx > 0) to reply, like WhatsApp/Instagram
-      const clamped = dx > 0 ? Math.min(72, dx) : 0;
-      setSwipeX(clamped);
+      // Swipe RIGHT (dx > 0) to reply (iOS / Telegram standard)
+      if (dx > 0) {
+        // Apply smooth logarithmic rubber-band resistance beyond threshold
+        const rawOffset = dx;
+        const clamped = rawOffset > SWIPE_REPLY_THRESHOLD 
+          ? SWIPE_REPLY_THRESHOLD + Math.pow(rawOffset - SWIPE_REPLY_THRESHOLD, 0.65) * 4
+          : rawOffset;
+        setSwipeX(clamped);
+
+        if (clamped >= SWIPE_REPLY_THRESHOLD && !hasVibratedThreshold.current) {
+          hasVibratedThreshold.current = true;
+          triggerNativeHaptic('selection');
+        } else if (clamped < SWIPE_REPLY_THRESHOLD && hasVibratedThreshold.current) {
+          hasVibratedThreshold.current = false;
+        }
+      } else {
+        setSwipeX(0);
+      }
     }
   };
 
   const handleTouchEnd = () => {
     clearLongPressTimer();
-    if (Math.abs(swipeX) >= SWIPE_REPLY_THRESHOLD && onReply) {
-      if (navigator.vibrate) navigator.vibrate(10);
+    if (swipeX >= SWIPE_REPLY_THRESHOLD && onReply) {
+      triggerNativeHaptic('tick');
       onReply(message);
     }
     setSwipeX(0);
     setIsSwiping(false);
     touchStartRef.current = null;
+    hasVibratedThreshold.current = false;
   };
 
   const lastTap = useRef<number>(0);
@@ -286,7 +308,7 @@ export const MessageItem = React.memo<{
   }, [albumItems, message]);
 
   const isSticker = message.type === 'sticker';
-  const isSpecialCard = message.type === 'file' || message.type === 'location' || message.type === 'contact' || Boolean(message.metadata?.isAudioMusic);
+  const isSpecialCard = message.type === 'file' || message.type === 'location' || message.type === 'contact' || message.type === 'poll' || Boolean(message.metadata?.poll) || Boolean(message.metadata?.isAudioMusic);
   const isPlaceholder = isAutoMediaPlaceholder(message.text);
   const hasRealText = Boolean(message.text && !isPlaceholder && !isSticker && !isSpecialCard);
   const isMediaOnly = !hasRealText && effectiveAlbum.length > 0;
@@ -413,12 +435,19 @@ export const MessageItem = React.memo<{
       onTouchCancel={handleTouchEnd}
       style={{ WebkitTouchCallout: 'none' }}
     >
-      {isSwiping && swipeX > 4 && (
+      {isSwiping && swipeX > 6 && (
         <div
-          className={`absolute top-1/2 -translate-y-1/2 left-0 pointer-events-none flex items-center justify-center w-8 h-8 rounded-full bg-white/10`}
-          style={{ opacity: Math.min(1, swipeX / SWIPE_REPLY_THRESHOLD) }}
+          className={`absolute top-1/2 -translate-y-1/2 left-2 pointer-events-none flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 ${
+            swipeX >= SWIPE_REPLY_THRESHOLD 
+              ? 'bg-[#00F2FF]/20 border border-[#00F2FF]/50 shadow-[0_0_12px_rgba(0,242,255,0.4)] scale-110' 
+              : 'bg-white/10 border border-white/15'
+          }`}
+          style={{ 
+            opacity: Math.min(1, swipeX / SWIPE_REPLY_THRESHOLD),
+            transform: `translateY(-50%) scale(${Math.min(1.15, 0.7 + (swipeX / SWIPE_REPLY_THRESHOLD) * 0.45)}) rotate(${Math.min(0, -25 + (swipeX / SWIPE_REPLY_THRESHOLD) * 25)}deg)`
+          }}
         >
-          <Reply size={16} className="text-[#00F2FF]" />
+          <Reply size={16} className={swipeX >= SWIPE_REPLY_THRESHOLD ? 'text-[#00F2FF]' : 'text-white/70'} />
         </div>
       )}
       <div
@@ -709,6 +738,16 @@ export const MessageItem = React.memo<{
                   </span>
                 )}
               </div>
+            )}
+
+            {/* 6. In-Chat Mini Poll Card */}
+            {(message.type === 'poll' || Boolean(message.metadata?.poll)) && (
+              <ChatMiniPoll
+                chatId={conversationId}
+                messageId={message.id}
+                poll={message.metadata?.poll || { question: message.text || 'Poll', options: [] }}
+                isMe={isMe}
+              />
             )}
 
 

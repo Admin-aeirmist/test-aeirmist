@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Bookmark, Share2, Link, UserPlus, 
-  VolumeX, EyeOff, Flag, Ban, BarChart3, Pin, Edit3, Trash2, Archive, Lock, X, Sparkles, Check,
+  VolumeX, EyeOff, Eye, Flag, Ban, BarChart3, Pin, Edit3, Trash2, Archive, Lock, X, Sparkles, Check,
   HelpCircle, ThumbsDown, Hash
 } from 'lucide-react';
 import { useAeirmist } from '../context/AeirmistContext';
@@ -35,6 +35,8 @@ interface PostMenuProps {
   isArchived?: boolean;
   onArchive?: () => void;
   onMoveToVault?: () => void;
+  isLikesHidden?: boolean;
+  onToggleHideLikes?: () => void;
   onWhyAmISeeingThis?: () => void;
   onShowLess?: () => void;
   onNotInterested?: () => void;
@@ -74,6 +76,8 @@ export const PostMenu: React.FC<PostMenuProps> = ({
   onMoveToVault,
   authorId,
   topics = [],
+  isLikesHidden = false,
+  onToggleHideLikes,
   onWhyAmISeeingThis,
   onShowLess,
   onNotInterested,
@@ -208,6 +212,18 @@ export const PostMenu: React.FC<PostMenuProps> = ({
       onClick: () => {
         if (onMoveToVault) onMoveToVault();
         else addToast?.({ title: 'Moved to Vault', message: 'Post secured in private encrypted vault.', type: 'success' });
+      } 
+    },
+    { 
+      icon: isLikesHidden ? <Eye size={17} className="text-pink-400" /> : <EyeOff size={17} className="text-pink-400" />, 
+      label: isLikesHidden ? 'Unhide Like Count' : 'Hide Like Count', 
+      onClick: () => {
+        if (onToggleHideLikes) onToggleHideLikes();
+        else addToast?.({ 
+          title: isLikesHidden ? 'Likes Visible' : 'Likes Hidden', 
+          message: isLikesHidden ? 'Like count is now visible to others.' : 'Like count is now hidden from others.', 
+          type: 'info' 
+        });
       } 
     },
     { 

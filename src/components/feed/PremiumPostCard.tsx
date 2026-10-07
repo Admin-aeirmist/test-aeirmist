@@ -70,6 +70,7 @@ interface PostCardProps {
       title: string;
       artist: string;
     } | null;
+    hideLikes?: boolean;
     fitMode?: 'contain' | 'cover';
   };
   onUserClick?: (user: any) => void;
@@ -204,6 +205,29 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   const [isHidden, setIsHidden] = useState(false);
   const [isSensitiveRevealed, setIsSensitiveRevealed] = useState(false);
   const [isMessengerShareOpen, setIsMessengerShareOpen] = useState(false);
+  const [showHeartAnim, setShowHeartAnim] = useState(false);
+  const [isLikesHidden, setIsLikesHidden] = useState<boolean>(Boolean((post as any).hideLikes));
+  const lastTapRef = React.useRef<number>(0);
+
+  const handleToggleHideLikes = async () => {
+    const nextState = !isLikesHidden;
+    setIsLikesHidden(nextState);
+    try {
+      if (db && post.id) {
+        await updateDoc(doc(db, 'posts', post.id), {
+          hideLikes: nextState
+        });
+      }
+      addToast?.({
+        title: nextState ? 'Like Count Hidden' : 'Like Count Visible',
+        message: nextState ? 'Others will see "Likes" instead of exact total.' : 'Like count is now visible to everyone.',
+        type: 'info'
+      });
+    } catch (e) {
+      logger.error('Failed to toggle like count visibility:', e);
+      setIsLikesHidden(!nextState);
+    }
+  };
 
   const shouldHideSensitive = (post as any).sensitiveWarning && !isSensitiveRevealed && !isOwnPost;
 
@@ -1515,6 +1539,8 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
           authorName={author.name}
           topics={postTopics}
           isOwnPost={!!isOwnPost}
+          isLikesHidden={isLikesHidden}
+          onToggleHideLikes={handleToggleHideLikes}
           isSaved={isBookmarked}
           onSave={handleBookmarkToggle}
           onViewInsights={() => setShowInsights(true)}
@@ -1724,6 +1750,22 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
           {hasMedia ? (
             <div
               className="w-full border-y border-white/5 bg-black/20 cursor-pointer relative"
+              onClick={(e) => {
+                const now = Date.now();
+                if (now - lastTapRef.current < 320) {
+                  // Double Tap Detected: Trigger like + heart animation + haptic
+                  triggerNativeHaptic('double_click');
+                  setShowHeartAnim(true);
+                  setTimeout(() => setShowHeartAnim(false), 900);
+                  if (!isLiked) {
+                    setIsLiked(true);
+                    toggleLike?.(post.id, false);
+                  }
+                  lastTapRef.current = 0;
+                  return;
+                }
+                lastTapRef.current = now;
+              }}
               onClickCapture={(e) => {
                 // Allow video controls / clicks to play inline without forced redirection
                 if (!showComments && (post as any).type !== 'video' && collageItems?.[0]?.type !== 'video') {
@@ -1746,6 +1788,23 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
                 }}
                 renderLightboxSidebar={renderLightboxSidebar}
               />
+
+              {/* Instagram-style Big Pulsing Heart on Double Tap */}
+              <AnimatePresence>
+                {showHeartAnim && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.4 }}
+                    animate={{ opacity: 1, scale: [0.4, 1.25, 1], rotate: [0, -10, 0] }}
+                    exit={{ opacity: 0, scale: 0.8, y: -20 }}
+                    transition={{ duration: 0.6, ease: "easeOut" }}
+                    className="absolute inset-0 flex items-center justify-center pointer-events-none z-40"
+                  >
+                    <div className="p-5 rounded-full bg-black/40 backdrop-blur-md border border-aeirmist-magenta/30 shadow-[0_0_50px_rgba(255,0,234,0.6)]">
+                      <Heart size={68} className="text-aeirmist-magenta fill-aeirmist-magenta filter drop-shadow-[0_0_20px_#ff00ea]" />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Instagram-Style Small Round Mute Button on bottom right of media */}
               {postMusicData && (
@@ -1779,7 +1838,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
               }`}
             >
               <Heart size={15} fill={isLiked ? "currentColor" : "none"} className={`transition-transform group-hover:scale-110 ${isLiked ? 'text-aeirmist-magenta' : 'text-current'}`} aria-hidden="true" />
-              <span>{post.likesCount?.toLocaleString() || '0'}</span>
+              <span>{(isLikesHidden && !isOwnPost) ? 'Likes' : (post.likesCount?.toLocaleString() || '0')}</span>
             </button>
 
             <button 

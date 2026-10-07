@@ -33,6 +33,7 @@ import { DevicesAndSessions } from './security/DevicesAndSessions';
 import { EmailChangeModal } from './security/EmailChangeModal';
 import { SecurityTimeline } from './security/SecurityTimeline';
 import { logger } from '@/src/utils/logger';
+import { checkDeviceBiometrics } from '../../../lib/nativeBiometrics';
 
 
 const SectionHeader = ({ title, desc }: { title: string, desc: string }) => (
@@ -78,6 +79,14 @@ const SecuritySettings = () => {
   const { user, profile, addToast, logout, deleteAccount, updateProfile, logActivity, db } = useAeirmist();
   const [hasPassword, setHasPassword] = useState<boolean | null>(null);
   const [activeSubSection, setActiveSubSection] = useState<string | null>(null);
+  const [biometricsAvailable, setBiometricsAvailable] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    checkDeviceBiometrics()
+      .then(res => { if (mounted) setBiometricsAvailable(!!res?.available); })
+      .catch(() => { if (mounted) setBiometricsAvailable(false); });
+    return () => { mounted = false; };
+  }, []);
   const [isLoading, setIsLoading] = useState<string | null>(null);
   const [activities, setActivities] = useState<any[]>([]);
   const [sessionsCount, setSessionsCount] = useState<number>(1);
@@ -392,6 +401,48 @@ const SecuritySettings = () => {
           {isLoading === '2fa' ? 'Syncing...' : (twoFactorEnabled ? 'Disable 2FA' : 'Enable 2FA')}
         </button>
       </Card>
+
+      {/* Section 4: Biometric / Fingerprint App Lock */}
+      {biometricsAvailable && (
+      <Card>
+        <CardHeader 
+          icon={Fingerprint} 
+          title="Biometric App Lock" 
+          desc="Require fingerprint or biometric scan whenever Aeirmist opens."
+          status={profile?.securitySettings?.biometricLock ? 'Active' : 'Disabled'}
+          statusColor={profile?.securitySettings?.biometricLock ? 'bg-[var(--color-aeirmist-cyan)]' : 'bg-white/20'}
+        />
+        <button 
+          type="button"
+          onClick={async () => {
+            const nextVal = !profile?.securitySettings?.biometricLock;
+            await updateProfile({
+              securitySettings: {
+                ...(profile?.securitySettings || {}),
+                biometricLock: nextVal
+              }
+            });
+            if (nextVal) {
+              localStorage.setItem('aeirmist_biometric_lock_enabled', 'true');
+            } else {
+              localStorage.removeItem('aeirmist_biometric_lock_enabled');
+            }
+            addToast({
+              title: nextVal ? 'Biometric Lock Enabled' : 'Biometric Lock Disabled',
+              message: nextVal ? 'Aeirmist will ask for fingerprint scan on launch.' : 'App lock has been turned off.',
+              type: 'success'
+            });
+          }}
+          className={`w-full py-3 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all cursor-pointer ${
+            profile?.securitySettings?.biometricLock 
+              ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' 
+              : 'bg-[var(--color-aeirmist-cyan)]/10 text-[var(--color-aeirmist-cyan)] hover:bg-[var(--color-aeirmist-cyan)]/20'
+          }`}
+        >
+          {profile?.securitySettings?.biometricLock ? 'Turn Off Biometric Lock' : 'Turn On Biometric Lock'}
+        </button>
+      </Card>
+      )}
 
       {/* Security Events Timeline */}
       <SecurityTimeline activities={activities} />

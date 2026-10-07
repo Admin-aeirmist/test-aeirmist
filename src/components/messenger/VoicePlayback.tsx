@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Play, Pause, Mic } from 'lucide-react';
 import { aeirmistCache } from '../../services/CacheService';
+import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { logger } from '@/src/utils/logger';
 
 
@@ -142,6 +143,8 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
   };
 
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const togglePlaybackRate = () => {
     const rates = [1, 1.5, 2];
@@ -152,8 +155,42 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
     }
   };
 
+  const seekToPosition = (clientX: number) => {
+    if (!containerRef.current || !audioRef.current || !audioRef.current.duration) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const clampedX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const ratio = clampedX / rect.width;
+    const targetTime = ratio * audioRef.current.duration;
+    audioRef.current.currentTime = targetTime;
+    setProgress(ratio * 100);
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    setIsScrubbing(true);
+    triggerNativeHaptic('tick');
+    seekToPosition(e.clientX);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isScrubbing) return;
+    e.stopPropagation();
+    seekToPosition(e.clientX);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (!isScrubbing) return;
+    e.stopPropagation();
+    setIsScrubbing(false);
+    triggerNativeHaptic('selection');
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+  };
+
   return (
-    <div className={`flex items-center gap-3 py-1 min-w-[200px] ${isMe ? 'text-white' : 'text-aeirmist-cyan'}`}>
+    <div className={`flex items-center gap-3 py-1 min-w-[200px] select-none ${isMe ? 'text-white' : 'text-aeirmist-cyan'}`}>
       <audio ref={audioRef} src={audioUrl} preload="metadata" />
       
       <div className="relative group">
@@ -161,7 +198,7 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
             onClick={togglePlay}
-            className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
             isMe ? 'bg-white/10 hover:bg-white/20' : 'bg-aeirmist-cyan/10 hover:bg-aeirmist-cyan/20'
             }`}
         >
@@ -170,32 +207,39 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
         
         <button 
            onClick={togglePlaybackRate}
-           className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-[8px] font-black hover:bg-aeirmist-cyan hover:text-aeirmist-bg transition-colors"
+           className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-[8px] font-black hover:bg-aeirmist-cyan hover:text-aeirmist-bg transition-colors cursor-pointer"
         >
             {playbackRate}x
         </button>
       </div>
 
-      <div className="flex-1 flex flex-col gap-1">
-        <div className="relative h-6 flex items-center">
+      <div className="flex-1 flex flex-col gap-1 min-w-0">
+        <div 
+          ref={containerRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          className="relative h-6 flex items-center cursor-pointer touch-none group/scrubber"
+          title="Drag or tap to scrub audio"
+        >
             <canvas 
                 ref={canvasRef} 
                 width={160} 
                 height={24} 
-                className="w-full h-full cursor-pointer"
-                onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const p = x / rect.width;
-                    if (audioRef.current) {
-                        audioRef.current.currentTime = p * audioRef.current.duration;
-                    }
-                }}
+                className="w-full h-full pointer-events-none"
+            />
+            {/* Dynamic Scrubbing Head Indicator */}
+            <div 
+              className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full border shadow-lg transition-transform pointer-events-none ${
+                isMe ? 'bg-white border-black/20' : 'bg-[#00F2FF] border-black/30 shadow-[0_0_8px_rgba(0,242,255,0.7)]'
+              } ${isScrubbing ? 'scale-125 ring-2 ring-white/50' : 'scale-0 group-hover/scrubber:scale-100'}`}
+              style={{ left: `${Math.min(100, Math.max(0, progress))}%` }}
             />
         </div>
         <div className="flex justify-between items-center px-0.5">
-            <span className="text-[9px] font-black opacity-40 uppercase tracking-widest">
-                {isPlaying ? formatTime(audioRef.current?.currentTime || 0) : formatTime(duration)}
+            <span className="text-[9px] font-black opacity-40 uppercase tracking-widest font-mono">
+                {isPlaying || isScrubbing ? formatTime(audioRef.current?.currentTime || 0) : formatTime(duration)}
             </span>
             <div className="flex items-center gap-1 opacity-20">
                 <Mic size={8} />

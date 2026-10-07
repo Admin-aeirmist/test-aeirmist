@@ -158,8 +158,7 @@
     }
 
     .feed-post-card {
-      content-visibility: auto;
-      contain-intrinsic-size: 0 450px;
+      contain: layout style;
     }
 
     /* Optimize expensive multi-stop shadows on phone displays */

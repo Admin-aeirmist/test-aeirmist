@@ -414,12 +414,12 @@ export const SupportSettings: React.FC = () => {
           </p>
         </div>
 
-        {/* Global Node Status Indicator */}
+        {/* Support Status Indicator */}
         <div className="flex items-center gap-3 px-4 py-2 rounded-2xl bg-white/[0.03] border border-white/10 shrink-0">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.6)]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.4)]" />
           <div>
-            <div className="text-[10px] font-mono font-bold text-white uppercase tracking-wider">Support Grid Online</div>
-            <div className="text-[9px] font-mono text-white/40">Avg Response Time: ~1.8 hours</div>
+            <div className="text-[10px] font-bold text-white uppercase tracking-wider">Support Available</div>
+            <div className="text-[9px] text-white/40">Typically responds within 24–48 hours</div>
           </div>
         </div>
       </div>
@@ -872,10 +872,10 @@ export const SupportSettings: React.FC = () => {
 
               <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2">
                 <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                  <Clock className="text-aeirmist-magenta" size={16} /> Response Commitments
+                  <Clock className="text-aeirmist-magenta" size={16} /> Response Times
                 </div>
-                <p className="text-xs font-mono text-white font-bold">Average Triage: &lt; 2 Hours</p>
-                <p className="text-[10px] text-white/40">Priority queue routes verified members first.</p>
+                <p className="text-xs text-white font-bold">Typically within 24–48 hours</p>
+                <p className="text-[10px] text-white/40">We review every submission and will get back to you as soon as we can.</p>
               </div>
             </div>
 

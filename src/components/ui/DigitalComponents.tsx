@@ -2,7 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 
 export const LiquidBackground = () => (
-  <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-40">
+  <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-[0.18]">
     <motion.div 
       animate={{ 
         scale: [1, 1.2, 1],
@@ -10,7 +10,7 @@ export const LiquidBackground = () => (
         rotate: [0, 180, 0],
       }}
       transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
-      className="absolute top-[-10%] right-[-10%] w-[50dvw] h-[50dvw] bg-aeirmist-cyan/30 blur-[100px] mix-blend-screen"
+      className="absolute top-[-10%] right-[-10%] w-[50dvw] h-[50dvw] bg-aeirmist-cyan/30 blur-[150px] mix-blend-screen"
     />
     <motion.div 
       animate={{ 
@@ -19,7 +19,7 @@ export const LiquidBackground = () => (
         rotate: [0, -180, 0],
       }}
       transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-      className="absolute bottom-[-10%] left-[-10%] w-[60dvw] h-[60dvw] bg-aeirmist-magenta/30 blur-[120px] mix-blend-screen"
+      className="absolute bottom-[-10%] left-[-10%] w-[60dvw] h-[60dvw] bg-aeirmist-magenta/30 blur-[170px] mix-blend-screen"
     />
     <motion.div 
       animate={{ 
@@ -28,7 +28,7 @@ export const LiquidBackground = () => (
         rotate: [0, 90, 0],
       }}
       transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
-      className="absolute top-[30%] left-[20%] w-[40dvw] h-[40dvw] bg-indigo-500/20 blur-[90px] mix-blend-screen"
+      className="absolute top-[30%] left-[20%] w-[40dvw] h-[40dvw] bg-indigo-500/20 blur-[150px] mix-blend-screen"
     />
     
     {/* Subtle Glass Noise Overlay */}

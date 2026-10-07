@@ -281,6 +281,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   const [tempInstagram, setTempInstagram] = useState('');
   const [tempFacebook, setTempFacebook] = useState('');
   const [tempWebsite, setTempWebsite] = useState('');
+  const [tempLocation, setTempLocation] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
   const [isProfileLocked, setIsProfileLocked] = useState(false);
   const [allowMessages, setAllowMessages] = useState(true);
@@ -292,33 +293,50 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   const [isMutualModalOpen, setIsMutualModalOpen] = useState(false);
   const [followListSearchFilter, setFollowListSearchFilter] = useState('');
 
-  // Dismissable Core Widget state persisted per profile
+  // Dismissable Core Widget state persisted across logins, devices, and profile state
   const [isCoreWidgetDismissed, setIsCoreWidgetDismissed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(`aeirmist_dismiss_core_widget_${displayUser?.id || 'default'}`) === 'true';
+      if (typeof window === 'undefined') return false;
+      const permDismissed = localStorage.getItem('aeirmist_dismiss_core_widget_permanent') === 'true';
+      const userDismissed = displayUser?.dismissedWidgets?.coreWidget === true || (displayUser?.id && localStorage.getItem(`aeirmist_dismiss_core_widget_${displayUser.id}`) === 'true');
+      return permDismissed || userDismissed;
     } catch (e) {
       return false;
     }
   });
 
   React.useEffect(() => {
-    if (displayUser?.id) {
-      try {
-        const isDismissed = localStorage.getItem(`aeirmist_dismiss_core_widget_${displayUser.id}`) === 'true';
-        setIsCoreWidgetDismissed(isDismissed);
-      } catch (e) {
-        // ignore
+    try {
+      const permDismissed = localStorage.getItem('aeirmist_dismiss_core_widget_permanent') === 'true';
+      const userDismissed = displayUser?.dismissedWidgets?.coreWidget === true || (displayUser?.id && localStorage.getItem(`aeirmist_dismiss_core_widget_${displayUser.id}`) === 'true');
+      if (permDismissed || userDismissed) {
+        setIsCoreWidgetDismissed(true);
       }
+    } catch (e) {
+      // ignore
     }
-  }, [displayUser?.id]);
+  }, [displayUser?.id, displayUser?.dismissedWidgets?.coreWidget]);
 
   const handleDismissCoreWidget = (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsCoreWidgetDismissed(true);
     try {
-      localStorage.setItem(`aeirmist_dismiss_core_widget_${displayUser?.id || 'default'}`, 'true');
+      localStorage.setItem('aeirmist_dismiss_core_widget_permanent', 'true');
+      if (displayUser?.id) {
+        localStorage.setItem(`aeirmist_dismiss_core_widget_${displayUser.id}`, 'true');
+      }
     } catch (e) {
       // ignore
+    }
+    // Persist to user's Firestore profile and cache so it never reappears on any login/logout
+    if (isOwnProfile && updateProfile) {
+      const currentDismissed = displayUser?.dismissedWidgets || {};
+      updateProfile({
+        dismissedWidgets: {
+          ...currentDismissed,
+          coreWidget: true
+        }
+      }).catch(() => {});
     }
   };
 
@@ -404,6 +422,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       setTempInstagram(displayUser.socialLinks?.instagram || '');
       setTempFacebook(displayUser.socialLinks?.facebook || '');
       setTempWebsite(displayUser.website || displayUser.socialLinks?.website || '');
+      setTempLocation(displayUser.location || '');
       setIsPrivate(displayUser.isPrivate || false);
       setIsProfileLocked(displayUser.isProfileLocked || false);
       setAllowMessages(displayUser.privacySettings?.allowMessages !== false);
@@ -859,11 +878,13 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     setIsUpdating(true);
     setUpdateError(null);
     try {
-      console.log("Initiating Identity Sync...", { tempBio, tempUsername, tempDisplayName, tempInstagram, tempFacebook, tempWebsite, isPrivate, isProfileLocked, allowMessages, allowCalls });
+      console.log("Initiating Identity Sync...", { tempBio, tempUsername, tempDisplayName, tempLocation, tempInstagram, tempFacebook, tempWebsite, isPrivate, isProfileLocked, allowMessages, allowCalls });
       await updateProfile({ 
         bio: tempBio, 
         username: tempUsername,
         displayName: tempDisplayName,
+        location: tempLocation,
+        locationData: tempLocation ? { displayName: tempLocation } : null,
         website: tempWebsite,
         isPrivate,
         isProfileLocked,
@@ -881,9 +902,19 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       });
       console.log("Identity Sync Successful");
       setIsEditingBio(false);
+      addToast?.({
+        title: "Profile Saved",
+        message: "Your profile details have been saved permanently.",
+        type: "success"
+      });
     } catch (e: any) {
       console.error("Identity update failed", e);
       setUpdateError(e.message || "Configuration sync failed.");
+      addToast?.({
+        title: "Sync Error",
+        message: e.message || "Could not save profile. Please try again.",
+        type: "warning"
+      });
     } finally {
       setIsUpdating(false);
     }
@@ -1494,6 +1525,14 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                   {displayUser?.bio || "No bio yet."}
                 </p>
 
+                {/* Location Badge */}
+                {displayUser?.location && (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium w-fit">
+                    <MapPin size={12} className="text-emerald-400 shrink-0" />
+                    <span>{displayUser.location}</span>
+                  </div>
+                )}
+
                 {/* Professional Creator Mode Toggle & Action Suite */}
                 {isProfessionalAccount && isOwnProfile && (
                   <div className="p-4 rounded-3xl bg-gradient-to-r from-aeirmist-cyan/10 via-black/40 to-aeirmist-magenta/10 border border-white/5 space-y-4 lg:max-w-md w-full relative overflow-hidden shadow-2xl my-2">
@@ -1987,6 +2026,14 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               <p className="text-xs text-white/85 leading-relaxed font-normal whitespace-pre-line pl-0.5 pt-0.5">
                 {displayUser?.bio || "No bio yet."}
               </p>
+
+              {/* Location Badge */}
+              {displayUser?.location && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-medium my-0.5 shadow-sm backdrop-blur-sm w-fit">
+                  <MapPin size={11} className="text-emerald-400 shrink-0" />
+                  <span className="truncate max-w-[200px]">{displayUser.location}</span>
+                </div>
+              )}
 
               {/* Mobile Aeirmist Core Sync Widget - Sleek Compact Version */}
               {!isCoreWidgetDismissed && (
@@ -2875,6 +2922,18 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                         value={tempWebsite} 
                         onChange={(e) => setTempWebsite(e.target.value)}
                         className="w-full bg-white/5 border border-white/10 rounded-[1.2rem] px-4 py-3 text-xs focus:border-aeirmist-cyan transition-all outline-none" 
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <label className="text-[10px] font-black uppercase text-white/30 tracking-widest block pl-2 flex items-center gap-2">
+                        <MapPin size={12} className="text-emerald-400" /> Location / City
+                      </label>
+                      <input 
+                        type="text" 
+                        placeholder="e.g. Dhaka, Bangladesh or New York, USA"
+                        value={tempLocation} 
+                        onChange={(e) => setTempLocation(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-[1.2rem] px-4 py-3 text-xs focus:border-emerald-400 transition-all outline-none" 
                       />
                     </div>
                   </div>

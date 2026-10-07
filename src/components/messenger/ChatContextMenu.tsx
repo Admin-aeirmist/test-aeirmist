@@ -199,7 +199,7 @@ export const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ x, y, onClose,
           <MenuItem icon={<Archive size={15} />} label={isArchived ? "Restore Thread" : "Archive Thread"} onClick={() => handleAction('archive')} />
           <MenuItem 
             icon={<Lock size={15} />} 
-            label="Move to Private Vault" 
+            label="Lock Chat (Secret Vault)" 
             onClick={async () => {
               if (!db || !chatId || !profile?.id) return;
               try {
@@ -207,6 +207,11 @@ export const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ x, y, onClose,
                 await updateDoc(convRef, {
                   [`isVaulted.${profile.id}`]: true,
                   [`isMuted.${profile.id}`]: true
+                });
+                addToast?.({
+                  title: 'Chat Locked',
+                  message: 'Conversation secured in your Secret Vault with PIN/biometrics.',
+                  type: 'success'
                 });
               } catch (e) {
                 logger.error("Vault move error", e);

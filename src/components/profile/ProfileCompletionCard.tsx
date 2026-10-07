@@ -19,6 +19,7 @@ import {
   Heart,
   X
 } from 'lucide-react';
+import { useAeirmist } from '../../context/AeirmistContext';
 
 interface ProfileCompletionCardProps {
   displayUser: any;
@@ -31,14 +32,19 @@ export const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({
   postsCount = 0,
   onEditProfile 
 }) => {
-  const userId = displayUser?.id || displayUser?.uid || 'user';
+  const { updateProfile, profile } = useAeirmist();
+  const userId = displayUser?.id || displayUser?.uid || profile?.id || 'user';
   const storageKey = `aeirmist_dismiss_profile_strength_${userId}`;
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [isVisible, setIsVisible] = useState(() => {
     if (typeof window === 'undefined') return true;
     try {
-      return localStorage.getItem(storageKey) !== 'true';
+      const permDismissed = localStorage.getItem('aeirmist_dismiss_profile_strength_permanent') === 'true';
+      const userDismissed = displayUser?.dismissedWidgets?.profileStrength === true || 
+                            profile?.dismissedWidgets?.profileStrength === true ||
+                            localStorage.getItem(storageKey) === 'true';
+      return !permDismissed && !userDismissed;
     } catch {
       return true;
     }
@@ -46,7 +52,11 @@ export const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({
 
   useEffect(() => {
     try {
-      if (localStorage.getItem(storageKey) === 'true') {
+      const permDismissed = localStorage.getItem('aeirmist_dismiss_profile_strength_permanent') === 'true';
+      const userDismissed = displayUser?.dismissedWidgets?.profileStrength === true || 
+                            profile?.dismissedWidgets?.profileStrength === true ||
+                            localStorage.getItem(storageKey) === 'true';
+      if (permDismissed || userDismissed) {
         setIsVisible(false);
       } else {
         setIsVisible(true);
@@ -54,14 +64,25 @@ export const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({
     } catch (e) {
       console.warn("Could not read profile strength state", e);
     }
-  }, [storageKey]);
+  }, [storageKey, displayUser?.dismissedWidgets?.profileStrength, profile?.dismissedWidgets?.profileStrength]);
 
   const handleDismiss = () => {
     setIsVisible(false);
     try {
+      localStorage.setItem('aeirmist_dismiss_profile_strength_permanent', 'true');
       localStorage.setItem(storageKey, 'true');
     } catch (e) {
       console.warn("Could not save profile strength dismiss state", e);
+    }
+    // Persist to user's Firestore profile and cache so it never reappears on any login/logout
+    if (updateProfile) {
+      const currentDismissed = displayUser?.dismissedWidgets || profile?.dismissedWidgets || {};
+      updateProfile({
+        dismissedWidgets: {
+          ...currentDismissed,
+          profileStrength: true
+        }
+      }).catch(() => {});
     }
   };
 

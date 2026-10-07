@@ -11,6 +11,7 @@ import { usePostAnalytics } from '../hooks/usePostAnalytics';
 import { getAvatarUrl, BLANK_DP, getBlankDp } from '../lib/avatar';
 import { InsightsDashboard } from './analytics/InsightsDashboard';
 import { postAnalytics } from '../services/PostAnalyticsService';
+import { triggerNativeHaptic } from '../lib/nativeHaptics';
 import { logger } from '@/src/utils/logger';
 
 
@@ -41,6 +42,8 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
   const [isEditing, setIsEditing] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [showHeartAnim, setShowHeartAnim] = useState(false);
+  const lastTapRef = React.useRef<number>(0);
 
   const postAuthorId = post.authorId || (post as any).userId || post.authorUid;
   const isDeletedAuthor = Boolean(
@@ -167,7 +170,22 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
 
         {/* Media Carousel */}
         {images.length > 0 && (
-          <div className={`relative overflow-hidden bg-white/[0.02] group max-h-[min(50vh,390px)] sm:max-h-[min(65vh,490px)] ${
+          <div 
+            onClick={() => {
+              const now = Date.now();
+              if (now - lastTapRef.current < 320) {
+                triggerNativeHaptic('double_click');
+                setShowHeartAnim(true);
+                setTimeout(() => setShowHeartAnim(false), 900);
+                if (!isLiked) {
+                  toggleLike(post.id, false);
+                }
+                lastTapRef.current = 0;
+                return;
+              }
+              lastTapRef.current = now;
+            }}
+            className={`relative overflow-hidden bg-white/[0.02] group max-h-[min(50vh,390px)] sm:max-h-[min(65vh,490px)] cursor-pointer select-none ${
             post.aspectRatio === '1/1' ? 'aspect-square' : 
             post.aspectRatio === '4/5' ? 'aspect-[4/5]' : 
             post.aspectRatio === '16/9' ? 'aspect-video' : 
@@ -185,6 +203,23 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
                 </div>
               ))}
             </div>
+
+            {/* Instagram-style Big Pulsing Heart on Double Tap */}
+            <AnimatePresence>
+              {showHeartAnim && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.4 }}
+                  animate={{ opacity: 1, scale: [0.4, 1.25, 1], rotate: [0, -10, 0] }}
+                  exit={{ opacity: 0, scale: 0.8, y: -20 }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                  className="absolute inset-0 flex items-center justify-center pointer-events-none z-40"
+                >
+                  <div className="p-5 rounded-full bg-black/40 backdrop-blur-md border border-aeirmist-magenta/30 shadow-[0_0_50px_rgba(255,0,234,0.6)]">
+                    <Heart size={64} className="text-aeirmist-magenta fill-aeirmist-magenta filter drop-shadow-[0_0_20px_#ff00ea]" />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Navigation Arrows */}
             {images.length > 1 && (

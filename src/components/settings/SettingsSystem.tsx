@@ -87,28 +87,30 @@ import { AeirmistAnalyticsDashboard } from './AeirmistAnalyticsDashboard';
 import { AeirmistUpgradePanel } from '../marketplace/AeirmistUpgradePanel';
 import { AeirmistBillingHistory } from '../marketplace/AeirmistBillingHistory';
 import { InfinityPortal } from '../dashboard/InfinityPortal';
-import AccountSettings from './sections/AccountSettings';
-import PrivacySettings from './sections/PrivacySettings';
-import SecuritySettings from './sections/SecuritySettings';
-import NotificationSettings from './sections/NotificationSettings';
-import MessagingSettings from './sections/MessagingSettings';
-import AppearanceSettings from './sections/AppearanceSettings';
-import ConnectedAccountsSettings from './sections/ConnectedAccountsSettings';
-import StorageSettings from './sections/StorageSettings';
-import AccessibilitySettings from './sections/AccessibilitySettings';
-import HelpSettings from './sections/HelpSettings';
-import { SoundLibrarySettings } from './sections/SoundLibrarySettings';
-import CallsSettings from './sections/CallsSettings';
-import VaultSettings from './sections/VaultSettings';
-import MarketplaceSettings from './sections/MarketplaceSettings';
-import SupportSettings from './sections/SupportSettings';
-import AboutSettings from './sections/AboutSettings';
-import FeedbackSettings from './sections/FeedbackSettings';
-import LanguagesSettings from './sections/LanguagesSettings';
-import DeveloperSettings from './sections/DeveloperSettings';
-import { VerificationSettings } from './sections/VerificationSettings';
 import { logger } from '@/src/utils/logger';
 import { useBackHandler } from '../../utils/backNavigation';
+
+// Lazy-load all settings sections – they only parse when first opened
+const AccountSettings = React.lazy(() => import('./sections/AccountSettings'));
+const PrivacySettings = React.lazy(() => import('./sections/PrivacySettings'));
+const SecuritySettings = React.lazy(() => import('./sections/SecuritySettings'));
+const NotificationSettings = React.lazy(() => import('./sections/NotificationSettings'));
+const MessagingSettings = React.lazy(() => import('./sections/MessagingSettings'));
+const AppearanceSettings = React.lazy(() => import('./sections/AppearanceSettings'));
+const ConnectedAccountsSettings = React.lazy(() => import('./sections/ConnectedAccountsSettings'));
+const StorageSettings = React.lazy(() => import('./sections/StorageSettings'));
+const AccessibilitySettings = React.lazy(() => import('./sections/AccessibilitySettings'));
+const HelpSettings = React.lazy(() => import('./sections/HelpSettings'));
+const SoundLibrarySettings = React.lazy(() => import('./sections/SoundLibrarySettings').then(m => ({ default: m.SoundLibrarySettings })));
+const CallsSettings = React.lazy(() => import('./sections/CallsSettings'));
+const VaultSettings = React.lazy(() => import('./sections/VaultSettings'));
+const MarketplaceSettings = React.lazy(() => import('./sections/MarketplaceSettings'));
+const SupportSettings = React.lazy(() => import('./sections/SupportSettings'));
+const AboutSettings = React.lazy(() => import('./sections/AboutSettings'));
+const FeedbackSettings = React.lazy(() => import('./sections/FeedbackSettings'));
+const LanguagesSettings = React.lazy(() => import('./sections/LanguagesSettings'));
+const DeveloperSettings = React.lazy(() => import('./sections/DeveloperSettings'));
+const VerificationSettings = React.lazy(() => import('./sections/VerificationSettings').then(m => ({ default: m.VerificationSettings })));
 
 
 type SettingsTab = 
@@ -771,32 +773,34 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
                       animate={{ opacity: 1 }} 
                       exit={{ opacity: 0 }}
                     >
-                      <AccountSettings
-                        formData={formData}
-                        handleFieldChange={handleFieldChange}
-                        handleAvatarUpload={handleAvatarUpload}
-                        handleBannerUpload={handleBannerUpload}
-                        handleFileSelect={handleFileSelect}
-                        fileInputRef={fileInputRef}
-                        bannerInputRef={bannerInputRef}
-                        localAvatarURL={localAvatarURL}
-                        localCoverURL={localCoverURL}
-                        setLocalAvatarURL={setLocalAvatarURL}
-                        setLocalCoverURL={setLocalCoverURL}
-                        isSaving={isSaving}
-                        saveSuccess={saveSuccess}
-                        handleUpdate={handleUpdate}
-                        profile={profile}
-                        user={user}
-                        checkUsernameAvailable={checkUsernameAvailable}
-                        unlinkAccountMethod={unlinkAccountMethod}
-                        linkAccountMethod={linkAccountMethod}
-                        requestDeleteAccount={requestDeleteAccount}
-                        deleteAccount={deleteAccount}
-                        addToast={addToast}
-                        refreshProfile={refreshProfile}
-                        reloadAuthUser={reloadAuthUser}
-                      />
+                      <React.Suspense fallback={<div className="h-32 flex items-center justify-center text-white/20 text-xs font-mono">Loading...</div>}>
+                        <AccountSettings
+                          formData={formData}
+                          handleFieldChange={handleFieldChange}
+                          handleAvatarUpload={handleAvatarUpload}
+                          handleBannerUpload={handleBannerUpload}
+                          handleFileSelect={handleFileSelect}
+                          fileInputRef={fileInputRef}
+                          bannerInputRef={bannerInputRef}
+                          localAvatarURL={localAvatarURL}
+                          localCoverURL={localCoverURL}
+                          setLocalAvatarURL={setLocalAvatarURL}
+                          setLocalCoverURL={setLocalCoverURL}
+                          isSaving={isSaving}
+                          saveSuccess={saveSuccess}
+                          handleUpdate={handleUpdate}
+                          profile={profile}
+                          user={user}
+                          checkUsernameAvailable={checkUsernameAvailable}
+                          unlinkAccountMethod={unlinkAccountMethod}
+                          linkAccountMethod={linkAccountMethod}
+                          requestDeleteAccount={requestDeleteAccount}
+                          deleteAccount={deleteAccount}
+                          addToast={addToast}
+                          refreshProfile={refreshProfile}
+                          reloadAuthUser={reloadAuthUser}
+                        />
+                      </React.Suspense>
                     </motion.div>
                   )}
 
@@ -808,7 +812,9 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
                       exit={{ opacity: 0, y: -10 }}
                       transition={{ duration: 0.2 }}
                     >
-                      <ActiveSection />
+                      <React.Suspense fallback={<div className="h-32 flex items-center justify-center text-white/20 text-xs font-mono">Loading...</div>}>
+                        <ActiveSection />
+                      </React.Suspense>
                     </motion.div>
                   )}
                 </AnimatePresence>
