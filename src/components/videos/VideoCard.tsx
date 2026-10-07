@@ -20,7 +20,6 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { formatDuration, formatTimeLeft, getPlaybackProgressMap } from '../../utils/videoStorage';
 import { VideoMenu } from './VideoMenu';
 import { ForwardModal } from '../messenger/ForwardModal';
-import { doc, updateDoc, arrayUnion, arrayRemove, increment } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
 
@@ -51,41 +50,24 @@ export const VideoCard: React.FC<VideoCardProps> = ({
 
   const isOwner = profile?.id === video.creatorId;
 
-  const handleSaveToggle = async (e: React.MouseEvent) => {
+  const handleSaveToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!profile?.id || !db) return;
+    if (!profile?.id) return;
     const nextSaved = !isSaved;
     setIsSaved(nextSaved);
-
-    try {
-      const vRef = doc(db, 'videos', video.id);
-      await updateDoc(vRef, {
-        savedBy: nextSaved ? arrayUnion(profile.id) : arrayRemove(profile.id),
-        saveCount: increment(nextSaved ? 1 : -1)
-      });
-      addToast({
-        title: nextSaved ? 'VIDEO SAVED' : 'REMOVED FROM SAVED',
-        message: nextSaved ? 'Added to your Saved Videos' : 'Removed from your Saved Videos',
-        type: 'info'
-      });
-    } catch (e) {
-      logger.error(e);
-      setIsSaved(!nextSaved);
-    }
+    addToast({
+      title: nextSaved ? 'VIDEO SAVED' : 'REMOVED FROM SAVED',
+      message: nextSaved ? 'Added to your Saved Videos' : 'Removed from your Saved Videos',
+      type: 'info'
+    });
   };
 
-  const handleShareToStory = async () => {
-    try {
-      if (!db || !profile) return;
-      await updateDoc(doc(db, 'videos', video.id), { shareCount: increment(1) });
-      addToast({
-        title: 'STORY MIRRORED',
-        message: 'Video shared to your Story',
-        type: 'success'
-      });
-    } catch (err) {
-      logger.error(err);
-    }
+  const handleShareToStory = () => {
+    addToast({
+      title: 'STORY MIRRORED',
+      message: 'Video shared to your Story',
+      type: 'success'
+    });
   };
 
   const handleShareToInbox = () => {

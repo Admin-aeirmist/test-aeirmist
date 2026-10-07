@@ -30,7 +30,7 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { MediaQuality } from '../../services/MediaService';
 import { cloudinaryService } from '../../services/cloudinaryService';
-import { collection, doc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 
@@ -409,33 +409,25 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         savedBy: []
       };
 
-      if (db) {
-        // Real Firestore persistence
-        await setDoc(doc(db, 'videos', id), finalVideoRecord);
-
-        // Also create a lightweight companion post so this video actually shows up
-        // in the main Home Feed (which only reads from the 'posts' collection).
-        // Tapping this feed card opens the Videos section (see PremiumPostCard.tsx).
-        await addDoc(collection(db, 'posts'), {
-          type: 'video',
-          videoId: id,
-          authorId: profile?.id,
-          authorUid: user?.uid,
-          author: {
-            displayName: profile?.displayName,
-            username: profile?.username,
-            photoURL: profile?.photoURL,
-            isVerified: profile?.isVerified || false,
-          },
-          caption: title,
-          mediaUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
-          videoURL: finalVideoUrl,
-          likesCount: 0,
-          commentsCount: 0,
-          createdAt: serverTimestamp(),
+      try {
+        await api.videos.create({
+          title,
+          description,
+          videoUrl: finalVideoUrl,
+          thumbnailUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
+          duration: Math.round(duration || 0),
+          category,
+          tags: hashtags ? hashtags.split(',').map(t => t.trim()).filter(Boolean) : [],
         });
-      } else {
-        logger.warn('Database unlinked, video saved locally');
+
+        await api.posts.create({
+          content: `${title}\n\n${description || ''}`,
+          mediaKeys: [finalVideoUrl],
+          mediaType: 'video',
+          tags: hashtags ? hashtags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        }).catch((err) => logger.warn('[Video Companion Post Error]', err));
+      } catch (err) {
+        logger.error('[Video Publish Error]', err);
       }
 
       setUploadProgress(100);

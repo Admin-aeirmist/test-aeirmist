@@ -320,6 +320,171 @@ export const stories = pgTable('stories', {
 ]);
 
 // -------------------------------------------------------------
+// 6. Marketplace Stores & Orders
+// -------------------------------------------------------------
+export const marketplaceStores = pgTable('marketplace_stores', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 128 }).notNull(),
+  handle: varchar('handle', { length: 64 }).notNull().unique(),
+  description: text('description'),
+  logoUrl: text('logo_url'),
+  bannerUrl: text('banner_url'),
+  category: varchar('category', { length: 64 }).default('General').notNull(),
+  location: varchar('location', { length: 128 }),
+  phone: varchar('phone', { length: 32 }),
+  email: varchar('email', { length: 128 }),
+  status: varchar('status', { length: 16 }).default('active').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const marketplaceOrders = pgTable('marketplace_orders', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  buyerId: uuid('buyer_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  storeId: uuid('store_id').references(() => marketplaceStores.id, { onDelete: 'set null' }),
+  items: jsonb('items').notNull(),
+  totalAmount: numeric('total_amount', { precision: 12, scale: 2 }).notNull(),
+  currency: varchar('currency', { length: 8 }).default('BDT').notNull(),
+  shippingAddress: jsonb('shipping_address').notNull(),
+  status: varchar('status', { length: 32 }).default('pending').notNull(),
+  paymentMethod: varchar('payment_method', { length: 32 }).default('cod').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// -------------------------------------------------------------
+// 7. Video Feed & Video Studio
+// -------------------------------------------------------------
+export const videos = pgTable('videos', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: varchar('title', { length: 255 }).notNull(),
+  description: text('description'),
+  mediaKey: varchar('media_key', { length: 512 }),
+  videoUrl: text('video_url').notNull(),
+  thumbnailUrl: text('thumbnail_url'),
+  duration: integer('duration').default(0).notNull(),
+  category: varchar('category', { length: 64 }).default('General').notNull(),
+  tags: text('tags').array().default([]).notNull(),
+  viewsCount: integer('views_count').default(0).notNull(),
+  likesCount: integer('likes_count').default(0).notNull(),
+  commentsCount: integer('comments_count').default(0).notNull(),
+  sharesCount: integer('shares_count').default(0).notNull(),
+  isPublished: boolean('is_published').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const videoLikes = pgTable('video_likes', {
+  videoId: uuid('video_id').notNull().references(() => videos.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.videoId, table.userId] }),
+]);
+
+export const videoComments = pgTable('video_comments', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  videoId: uuid('video_id').notNull().references(() => videos.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  likesCount: integer('likes_count').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// -------------------------------------------------------------
+// 8. WebRTC Calling Sessions & Logs
+// -------------------------------------------------------------
+export const calls = pgTable('calls', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  callerId: uuid('caller_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  receiverId: uuid('receiver_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 16 }).default('video').notNull(), // 'audio' | 'video'
+  status: varchar('status', { length: 32 }).default('calling').notNull(), // 'calling', 'ongoing', 'ended', 'rejected', 'missed', 'busy'
+  duration: integer('duration').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+});
+
+// -------------------------------------------------------------
+// 9. Chat Sub-features: User Notes, Vault Items, Poll Votes
+// -------------------------------------------------------------
+export const userNotes = pgTable('user_notes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  emoji: varchar('emoji', { length: 16 }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const vaultItems = pgTable('vault_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 32 }).default('note').notNull(), // 'photo', 'video', 'note', 'document'
+  title: varchar('title', { length: 255 }),
+  content: text('content'),
+  mediaKey: varchar('media_key', { length: 512 }),
+  mediaUrl: text('media_url'),
+  folder: varchar('folder', { length: 64 }).default('General').notNull(),
+  isEncrypted: boolean('is_encrypted').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const pollVotes = pgTable('poll_votes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  postId: uuid('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  optionIndex: integer('option_index').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_poll_votes_post').on(table.postId),
+  index('idx_poll_votes_user').on(table.userId),
+]);
+
+export const storyHighlights = pgTable('story_highlights', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: varchar('title', { length: 100 }).notNull(),
+  coverUrl: text('cover_url'),
+  storyIds: jsonb('story_ids').$type<string[]>().default([]).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const supportTickets = pgTable('support_tickets', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  ticketRef: varchar('ticket_ref', { length: 64 }).notNull().unique(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 32 }).default('general').notNull(),
+  area: varchar('area', { length: 64 }),
+  message: text('message').notNull(),
+  attachmentUrl: text('attachment_url'),
+  status: varchar('status', { length: 32 }).default('open').notNull(),
+  reply: text('reply'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const contentReports = pgTable('content_reports', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  reportRef: varchar('report_ref', { length: 64 }).notNull().unique(),
+  reporterId: uuid('reporter_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  reportedUserId: varchar('reported_user_id', { length: 128 }).notNull(),
+  targetType: varchar('target_type', { length: 32 }).notNull(),
+  targetId: varchar('target_id', { length: 128 }).notNull(),
+  reason: varchar('reason', { length: 128 }).notNull(),
+  description: text('description'),
+  attachmentUrl: text('attachment_url'),
+  status: varchar('status', { length: 32 }).default('pending_review').notNull(),
+  resolution: text('resolution'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// -------------------------------------------------------------
 // Drizzle Relations
 // -------------------------------------------------------------
 export const usersRelations = relations(users, ({ one, many }) => ({

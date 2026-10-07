@@ -16,6 +16,28 @@ const CreateItemSchema = z.object({
   location: z.string().optional(),
 });
 
+const CreateStoreSchema = z.object({
+  name: z.string().min(2).max(128),
+  handle: z.string().min(2).max(64),
+  description: z.string().max(2000).optional(),
+  logoUrl: z.string().optional(),
+  bannerUrl: z.string().optional(),
+  category: z.string().max(64).optional(),
+  location: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+});
+
+const CreateOrderSchema = z.object({
+  storeId: z.string().optional(),
+  items: z.array(z.any()).min(1),
+  totalAmount: z.string(),
+  currency: z.string().default('BDT'),
+  shippingAddress: z.any(),
+  paymentMethod: z.string().default('cod'),
+});
+
+// ---------------- Items ----------------
 // List items
 router.get('/items', async (req, res: Response) => {
   try {
@@ -93,6 +115,85 @@ router.delete('/items/:id', authenticateToken, async (req: AuthenticatedRequest,
   } catch (err) {
     console.error('[Marketplace Delete Error]', err);
     res.status(500).json({ error: 'Failed to delete item' });
+  }
+});
+
+// ---------------- Stores ----------------
+// Create store
+router.post('/stores', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const data = CreateStoreSchema.parse(req.body);
+    const existing = await MarketplaceDAL.getStoreByHandle(data.handle);
+    if (existing) {
+      return res.status(409).json({ error: 'Store handle already taken' });
+    }
+
+    const store = await MarketplaceDAL.createStore({
+      ownerId: req.user!.userId,
+      ...data,
+    });
+    res.status(201).json({ store });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: err.errors });
+    }
+    console.error('[Store Create Error]', err);
+    res.status(500).json({ error: 'Failed to create store' });
+  }
+});
+
+// Get store by handle
+router.get('/stores/:handle', async (req, res: Response) => {
+  try {
+    const store = await MarketplaceDAL.getStoreByHandle(req.params.handle);
+    if (!store) {
+      return res.status(404).json({ error: 'Store not found' });
+    }
+    res.json({ store });
+  } catch (err) {
+    console.error('[Store Fetch Error]', err);
+    res.status(500).json({ error: 'Failed to fetch store' });
+  }
+});
+
+// Get my store
+router.get('/my-store', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const store = await MarketplaceDAL.getStoreByOwner(req.user!.userId);
+    res.json({ store });
+  } catch (err) {
+    console.error('[My Store Fetch Error]', err);
+    res.status(500).json({ error: 'Failed to fetch my store' });
+  }
+});
+
+// ---------------- Orders ----------------
+// Create order / checkout
+router.post('/orders', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const data = CreateOrderSchema.parse(req.body);
+    const order = await MarketplaceDAL.createOrder({
+      buyerId: req.user!.userId,
+      ...data,
+    });
+    res.status(201).json({ order });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: err.errors });
+    }
+    console.error('[Order Create Error]', err);
+    res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+// Get buyer orders
+router.get('/orders/my', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const orders = await MarketplaceDAL.getUserOrders(req.user!.userId);
+    res.json({ orders });
+  } catch (err) {
+    console.error('[User Orders Error]', err);
+    res.status(500).json({ error: 'Failed to fetch orders' });
   }
 });
 

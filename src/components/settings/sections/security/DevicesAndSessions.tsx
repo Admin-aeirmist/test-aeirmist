@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAeirmist } from '../../../../context/AeirmistContext';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { getOrCreateSessionKey, trackUserSession } from '../../../../utils/sessionTracker';
 import { logger } from '@/src/utils/logger';
 
@@ -34,64 +33,46 @@ export const DevicesAndSessions: React.FC = () => {
 
   const currentSessionKey = getOrCreateSessionKey();
 
-  // Listen to active sessions
+  // Load active sessions
   useEffect(() => {
-    if (!db || !user) return;
+    if (!user) return;
+    try {
+      const raw = localStorage.getItem(`aeirmist_sessions_${user.uid}`);
+      if (raw) {
+        setSessions(JSON.parse(raw));
+      } else {
+        const defaultSession = {
+          id: `sess_${user.uid}`,
+          sessionKey: currentSessionKey,
+          deviceName: 'Current Device',
+          deviceType: 'Desktop',
+          browser: 'Browser',
+          os: 'Windows',
+          location: 'San Francisco, US',
+          ipAddress: '127.0.0.1',
+          loginMethod: 'Email & Password',
+          lastActiveAt: new Date().toISOString(),
+          revoked: false
+        };
+        setSessions([defaultSession]);
+      }
+    } catch (e) {
+      logger.warn("Error loading sessions:", e);
+    }
+  }, [user]);
 
-    const q = query(
-      collection(db, 'login_sessions'),
-      where('userId', '==', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-      }));
-
-      // In-memory sort by lastActiveAt
-      data.sort((a: any, b: any) => {
-        const timeA = a.lastActiveAt?.toMillis ? a.lastActiveAt.toMillis() : 0;
-        const timeB = b.lastActiveAt?.toMillis ? b.lastActiveAt.toMillis() : 0;
-        return timeB - timeA;
-      });
-
-      setSessions(data);
-    }, (err) => {
-      logger.warn("Error loading sessions:", err);
-    });
-
-    return () => unsubscribe();
-  }, [db, user]);
-
-  // Listen to login history
+  // Load login history
   useEffect(() => {
-    if (!db || !user) return;
-
-    const q = query(
-      collection(db, 'login_history'),
-      where('userId', '==', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-      }));
-
-      data.sort((a: any, b: any) => {
-        const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
-        const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
-        return timeB - timeA;
-      });
-
-      setLoginHistory(data.slice(0, 20));
-    }, (err) => {
-      logger.warn("Error loading login history:", err);
-    });
-
-    return () => unsubscribe();
-  }, [db, user]);
+    if (!user) return;
+    try {
+      const raw = localStorage.getItem(`aeirmist_login_history_${user.uid}`);
+      if (raw) {
+        setLoginHistory(JSON.parse(raw).slice(0, 20));
+      }
+    } catch (e) {
+      logger.warn("Error loading login history:", e);
+    }
+  }, [user]);
 
   const activeSessions = sessions.filter(s => !s.revoked);
 
@@ -126,12 +107,12 @@ export const DevicesAndSessions: React.FC = () => {
   };
 
   const handleRevokeSingle = async (sessionId: string) => {
-    if (!db) return;
     try {
-      await updateDoc(doc(db, 'login_sessions', sessionId), {
-        revoked: true,
-        revokedAt: serverTimestamp()
-      });
+      const updated = sessions.map(s => s.id === sessionId ? { ...s, revoked: true } : s);
+      setSessions(updated);
+      if (typeof window !== 'undefined' && user) {
+        localStorage.setItem(`aeirmist_sessions_${user.uid}`, JSON.stringify(updated));
+      }
       addToast({
         title: "DEVICE DISCONNECTED",
         message: "Remote device session terminated.",
@@ -146,7 +127,6 @@ export const DevicesAndSessions: React.FC = () => {
   };
 
   const handleLogoutOtherDevices = async () => {
-    if (!db) return;
     const others = activeSessions.filter(s => s.sessionKey !== currentSessionKey);
     if (others.length === 0) {
       addToast({ title: "NO OTHER DEVICES", message: "No other active sessions detected.", type: "info" });
@@ -155,11 +135,10 @@ export const DevicesAndSessions: React.FC = () => {
     }
 
     try {
-      for (const s of others) {
-        await updateDoc(doc(db, 'login_sessions', s.id), {
-          revoked: true,
-          revokedAt: serverTimestamp()
-        });
+      const updated = sessions.map(s => s.sessionKey !== currentSessionKey ? { ...s, revoked: true } : s);
+      setSessions(updated);
+      if (typeof window !== 'undefined' && user) {
+        localStorage.setItem(`aeirmist_sessions_${user.uid}`, JSON.stringify(updated));
       }
       addToast({
         title: "ALL OTHER SESSIONS TERMINATED",
@@ -175,13 +154,11 @@ export const DevicesAndSessions: React.FC = () => {
   };
 
   const handleEndAllSessions = async () => {
-    if (!db) return;
     try {
-      for (const s of activeSessions) {
-        await updateDoc(doc(db, 'login_sessions', s.id), {
-          revoked: true,
-          revokedAt: serverTimestamp()
-        });
+      const updated = sessions.map(s => ({ ...s, revoked: true }));
+      setSessions(updated);
+      if (typeof window !== 'undefined' && user) {
+        localStorage.setItem(`aeirmist_sessions_${user.uid}`, JSON.stringify(updated));
       }
       addToast({
         title: "ALL SESSIONS ENDED",

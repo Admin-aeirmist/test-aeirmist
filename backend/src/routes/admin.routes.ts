@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { db } from '../db';
-import { users, profiles, posts, messages, marketplaceItems, auditLogs } from '../db/schema';
+import { users, profiles, posts, messages, marketplaceItems, auditLogs, supportTickets, contentReports } from '../db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 
@@ -58,6 +58,99 @@ router.post('/users/:id/ban', authenticateToken, requireAdmin, async (req: Authe
   } catch (err) {
     console.error('[Admin Ban Error]', err);
     res.status(500).json({ error: 'Failed to update user status' });
+  }
+});
+
+// Support Tickets list
+router.get('/tickets', authenticateToken, requireAdmin, async (_req, res: Response) => {
+  try {
+    const tickets = await db
+      .select({
+        ticket: supportTickets,
+        user: {
+          id: users.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarKey: profiles.avatarKey,
+        },
+      })
+      .from(supportTickets)
+      .innerJoin(users, eq(supportTickets.userId, users.id))
+      .innerJoin(profiles, eq(users.id, profiles.userId))
+      .orderBy(desc(supportTickets.createdAt))
+      .limit(100);
+
+    res.json({ tickets: tickets.map((t) => ({ ...t.ticket, user: t.user })) });
+  } catch (err) {
+    console.error('[Admin Tickets Error]', err);
+    res.status(500).json({ error: 'Failed to fetch tickets' });
+  }
+});
+
+// Reply / update support ticket
+router.patch('/tickets/:id', authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { status, reply } = req.body;
+    const [ticket] = await db
+      .update(supportTickets)
+      .set({
+        status: status || undefined,
+        reply: reply || undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(supportTickets.id, req.params.id))
+      .returning();
+
+    res.json({ ticket });
+  } catch (err) {
+    console.error('[Admin Update Ticket Error]', err);
+    res.status(500).json({ error: 'Failed to update ticket' });
+  }
+});
+
+// Content Reports list
+router.get('/reports', authenticateToken, requireAdmin, async (_req, res: Response) => {
+  try {
+    const reports = await db
+      .select({
+        report: contentReports,
+        reporter: {
+          id: users.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+        },
+      })
+      .from(contentReports)
+      .innerJoin(users, eq(contentReports.reporterId, users.id))
+      .innerJoin(profiles, eq(users.id, profiles.userId))
+      .orderBy(desc(contentReports.createdAt))
+      .limit(100);
+
+    res.json({ reports: reports.map((r) => ({ ...r.report, reporter: r.reporter })) });
+  } catch (err) {
+    console.error('[Admin Reports Error]', err);
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+// Resolve Content Report
+router.patch('/reports/:id', authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { status, resolution } = req.body;
+    const [report] = await db
+      .update(contentReports)
+      .set({
+        status: status || 'resolved',
+        resolution: resolution || undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(contentReports.id, req.params.id))
+      .returning();
+
+    res.json({ report });
+  } catch (err) {
+    console.error('[Admin Update Report Error]', err);
+    res.status(500).json({ error: 'Failed to update report' });
   }
 });
 

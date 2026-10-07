@@ -194,6 +194,15 @@ export class UserDAL {
       .limit(limit);
   }
 
+  static async updateEmail(userId: string, newEmail: string) {
+    const [user] = await db
+      .update(users)
+      .set({ email: newEmail.toLowerCase().trim(), updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return user || null;
+  }
+
   static async deactivateAccount(userId: string) {
     const [user] = await db
       .update(users)

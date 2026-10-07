@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { motion } from 'motion/react';
 import { Sparkles, CheckCircle2 } from 'lucide-react';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 
@@ -20,28 +20,29 @@ interface PollProps {
 }
 
 export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
-  const { db, profile } = useAeirmist();
+  const { profile } = useAeirmist();
   const [voting, setVoting] = useState(false);
+  const [localVotes, setLocalVotes] = useState(poll.votes || {});
 
   if (!poll || !poll.options) return null;
 
-  const totalVotes = Object.values(poll.votes || {}).reduce(
+  const totalVotes = Object.values(localVotes).reduce(
     (acc, userIds) => acc + (userIds?.length || 0),
     0
   );
 
   const userVotedOption = profile 
-    ? Object.keys(poll.votes || {}).find(option => poll.votes[option]?.includes(profile.id))
+    ? Object.keys(localVotes).find(option => localVotes[option]?.includes(profile.id))
     : undefined;
 
   const hasVoted = !!userVotedOption;
 
-  const handleVote = async (option: string) => {
-    if (!db || !profile || voting) return;
+  const handleVote = async (option: string, optionIndex: number) => {
+    if (!profile || voting) return;
     setVoting(true);
     
     try {
-      const votesCopy = { ...(poll.votes || {}) };
+      const votesCopy = { ...(localVotes || {}) };
       
       // Clean up user's previous votes so they can switch choice
       Object.keys(votesCopy).forEach(key => {
@@ -57,8 +58,10 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
       }
       votesCopy[option].push(profile.id);
 
-      await updateDoc(doc(db, 'posts', postId), {
-        'poll.votes': votesCopy
+      setLocalVotes(votesCopy);
+
+      await api.posts.votePoll(postId, optionIndex).catch((err) => {
+        logger.warn('[Poll] Server vote warning:', err);
       });
     } catch (e) {
       logger.error("Poll voting error", e);
@@ -82,7 +85,7 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
 
       <div className="space-y-2.5 relative z-10">
         {poll.options.map((option, idx) => {
-          const optionVotes = poll.votes?.[option]?.length || 0;
+          const optionVotes = localVotes?.[option]?.length || 0;
           const percentage = totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 100) : 0;
           const isSelected = userVotedOption === option;
 
@@ -90,7 +93,7 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
             <button
               key={idx}
               disabled={!profile || voting}
-              onClick={() => handleVote(option)}
+              onClick={() => handleVote(option, idx)}
               className={`w-full group text-left relative overflow-hidden rounded-xl border p-3 sm:p-3.5 transition-all outline-none ${
                 isSelected 
                   ? 'border-aeirmist-cyan/40 bg-aeirmist-cyan/[0.04]' 

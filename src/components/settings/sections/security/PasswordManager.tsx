@@ -1,19 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, ShieldCheck, Lock, AlertCircle, Sparkles, X, Loader2 } from 'lucide-react';
 import { useAeirmist } from '../../../../context/AeirmistContext';
-import { 
-  EmailAuthProvider, 
-  GoogleAuthProvider, 
-  linkWithCredential, 
-  reauthenticateWithCredential, 
-  reauthenticateWithPopup, 
-  updatePassword, 
-  updateEmail,
-  verifyBeforeUpdateEmail,
-  sendPasswordResetEmail,
-  AuthError 
-} from 'firebase/auth';
-import { auth } from '../../../../lib/firebase';
+import { api } from '../../../../services/api/client';
 import { Mail, Plus } from 'lucide-react';
 import { logger } from '@/src/utils/logger';
 
@@ -56,7 +44,7 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
     }
     setIsSendingReset(true);
     try {
-      await sendPasswordResetEmail(auth, user.email);
+      await api.auth.forgotPassword(user.email);
       await logActivity('password_reset_request', `Sent password reset link to ${user.email}`);
       addToast({
         title: 'Security Protocol Updated',
@@ -76,11 +64,11 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
   useEffect(() => {
     const autoLinkEmail = async () => {
       if (user && !user.email && !isAutoLinking) {
-        const trustedEmail = user.providerData.find(p => p.email)?.email;
+        const trustedEmail = user.providerData?.find((p: any) => p.email)?.email;
         if (trustedEmail) {
           setIsAutoLinking(true);
           try {
-            await updateEmail(user, trustedEmail);
+            await updateProfile({ email: trustedEmail });
             await logActivity('email_auto_sync', `Auto-linked trusted email ${trustedEmail} to user.`);
           } catch (error: any) {
             logger.error('[Security] Auto-link email failed:', error);
@@ -120,24 +108,17 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
 
     setIsUpdatingEmail(true);
     try {
-      // Manual addition always uses verification link for security
-      await verifyBeforeUpdateEmail(user, emailInput);
-      await logActivity('email_addition', `Verification sent to ${emailInput} for user linkage.`);
+      await updateProfile({ email: emailInput });
+      await logActivity('email_addition', `Linked email ${emailInput} for user.`);
       addToast({ 
-        title: 'Verification Sent', 
-        message: 'Verification email sent — please check your inbox and click the link to confirm this email address.', 
+        title: 'Email Updated', 
+        message: 'Email address updated successfully.', 
         type: 'success' 
       });
       setEmailInput('');
     } catch (error: any) {
       logger.error('Email addition error:', error);
-      if (error.code === 'auth/requires-recent-login') {
-        setPendingAction('add_email');
-        setShowReauthModal(true);
-        addToast({ title: 'Identity Verification', message: 'Please confirm your identity to link this email.', type: 'info' });
-      } else {
-        addToast({ title: 'Error', message: 'Failed to link email.', type: 'warning' });
-      }
+      addToast({ title: 'Error', message: 'Failed to link email.', type: 'warning' });
     } finally {
       setIsUpdatingEmail(false);
     }
@@ -183,9 +164,7 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
     try {
       if (hasPassword) {
         // Change Password Form Submission
-        const credential = EmailAuthProvider.credential(user.email, currentPassword);
-        await reauthenticateWithCredential(user, credential);
-        await updatePassword(user, password);
+        await api.auth.changePassword(currentPassword, password);
         await updateProfile({ lastPasswordChangedAt: new Date().toISOString() });
         await logActivity('password_change', 'User successfully changed their login password.');
         addToast({ 
@@ -196,20 +175,7 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
         });
       } else {
         // Create Password Form Submission
-        const credential = EmailAuthProvider.credential(user.email, password);
-        try {
-          await linkWithCredential(user, credential);
-        } catch (linkErr: any) {
-          if (
-            linkErr.code === 'auth/provider-already-linked' ||
-            linkErr.code === 'auth/credential-already-in-use' ||
-            linkErr.code === 'auth/email-already-in-use'
-          ) {
-            await updatePassword(user, password);
-          } else {
-            throw linkErr;
-          }
-        }
+        await api.auth.changePassword('', password);
         await updateProfile({ hasPassword: true, passwordCreatedAt: new Date().toISOString() });
         await logActivity('password_creation', 'User saved a new password to their user.');
         addToast({ 
@@ -228,21 +194,8 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
       setCurrentPassword('');
     } catch (error: any) {
       logger.error('Password operation error:', error);
-      const authError = error as AuthError;
-      
-      if (authError.code === 'auth/requires-recent-login') {
-        setPendingAction(hasPassword ? 'update' : 'create');
-        setShowReauthModal(true);
-        addToast({ title: 'Identity Verification', message: 'Please confirm your identity to complete this operation.', type: 'info' });
-      } else if (authError.code === 'auth/wrong-password') {
-        addToast({ title: 'Error', message: 'Current password is incorrect.', type: 'warning' });
-      } else if (authError.code === 'auth/weak-password') {
-        addToast({ title: 'Error', message: 'New password is too weak.', type: 'warning' });
-      } else if (authError.code === 'auth/network-request-failed') {
-        addToast({ title: 'Error', message: 'Network error, please try again.', type: 'warning' });
-      } else {
-        addToast({ title: 'Error', message: authError.message || 'An unexpected error occurred.', type: 'warning' });
-      }
+      const msg = error.response?.data?.error || error.message || 'An unexpected error occurred.';
+      addToast({ title: 'Error', message: msg, type: 'warning' });
     } finally {
       setIsLoading(false);
     }
@@ -253,30 +206,21 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
     setIsReauthorizing(true);
 
     try {
-      const hasPasswordProvider = user.providerData.some(p => p.providerId === 'password');
-      
-      if (hasPasswordProvider && user.email) {
-        if (!reauthPassword) {
-          addToast({ title: 'Authentication Error', message: 'Please enter your current password.', type: 'warning' });
+      if (reauthPassword) {
+        try {
+          await api.auth.login(user.email || user.username, reauthPassword);
+        } catch {
+          addToast({ title: 'Authentication Error', message: 'Current password incorrect.', type: 'warning' });
           setIsReauthorizing(false);
           return;
         }
-        // Reauthenticate using Password Credential
-        const credential = EmailAuthProvider.credential(user.email, reauthPassword);
-        await reauthenticateWithCredential(user, credential);
-      } else {
-        // Reauthenticate using Google Popup Flow
-        const provider = new GoogleAuthProvider();
-        await reauthenticateWithPopup(user, provider);
       }
 
-      addToast({ title: 'Verification Success', message: 'Identity verified. Retrying operation...', type: 'success' });
+      addToast({ title: 'Verification Success', message: 'Identity verified. Updating credentials...', type: 'success' });
       setShowReauthModal(false);
       
-      // Automatic execution of the pending action
       if (pendingAction === 'update') {
-        // Retry Password Update
-        await updatePassword(user, password);
+        await api.auth.changePassword(reauthPassword || currentPassword, password);
         await updateProfile({ lastPasswordChangedAt: new Date().toISOString() });
         await logActivity('password_change', 'User successfully changed password after reauthentication.');
         addToast({ title: 'Success', message: 'Password updated successfully.', type: 'success' });
@@ -284,39 +228,22 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
         setConfirmPassword('');
         setCurrentPassword('');
       } else if (pendingAction === 'create') {
-        // Retry Password Create/Link
-        if (user.email) {
-          const credential = EmailAuthProvider.credential(user.email, password);
-          try {
-            await linkWithCredential(user, credential);
-          } catch (linkErr: any) {
-            if (
-              linkErr.code === 'auth/provider-already-linked' ||
-              linkErr.code === 'auth/credential-already-in-use' ||
-              linkErr.code === 'auth/email-already-in-use'
-            ) {
-              await updatePassword(user, password);
-            } else {
-              throw linkErr;
-            }
-          }
-          await updateProfile({ hasPassword: true, passwordCreatedAt: new Date().toISOString() });
-          await logActivity('password_creation', 'User successfully created password after reauthentication.');
-          addToast({ title: 'Success', message: 'Password created successfully.', type: 'success' });
-          if (onPasswordChange) {
-            onPasswordChange(true);
-          }
-          setPassword('');
-          setConfirmPassword('');
-          setCurrentPassword('');
+        await api.auth.changePassword('', password);
+        await updateProfile({ hasPassword: true, passwordCreatedAt: new Date().toISOString() });
+        await logActivity('password_creation', 'User successfully created password after reauthentication.');
+        addToast({ title: 'Success', message: 'Password created successfully.', type: 'success' });
+        if (onPasswordChange) {
+          onPasswordChange(true);
         }
+        setPassword('');
+        setConfirmPassword('');
+        setCurrentPassword('');
       } else if (pendingAction === 'add_email') {
-        // Retry Email Addition
-        await verifyBeforeUpdateEmail(user, emailInput);
-        await logActivity('email_addition', `Verification sent to ${emailInput} after reauthentication.`);
+        await updateProfile({ email: emailInput });
+        await logActivity('email_addition', `Linked ${emailInput} for user.`);
         addToast({ 
-          title: 'Verification Sent', 
-          message: 'Verification email sent — please check your inbox and click the link to confirm this email address.', 
+          title: 'Email Updated', 
+          message: 'Email address updated successfully.', 
           type: 'success' 
         });
         setEmailInput('');
@@ -325,12 +252,7 @@ const PasswordManager: React.FC<PasswordManagerProps> = ({ hasPassword, onPasswo
       setPendingAction(null);
     } catch (reauthErr: any) {
       logger.error('Reauth confirmation failed:', reauthErr);
-      let errMsg = 'Reauthentication failed. Please try again.';
-      if (reauthErr.code === 'auth/wrong-password') {
-        errMsg = 'Incorrect password. Verification rejected.';
-      } else if (reauthErr.code === 'auth/popup-closed-by-user') {
-        errMsg = 'Google authentication popup was cancelled.';
-      }
+      const errMsg = reauthErr.response?.data?.error || reauthErr.message || 'Verification rejected.';
       addToast({ title: 'Authentication Failed', message: errMsg, type: 'warning' });
     } finally {
       setIsReauthorizing(false);

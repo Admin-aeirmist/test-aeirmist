@@ -25,17 +25,7 @@ import {
   Settings
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  deleteDoc, 
-  serverTimestamp 
-} from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { EmptyState } from '../ui/EmptyState';
 import { logger } from '@/src/utils/logger';
@@ -84,49 +74,43 @@ export const MarketplaceStorePage: React.FC<StorePageProps> = ({
   const [replyTextMap, setReplyTextMap] = useState<Record<string, string>>({});
   const isOwner = profile?.id === store.ownerId;
 
-  // Real-time syncing from Firestore
+  // Loading data from self-hosted API & seeds
   useEffect(() => {
-    if (!db) return;
-
     // Follow status
     setIsFollowing(store.followers?.includes(profile?.id) || false);
 
     // Products
-    const qProducts = query(collection(db, 'products'), where('storeId', '==', store.id));
-    const unsubProducts = onSnapshot(qProducts, (snap) => {
-      if (snap.empty) {
-        // Fallback to seed items for this store
+    api.marketplace.getItems()
+      .then(res => {
+        if (res?.items && res.items.length > 0) {
+          const filtered = res.items.filter((p: any) => p.storeId === store.id);
+          setStoreProducts(filtered.length > 0 ? filtered : SEED_PRODUCTS.filter(p => p.storeId === store.id));
+        } else {
+          setStoreProducts(SEED_PRODUCTS.filter(p => p.storeId === store.id));
+        }
+      })
+      .catch(() => {
         setStoreProducts(SEED_PRODUCTS.filter(p => p.storeId === store.id));
-      } else {
-        const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-        setStoreProducts(list);
-      }
-    }, () => {
-      setStoreProducts(SEED_PRODUCTS.filter(p => p.storeId === store.id));
-    });
+      });
 
     // Posts
-    const qPosts = query(collection(db, 'store_posts'), where('storeId', '==', store.id));
-    const unsubPosts = onSnapshot(qPosts, (snap) => {
-      if (snap.empty) {
-        setStorePosts(SEED_STORE_POSTS.filter(p => p.storeId === store.id));
+    try {
+      const postsKey = `aeirmist_store_posts_${store.id}`;
+      const saved = localStorage.getItem(postsKey);
+      if (saved) {
+        setStorePosts(JSON.parse(saved));
       } else {
-        const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as StorePost));
-        setStorePosts(list);
+        setStorePosts(SEED_STORE_POSTS.filter(p => p.storeId === store.id));
       }
-    }, () => {
+    } catch {
       setStorePosts(SEED_STORE_POSTS.filter(p => p.storeId === store.id));
-    });
+    }
 
     // Reviews
-    const qReviews = query(collection(db, 'store_reviews'), where('storeId', '==', store.id));
-    const unsubReviews = onSnapshot(qReviews, (snap) => {
-      let list: StoreReview[] = [];
-      if (snap.empty) {
-        list = SEED_STORE_REVIEWS.filter(r => r.storeId === store.id);
-      } else {
-        list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoreReview));
-      }
+    try {
+      const reviewsKey = `aeirmist_store_reviews_${store.id}`;
+      const saved = localStorage.getItem(reviewsKey);
+      const list: StoreReview[] = saved ? JSON.parse(saved) : SEED_STORE_REVIEWS.filter(r => r.storeId === store.id);
       setStoreReviews(list);
 
       // Compute Breakdown
@@ -134,30 +118,24 @@ export const MarketplaceStorePage: React.FC<StorePageProps> = ({
         const total = list.length;
         const sum = list.reduce((acc, r) => acc + r.rating, 0);
         const avg = parseFloat((sum / total).toFixed(1));
-        const stars = [0, 0, 0, 0, 0]; // index 0 for 1 star, indexing ...
+        const stars = [0, 0, 0, 0, 0];
         list.forEach(r => {
           const idx = Math.min(Math.max(1, Math.round(r.rating)), 5) - 1;
           stars[idx] = (stars[idx] || 0) + 1;
         });
         setRatingsBreakdown({ avg, total, stars });
       } else {
-        setRatingsBreakdown({ avg: 5.0, total: 0, stars: [0,0,0,0,0] });
+        setRatingsBreakdown({ avg: 5.0, total: 0, stars: [0, 0, 0, 0, 0] });
       }
-    }, () => {
+    } catch {
       const list = SEED_STORE_REVIEWS.filter(r => r.storeId === store.id);
       setStoreReviews(list);
-    });
-
-    return () => {
-      unsubProducts();
-      unsubPosts();
-      unsubReviews();
-    };
-  }, [db, store.id, profile?.id]);
+    }
+  }, [store.id, profile?.id]);
 
   // Actions
   const handleToggleFollow = async () => {
-    if (!profile || !db) {
+    if (!profile) {
       addToast({ title: 'AUTHENTICATION NEEDED', message: 'Please open or log into your account to follow.', type: 'warning' });
       return;
     }
@@ -171,18 +149,13 @@ export const MarketplaceStorePage: React.FC<StorePageProps> = ({
       updatedFollowers.push(profile.id);
     }
 
-    try {
-      const storeRef = doc(db, 'stores', store.id);
-      await updateDoc(storeRef, { followers: updatedFollowers });
-      setIsFollowing(!following);
-      addToast({
-        title: following ? 'UNFOLLOWED STORE' : 'FOLLOWED STORE',
-        message: following ? `You stopped following ${store.name}.` : `You are now receiving live feed updates of ${store.name}!`,
-        type: 'success'
-      });
-    } catch (e) {
-      logger.error(e);
-    }
+    setIsFollowing(!following);
+    store.followers = updatedFollowers;
+    addToast({
+      title: following ? 'UNFOLLOWED STORE' : 'FOLLOWED STORE',
+      message: following ? `You stopped following ${store.name}.` : `You are now receiving live feed updates of ${store.name}!`,
+      type: 'success'
+    });
   };
 
   const handleShareStore = () => {
@@ -200,7 +173,7 @@ export const MarketplaceStorePage: React.FC<StorePageProps> = ({
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile || !db) {
+    if (!profile) {
       addToast({ title: 'AUTHENTICATION NEEDED', message: 'You must log in to review.', type: 'warning' });
       return;
     }
@@ -208,25 +181,26 @@ export const MarketplaceStorePage: React.FC<StorePageProps> = ({
 
     setIsSubmittingReview(true);
     try {
-      await addDoc(collection(db, 'store_reviews'), {
+      const newReview: StoreReview = {
+        id: 'rev_' + Date.now(),
         storeId: store.id,
         userId: profile.id,
         userName: profile.displayName || profile.username,
         userAvatar: profile.photoURL || '',
         rating: newRating,
         comment: newComment.trim(),
-        createdAt: serverTimestamp()
-      });
+        createdAt: new Date().toISOString() as any,
+      };
+
+      const updated = [newReview, ...storeReviews];
+      setStoreReviews(updated);
+      localStorage.setItem(`aeirmist_store_reviews_${store.id}`, JSON.stringify(updated));
 
       // Update store average/total count
       const updatedTotal = ratingsBreakdown.total + 1;
-      const sum = storeReviews.reduce((acc, r) => acc + r.rating, 0) + newRating;
+      const sum = updated.reduce((acc, r) => acc + r.rating, 0);
       const updatedAvg = parseFloat((sum / updatedTotal).toFixed(1));
-      
-      await updateDoc(doc(db, 'stores', store.id), {
-        avgRating: updatedAvg,
-        totalReviews: updatedTotal
-      });
+      setRatingsBreakdown(prev => ({ ...prev, avg: updatedAvg, total: updatedTotal }));
 
       setNewComment('');
       addToast({ title: 'REVIEW RECORDED', message: 'Thank you! Your feedback star has expanded the business profile.', type: 'success' });
@@ -239,12 +213,13 @@ export const MarketplaceStorePage: React.FC<StorePageProps> = ({
 
   const handleSaveReply = async (reviewId: string) => {
     const text = replyTextMap[reviewId]?.trim();
-    if (!text || !db) return;
+    if (!text) return;
 
     try {
-      await updateDoc(doc(db, 'store_reviews', reviewId), { reply: text });
+      const updated = storeReviews.map(r => r.id === reviewId ? { ...r, reply: text } : r);
+      setStoreReviews(updated);
+      localStorage.setItem(`aeirmist_store_reviews_${store.id}`, JSON.stringify(updated));
       addToast({ title: 'REPLY SUBMITTED', message: 'Owner response has been recorded.', type: 'success' });
-      // clear local text
       setReplyTextMap(prev => ({ ...prev, [reviewId]: '' }));
     } catch (err) {
       logger.error(err);
@@ -252,9 +227,10 @@ export const MarketplaceStorePage: React.FC<StorePageProps> = ({
   };
 
   const handleDeleteReview = async (reviewId: string) => {
-    if (!db) return;
     try {
-      await deleteDoc(doc(db, 'store_reviews', reviewId));
+      const updated = storeReviews.filter(r => r.id !== reviewId);
+      setStoreReviews(updated);
+      localStorage.setItem(`aeirmist_store_reviews_${store.id}`, JSON.stringify(updated));
       addToast({ title: 'REVIEW REMOVED', message: 'Review has been expunged.', type: 'success' });
     } catch (err) {
       logger.error(err);

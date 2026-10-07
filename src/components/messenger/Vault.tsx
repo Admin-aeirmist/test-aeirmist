@@ -31,19 +31,7 @@ import {
   FolderLock,
   Image as ImageLucide
 } from 'lucide-react';
-import { 
-  doc, 
-  setDoc, 
-  getDoc, 
-  updateDoc,
-  serverTimestamp,
-  query,
-  collection,
-  where,
-  onSnapshot,
-  addDoc,
-  deleteDoc
-} from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { PrivacyFolderLayout } from './vault/PrivacyFolderLayout';
 import { useAeirmist } from '../../context/AeirmistContext';
@@ -308,12 +296,11 @@ export const Vault: React.FC<VaultProps> = ({
   // Load configuration on mount or auth change
   useEffect(() => {
     const loadVaultConfig = async () => {
-      if (!db || !profile?.id) return;
+      if (!profile?.id) return;
       try {
-        const docRef = doc(db, 'profiles', profile.id, 'vault', 'config');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists() || profile.vaultConfigured === true) {
-          const data = docSnap.data() || {};
+        const saved = localStorage.getItem(`vault_config_${profile.id}`);
+        if (saved) {
+          const data = JSON.parse(saved);
           setPasscodeHash(data.passcodeHash || '');
           setSelectedQuestions(data.questionIds || [0, 1, 2]);
           setRecoveryAnswersHashes(data.answersHashes || []);
@@ -331,12 +318,14 @@ export const Vault: React.FC<VaultProps> = ({
           setVaultConfigured(false);
           setView('welcome');
         }
-      } catch (err: any) { logger.error("Failed to load secure Hidden Chats Settings:", err); addToast({ title: "Failed", message: "Failed to load Vault settings", type: "warning" }); } finally {
+      } catch (err: any) {
+        logger.error("Failed to load secure Vault settings:", err);
+      } finally {
         setLoading(false);
       }
     };
     loadVaultConfig();
-  }, [db, profile?.id, isUnlocked, profile?.vaultConfigured]);
+  }, [profile?.id, isUnlocked]);
 
   // Read lockout state from localStorage to protect against reload escapes
   useEffect(() => {
@@ -481,9 +470,7 @@ export const Vault: React.FC<VaultProps> = ({
       const hashedAns3 = await hashString(recoveryAnswers[2], '_aurareCOVERY_salt');
       const ansHashes = [hashedAns1, hashedAns2, hashedAns3];
 
-      // Save inside vault/config subcollection of profiles
-      const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
-      await setDoc(configRef, {
+      const configData = {
         passcodeType,
         passcodeHash: hashedPasscode,
         questionIds: selectedQuestions,
@@ -492,13 +479,8 @@ export const Vault: React.FC<VaultProps> = ({
         autoLockDuration,
         silentNotifications,
         createdAt: new Date().toISOString()
-      });
-
-      // Update parent profile document for quick queries
-      const profileRef = doc(db, 'profiles', profile.id);
-      await updateDoc(profileRef, {
-        vaultConfigured: true
-      });
+      };
+      localStorage.setItem(`vault_config_${profile.id}`, JSON.stringify(configData));
 
       setPasscodeHash(hashedPasscode);
       setRecoveryAnswersHashes(ansHashes);
@@ -688,46 +670,42 @@ export const Vault: React.FC<VaultProps> = ({
   // Theme & Media State
   const [privacyMedia, setPrivacyMedia] = useState<any[]>([]);
 
-  // Load Vault Media from Firestore
+  const loadVaultMedia = async () => {
+    if (!profile?.id) return;
+    try {
+      const res = await api.vault.getItems();
+      if (res && res.items) {
+        setPrivacyMedia(res.items.map((it: any) => ({
+          id: it.id,
+          url: it.mediaUrl,
+          name: it.title,
+          type: it.type === 'video' ? 'video' : 'image',
+          createdAt: it.createdAt,
+          folder: it.folder,
+        })));
+      }
+    } catch (err) {
+      logger.warn('[Vault] Error loading items:', err);
+    }
+  };
+
   useEffect(() => {
-    if (!db || !profile?.id || !isUnlocked) return;
-    
-    const userKeys = Array.from(new Set([
-      profile.id, 
-      profile.uid, 
-      profile.ownerUid, 
-      user?.uid, 
-      auth?.currentUser?.uid,
-      `profile_${auth?.currentUser?.uid}`,
-      `profile_${user?.uid}`
-    ].filter(Boolean)));
-    const q = query(
-      collection(db, 'vault_media'), 
-      where('userId', 'in', userKeys)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const media = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setPrivacyMedia(media);
-    }, (err) => {
-      logger.warn('[Vault] vault_media subscription fallback:', err);
-    });
-
-    return () => unsubscribe();
-  }, [db, profile?.id, profile?.uid, profile?.ownerUid, user?.uid, isUnlocked]);
+    if (isUnlocked) {
+      loadVaultMedia();
+    }
+  }, [profile?.id, isUnlocked]);
 
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files || files.length === 0 || !db || !profile?.id) return;
+    if (!files || files.length === 0 || !profile?.id) return;
 
-    const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile.id;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
         let mediaUrl = '';
         try {
           if (uploadMedia) {
-            mediaUrl = await uploadMedia(file, `vault/${currentAuthUid}`);
+            mediaUrl = await uploadMedia(file, `vault/${profile.id}`);
           }
         } catch (uploadErr) {
           logger.warn("[Vault] Storage upload failed, falling back to data URL:", uploadErr);
@@ -742,16 +720,11 @@ export const Vault: React.FC<VaultProps> = ({
           });
         }
 
-        await addDoc(collection(db, 'vault_media'), {
-          userId: currentAuthUid,
-          ownerUid: currentAuthUid,
-          profileId: profile.id,
-          url: mediaUrl,
-          type: file.type.startsWith('video') ? 'video' : 'image',
-          name: file.name,
-          createdAt: serverTimestamp(),
-          isFavorite: false,
-          folderId: null
+        await api.vault.addItem({
+          type: file.type.startsWith('video') ? 'video' : 'photo',
+          title: file.name,
+          mediaUrl,
+          folder: 'General',
         });
 
         addToast({
@@ -768,18 +741,21 @@ export const Vault: React.FC<VaultProps> = ({
         });
       }
     }
-    // Reset file input target value so subsequent uploads of same file trigger onChange
+    loadVaultMedia();
     try {
       e.target.value = '';
     } catch {}
   };
 
   const handleVaultDelete = async (id: string) => {
-    if (!db) return;
     try {
-      await deleteDoc(doc(db, 'vault_media', id));
+      await api.vault.deleteItem(id);
+      loadVaultMedia();
       addToast({ title: "Deleted", message: "Item removed from Vault.", type: "info" });
-    } catch (e: any) { logger.error("Delete failed:", e); addToast({ title: "Failed", message: "Failed to delete vault item", type: "warning" }); }
+    } catch (e: any) {
+      logger.error("Delete failed:", e);
+      addToast({ title: "Failed", message: "Failed to delete vault item", type: "warning" });
+    }
   };
 
   const handleRestoreMedia = async (id: string) => {

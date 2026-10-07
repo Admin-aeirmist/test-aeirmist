@@ -16,8 +16,8 @@ export async function registerUser(
   password: string, 
   username?: string, 
   displayName?: string
-): Promise<User | null> {
-  // 1. Attempt Universal API backend registration first
+): Promise<any> {
+  let backendUser: any = null;
   try {
     const cleanUsername = username || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_');
     const cleanDisplay = displayName || cleanUsername;
@@ -29,51 +29,66 @@ export async function registerUser(
     });
     if (backendRes?.token) {
       setAuthToken(backendRes.token);
+      backendUser = {
+        uid: backendRes.user?.id,
+        id: backendRes.user?.id,
+        email: backendRes.user?.email,
+        displayName: cleanDisplay,
+        photoURL: null,
+        providerData: [{ providerId: 'password', email }]
+      };
       console.info("[AuthHelpers] Backend registration successful, JWT stored for:", backendRes.user?.email);
     }
   } catch (backendErr: any) {
     console.warn("[AuthHelpers] Backend registration notice:", backendErr.message);
   }
 
-  // 2. Client Firebase session sync (ensuring zero disruption to legacy UI)
-  return createUserWithEmailAndPassword(auth, email, password)
-    .then((userCredential) => {
-      const user = userCredential.user;
-      console.info("[AuthHelpers] Account created successfully:", user.email);
-      return user;
-    })
-    .catch((error) => {
-      console.error("[AuthHelpers] Registration error:", error.code, error.message);
-      return null;
-    });
+  // Client Firebase session sync (if available)
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    return userCredential.user;
+  } catch (error: any) {
+    if (backendUser) {
+      return backendUser;
+    }
+    console.error("[AuthHelpers] Registration error:", error.code, error.message);
+    return null;
+  }
 }
 
 // ==========================================
 // ২. লগইন (Login) ফাংশন
 // ==========================================
-export async function loginUser(email: string, password: string): Promise<User | null> {
-  // 1. Attempt Universal API backend login first (verifies Bcrypt / Scrypt and issues JWT)
+export async function loginUser(email: string, password: string): Promise<any> {
+  let backendUser: any = null;
   try {
     const backendRes = await api.auth.login({ email, password });
     if (backendRes?.token) {
       setAuthToken(backendRes.token);
+      backendUser = {
+        uid: backendRes.user?.id,
+        id: backendRes.user?.id,
+        email: backendRes.user?.email,
+        displayName: backendRes.user?.displayName || backendRes.user?.username,
+        photoURL: backendRes.user?.avatarKey || null,
+        providerData: [{ providerId: 'password', email }]
+      };
       console.info("[AuthHelpers] Backend login successful, JWT token stored for:", backendRes.user?.email);
     }
   } catch (backendErr: any) {
     console.warn("[AuthHelpers] Backend login notice:", backendErr.message);
   }
 
-  // 2. Client Firebase session sync
-  return signInWithEmailAndPassword(auth, email, password)
-    .then((userCredential) => {
-      const user = userCredential.user;
-      console.info("[AuthHelpers] Login successful:", user.email);
-      return user;
-    })
-    .catch((error) => {
-      console.error("[AuthHelpers] Login error:", error.code, error.message);
-      return null;
-    });
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    return userCredential.user;
+  } catch (error: any) {
+    if (backendUser) {
+      return backendUser;
+    }
+    console.error("[AuthHelpers] Login error:", error.code, error.message);
+    return null;
+  }
 }
 
 // ==========================================
@@ -97,7 +112,12 @@ export function initAuthStateObserver(callback?: (user: User | null) => void) {
 // ==========================================
 export async function signOutUser() {
   setAuthToken(null);
-  return firebaseSignOut(auth);
+  try {
+    await firebaseSignOut(auth);
+  } catch {
+    // Ignore fallback signout error
+  }
+  return true;
 }
 
 export { firebaseSignOut };

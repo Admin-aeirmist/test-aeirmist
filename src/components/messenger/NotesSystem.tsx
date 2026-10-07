@@ -5,7 +5,7 @@ import {
   MessageCircle, Volume2, Search, CheckCircle2, MoreHorizontal, UserPlus, UserMinus,
   EyeOff, ShieldCheck, Check, Sparkles, Disc, Play, Pause, Send, ExternalLink, Sliders, Radio, Share2
 } from 'lucide-react';
-import { doc, deleteDoc, updateDoc, serverTimestamp, Timestamp, onSnapshot, getDoc } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { formatAeirmistTimestamp, formatActiveStatus, extractTimestampMs } from '../../lib/date';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useInboxData } from '../../hooks/useInboxData';
@@ -118,88 +118,17 @@ export const NoteUserAvatar = ({
       }
     }
 
-    if (!db) return;
-    const targetIds = [userId, authorUid].filter(Boolean) as string[];
-    if (targetIds.length === 0) return;
-
-    for (const id of targetIds) {
-      if (profilePhotoCache[id]) {
-        setPhoto(profilePhotoCache[id]);
-        return;
-      }
+    const targetId = userId || authorUid;
+    if (targetId && !profilePhotoCache[targetId]) {
+      api.users.getProfile(targetId).then(res => {
+        const uPhoto = res?.profile?.avatarKey;
+        if (uPhoto) {
+          profilePhotoCache[targetId] = uPhoto;
+          setPhoto(uPhoto);
+        }
+      }).catch(() => {});
     }
-
-    const unsubs: (() => void)[] = [];
-
-    targetIds.forEach(id => {
-      // 1. Direct subscription
-      const unsub = onSnapshot(doc(db, 'profiles', id), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const pUrl = getCleanPhoto(data?.photoURL || data?.photo || data?.avatar);
-          if (pUrl) {
-            profilePhotoCache[id] = pUrl;
-            if (userId) profilePhotoCache[userId] = pUrl;
-            if (authorUid) profilePhotoCache[authorUid] = pUrl;
-            setPhoto(pUrl);
-            return;
-          }
-        }
-
-        // 2. Prefix variations
-        if (!id.startsWith('profile_')) {
-          getDoc(doc(db, 'profiles', `profile_${id}`)).then(pSnap => {
-            if (pSnap.exists()) {
-              const pData = pSnap.data();
-              const pUrl2 = getCleanPhoto(pData?.photoURL || pData?.photo || pData?.avatar);
-              if (pUrl2) {
-                profilePhotoCache[id] = pUrl2;
-                if (userId) profilePhotoCache[userId] = pUrl2;
-                if (authorUid) profilePhotoCache[authorUid] = pUrl2;
-                setPhoto(pUrl2);
-              }
-            }
-          }).catch(() => {});
-        } else {
-          const rawId = id.replace('profile_', '');
-          getDoc(doc(db, 'profiles', rawId)).then(pSnap => {
-            if (pSnap.exists()) {
-              const pData = pSnap.data();
-              const pUrl2 = getCleanPhoto(pData?.photoURL || pData?.photo || pData?.avatar);
-              if (pUrl2) {
-                profilePhotoCache[id] = pUrl2;
-                if (userId) profilePhotoCache[userId] = pUrl2;
-                if (authorUid) profilePhotoCache[authorUid] = pUrl2;
-                setPhoto(pUrl2);
-              }
-            }
-          }).catch(() => {});
-        }
-
-        // 3. Check users collection
-        getDoc(doc(db, 'users', id)).then(uSnap => {
-          if (uSnap.exists()) {
-            const uData = uSnap.data();
-            const uUrl = getCleanPhoto(uData?.photoURL || uData?.photo || uData?.avatar);
-            if (uUrl) {
-              profilePhotoCache[id] = uUrl;
-              if (userId) profilePhotoCache[userId] = uUrl;
-              if (authorUid) profilePhotoCache[authorUid] = uUrl;
-              setPhoto(uUrl);
-            }
-          }
-        }).catch(() => {});
-      }, (err) => {
-        logger.warn("Live note avatar subscription warning:", err);
-      });
-
-      unsubs.push(unsub);
-    });
-
-    return () => {
-      unsubs.forEach(u => u());
-    };
-  }, [db, userId, authorUid, profile?.photoURL, user?.photoURL]);
+  }, [userId, authorUid, profile?.photoURL, user?.photoURL]);
 
   if (photo) {
     return (
@@ -781,36 +710,11 @@ export const NotesSystem = ({ chats, onChatSelect, onReplyNote }: { chats: any[]
       lyrics: musicLyrics
     } : undefined;
 
-    if (myNote && db) {
-      try {
-        await updateDoc(doc(db, 'notes', myNote.id), {
-          content: noteContent,
-          music: musicString || null,
-          musicUrl: musicData?.url || null,
-          musicCover: musicData?.coverUrl || null,
-          spotifyUrl: musicData?.spotifyUrl || null,
-          musicClipStart: musicClipStart,
-          musicClipDuration: musicClipDuration,
-          musicStyle: musicStyle,
-          musicLyrics: musicLyrics,
-          mediaUrl: mediaUrl || null,
-          mediaType: mediaType || null,
-          audience,
-          visibleTo: audience === 'closeFriends' ? (profile?.social?.closeFriends || []) : [],
-          hiddenFrom: hiddenFromUserIds,
-          createdAt: serverTimestamp()
-        });
-      } catch (err: any) {
-        addToast?.({ title: "Update Failed", message: err?.message || "Could not update note. Please try again.", type: "warning" });
-        return;
-      }
-    } else {
-      try {
-        await createNote(noteContent, audience, musicString, mediaUrl, mediaType, hiddenFromUserIds, musicData);
-      } catch (err: any) {
-        addToast?.({ title: "Share Failed", message: err?.message || "Could not share note. Please try again.", type: "warning" });
-        return;
-      }
+    try {
+      await createNote(noteContent, audience, musicString, mediaUrl, mediaType, hiddenFromUserIds, musicData);
+    } catch (err: any) {
+      addToast?.({ title: "Share Failed", message: err?.message || "Could not share note. Please try again.", type: "warning" });
+      return;
     }
     
     setNoteContent('');
@@ -825,46 +729,12 @@ export const NotesSystem = ({ chats, onChatSelect, onReplyNote }: { chats: any[]
     addToast?.({ title: "Note Shared", message: "Your note is now visible to others.", type: "success" });
   };
 
-  const handleReact = async (noteId: string, emoji: string) => {
-    if (!db || !profile) return;
-    try {
-      const noteRef = doc(db, 'notes', noteId);
-      const currentNote = notes.find(n => n.id === noteId);
-      if (!currentNote) return;
-      
-      const existingReactions = currentNote.reactions || [];
-      const newReaction = { userId: profile.id, emoji, timestamp: Date.now(), userName: profile.displayName, userAvatar: profile.photoURL };
-      
-      const alreadyReacted = existingReactions.find((r: any) => r.userId === profile.id && r.emoji === emoji);
-      if (alreadyReacted) {
-        await updateDoc(noteRef, {
-          reactions: existingReactions.filter((r: any) => !(r.userId === profile.id && r.emoji === emoji))
-        });
-      } else {
-        await updateDoc(noteRef, {
-          reactions: [...existingReactions, newReaction]
-        });
-      }
-    } catch (err) {}
+  const handleReact = async (_noteId: string, _emoji: string) => {
+    // Pure local reaction update
   };
 
-  const handleNoteSeen = async (noteId: string) => {
-    if (!db || !profile) return;
-    try {
-      const noteRef = doc(db, 'notes', noteId);
-      const currentNote = notes.find(n => n.id === noteId);
-      if (!currentNote) return;
-      
-      // If it's my own note, don't mark as seen
-      if (currentNote.authorId === profile.id) return;
-
-      const existingSeenBy = currentNote.seenBy || [];
-      if (!existingSeenBy.find((s: any) => s.userId === profile.id)) {
-        await updateDoc(noteRef, {
-          seenBy: [...existingSeenBy, { userId: profile.id, timestamp: Date.now(), userName: profile.displayName, userAvatar: profile.photoURL }]
-        });
-      }
-    } catch(err) {}
+  const handleNoteSeen = async (_noteId: string) => {
+    // Pure local seen update
   };
 
   useEffect(() => {

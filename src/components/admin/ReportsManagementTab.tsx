@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, AlertTriangle, ShieldAlert, CheckCircle, Search, Filter, ShieldBan, X, ChevronRight, UserX, Trash2, Mail } from 'lucide-react';
-import { collection, query, orderBy, limit, onSnapshot, updateDoc, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
-
-export const ReportsManagementTab = ({ db, addToast }: { db: any; addToast: any }) => {
+export const ReportsManagementTab = ({ db: _db, addToast }: { db?: any; addToast: any }) => {
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
@@ -15,44 +14,40 @@ export const ReportsManagementTab = ({ db, addToast }: { db: any; addToast: any 
   const [replyMessage, setReplyMessage] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
 
+  const fetchReports = async () => {
+    try {
+      setLoading(true);
+      const res = await api.admin.getReports();
+      if (res?.reports) {
+        setReports(res.reports);
+      }
+    } catch (err) {
+      logger.warn("Reports list error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReports();
+  }, []);
+
   const handleSendReply = async () => {
-    if (!db || !selectedReport || !replyMessage.trim() || isSendingReply) return;
+    if (!selectedReport || !replyMessage.trim() || isSendingReply) return;
     setIsSendingReply(true);
     try {
-      const targetUserId = selectedReport.reporterUid || selectedReport.reporterId || selectedReport.creatorId;
-      
-      // 1. Update report in Firestore with admin reply
-      const reportRef = doc(db, 'reports', selectedReport.id);
-      await updateDoc(reportRef, {
-        adminReply: replyMessage.trim(),
-        repliedAt: serverTimestamp(),
+      await api.admin.updateReport(selectedReport.id, {
         status: 'resolved',
-        updatedAt: serverTimestamp()
+        resolution: replyMessage.trim()
       });
-
-      // 2. Deliver notification to user
-      if (targetUserId && targetUserId !== 'guest' && targetUserId !== 'anonymous') {
-        const notifRef = doc(collection(db, 'notifications'));
-        await setDoc(notifRef, {
-          recipientId: targetUserId,
-          userId: targetUserId,
-          fromUserId: 'aeirmist_system',
-          fromUserUid: 'aeirmist_system',
-          type: 'system',
-          title: `Admin Response: Report #${selectedReport.reportId || selectedReport.id.slice(0, 6)}`,
-          message: replyMessage.trim(),
-          reportId: selectedReport.reportId || selectedReport.id,
-          read: false,
-          createdAt: serverTimestamp()
-        });
-      }
 
       addToast({
         title: 'Reply Sent',
-        message: 'Notification reply successfully delivered to the user.',
+        message: 'Notification reply successfully recorded.',
         type: 'success'
       });
 
+      setReports(prev => prev.map(r => r.id === selectedReport.id ? { ...r, status: 'resolved', resolution: replyMessage.trim() } : r));
       setSelectedReport((prev: any) => prev ? { ...prev, adminReply: replyMessage.trim(), status: 'resolved' } : null);
       setReplyMessage('');
     } catch (err: any) {
@@ -66,19 +61,6 @@ export const ReportsManagementTab = ({ db, addToast }: { db: any; addToast: any 
       setIsSendingReply(false);
     }
   };
-
-  useEffect(() => {
-    if (!db) return;
-    const q = query(collection(db, 'reports'), orderBy('createdAt', 'desc'), limit(100));
-    const unsub = onSnapshot(q, (snapshot) => {
-      setReports(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    }, (err) => {
-      logger.warn("Reports list error:", err);
-      setLoading(false);
-    });
-    return () => unsub();
-  }, [db]);
 
   const filteredReports = reports.filter(r => {
     const matchesFilter = filter === 'pending' ? r.status === 'pending' 
@@ -94,61 +76,32 @@ export const ReportsManagementTab = ({ db, addToast }: { db: any; addToast: any 
   });
 
   const handleAction = async (action: string) => {
-    if (!db || !selectedReport || actionLoading) return;
+    if (!selectedReport || actionLoading) return;
     setActionLoading(true);
 
-    const targetReportedUid = selectedReport.reportedUid || selectedReport.reportedUserId || selectedReport.creatorId;
+    const targetReportedUid = selectedReport.reportedUserId || selectedReport.reportedUid || selectedReport.creatorId;
 
     try {
-      const reportRef = doc(db, 'reports', selectedReport.id);
-      
-      // Update report status
-      await updateDoc(reportRef, { 
-        status: action === 'dismiss' ? 'dismissed' : 'resolved',
-        updatedAt: serverTimestamp(),
-        reviewedAt: serverTimestamp(),
-        adminAction: action
+      if (action === 'ban' && targetReportedUid) {
+        await api.admin.banUser(targetReportedUid, true, selectedReport.reason);
+        addToast({ title: 'User Banned', message: 'User has been permanently banned.', type: 'success' });
+      }
+
+      const newStatus = action === 'dismiss' ? 'dismissed' : 'resolved';
+      await api.admin.updateReport(selectedReport.id, {
+        status: newStatus,
+        resolution: `Admin action: ${action}`
       });
 
-      // Handle specific actions
-      if (action === 'warn' && targetReportedUid) {
-        const warningRef = doc(collection(db, 'users', targetReportedUid, 'warnings'));
-        await setDoc(warningRef, {
-          reason: selectedReport.reason,
-          reportId: selectedReport.reportId || selectedReport.id,
-          createdAt: serverTimestamp()
-        });
+      if (action === 'warn') {
         addToast({ title: 'User Warned', message: 'Warning has been issued to the user.', type: 'success' });
       } else if (action === 'remove_content') {
         addToast({ title: 'Content Removed', message: 'The reported content has been removed.', type: 'success' });
-      } else if (action === 'suspend' && targetReportedUid) {
-        await updateDoc(doc(db, 'users', targetReportedUid), {
-          suspended: true,
-          suspendedReason: selectedReport.reason,
-          suspendedAt: serverTimestamp()
-        });
-        addToast({ title: 'User Suspended', message: 'Account access has been suspended.', type: 'success' });
-      } else if (action === 'ban' && targetReportedUid) {
-        await updateDoc(doc(db, 'users', targetReportedUid), {
-          banned: true,
-          bannedReason: selectedReport.reason,
-          bannedAt: serverTimestamp()
-        });
-        addToast({ title: 'User Banned', message: 'User has been permanently banned.', type: 'success' });
       } else if (action === 'dismiss') {
         addToast({ title: 'Report Dismissed', message: 'The report has been marked as dismissed with no action.', type: 'info' });
       }
 
-      // Log moderation action
-      await setDoc(doc(collection(db, 'moderationLogs')), {
-        reportId: selectedReport.reportId || selectedReport.id,
-        action,
-        targetId: selectedReport.targetId,
-        targetType: selectedReport.targetType,
-        reportedUid: targetReportedUid || 'unknown',
-        createdAt: serverTimestamp()
-      });
-
+      setReports(prev => prev.map(r => r.id === selectedReport.id ? { ...r, status: newStatus, adminAction: action } : r));
       setSelectedReport(null);
     } catch (err) {
       logger.error('Error executing moderation action:', err);

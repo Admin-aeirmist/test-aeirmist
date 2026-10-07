@@ -1,21 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp,
-  increment,
-  Timestamp
-} from 'firebase/firestore';
 import { useAeirmist } from '../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
-
 
 export interface NGLMessage {
   id: string;
@@ -23,122 +8,95 @@ export interface NGLMessage {
   recipientUid: string;
   senderUid?: string;
   content: string;
-  createdAt: Timestamp;
+  createdAt: string;
   status: 'unread' | 'read' | 'archived' | 'replied';
   storyReplyId?: string;
-  repliedAt?: Timestamp;
+  repliedAt?: string;
 }
 
 export const useNGL = (profileId?: string) => {
-  const { db, user, profile, createNotification, addToast } = useAeirmist();
+  const { user, profile, addToast } = useAeirmist();
   const [messages, setMessages] = useState<NGLMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sync messages if it's the current user's profile
+  const storageKey = profileId ? `aeirmist_ngl_${profileId}` : null;
+
   useEffect(() => {
-    if (!db || !user || !profile || !profileId || profile.id !== profileId) {
+    if (!profileId || !storageKey) {
       setMessages([]);
-      setLoading(false);
       return;
     }
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        setMessages(JSON.parse(raw));
+      }
+    } catch {
+      setMessages([]);
+    }
+  }, [profileId, storageKey]);
 
-    setLoading(true);
-    const q = query(
-      collection(db, 'ngl_messages'),
-      where('recipientProfileId', '==', profileId),
-      where('recipientUid', '==', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as NGLMessage[];
-
-      // Sort client-side by createdAt desc to avoid composite index requirements
-      msgs.sort((a, b) => {
-        const getMs = (val: any) => {
-          if (!val) return 0;
-          if (typeof val.toMillis === 'function') return val.toMillis();
-          if (val instanceof Date) return val.getTime();
-          if (typeof val === 'number') return val;
-          if (val.seconds) return val.seconds * 1000;
-          return 0;
-        };
-        return getMs(b.createdAt) - getMs(a.createdAt);
-      });
-
-      setMessages(msgs);
-      setLoading(false);
-    }, (err) => {
-      logger.error('[useNGL] Fetch Error:', err);
-      setError(err.message);
-      setLoading(false);
+  const saveMessages = useCallback((updater: (prev: NGLMessage[]) => NGLMessage[]) => {
+    setMessages(prev => {
+      const next = updater(prev);
+      if (storageKey) {
+        localStorage.setItem(storageKey, JSON.stringify(next));
+      }
+      return next;
     });
-
-    return () => unsubscribe();
-  }, [db, user?.uid, profile?.id, profileId]);
+  }, [storageKey]);
 
   const sendNGL = useCallback(async (targetProfileId: string, targetUid: string, content: string) => {
-    if (!db || !content.trim()) return;
-
+    if (!content.trim()) return false;
     try {
-      await addDoc(collection(db, 'ngl_messages'), {
+      const newMsg: NGLMessage = {
+        id: 'ngl_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
         recipientProfileId: targetProfileId,
         recipientUid: targetUid,
-        senderUid: user?.uid || 'anonymous',
+        senderUid: user?.uid || (user as any)?.id || 'anonymous',
         content: content.trim(),
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
         status: 'unread'
-      });
+      };
 
-      // Create notification for recipient
-      if (targetUid) {
-        await createNotification(targetUid, 'ngl_received', 'Anonymous sent you a new signal.', {
-          profileId: targetProfileId,
-          type: 'ngl'
-        });
+      const key = `aeirmist_ngl_${targetProfileId}`;
+      const existing: NGLMessage[] = JSON.parse(localStorage.getItem(key) || '[]');
+      localStorage.setItem(key, JSON.stringify([newMsg, ...existing]));
+
+      if (profileId === targetProfileId) {
+        setMessages(prev => [newMsg, ...prev]);
       }
 
+      addToast({ title: "Sent", message: "Signal delivered anonymously.", type: "success" });
       return true;
-    } catch (err: any) { logger.error("[useNGL] Send Error:", err); addToast({ title: "Failed", message: "Failed to send message", type: "warning" }); return false; }
-  }, [db, user?.uid, createNotification]);
+    } catch (err: any) {
+      logger.error("[useNGL] Send Error:", err);
+      addToast({ title: "Failed", message: "Failed to send message", type: "warning" });
+      return false;
+    }
+  }, [user, profileId, addToast]);
 
   const markAsRead = useCallback(async (messageId: string) => {
-    if (!db) return;
-    try {
-      await updateDoc(doc(db, 'ngl_messages', messageId), {
-        status: 'read'
-      });
-    } catch (err: any) { logger.error("[useNGL] Mark Read Error:", err); addToast({ title: "Failed", message: "Failed to mark as read", type: "warning" }); }
-  }, [db]);
+    saveMessages(prev => prev.map(m => m.id === messageId ? { ...m, status: 'read' } : m));
+  }, [saveMessages]);
 
   const archiveNGL = useCallback(async (messageId: string) => {
-    if (!db) return;
-    try {
-      await updateDoc(doc(db, 'ngl_messages', messageId), {
-        status: 'archived'
-      });
-    } catch (err: any) { logger.error("[useNGL] Archive Error:", err); addToast({ title: "Failed", message: "Failed to archive", type: "warning" }); }
-  }, [db]);
+    saveMessages(prev => prev.map(m => m.id === messageId ? { ...m, status: 'archived' } : m));
+  }, [saveMessages]);
 
   const deleteNGL = useCallback(async (messageId: string) => {
-    if (!db) return;
-    try {
-      await deleteDoc(doc(db, 'ngl_messages', messageId));
-    } catch (err: any) { logger.error("[useNGL] Delete Error:", err); addToast({ title: "Failed", message: "Failed to delete", type: "warning" }); }
-  }, [db]);
+    saveMessages(prev => prev.filter(m => m.id !== messageId));
+  }, [saveMessages]);
 
   const markAsReplied = useCallback(async (messageId: string, storyId: string) => {
-    if (!db) return;
-    try {
-      await updateDoc(doc(db, 'ngl_messages', messageId), {
-        status: 'replied',
-        storyReplyId: storyId
-      });
-    } catch (err: any) { logger.error("[useNGL] Mark Replied Error:", err); addToast({ title: "Failed", message: "Failed to mark replied", type: "warning" }); }
-  }, [db]);
+    saveMessages(prev => prev.map(m => m.id === messageId ? {
+      ...m,
+      status: 'replied',
+      storyReplyId: storyId,
+      repliedAt: new Date().toISOString()
+    } : m));
+  }, [saveMessages]);
 
   return {
     messages,

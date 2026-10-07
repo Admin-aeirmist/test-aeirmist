@@ -1,6 +1,6 @@
 import { eq, and, desc, sql, isNull } from 'drizzle-orm';
 import { db } from '../db';
-import { posts, postLikes, postBookmarks, profiles, users } from '../db/schema';
+import { posts, postLikes, postBookmarks, profiles, users, pollVotes } from '../db/schema';
 
 export class PostDAL {
   static async createPost(data: {
@@ -207,5 +207,36 @@ export class PostDAL {
       .where(eq(profiles.userId, post.userId));
 
     return true;
+  }
+
+  static async votePoll(postId: string, userId: string, optionIndex: number) {
+    const [post] = await db
+      .select({ id: posts.id, pollData: posts.pollData })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
+
+    if (!post || !post.pollData) return null;
+
+    const [existing] = await db
+      .select()
+      .from(pollVotes)
+      .where(and(eq(pollVotes.postId, postId), eq(pollVotes.userId, userId)))
+      .limit(1);
+
+    if (existing) {
+      return { alreadyVoted: true, pollData: post.pollData };
+    }
+
+    await db.insert(pollVotes).values({ postId, userId, optionIndex });
+
+    const poll = { ...(post.pollData as any) };
+    if (poll.options && poll.options[optionIndex]) {
+      poll.options[optionIndex].votes = (poll.options[optionIndex].votes || 0) + 1;
+      poll.totalVotes = (poll.totalVotes || 0) + 1;
+      await db.update(posts).set({ pollData: poll }).where(eq(posts.id, postId));
+    }
+
+    return { success: true, pollData: poll };
   }
 }

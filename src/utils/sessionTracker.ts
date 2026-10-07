@@ -1,5 +1,4 @@
-import { getAuth } from 'firebase/auth';
-import { collection, doc, setDoc, getDoc, updateDoc, serverTimestamp, query, where, getDocs, addDoc } from 'firebase/firestore';
+// Session tracking without Firebase dependencies
 
 export interface DeviceSessionInfo {
   sessionKey: string;
@@ -109,17 +108,12 @@ export async function trackUserSession(
   userId: string,
   loginMethod: 'Google' | 'Email & Password' = 'Email & Password'
 ): Promise<{ isNewDevice: boolean; sessionInfo: DeviceSessionInfo }> {
-  if (!db || !userId) return { isNewDevice: false, sessionInfo: {} as any };
+  if (!userId) return { isNewDevice: false, sessionInfo: {} as any };
 
   const sessionKey = getOrCreateSessionKey();
   const uaInfo = parseUserAgent();
   const maskedIp = maskIpAddress();
-  const location = 'San Francisco, US'; // Default approximate location
-
-  const sessionRef = doc(db, 'login_sessions', `${userId}_${sessionKey}`);
-  const sessionSnap = await getDoc(sessionRef);
-
-  let isNewDevice = false;
+  const location = 'San Francisco, US';
 
   const sessionData: DeviceSessionInfo = {
     sessionKey,
@@ -131,73 +125,23 @@ export async function trackUserSession(
     ipAddress: maskedIp,
     loginMethod,
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-    lastActiveAt: serverTimestamp(),
+    lastActiveAt: new Date().toISOString(),
     revoked: false
   };
 
-  if (!sessionSnap.exists()) {
-    isNewDevice = true;
-    // New device session
-    await setDoc(sessionRef, {
-      ...sessionData,
-      userId,
-      loginAt: serverTimestamp(),
-      firstLoginAt: serverTimestamp()
-    });
-
-    // Also record in login history collection
-    await addDoc(collection(db, 'login_history'), {
-      userId,
-      sessionKey,
-      deviceName: uaInfo.deviceName,
-      deviceType: uaInfo.deviceType,
-      browser: uaInfo.browser,
-      os: uaInfo.os,
-      location,
-      ipAddress: maskedIp,
-      loginMethod,
-      status: 'SUCCESS',
-      timestamp: serverTimestamp()
-    });
-
-    // Log security activity
-    await addDoc(collection(db, 'activities'), {
-      userId,
-      action: 'new_device_login',
-      details: `Signed in from ${uaInfo.deviceName} (${uaInfo.os})`,
-      timestamp: serverTimestamp()
-    });
-
-    // Create in-app notification for new device
-    await addDoc(collection(db, 'notifications'), {
-      userId,
-      type: 'security_new_device',
-      title: 'New Login Detected',
-      message: `New sign-in from ${uaInfo.deviceName} in ${location}.`,
-      deviceName: uaInfo.deviceName,
-      browser: uaInfo.browser,
-      location,
-      time: new Date().toISOString(),
-      read: false,
-      createdAt: serverTimestamp()
-    });
-
-  } else {
-    // Existing session, check if revoked or update last active
-    const existing = sessionSnap.data();
-    if (existing.revoked) {
-      // Session was previously revoked by user/admin
-      // Prompt re-auth or reactivate if fresh login
-      await updateDoc(sessionRef, {
-        revoked: false,
-        lastActiveAt: serverTimestamp()
-      });
-    } else {
-      await updateDoc(sessionRef, {
-        lastActiveAt: serverTimestamp()
-      });
+  try {
+    if (typeof window !== 'undefined') {
+      const existingSessionsRaw = localStorage.getItem(`aeirmist_sessions_${userId}`);
+      const sessions = existingSessionsRaw ? JSON.parse(existingSessionsRaw) : [];
+      const idx = sessions.findIndex((s: any) => s.sessionKey === sessionKey);
+      if (idx === -1) {
+        sessions.push(sessionData);
+      } else {
+        sessions[idx] = { ...sessions[idx], ...sessionData };
+      }
+      localStorage.setItem(`aeirmist_sessions_${userId}`, JSON.stringify(sessions));
     }
-  }
+  } catch (e) {}
 
-  return { isNewDevice, sessionInfo: sessionData };
+  return { isNewDevice: false, sessionInfo: sessionData };
 }

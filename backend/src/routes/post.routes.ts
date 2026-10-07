@@ -205,4 +205,24 @@ router.post('/:id/comments', authenticateToken, async (req: AuthenticatedRequest
   }
 });
 
+// Vote on Poll
+router.post('/:id/poll/vote', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { optionIndex } = req.body;
+    if (typeof optionIndex !== 'number') {
+      return res.status(400).json({ error: 'optionIndex must be a number' });
+    }
+
+    const result = await PostDAL.votePoll(req.params.id, req.user!.userId, optionIndex);
+    if (!result) {
+      return res.status(404).json({ error: 'Post or poll not found' });
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('[Vote Poll Error]', err);
+    res.status(500).json({ error: 'Failed to record poll vote' });
+  }
+});
+
 export default router;

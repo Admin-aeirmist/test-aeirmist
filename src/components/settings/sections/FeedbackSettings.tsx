@@ -23,9 +23,6 @@ import {
   X
 } from 'lucide-react';
 import { useAeirmist } from '../../../context/AeirmistContext';
-import { db, storage } from '../../../lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
 import { api } from '../../../services/api/client';
 
@@ -84,14 +81,13 @@ const FeedbackSettings = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!message.trim() || !user || !db) return;
+    if (!message.trim() || !user) return;
 
     setIsSending(true);
     
     try {
       let attachmentUrl = null;
 
-      // Try local/S3 media upload first
       if (screenshot) {
         try {
           const mediaRes = await api.media.upload(screenshot, 'support');
@@ -99,41 +95,16 @@ const FeedbackSettings = () => {
             attachmentUrl = mediaRes.url;
           }
         } catch (mediaErr) {
-          if (storage) {
-            const fileRef = ref(storage, `supportTickets/${user.uid}/${Date.now()}_${screenshot.name}`);
-            await uploadBytes(fileRef, screenshot);
-            attachmentUrl = await getDownloadURL(fileRef);
-          }
+          logger.warn('[Media Upload Error]', mediaErr);
         }
       }
 
-      // Try Backend PostgreSQL support ticket first
-      let sentViaBackend = false;
-      try {
-        await api.support.createTicket({
-          type,
-          area: type === 'bug' ? area.id : null,
-          message,
-          attachmentUrl,
-        });
-        sentViaBackend = true;
-      } catch (beErr) {
-        logger.warn('[Backend Support Ticket Fallback]', beErr);
-      }
-
-      // Dual-sync / fallback to Firestore
-      if (!sentViaBackend && db) {
-        await addDoc(collection(db, 'supportTickets'), {
-          userId: user.uid,
-          username: profile?.username || 'Unknown',
-          type,
-          area: type === 'bug' ? area.id : null,
-          message,
-          attachmentUrl,
-          status: 'open',
-          createdAt: serverTimestamp()
-        });
-      }
+      await api.support.createTicket({
+        type,
+        area: type === 'bug' ? area.id : null,
+        message,
+        attachmentUrl,
+      });
 
       setSent(true);
       addToast?.({

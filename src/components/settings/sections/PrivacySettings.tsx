@@ -22,7 +22,7 @@ import {
   AtSign,
   Trash2
 } from 'lucide-react';
-import { doc, getDoc, collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { api } from '../../../services/api/client';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { getAvatarUrl } from '../../../lib/avatar';
 
@@ -132,7 +132,7 @@ export default function PrivacySettings() {
   // Real-time / direct loader for blocked user profiles
   useEffect(() => {
     let isMounted = true;
-    if (!db || blockedUserIds.length === 0) {
+    if (blockedUserIds.length === 0) {
       setBlockedUsers([]);
       setIsLoadingBlocked(false);
       return;
@@ -144,58 +144,14 @@ export default function PrivacySettings() {
         const loaded: any[] = [];
         for (const targetId of blockedUserIds) {
           if (!targetId) continue;
-          
-          // 1. Direct profile lookup by document ID
           try {
-            const pRef = doc(db, 'profiles', targetId);
-            const pSnap = await getDoc(pRef);
-            if (pSnap.exists()) {
-              loaded.push({ id: pSnap.id, ...pSnap.data() });
+            const res = await api.users.getProfile(targetId);
+            if (res?.profile) {
+              loaded.push({ id: res.profile.id || targetId, ...res.profile });
               continue;
             }
           } catch {}
 
-          // 2. Query by ownerUid
-          try {
-            const q = query(collection(db, 'profiles'), where('ownerUid', '==', targetId), limit(1));
-            const qSnap = await getDocs(q);
-            if (!qSnap.empty) {
-              const d = qSnap.docs[0];
-              loaded.push({ id: d.id, ...d.data() });
-              continue;
-            }
-          } catch {}
-
-          // 3. Query by uid
-          try {
-            const q = query(collection(db, 'profiles'), where('uid', '==', targetId), limit(1));
-            const qSnap = await getDocs(q);
-            if (!qSnap.empty) {
-              const d = qSnap.docs[0];
-              loaded.push({ id: d.id, ...d.data() });
-              continue;
-            }
-          } catch {}
-
-          // 4. Fallback from users collection
-          try {
-            const uRef = doc(db, 'users', targetId);
-            const uSnap = await getDoc(uRef);
-            if (uSnap.exists()) {
-              const uData = uSnap.data();
-              loaded.push({
-                id: targetId,
-                displayName: uData?.displayName || uData?.name || 'Aeirmist User',
-                username: uData?.username || targetId.slice(0, 8),
-                avatarUrl: uData?.photoURL || uData?.avatarUrl || '',
-                isVerified: uData?.isVerified || false,
-                ...uData
-              });
-              continue;
-            }
-          } catch {}
-
-          // 5. Clean fallback object so the row ALWAYS appears
           loaded.push({
             id: targetId,
             displayName: 'Blocked Account',
@@ -217,12 +173,12 @@ export default function PrivacySettings() {
 
     fetchBlockedDetails();
     return () => { isMounted = false; };
-  }, [db, blockedUserIds.join(',')]);
+  }, [blockedUserIds.join(',')]);
 
   // Real-time / direct loader for restricted user profiles
   useEffect(() => {
     let isMounted = true;
-    if (!db || restrictedUserIds.length === 0) {
+    if (restrictedUserIds.length === 0) {
       setRestrictedUsers([]);
       setIsLoadingRestricted(false);
       return;
@@ -235,37 +191,9 @@ export default function PrivacySettings() {
         for (const targetId of restrictedUserIds) {
           if (!targetId) continue;
           try {
-            const pRef = doc(db, 'profiles', targetId);
-            const pSnap = await getDoc(pRef);
-            if (pSnap.exists()) {
-              loaded.push({ id: pSnap.id, ...pSnap.data() });
-              continue;
-            }
-          } catch {}
-
-          try {
-            const q = query(collection(db, 'profiles'), where('ownerUid', '==', targetId), limit(1));
-            const qSnap = await getDocs(q);
-            if (!qSnap.empty) {
-              const d = qSnap.docs[0];
-              loaded.push({ id: d.id, ...d.data() });
-              continue;
-            }
-          } catch {}
-
-          try {
-            const uRef = doc(db, 'users', targetId);
-            const uSnap = await getDoc(uRef);
-            if (uSnap.exists()) {
-              const uData = uSnap.data();
-              loaded.push({
-                id: targetId,
-                displayName: uData?.displayName || uData?.name || 'Aeirmist User',
-                username: uData?.username || targetId.slice(0, 8),
-                avatarUrl: uData?.photoURL || uData?.avatarUrl || '',
-                isVerified: uData?.isVerified || false,
-                ...uData
-              });
+            const res = await api.users.getProfile(targetId);
+            if (res?.profile) {
+              loaded.push({ id: res.profile.id || targetId, ...res.profile });
               continue;
             }
           } catch {}
@@ -291,7 +219,7 @@ export default function PrivacySettings() {
 
     fetchRestrictedDetails();
     return () => { isMounted = false; };
-  }, [db, restrictedUserIds.join(',')]);
+  }, [restrictedUserIds.join(',')]);
 
   const blockedProfiles = blockedUsers.filter(p => 
     p.username?.toLowerCase().includes(searchQuery.toLowerCase()) || 

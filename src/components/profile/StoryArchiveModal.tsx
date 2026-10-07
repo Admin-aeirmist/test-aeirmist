@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot, doc, deleteDoc, getDoc } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { 
@@ -42,62 +42,36 @@ export const StoryArchiveModal: React.FC<StoryArchiveModalProps> = ({ isOpen, on
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Subscribe to user's stories in real-time
+  // Fetch user's stories from Universal Backend API
   useEffect(() => {
-    if (!isOpen || !user || !db) return;
+    if (!isOpen || !user) return;
 
     setLoading(true);
-    const storiesRef = collection(db, 'stories');
-    const q = query(
-      storiesRef,
-      where('userId', '==', user.uid)
-    );
+    api.stories.getArchive()
+      .then((res) => {
+        const fetched = res.stories || [];
+        setStories(fetched);
+        setLoading(false);
 
-    const unsub = onSnapshot(q, (snapshot) => {
-      const fetched = snapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      }));
-      // Sort client-side by createdAt descending to avoid composite index requirements
-      fetched.sort((a: any, b: any) => {
-        const getMs = (val: any) => {
-          if (!val) return 0;
-          if (typeof val.toMillis === 'function') return val.toMillis();
-          if (val instanceof Date) return val.getTime();
-          if (typeof val === 'number') return val;
-          if (val.seconds) return val.seconds * 1000;
-          return 0;
-        };
-        return getMs(b.createdAt) - getMs(a.createdAt);
-      });
-      setStories(fetched);
-      setLoading(false);
-
-      // Default select the first story if none is selected
-      if (fetched.length > 0 && !selectedStory) {
-        setSelectedStory(fetched[0]);
-      } else if (fetched.length > 0 && selectedStory) {
-        // If selected story still exists, update its reference, else select first
-        const updated = fetched.find(s => s.id === selectedStory.id);
-        if (updated) {
-          setSelectedStory(updated);
-        } else {
+        // Default select the first story if none is selected
+        if (fetched.length > 0 && !selectedStory) {
           setSelectedStory(fetched[0]);
+        } else if (fetched.length > 0 && selectedStory) {
+          const updated = fetched.find(s => s.id === selectedStory.id);
+          setSelectedStory(updated || fetched[0]);
+        } else if (fetched.length === 0) {
+          setSelectedStory(null);
         }
-      } else if (fetched.length === 0) {
-        setSelectedStory(null);
-      }
-    }, (error) => {
-      console.error('Error fetching archived stories:', error);
-      setLoading(false);
-    });
-
-    return () => unsub();
-  }, [isOpen, user, db]);
+      })
+      .catch((error) => {
+        console.error('Error fetching archived stories:', error);
+        setLoading(false);
+      });
+  }, [isOpen, user]);
 
   // Resolve story viewers to actual profile names and avatars
   useEffect(() => {
-    if (!selectedStory || !db) return;
+    if (!selectedStory) return;
 
     const viewers: string[] = selectedStory.viewers || [];
     if (viewers.length === 0) {
@@ -110,29 +84,33 @@ export const StoryArchiveModal: React.FC<StoryArchiveModalProps> = ({ isOpen, on
       const newResolved: Record<string, any> = {};
 
       for (const viewerId of viewers) {
-        // Ignore resolved viewer caches to optimize requests
         if (resolvedViewers[viewerId]) {
           newResolved[viewerId] = resolvedViewers[viewerId];
           continue;
         }
 
         try {
-          const profileDoc = await getDoc(doc(db, 'profiles', viewerId));
-          if (profileDoc.exists()) {
+          const profileRes = await api.users.getProfile(viewerId);
+          if (profileRes?.profile) {
             newResolved[viewerId] = {
               uid: viewerId,
-              ...profileDoc.data()
+              ...profileRes.profile,
             };
           } else {
             newResolved[viewerId] = {
               uid: viewerId,
               displayName: 'User',
               username: 'user_node',
-              photoURL: getAvatarUrl(null, viewerId)
+              photoURL: getAvatarUrl(null, viewerId),
             };
           }
         } catch (err) {
-          console.error(`Failed to resolve profile for viewer ${viewerId}:`, err);
+          newResolved[viewerId] = {
+            uid: viewerId,
+            displayName: 'User',
+            username: 'user_node',
+            photoURL: getAvatarUrl(null, viewerId),
+          };
         }
       }
 
@@ -141,20 +119,21 @@ export const StoryArchiveModal: React.FC<StoryArchiveModalProps> = ({ isOpen, on
     };
 
     fetchViewers();
-  }, [selectedStory?.id, db]);
+  }, [selectedStory?.id]);
 
   const deleteSingleStory = async (storyId: string) => {
-    if (!db) return;
     if (!window.confirm('Are you sure you want to delete this story? This action cannot be undone.')) {
       return;
     }
 
     try {
       setDeletingId(storyId);
-      await deleteDoc(doc(db, 'stories', storyId));
+      await api.stories.delete(storyId);
+      setStories(prev => prev.filter(s => s.id !== storyId));
       if (selectedStory?.id === storyId) {
         setSelectedStory(null);
       }
+      addToast({ title: 'Story deleted', message: 'The story has been removed.', type: 'info' });
     } catch (error) {
       console.error('Error deleting story:', error);
       addToast({ title: 'Delete failed', message: 'Could not delete this story. Please try again.', type: 'warning' });
@@ -164,7 +143,7 @@ export const StoryArchiveModal: React.FC<StoryArchiveModalProps> = ({ isOpen, on
   };
 
   const deleteSelectedStories = async () => {
-    if (!db || selectedIds.length === 0) return;
+    if (selectedIds.length === 0) return;
     if (!window.confirm(`Are you sure you want to delete the selected ${selectedIds.length} stories? This action cannot be undone.`)) {
       return;
     }
@@ -172,10 +151,12 @@ export const StoryArchiveModal: React.FC<StoryArchiveModalProps> = ({ isOpen, on
     try {
       setLoading(true);
       for (const storyId of selectedIds) {
-        await deleteDoc(doc(db, 'stories', storyId));
+        await api.stories.delete(storyId);
       }
+      setStories(prev => prev.filter(s => !selectedIds.includes(s.id)));
       setSelectedIds([]);
       setIsSelectMode(false);
+      addToast({ title: 'Stories deleted', message: 'Selected stories removed successfully.', type: 'info' });
     } catch (error) {
       console.error('Error deleting selected stories:', error);
       addToast({ title: 'Delete failed', message: 'Could not delete the selected stories. Please try again.', type: 'warning' });

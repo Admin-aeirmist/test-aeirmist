@@ -72,6 +72,16 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    changePassword: (data: { currentPassword?: string; newPassword: string }) =>
+      request<{ success: boolean; message: string }>('/api/v1/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    changeEmail: (data: { currentPassword?: string; newEmail: string }) =>
+      request<{ success: boolean; message: string }>('/api/v1/auth/change-email', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Feed & Posts
@@ -79,7 +89,7 @@ export const api = {
     getFeed: (limit = 20, offset = 0) =>
       request<{ posts: any[] }>(`/api/v1/posts?limit=${limit}&offset=${offset}`),
     getById: (id: string) => request<{ post: any }>(`/api/v1/posts/${id}`),
-    create: (data: { content: string; mediaKeys?: string[]; mediaType?: string; tags?: string[] }) =>
+    create: (data: { content: string; mediaKeys?: string[]; mediaType?: string; tags?: string[]; pollData?: any }) =>
       request<{ post: any }>('/api/v1/posts', {
         method: 'POST',
         body: JSON.stringify(data),
@@ -99,6 +109,11 @@ export const api = {
       }),
     getUserPosts: (userId: string, limit = 50, offset = 0) =>
       request<{ posts: any[] }>(`/api/v1/posts/user/${encodeURIComponent(userId)}?limit=${limit}&offset=${offset}`),
+    votePoll: (postId: string, optionIndex: number) =>
+      request<{ success?: boolean; alreadyVoted?: boolean; pollData: any }>(`/api/v1/posts/${postId}/poll/vote`, {
+        method: 'POST',
+        body: JSON.stringify({ optionIndex }),
+      }),
   },
 
   // Users & Profiles
@@ -174,6 +189,92 @@ export const api = {
       }),
   },
 
+  // Videos & Video Creator Studio
+  videos: {
+    getFeed: (limit = 20, offset = 0) =>
+      request<{ videos: any[] }>(`/api/v1/videos/feed?limit=${limit}&offset=${offset}`),
+    getById: (id: string) =>
+      request<{ video: any }>(`/api/v1/videos/${id}`),
+    create: (data: {
+      title: string;
+      description?: string;
+      videoUrl: string;
+      thumbnailUrl?: string;
+      mediaKey?: string;
+      duration?: number;
+      category?: string;
+      tags?: string[];
+    }) =>
+      request<{ video: any }>('/api/v1/videos', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    like: (id: string) =>
+      request<{ success: boolean; isLiked: boolean }>(`/api/v1/videos/${id}/like`, { method: 'POST' }),
+    unlike: (id: string) =>
+      request<{ success: boolean; isLiked: boolean }>(`/api/v1/videos/${id}/like`, { method: 'DELETE' }),
+    recordView: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/videos/${id}/view`, { method: 'POST' }),
+    getComments: (id: string, limit = 50, offset = 0) =>
+      request<{ comments: any[] }>(`/api/v1/videos/${id}/comments?limit=${limit}&offset=${offset}`),
+    addComment: (id: string, content: string) =>
+      request<{ comment: any }>(`/api/v1/videos/${id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      }),
+    delete: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/videos/${id}`, { method: 'DELETE' }),
+  },
+
+  // 24h Notes
+  notes: {
+    getActive: () => request<{ notes: any[] }>('/api/v1/notes'),
+    setNote: (text: string, emoji?: string) =>
+      request<{ note: any }>('/api/v1/notes', {
+        method: 'POST',
+        body: JSON.stringify({ text, emoji }),
+      }),
+    deleteNote: () =>
+      request<{ success: boolean }>('/api/v1/notes', { method: 'DELETE' }),
+  },
+
+  // Vault Items
+  vault: {
+    getItems: (folder?: string) =>
+      request<{ items: any[] }>(`/api/v1/vault${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`),
+    addItem: (data: {
+      type: 'photo' | 'video' | 'note' | 'document';
+      title?: string;
+      content?: string;
+      mediaKey?: string;
+      mediaUrl?: string;
+      folder?: string;
+      isEncrypted?: boolean;
+    }) =>
+      request<{ item: any }>('/api/v1/vault', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    deleteItem: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/vault/${id}`, { method: 'DELETE' }),
+  },
+
+  // Calls
+  calls: {
+    getHistory: (limit = 50) =>
+      request<{ calls: any[] }>(`/api/v1/calls/history?limit=${limit}`),
+    logCall: (data: { receiverId: string; type: 'audio' | 'video'; status?: string; duration?: number }) =>
+      request<{ call: any }>('/api/v1/calls/log', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateStatus: (id: string, status: string, duration?: number) =>
+      request<{ call: any }>(`/api/v1/calls/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, duration }),
+      }),
+  },
+
   // Marketplace
   marketplace: {
     getItems: (category?: string, limit = 20, offset = 0) =>
@@ -195,6 +296,22 @@ export const api = {
       request<{ success: boolean }>(`/api/v1/marketplace/items/${id}`, {
         method: 'DELETE',
       }),
+    createStore: (data: any) =>
+      request<{ store: any }>('/api/v1/marketplace/stores', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    getStore: (handle: string) =>
+      request<{ store: any }>(`/api/v1/marketplace/stores/${encodeURIComponent(handle)}`),
+    getMyStore: () =>
+      request<{ store: any }>('/api/v1/marketplace/my-store'),
+    createOrder: (data: any) =>
+      request<{ order: any }>('/api/v1/marketplace/orders', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    getMyOrders: () =>
+      request<{ orders: any[] }>('/api/v1/marketplace/orders/my'),
   },
 
   // Media
@@ -216,6 +333,7 @@ export const api = {
   // Stories
   stories: {
     getFeed: () => request<{ stories: any[] }>('/api/v1/stories'),
+    getArchive: () => request<{ stories: any[] }>('/api/v1/stories/archive'),
     create: (data: { mediaUrl: string; thumbnailUrl?: string; mediaType?: string; caption?: string; audience?: string }) =>
       request<{ story: any }>('/api/v1/stories', {
         method: 'POST',
@@ -223,6 +341,17 @@ export const api = {
       }),
     view: (id: string) =>
       request<{ success: boolean }>(`/api/v1/stories/${id}/view`, { method: 'POST' }),
+    getHighlights: (userId: string) =>
+      request<{ highlights: any[] }>(`/api/v1/stories/highlights/${encodeURIComponent(userId)}`),
+    createHighlight: (data: { title: string; coverUrl?: string; storyIds: string[] }) =>
+      request<{ highlight: any }>('/api/v1/stories/highlights', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    deleteHighlight: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/stories/highlights/${id}`, { method: 'DELETE' }),
+    delete: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/stories/${id}`, { method: 'DELETE' }),
   },
 
   // Admin
@@ -234,15 +363,29 @@ export const api = {
         body: JSON.stringify({ ban, reason }),
       }),
     getAuditLogs: () => request<{ logs: any[] }>('/api/v1/admin/audit-logs'),
+    getTickets: () => request<{ tickets: any[] }>('/api/v1/admin/tickets'),
+    updateTicket: (id: string, data: { status?: string; reply?: string }) =>
+      request<{ ticket: any }>(`/api/v1/admin/tickets/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    getReports: () => request<{ reports: any[] }>('/api/v1/admin/reports'),
+    updateReport: (id: string, data: { status?: string; resolution?: string }) =>
+      request<{ report: any }>(`/api/v1/admin/reports/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Support & Reports
   support: {
     createTicket: (data: { type: string; message: string; area?: string | null; attachmentUrl?: string | null }) =>
-      request<{ success: boolean; ticketId: string }>('/api/v1/support/tickets', {
+      request<{ success: boolean; ticket: any }>('/api/v1/support/tickets', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    getMyTickets: () =>
+      request<{ tickets: any[] }>('/api/v1/support/tickets/my'),
     createReport: (data: {
       reportedUid: string;
       targetType: string;
@@ -251,7 +394,7 @@ export const api = {
       description?: string;
       attachmentUrl?: string | null;
     }) =>
-      request<{ success: boolean; reportId: string }>('/api/v1/support/reports', {
+      request<{ success: boolean; report: any }>('/api/v1/support/reports', {
         method: 'POST',
         body: JSON.stringify(data),
       }),

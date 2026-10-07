@@ -5963,23 +5963,40 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const logActivity = async (action: string, details?: string) => {
-    if (!db || !profile || !user || isOffline) return;
+    if (!profile || !user) return;
     try {
-      const activityRef = collection(db, 'activities');
-      await addDoc(activityRef, {
-        userId: user.uid,
+      const act = {
+        id: 'act_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        userId: user.uid || (user as any).id,
         profileId: profile.id,
         action,
         details: details || '',
-        timestamp: serverTimestamp(),
+        timestamp: new Date().toISOString(),
         device: {
           userAgent: navigator.userAgent,
           platform: navigator.platform,
           language: navigator.language
         }
-      });
+      };
+      const key = `aeirmist_activities_${user.uid || (user as any).id}`;
+      const existing = JSON.parse(localStorage.getItem(key) || '[]');
+      const updated = [act, ...existing].slice(0, 50);
+      localStorage.setItem(key, JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('aeirmist_activity_logged', { detail: act }));
+
+      if (db && !isOffline) {
+        const activityRef = collection(db, 'activities');
+        await addDoc(activityRef, {
+          userId: user.uid || (user as any).id,
+          profileId: profile.id,
+          action,
+          details: details || '',
+          timestamp: serverTimestamp(),
+          device: act.device
+        }).catch(() => {});
+      }
     } catch (e) {
-      logger.warn("Activity logging failed", e);
+      logger.warn("Activity logging notice", e);
     }
   };
 

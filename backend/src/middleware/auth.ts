@@ -53,3 +53,14 @@ export function requireRole(...roles: string[]) {
 
 export const requireAdmin = requireRole('admin', 'super_admin', 'owner');
 export const requireModerator = requireRole('moderator', 'admin', 'super_admin', 'owner');
+
+export async function optionalAuthToken(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return next();
+  try {
+    const payload = verifyAccessToken(token);
+    req.user = payload;
+  } catch (err) {}
+  next();
+}

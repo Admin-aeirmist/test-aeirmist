@@ -2,9 +2,6 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, AlertTriangle, ChevronRight, Loader2, CheckCircle, Upload, Shield } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { db, storage } from '../../lib/firebase';
-import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
 import { api } from '../../services/api/client';
 
@@ -53,32 +50,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!user || !db || isSubmitting) return;
+    if (isSubmitting) return;
     setIsSubmitting(true);
 
     try {
-      // Check for duplicate recent reports from this user for this target
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-      const q = query(
-        collection(db, 'reports'),
-        where('reporterUid', '==', user.uid),
-        where('targetId', '==', targetId)
-      );
-      const snapshot = await getDocs(q);
-      const recentReports = snapshot.docs.filter(doc => {
-        const data = doc.data();
-        if (!data.createdAt) return false;
-        return data.createdAt.toDate() > oneHourAgo;
-      });
-
-      if (recentReports.length > 0) {
-        addToast({ title: 'Already Reported', message: 'You have already reported this content recently.', type: 'warning' });
-        setIsSubmitting(false);
-        onClose();
-        return;
-      }
-
-      let attachmentObj = null;
       let uploadedAttachmentUrl: string | null = null;
       if (file) {
         if (!file.type || !file.type.startsWith('image/')) {
@@ -92,81 +67,28 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           return;
         }
 
-        // Try local/S3 driver first
         try {
           const mediaRes = await api.media.upload(file, 'reports');
           if (mediaRes && mediaRes.url) {
             uploadedAttachmentUrl = mediaRes.url;
-            attachmentObj = {
-              url: mediaRes.url,
-              name: file.name,
-              contentType: file.type || 'image/png',
-              size: file.size,
-              uploadedAt: new Date().toISOString()
-            };
           }
         } catch (mediaErr) {
-          if (storage) {
-            const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
-            const base = file.name.split('.').slice(0, -1).join('.').toLowerCase().replace(/[^a-z0-9_-]/g, '_').substring(0, 30);
-            const rand = Math.random().toString(36).substring(2, 8);
-            const safeName = `${base || 'screenshot'}_${Date.now()}_${rand}.${ext}`;
-
-            const fileRef = ref(storage, `reports/${user.uid}/${safeName}`);
-            await uploadBytes(fileRef, file, { contentType: file.type || 'image/png' });
-            const downloadUrl = await getDownloadURL(fileRef);
-
-            uploadedAttachmentUrl = downloadUrl;
-            attachmentObj = {
-              url: downloadUrl,
-              name: file.name,
-              contentType: file.type || 'image/png',
-              size: file.size,
-              uploadedAt: new Date().toISOString()
-            };
-          }
+          logger.warn('[ReportModal] Media upload fallback error:', mediaErr);
         }
       }
 
-      const priority = AUTO_PRIORITIES[selectedReason] || 'low';
       let refId = `RPT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
       
-      // Try Backend PostgreSQL Report first
-      let sentViaBackend = false;
-      try {
-        const reportRes = await api.support.createReport({
-          reportedUid,
-          targetType,
-          targetId,
-          reason: selectedReason,
-          description,
-          attachmentUrl: uploadedAttachmentUrl,
-        });
-        if (reportRes && reportRes.reportId) {
-          refId = reportRes.reportId;
-          sentViaBackend = true;
-        }
-      } catch (beErr) {
-        logger.warn('[Backend Report Fallback]', beErr);
-      }
-
-      // Dual-sync / fallback to Firestore
-      if (!sentViaBackend && db) {
-        await addDoc(collection(db, 'reports'), {
-          reportId: refId,
-          reporterUid: user.uid,
-          reporterUsername: profile?.username || 'Unknown',
-          reportedUid,
-          targetType,
-          targetId,
-          reason: selectedReason,
-          description,
-          attachments: attachmentObj ? [attachmentObj] : [],
-          status: 'pending',
-          priority,
-          createdAt: serverTimestamp(),
-          meta: meta || {}
-        });
+      const reportRes = await api.support.createReport({
+        reportedUid,
+        targetType,
+        targetId,
+        reason: selectedReason,
+        description,
+        attachmentUrl: uploadedAttachmentUrl,
+      });
+      if (reportRes && reportRes.report) {
+        refId = reportRes.report.reportRef || refId;
       }
 
       setReportId(refId);

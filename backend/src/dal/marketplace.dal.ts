@@ -1,8 +1,9 @@
 import { eq, and, desc, sql, isNull } from 'drizzle-orm';
 import { db } from '../db';
-import { marketplaceItems, profiles, users } from '../db/schema';
+import { marketplaceItems, marketplaceStores, marketplaceOrders, profiles, users } from '../db/schema';
 
 export class MarketplaceDAL {
+  // ---------------- Items ----------------
   static async createItem(data: {
     sellerId: string;
     title: string;
@@ -116,5 +117,118 @@ export class MarketplaceDAL {
       .where(eq(marketplaceItems.id, id));
 
     return true;
+  }
+
+  // ---------------- Stores ----------------
+  static async createStore(data: {
+    ownerId: string;
+    name: string;
+    handle: string;
+    description?: string;
+    logoUrl?: string;
+    bannerUrl?: string;
+    category?: string;
+    location?: string;
+    phone?: string;
+    email?: string;
+  }) {
+    const [store] = await db
+      .insert(marketplaceStores)
+      .values({
+        ownerId: data.ownerId,
+        name: data.name,
+        handle: data.handle.toLowerCase().replace(/[^a-z0-9_]/g, ''),
+        description: data.description,
+        logoUrl: data.logoUrl,
+        bannerUrl: data.bannerUrl,
+        category: data.category || 'General',
+        location: data.location,
+        phone: data.phone,
+        email: data.email,
+      })
+      .returning();
+
+    return store;
+  }
+
+  static async getStoreByHandle(handle: string) {
+    const [store] = await db
+      .select()
+      .from(marketplaceStores)
+      .where(eq(marketplaceStores.handle, handle.toLowerCase()))
+      .limit(1);
+
+    return store || null;
+  }
+
+  static async getStoreByOwner(ownerId: string) {
+    const [store] = await db
+      .select()
+      .from(marketplaceStores)
+      .where(eq(marketplaceStores.ownerId, ownerId))
+      .limit(1);
+
+    return store || null;
+  }
+
+  static async updateStore(storeId: string, ownerId: string, data: Partial<{
+    name: string;
+    description: string;
+    logoUrl: string;
+    bannerUrl: string;
+    category: string;
+    location: string;
+    phone: string;
+    email: string;
+  }>) {
+    const [updated] = await db
+      .update(marketplaceStores)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(marketplaceStores.id, storeId), eq(marketplaceStores.ownerId, ownerId)))
+      .returning();
+
+    return updated || null;
+  }
+
+  // ---------------- Orders ----------------
+  static async createOrder(data: {
+    buyerId: string;
+    storeId?: string;
+    items: any[];
+    totalAmount: string;
+    currency?: string;
+    shippingAddress?: any;
+    paymentMethod?: string;
+  }) {
+    const [order] = await db
+      .insert(marketplaceOrders)
+      .values({
+        buyerId: data.buyerId,
+        storeId: data.storeId,
+        items: data.items,
+        totalAmount: data.totalAmount,
+        currency: data.currency || 'BDT',
+        shippingAddress: data.shippingAddress || {},
+        paymentMethod: data.paymentMethod || 'cod',
+      })
+      .returning();
+
+    return order;
+  }
+
+  static async getUserOrders(buyerId: string) {
+    return await db
+      .select()
+      .from(marketplaceOrders)
+      .where(eq(marketplaceOrders.buyerId, buyerId))
+      .orderBy(desc(marketplaceOrders.createdAt));
+  }
+
+  static async getStoreOrders(storeId: string) {
+    return await db
+      .select()
+      .from(marketplaceOrders)
+      .where(eq(marketplaceOrders.storeId, storeId))
+      .orderBy(desc(marketplaceOrders.createdAt));
   }
 }

@@ -13,31 +13,39 @@ import {
   Image as ImageIcon,
   Clock
 } from "lucide-react";
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { api } from "../../services/api/client";
 
-const TicketsTab = ({ db, addToast }: { db: any, addToast: any }) => {
+const TicketsTab = ({ addToast }: { db?: any, addToast: any }) => {
   const [tickets, setTickets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
   
-  useEffect(() => {
-    if (!db) return;
-    const q = query(collection(db, "supportTickets"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => {
-      setTickets(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  const loadTickets = async () => {
+    try {
+      const res = await api.admin.getTickets();
+      if (res && res.tickets) {
+        setTickets(res.tickets);
+      }
+    } catch (err) {
+      logger.warn('[TicketsTab] Error loading tickets:', err);
+    } finally {
       setLoading(false);
-    });
-    return () => unsub();
-  }, [db]);
+    }
+  };
+
+  useEffect(() => {
+    loadTickets();
+  }, []);
 
   const handleUpdateStatus = async (ticketId: string, status: string) => {
     try {
-      await updateDoc(doc(db, "supportTickets", ticketId), { status });
+      await api.admin.updateTicket(ticketId, { status });
       addToast({ title: "Status Updated", message: `Ticket marked as ${status}`, type: "success" });
       if (selectedTicket?.id === ticketId) {
         setSelectedTicket({ ...selectedTicket, status });
       }
+      loadTickets();
     } catch (e) {
       logger.error(e);
       addToast({ title: "Error", message: "Could not update ticket", type: "error" });
@@ -47,9 +55,10 @@ const TicketsTab = ({ db, addToast }: { db: any, addToast: any }) => {
   const handleDelete = async (ticketId: string) => {
     if (window.confirm("Delete this ticket permanently?")) {
       try {
-        await deleteDoc(doc(db, "supportTickets", ticketId));
-        addToast({ title: "Ticket Deleted", message: "Ticket has been deleted.", type: "success" });
+        await api.admin.updateTicket(ticketId, { status: 'closed' });
+        addToast({ title: "Ticket Closed", message: "Ticket has been closed.", type: "success" });
         if (selectedTicket?.id === ticketId) setSelectedTicket(null);
+        loadTickets();
       } catch (e) {
         logger.error(e);
       }

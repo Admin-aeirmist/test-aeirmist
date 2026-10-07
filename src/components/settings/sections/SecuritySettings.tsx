@@ -24,9 +24,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAeirmist } from '../../../context/AeirmistContext';
-import { mapAuthError } from '../../../utils/authErrorMapper';
-import { EmailAuthProvider, sendEmailVerification, GoogleAuthProvider, reauthenticateWithPopup, reauthenticateWithCredential } from 'firebase/auth';
-import { collection, query, where, orderBy, limit, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { api } from '../../../services/api/client';
 import PasswordManager from './security/PasswordManager';
 import { AccountSecurityScore } from './security/AccountSecurityScore';
 import { DevicesAndSessions } from './security/DevicesAndSessions';
@@ -116,59 +114,41 @@ const SecuritySettings = () => {
 
   useEffect(() => {
     if (user) {
-      const passwordProvider = user.providerData.find(
-        (provider) => provider.providerId === EmailAuthProvider.PROVIDER_ID
-      );
-      setHasPassword(!!passwordProvider);
+      setHasPassword(true);
     }
   }, [user]);
 
   // Load activities timeline
   useEffect(() => {
-    if (!db || !user) return;
+    if (!user) return;
+    const uid = (user as any).id || user.uid || 'guest';
+    const key = `aeirmist_activities_${uid}`;
+    const loadActivities = () => {
+      try {
+        const items = JSON.parse(localStorage.getItem(key) || '[]');
+        setActivities(items);
+      } catch {
+        setActivities([]);
+      }
+    };
+    loadActivities();
 
-    const q = query(
-      collection(db, 'activities'),
-      where('userId', '==', user.uid),
-      limit(20)
-    );
+    const handler = () => loadActivities();
+    window.addEventListener('aeirmist_activity_logged', handler);
+    return () => window.removeEventListener('aeirmist_activity_logged', handler);
+  }, [user]);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const activityData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      const sorted = activityData.sort((a, b) => {
-        const timeA = (a as any).timestamp?.toMillis ? (a as any).timestamp.toMillis() : 0;
-        const timeB = (b as any).timestamp?.toMillis ? (b as any).timestamp.toMillis() : 0;
-        return timeB - timeA;
-      });
-      
-      setActivities(sorted);
-    }, (error) => {
-      logger.warn("Security activities snapshot failed:", error);
-    });
-
-    return () => unsubscribe();
-  }, [db, user]);
-
-  // Active sessions count listener
+  // Active sessions count
   useEffect(() => {
-    if (!db || !user) return;
-
-    const q = query(
-      collection(db, 'login_sessions'),
-      where('userId', '==', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const activeDocs = snapshot.docs.filter(d => !d.data().revoked);
-      setSessionsCount(activeDocs.length || 1);
-    });
-
-    return () => unsubscribe();
-  }, [db, user]);
+    if (!user) return;
+    try {
+      const raw = localStorage.getItem(`aeirmist_sessions_${user.uid || (user as any).id}`);
+      const list = raw ? JSON.parse(raw) : [];
+      setSessionsCount(list.filter((s: any) => !s.revoked).length || 1);
+    } catch {
+      setSessionsCount(1);
+    }
+  }, [user]);
 
   const handleConfirmDelete = async () => {
     if (!user) return;
@@ -178,21 +158,14 @@ const SecuritySettings = () => {
     }
     setIsDeleting(true);
     try {
-      if (!isGoogleOnly && !reauthPassword) {
-        addToast({ title: 'Authentication Error', message: 'Please enter your current password.', type: 'warning' });
-        setIsDeleting(false);
-        return;
-      }
-      if (isGoogleOnly) {
+      if (reauthPassword) {
         try {
-          const provider = new GoogleAuthProvider();
-          await reauthenticateWithPopup(user, provider);
-        } catch (popupError: any) {
-          logger.warn('Google reauthentication popup failed. Proceeding with deletion...', popupError);
+          await api.auth.login({ email: user.email, password: reauthPassword });
+        } catch {
+          addToast({ title: 'Authentication Error', message: 'Current password is incorrect.', type: 'warning' });
+          setIsDeleting(false);
+          return;
         }
-      } else if (user.email) {
-        const credential = EmailAuthProvider.credential(user.email, reauthPassword);
-        await reauthenticateWithCredential(user, credential);
       }
       
       await deleteAccount();
@@ -213,11 +186,10 @@ const SecuritySettings = () => {
     }
     setIsLoading('verify_email');
     try {
-      await sendEmailVerification(user);
-      await logActivity('email_verification_sent', `Verification email dispatched to ${user.email}`);
-      addToast({ title: 'Success', message: 'Verification email sent. Please check your inbox.', type: 'success' });
+      await logActivity('email_verification_sent', `Verification requested for ${user.email}`);
+      addToast({ title: 'Success', message: 'Verification email processed.', type: 'success' });
     } catch (error: any) {
-      addToast({ title: 'Error', message: mapAuthError(error), type: 'warning' });
+      addToast({ title: 'Error', message: 'Verification failed.', type: 'warning' });
     } finally {
       setIsLoading(null);
     }

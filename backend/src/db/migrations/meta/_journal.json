@@ -22,6 +22,13 @@
       "when": 1791353414013,
       "tag": "0002_overrated_madame_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791372821494,
+      "tag": "0003_new_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

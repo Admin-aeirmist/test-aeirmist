@@ -20,7 +20,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { Store as StoreType, MARKETPLACE_CATEGORIES } from './MarketplaceTypes';
 import { logger } from '@/src/utils/logger';
@@ -213,14 +213,24 @@ export const MarketplaceCreateShopModal: React.FC<CreateShopModalProps> = ({
       productsCount: 0,
       avgRating: 0,
       totalReviews: 0,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
     try {
-      const docRef = await addDoc(collection(db, 'stores'), newShopData);
+      const res = await api.marketplace.createStore({
+        name,
+        handle: finalHandle,
+        description,
+        logoUrl: logo,
+        bannerUrl: banner,
+        category,
+        location: division ? `${division}, Bangladesh` : 'Bangladesh',
+        phone,
+        email,
+      });
       const createdShop: StoreType = {
-        id: docRef.id,
+        id: res?.store?.id || Date.now().toString(),
         ...newShopData
       };
 

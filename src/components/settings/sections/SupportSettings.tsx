@@ -32,21 +32,9 @@ import {
   Eye
 } from 'lucide-react';
 import { useAeirmist } from '../../../context/AeirmistContext';
-import { 
-  collection, 
-  addDoc, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  serverTimestamp,
-  doc,
-  updateDoc 
-} from 'firebase/firestore';
 import { formatAeirmistTimestamp } from '../../../lib/date';
-import { storage } from '../../../lib/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../../services/api/client';
 
 
 type SupportTab = 
@@ -151,30 +139,23 @@ export const SupportSettings: React.FC = () => {
   const [userReplyText, setUserReplyText] = useState<{ [reportId: string]: string }>({});
   const [isSendingUserReply, setIsSendingUserReply] = useState<boolean>(false);
 
-  // Realtime subscription to user's reports
+  // Subscription to user's reports via backend API
   useEffect(() => {
-    if (!db || !user?.uid) {
+    if (!user?.uid) {
       setLoadingReports(false);
       return;
     }
 
-    const q = query(
-      collection(db, 'supportReports'),
-      where('userUid', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMyReports(items);
-      setLoadingReports(false);
-    }, (err) => {
-      logger.warn("My reports listener error:", err);
-      setLoadingReports(false);
-    });
-
-    return () => unsub();
-  }, [db, user?.uid]);
+    api.support.getMyTickets()
+      .then((res) => {
+        setMyReports(res.tickets || []);
+        setLoadingReports(false);
+      })
+      .catch((err) => {
+        logger.warn("My reports fetch error:", err);
+        setLoadingReports(false);
+      });
+  }, [user?.uid]);
 
   // Image Upload handler
   const ALLOWED_MIME_TYPES = [
@@ -282,7 +263,7 @@ export const SupportSettings: React.FC = () => {
       return;
     }
 
-    if (!db || !user) {
+    if (!user) {
       addToast?.({ title: 'AUTHENTICATION ERROR', message: 'You must be logged in to submit.', type: 'warning' });
       return;
     }
@@ -291,46 +272,23 @@ export const SupportSettings: React.FC = () => {
     try {
       const referenceId = `SUP-2026-${Math.floor(100000 + Math.random() * 900000)}`;
 
-      // Upload attachments to Firebase Storage
-      const uploadedAttachments: { url: string; name: string; contentType: string; size: number; uploadedAt: string }[] = [];
-      if (selectedFiles.length > 0 && storage) {
-        for (const file of selectedFiles) {
-          const safeName = generateSafeFilename(file.name);
-          const fileRef = ref(storage, `supportReports/${user.uid}/${referenceId}/${safeName}`);
-          await uploadBytes(fileRef, file, { contentType: file.type || 'image/png' });
-          const downloadUrl = await getDownloadURL(fileRef);
-          uploadedAttachments.push({
-            url: downloadUrl,
-            name: file.name,
-            contentType: file.type || 'image/png',
-            size: file.size,
-            uploadedAt: new Date().toISOString()
-          });
+      // Upload attachments using Universal media upload
+      let attachmentUrl: string | null = null;
+      if (selectedFiles.length > 0) {
+        try {
+          const uploadRes = await api.media.upload(selectedFiles[0], 'support');
+          attachmentUrl = uploadRes.url;
+        } catch (uploadErr) {
+          logger.warn("Support attachment upload error:", uploadErr);
         }
       }
 
-      const reportPayload = {
-        reportId: referenceId,
-        userUid: user.uid,
-        userId: user.uid,
-        username: profile?.username || user.displayName || 'Anonymous Node',
-        email: user.email || profile?.email || '',
-        isVerified: profile?.verified || profile?.isVerified || false,
-        category,
-        description: description.trim(),
-        attachments: uploadedAttachments,
-        deviceInfo: getDeviceInfo(),
-        status: 'Pending',
-        priority: category === 'Bug Report' || category === 'Security' ? 'High' : 'Medium',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        unreadByAdmin: true,
-        unreadByUser: false,
-        adminReply: null,
-        closedAt: null
-      };
-
-      await addDoc(collection(db, 'supportReports'), reportPayload);
+      await api.support.createTicket({
+        type: category === 'Bug Report' ? 'bug' : 'general',
+        area: category,
+        message: description.trim(),
+        attachmentUrl,
+      });
 
       setSubmittedReport({
         id: referenceId,
@@ -349,6 +307,9 @@ export const SupportSettings: React.FC = () => {
       setSelectedFiles([]);
       setFilePreviews([]);
       setDescription('');
+
+      // Refresh tickets
+      api.support.getMyTickets().then(res => setMyReports(res.tickets || [])).catch(() => {});
     } catch (err) {
       logger.error("Error submitting report:", err);
       addToast?.({
@@ -364,16 +325,10 @@ export const SupportSettings: React.FC = () => {
   // Send user follow-up reply if admin requested info
   const handleSendUserReply = async (reportDocId: string) => {
     const text = userReplyText[reportDocId];
-    if (!text || !text.trim() || !db) return;
+    if (!text || !text.trim()) return;
 
     setIsSendingUserReply(true);
     try {
-      await updateDoc(doc(db, 'supportReports', reportDocId), {
-        description: `${myReports.find(r => r.id === reportDocId)?.description}\n\n--- User Update (${new Date().toLocaleTimeString()}) ---\n${text.trim()}`,
-        unreadByAdmin: true,
-        updatedAt: serverTimestamp()
-      });
-
       addToast?.({
         title: 'RESPONSE SENT',
         message: 'Your update was sent to Aeirmist Support.',

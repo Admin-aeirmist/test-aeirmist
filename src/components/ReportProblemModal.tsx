@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, AlertCircle, Send, CheckCircle2, Upload, Bug, ShieldAlert, Sparkles, HelpCircle } from 'lucide-react';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAeirmist } from '../context/AeirmistContext';
+import { api } from '../services/api/client';
 import { logger } from '../utils/logger';
 
 interface ReportProblemModalProps {
@@ -19,7 +19,7 @@ const CATEGORIES = [
 ];
 
 export const ReportProblemModal: React.FC<ReportProblemModalProps> = ({ isOpen, onClose }) => {
-  const { user, profile, db, addToast, uploadMedia } = useAeirmist();
+  const { user, profile, addToast, uploadMedia } = useAeirmist();
   const [category, setCategory] = useState('bug');
   const [description, setDescription] = useState('');
   const [attachment, setAttachment] = useState<File | null>(null);
@@ -37,7 +37,7 @@ export const ReportProblemModal: React.FC<ReportProblemModalProps> = ({ isOpen, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description.trim() || !db) return;
+    if (!description.trim()) return;
 
     setIsSubmitting(true);
     try {
@@ -57,29 +57,14 @@ export const ReportProblemModal: React.FC<ReportProblemModalProps> = ({ isOpen, 
         }
       }
 
-      const reportPayload = {
-        reportId: `REP-${Date.now().toString(36).toUpperCase()}`,
-        reporterUid: user?.uid || profile?.uid || profile?.id || 'guest',
-        reporterId: profile?.id || user?.uid || 'guest',
-        reporterUsername: profile?.username || user?.displayName || 'anonymous',
-        reporterEmail: user?.email || profile?.email || '',
+      await api.support.createReport({
+        reportedUid: user?.uid || profile?.id || 'system',
+        targetType: category,
+        targetId: 'system_issue',
         reason: CATEGORIES.find(c => c.id === category)?.label || category,
-        category,
-        targetType: 'system_issue',
-        targetId: 'app_report',
         description: description.trim(),
-        attachments: attachmentUrl ? [attachmentUrl] : [],
-        status: 'pending',
-        priority: category === 'abuse_harassment' ? 'high' : 'medium',
-        createdAt: serverTimestamp(),
-        deviceInfo: {
-          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-          platform: typeof navigator !== 'undefined' ? navigator.platform : '',
-          screen: typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : ''
-        }
-      };
-
-      await addDoc(collection(db, 'reports'), reportPayload);
+        attachmentUrl: attachmentUrl || null,
+      });
 
       setIsSubmitted(true);
       addToast({

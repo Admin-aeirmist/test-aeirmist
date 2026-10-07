@@ -1,6 +1,6 @@
 import { db } from '../db';
-import { stories, users, profiles } from '../db/schema';
-import { eq, gt, desc } from 'drizzle-orm';
+import { stories, storyHighlights, users, profiles } from '../db/schema';
+import { eq, gt, desc, and } from 'drizzle-orm';
 
 export interface CreateStoryDTO {
   userId: string;
@@ -60,6 +60,16 @@ export class StoryDAL {
     return rows;
   }
 
+  static async getArchive(userId: string) {
+    const rows = await db
+      .select()
+      .from(stories)
+      .where(eq(stories.userId, userId))
+      .orderBy(desc(stories.createdAt));
+
+    return rows;
+  }
+
   static async recordView(storyId: string, viewerUserId: string) {
     const [existing] = await db
       .select({ viewers: stories.viewers })
@@ -78,5 +88,43 @@ export class StoryDAL {
         .where(eq(stories.id, storyId));
     }
     return true;
+  }
+
+  // Highlights
+  static async createHighlight(userId: string, title: string, coverUrl?: string, storyIds: string[] = []) {
+    const [highlight] = await db
+      .insert(storyHighlights)
+      .values({
+        userId,
+        title,
+        coverUrl,
+        storyIds,
+      })
+      .returning();
+    return highlight;
+  }
+
+  static async getUserHighlights(userId: string) {
+    return await db
+      .select()
+      .from(storyHighlights)
+      .where(eq(storyHighlights.userId, userId))
+      .orderBy(desc(storyHighlights.createdAt));
+  }
+
+  static async deleteHighlight(highlightId: string, userId: string) {
+    const [deleted] = await db
+      .delete(storyHighlights)
+      .where(and(eq(storyHighlights.id, highlightId), eq(storyHighlights.userId, userId)))
+      .returning();
+    return !!deleted;
+  }
+
+  static async deleteStory(storyId: string, userId: string) {
+    const [deleted] = await db
+      .delete(stories)
+      .where(and(eq(stories.id, storyId), eq(stories.userId, userId)))
+      .returning();
+    return !!deleted;
   }
 }
