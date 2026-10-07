@@ -87,9 +87,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   return error;
 }
 
-export async function registerUser(email: string, password: string) {
+export async function registerUser(email: string, password: string, username?: string, displayName?: string) {
   try {
-    const res = await api.auth.register({ email, password });
+    const defaultName = email.split('@')[0];
+    const res = await api.auth.register({ 
+      email, 
+      password, 
+      username: username || defaultName, 
+      displayName: displayName || defaultName 
+    });
     if (res?.token && typeof localStorage !== 'undefined') {
       localStorage.setItem('auth_token', res.token);
     }

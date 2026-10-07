@@ -230,4 +230,22 @@ export class ChatDAL {
       .from(conversationMembers)
       .where(eq(conversationMembers.conversationId, conversationId));
   }
+
+  static async deleteMessage(messageId: string, userId: string) {
+    const [msg] = await db
+      .update(messages)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(messages.id, messageId), eq(messages.senderId, userId)))
+      .returning();
+    return msg;
+  }
+
+  static async editMessage(messageId: string, userId: string, newContent: string) {
+    const [msg] = await db
+      .update(messages)
+      .set({ content: newContent, updatedAt: new Date() })
+      .where(and(eq(messages.id, messageId), eq(messages.senderId, userId)))
+      .returning();
+    return msg;
+  }
 }

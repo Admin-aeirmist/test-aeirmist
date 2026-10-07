@@ -70,6 +70,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
       location: data.location,
       pollData: data.pollData,
     });
+    io.emit('new_post', { post });
     res.status(201).json({ post });
   } catch (err: any) {
     if (err instanceof z.ZodError) {

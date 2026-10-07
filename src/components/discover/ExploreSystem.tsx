@@ -777,7 +777,6 @@ export const ExploreSystem: React.FC<{
 
   // Saved / Bookmark items persistence
   const handleToggleSaveItem = async (itemId: string, itemType: 'product' | 'store' | 'service' | 'post') => {
-    if (!db) return;
     if (!profile) {
       addToast({ title: 'SYNC NOT VALID', message: 'Sign in to bookmark listings.', type: 'warning' });
       return;

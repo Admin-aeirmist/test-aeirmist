@@ -192,6 +192,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ title, memberIds, avatarKey }),
       }),
+    editMessage: (messageId: string, content: string) =>
+      request<{ message: any }>(`/api/v1/chat/messages/${messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ content }),
+      }),
+    deleteMessage: (messageId: string) =>
+      request<{ success: boolean }>(`/api/v1/chat/messages/${messageId}`, {
+        method: 'DELETE',
+      }),
   },
 
   // Videos & Video Creator Studio

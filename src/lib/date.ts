@@ -247,7 +247,7 @@ export const formatConversationTime = (timestamp: any): string => {
   if (
     typeof timestamp === 'object' &&
     !(timestamp instanceof Date) &&
-    !(timestamp instanceof Timestamp) &&
+    timestamp?.constructor?.name !== 'Timestamp' &&
     typeof timestamp.toMillis !== 'function' &&
     typeof timestamp.toDate !== 'function'
   ) {

@@ -64,6 +64,7 @@ import { ChatWallpaperController } from './messenger/ChatWallpaperController';
 import { GroupCreationModal } from './messenger/GroupCreationModal';
 import { GroupInfoPanel } from './messenger/GroupInfoPanel';
 import { api } from '../services/api/client';
+import { getSocket } from '../services/api/socket';
 import { Chat, Message } from '../types/messenger';
 import { 
   formatAeirmistTimestamp, 
@@ -209,20 +210,19 @@ export const LiveParticipantName = ({ participantId, fallbackName, className = "
     : (profileData?.displayName || profileData?.username || (isFallbackValid ? fallbackName : '') || 'Aeirmist User');
 
   useEffect(() => {
-    if (!db || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
-    // Nickname listener (separate collection — cannot be shared via profile cache)
-    const unsubNickname = onSnapshot(doc(db, 'chat_settings', chatId.trim()), (docSnap) => {
-      if (docSnap.exists()) {
-        const nicks = docSnap.data().nicknames || {};
+    if (!chatId || typeof chatId !== 'string' || !chatId.trim()) return;
+    try {
+      const stored = localStorage.getItem(`chat_settings_${chatId.trim()}`);
+      if (stored) {
+        const nicks = JSON.parse(stored).nicknames || {};
         setNickname(nicks[participantId] || '');
       } else {
         setNickname('');
       }
-    }, (err) => {
-      logger.error("Error listening for shared nickname:", err);
-    });
-    return () => unsubNickname();
-  }, [db, participantId, chatId]);
+    } catch (e) {
+      setNickname('');
+    }
+  }, [participantId, chatId]);
 
   return <span className={className}>{isDeleted ? 'Aeirmist User' : (nickname || profileName)}</span>;
 };
@@ -266,30 +266,28 @@ const LiveParticipantSubDetails = ({ participantId, chatId }: { participantId: s
   const isOnlineStatusOn = profileData?.messagingSettings?.onlineStatus !== false;
 
   useEffect(() => {
-    if (!db || !participantId || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
+    if (!participantId || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
 
-    const indicatorId = `${chatId.trim()}_${participantId.trim()}`;
-    const unsubTyping = onSnapshot(doc(db, 'typing_indicators', indicatorId), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.updatedAt) {
-          try {
-            const date = typeof data.updatedAt.toDate === 'function' ? data.updatedAt.toDate() : new Date(data.updatedAt);
-            const isCurrentlyTyping = (Date.now() - date.getTime()) < 4000;
-            setIsTyping(isCurrentlyTyping);
-          } catch (e) {
-            setIsTyping(false);
-          }
-        } else {
-          setIsTyping(false);
-        }
-      } else {
+    const socket = getSocket();
+    const handleTyping = (data: any) => {
+      if (data?.conversationId === chatId.trim() && (data?.userId === participantId || data?.profileId === participantId)) {
+        setIsTyping(true);
+      }
+    };
+    const handleStopTyping = (data: any) => {
+      if (data?.conversationId === chatId.trim() && (data?.userId === participantId || data?.profileId === participantId)) {
         setIsTyping(false);
       }
-    });
+    };
 
-    return () => unsubTyping();
-  }, [db, participantId, chatId]);
+    socket.on('user_typing', handleTyping);
+    socket.on('user_stop_typing', handleStopTyping);
+
+    return () => {
+      socket.off('user_typing', handleTyping);
+      socket.off('user_stop_typing', handleStopTyping);
+    };
+  }, [participantId, chatId]);
 
   const lastSeenMs = extractTimestampMs(lastSeen) || extractTimestampMs(profileData?.updatedAt);
   const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
@@ -2125,9 +2123,9 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
             <CallHistorySection 
               onBack={() => { setView('chats'); setIsMobileList(true); }} 
               onRedial={async (pid, type) => {
-                const profileDoc = await getDoc(doc(db, 'profiles', pid));
-                if (profileDoc.exists()) {
-                  handleUserClick({ id: pid, ...profileDoc.data() }, type);
+                const res = await api.users.getProfile(pid).catch(() => null);
+                if (res?.profile) {
+                  handleUserClick(res.profile, type);
                 }
               }}
               onUserClick={onUserClick}
@@ -2581,33 +2579,33 @@ const ChatWindow = ({
 
   useEffect(() => {
     const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
-    if (!db || !otherId) {
+    if (!otherId) {
       setOtherProfile(null);
       setOtherProfileLoaded(true);
       return;
     }
     
-    // Subscribe to other user's profile to check if they are private or deleted
-    const unsub = onSnapshot(doc(db, 'profiles', otherId), (snap) => {
-      setOtherProfileLoaded(true);
-      if (snap.exists()) {
-        const pData = snap.data();
-        if (pData.isDeleted === true || pData.status === 'deleted') {
-          setOtherProfile({ id: snap.id, ...pData, isDeleted: true });
+    let isMounted = true;
+    api.users.getProfile(otherId).then(res => {
+      if (isMounted) {
+        setOtherProfileLoaded(true);
+        if (res?.profile) {
+          const p = res.profile;
+          setOtherProfile({ id: p.id, ...p, isDeleted: p.isDeleted === true || p.status === 'deleted' });
         } else {
-          setOtherProfile({ id: snap.id, ...pData });
+          setOtherProfile(null);
         }
-      } else {
+      }
+    }).catch(err => {
+      if (isMounted) {
+        logger.warn("Could not listen to other profile:", err);
+        setOtherProfileLoaded(true);
         setOtherProfile(null);
       }
-    }, (err) => {
-      logger.warn("Could not listen to other profile:", err);
-      setOtherProfileLoaded(true);
-      setOtherProfile(null);
     });
     
-    return () => unsub();
-  }, [db, chat.otherParticipantId, chat.profileIds, profile?.id]);
+    return () => { isMounted = false; };
+  }, [chat.otherParticipantId, chat.profileIds, profile?.id]);
 
   const handleReply = (msg: any) => {
     setReplyingTo(msg);
@@ -2912,30 +2910,26 @@ const ChatWindow = ({
     const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
     if (!otherParticipantId) return;
 
-    const indicatorId = `${chat.id}_${otherParticipantId}`;
-    const indicatorRef = doc(db, 'typing_indicators', indicatorId);
-    
-    const unsubscribe = onSnapshot(indicatorRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.updatedAt) {
-          try {
-            const date = typeof data.updatedAt.toDate === 'function' ? data.updatedAt.toDate() : new Date(data.updatedAt);
-            const isCurrentlyTyping = (Date.now() - date.getTime()) < 4000;
-            setRemoteTyping(isCurrentlyTyping);
-          } catch (e) {
-            setRemoteTyping(false);
-          }
-        } else {
-          setRemoteTyping(false);
-        }
-      } else {
+    const socket = getSocket();
+    const handleTyping = (data: any) => {
+      if (data?.conversationId === chat.id && (data?.userId === otherParticipantId || data?.profileId === otherParticipantId)) {
+        setRemoteTyping(true);
+      }
+    };
+    const handleStopTyping = (data: any) => {
+      if (data?.conversationId === chat.id && (data?.userId === otherParticipantId || data?.profileId === otherParticipantId)) {
         setRemoteTyping(false);
       }
-    }, (err) => logger.warn("Typing sync delayed", err));
+    };
 
-    return () => unsubscribe();
-  }, [db, chat.id, profile?.id]);
+    socket.on('user_typing', handleTyping);
+    socket.on('user_stop_typing', handleStopTyping);
+
+    return () => {
+      socket.off('user_typing', handleTyping);
+      socket.off('user_stop_typing', handleStopTyping);
+    };
+  }, [chat.id, profile?.id]);
 
   // Auto-retry failed messages when coming back online
   useEffect(() => {

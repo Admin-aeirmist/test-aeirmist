@@ -202,46 +202,24 @@ export const LiveNoteAuthorName = ({
       }
     }
 
-    const unsubs: (() => void)[] = [];
-
+    let isMounted = true;
     targetIds.forEach(id => {
-      const unsub = onSnapshot(doc(db, 'profiles', id), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const name = data?.displayName || data?.username || data?.name;
-          if (isValidName(name)) {
-            const cleanName = name.trim();
-            profileNameCache[id] = cleanName;
-            if (userId) profileNameCache[userId] = cleanName;
-            if (authorUid) profileNameCache[authorUid] = cleanName;
-            setLiveName(cleanName);
-            return;
-          }
+      api.users.getProfile(id).then(res => {
+        if (!isMounted) return;
+        const data = res?.profile;
+        const name = data?.displayName || data?.username || data?.name;
+        if (isValidName(name)) {
+          const cleanName = name.trim();
+          profileNameCache[id] = cleanName;
+          if (userId) profileNameCache[userId] = cleanName;
+          if (authorUid) profileNameCache[authorUid] = cleanName;
+          setLiveName(cleanName);
         }
-
-        const altId = id.startsWith('profile_') ? id.replace('profile_', '') : `profile_${id}`;
-        getDoc(doc(db, 'profiles', altId)).then(altSnap => {
-          if (altSnap.exists()) {
-            const altData = altSnap.data();
-            const altName = altData?.displayName || altData?.username || altData?.name;
-            if (isValidName(altName)) {
-              const cleanName = altName.trim();
-              profileNameCache[id] = cleanName;
-              if (userId) profileNameCache[userId] = cleanName;
-              if (authorUid) profileNameCache[authorUid] = cleanName;
-              setLiveName(cleanName);
-            }
-          }
-        }).catch(() => {});
-      }, (err) => {
-        logger.warn("Live note author name error:", err);
-      });
-
-      unsubs.push(unsub);
+      }).catch(() => {});
     });
 
     return () => {
-      unsubs.forEach(u => u());
+      isMounted = false;
     };
   }, [db, userId, authorUid]);
 

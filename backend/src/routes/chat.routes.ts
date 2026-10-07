@@ -43,7 +43,9 @@ async function resolveConversationId(rawConvId: string, currentUserId: string): 
   let target = rawConvId.startsWith('new_') ? rawConvId.replace('new_', '') : rawConvId;
   if (target.includes('_')) {
     const parts = target.split('_');
-    target = parts.find((p) => p !== currentUserId) || parts[0];
+    const resolvedParts = await Promise.all(parts.map(resolveUserId));
+    const other = resolvedParts.find((p) => p !== currentUserId);
+    target = other || resolvedParts[0];
   }
   const resolvedTargetId = await resolveUserId(target);
   return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
@@ -166,6 +168,32 @@ router.post('/conversations/:id/seen', authenticateToken, async (req: Authentica
   } catch (err) {
     console.error('[Mark Seen Error]', err);
     res.status(500).json({ error: 'Failed to mark conversation seen' });
+  }
+});
+// Edit Message
+router.patch('/messages/:messageId', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { content } = z.object({ content: z.string().min(1) }).parse(req.body);
+    const msg = await ChatDAL.editMessage(req.params.messageId, req.user!.userId, content);
+    if (!msg) return res.status(404).json({ error: 'Message not found or unauthorized' });
+    io.to(`conv:${msg.conversationId}`).emit('message_edited', { message: msg });
+    res.json({ message: msg });
+  } catch (err) {
+    console.error('[Edit Message Error]', err);
+    res.status(500).json({ error: 'Failed to edit message' });
+  }
+});
+
+// Delete Message
+router.delete('/messages/:messageId', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const msg = await ChatDAL.deleteMessage(req.params.messageId, req.user!.userId);
+    if (!msg) return res.status(404).json({ error: 'Message not found or unauthorized' });
+    io.to(`conv:${msg.conversationId}`).emit('message_deleted', { messageId: req.params.messageId, conversationId: msg.conversationId });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Delete Message Error]', err);
+    res.status(500).json({ error: 'Failed to delete message' });
   }
 });
 

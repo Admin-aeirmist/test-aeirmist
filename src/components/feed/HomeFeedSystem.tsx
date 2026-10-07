@@ -16,8 +16,8 @@ import {
   Users,
   Compass
 } from 'lucide-react';
-import { useAeirmist } from '../../context/AeirmistContext';
 import { api } from '../../services/api/client';
+import { getSocket } from '../../services/api/socket';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
 import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
 import { Skeleton } from '../ui/Skeleton';
@@ -311,14 +311,29 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
 
     fetchFeed();
 
+    // Real-time post updates
+    const handlePostCreated = () => {
+      fetchFeed();
+    };
+    window.addEventListener('aeirmist-post-created', handlePostCreated);
+    let socket: any = null;
+    try {
+      socket = getSocket();
+      socket.on('new_post', handlePostCreated);
+    } catch (e) {}
+
     // Freshness poll interval
     const pollInterval = setInterval(() => {
       fetchFeed();
-    }, 20000);
+    }, 15000);
 
     return () => {
       isCancelled = true;
       clearInterval(pollInterval);
+      window.removeEventListener('aeirmist-post-created', handlePostCreated);
+      if (socket) {
+        socket.off('new_post', handlePostCreated);
+      }
     };
   }, [user?.uid, profile?.id, uidsToQueryString, feedMode, retryCount, postLimit]);
 

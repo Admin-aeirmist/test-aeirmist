@@ -61,27 +61,27 @@ const EmailAuthProvider = class {};
 const fetchSignInMethodsForEmail = async () => [];
 
 const getFirestore = () => ({});
-const doc = (_db, ...p) => ({ id: p[p.length - 1], path: p.join('/') });
-const getDoc = async (_r) => ({ exists: () => false, data: () => ({}) });
-const getDocs = async (_r) => ({ empty: true, docs: [] });
-const setDoc = async () => {};
-const collection = (_db, ...p) => ({ path: p.join('/') });
-const query = (_r, ..._a) => _r;
-const where = () => ({});
-const limit = () => ({});
+const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
+const getDoc = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
+const getDocs = async (_r?: any) => ({ empty: true, docs: [] as any[], forEach: (_fn: any) => {}, size: 0 });
+const setDoc = async (..._args: any[]) => {};
+const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
+const query = (_r: any, ..._a: any[]) => _r;
+const where = (..._args: any[]) => ({});
+const limit = (..._args: any[]) => ({});
 const serverTimestamp = () => new Date().toISOString();
-const getDocFromServer = async (_r) => ({ exists: () => false, data: () => ({}) });
-const getDocFromCache = async (_r) => ({ exists: () => false, data: () => ({}) });
-const writeBatch = () => ({ set: () => {}, update: () => {}, delete: () => {}, commit: async () => {} });
-const updateDoc = async () => {};
-const deleteDoc = async () => {};
+const getDocFromServer = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
+const getDocFromCache = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
+const writeBatch = () => ({ set: (..._a: any[]) => {}, update: (..._a: any[]) => {}, delete: (..._a: any[]) => {}, commit: async () => {} });
+const updateDoc = async (..._args: any[]) => {};
+const deleteDoc = async (..._args: any[]) => {};
 const deleteField = () => undefined;
-const addDoc = async () => ({ id: 'doc_' + Date.now() });
-const increment = (n) => n;
-const arrayUnion = (...el) => el;
-const arrayRemove = (...el) => el;
-const onSnapshot = (_r, _cb) => (() => {});
-const orderBy = () => ({});
+const addDoc = async (..._args: any[]) => ({ id: 'doc_' + Date.now() });
+const increment = (n: any) => n;
+const arrayUnion = (...el: any[]) => el;
+const arrayRemove = (...el: any[]) => el;
+const onSnapshot = (_r: any, _cb: any, ..._args: any[]) => (() => {});
+const orderBy = (..._args: any[]) => ({});
 const initializeFirestore = () => ({});
 const persistentLocalCache = () => ({});
 const persistentMultipleTabManager = () => ({});
@@ -89,8 +89,8 @@ const enableNetwork = async () => {};
 const disableNetwork = async () => {};
 
 const getStorage = () => ({});
-const ref = (_s, p) => ({ fullPath: p });
-const deleteObject = async () => {};
+const ref = (_s: any, p: string) => ({ fullPath: p });
+const deleteObject = async (..._args: any[]) => {};
 
 const firebaseConfig = { projectId: 'aeirmist-self-hosted' };
 import { normalizeUsername } from '../utils/usernameUtils';
@@ -688,7 +688,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           logger.warn("Aeirmist: Sync Timeout. Forcing interface activation.");
           setLoading(false);
         }
-      }, 8000); 
+      }, 1200);
     }
     return () => {
       if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
@@ -3047,24 +3047,29 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setNeedsUsername(false);
           setLoading(false);
         } else {
-          // Give Firebase Auth a grace period to verify IndexedDB tokens before concluding user is truly logged out
-          setTimeout(() => {
-            if (!auth.currentUser) {
-              const stillCached = typeof window !== 'undefined' && Boolean(
-                localStorage.getItem('aeirmist_session') ||
-                localStorage.getItem('aeirmist_user_profile') ||
-                localStorage.getItem('aeirmist_cached_profile')
-              );
-              if (!stillCached) {
-                setUser(null);
-                setProfile(null);
-                setAllProfiles([]);
-                setIsScheduledForPurge(false);
-                setNeedsUsername(false);
-                setLoading(false);
+          if (typeof window !== 'undefined') {
+            try {
+              const cachedStr = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile') || localStorage.getItem('aeirmist_session');
+              if (cachedStr) {
+                const parsed = JSON.parse(cachedStr);
+                if (parsed && (parsed.id || parsed.uid)) {
+                  setProfile(parsed);
+                  setActiveProfileId(parsed.id || `profile_${parsed.uid}`);
+                  setAllProfiles([parsed]);
+                  setUser({
+                    uid: parsed.uid || parsed.id,
+                    id: parsed.uid || parsed.id,
+                    email: parsed.email || 'user@aeirmist.local',
+                    displayName: parsed.displayName || parsed.username || 'User',
+                    photoURL: parsed.avatarUrl || parsed.photoURL || null,
+                    getIdToken: async () => getAuthToken() || '',
+                    reload: async () => {},
+                  });
+                }
               }
-            }
-          }, 2500);
+            } catch (e) {}
+          }
+          setLoading(false);
         }
       }
     });

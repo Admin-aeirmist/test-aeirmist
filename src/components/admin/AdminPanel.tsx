@@ -80,8 +80,8 @@ const sendPasswordResetEmail = async (_auth: any, email: string) => {
   }
 };
 const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
-const getDoc = async (_r: any) => ({ exists: () => false, data: () => ({}) });
-const updateDoc = async (_r: any, _data?: any) => {};
+const getDoc = async (_r: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
+const updateDoc = async (_r: any, _data?: any, ..._opt: any[]) => {};
 const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
 const query = (_r: any, ..._a: any[]) => _r;
 const orderBy = (..._a: any[]) => ({});
@@ -91,8 +91,8 @@ const where = (..._a: any[]) => ({});
 const serverTimestamp = () => new Date().toISOString();
 const setDoc = async (_r: any, _data?: any, _opt?: any) => {};
 const deleteDoc = async (_r: any) => {};
-const writeBatch = (_db?: any) => ({ set: () => {}, update: () => {}, delete: () => {}, commit: async () => {} });
-const getDocs = async (_r: any) => ({ empty: true, docs: [] });
+const writeBatch = (_db?: any) => ({ set: (..._a: any[]) => {}, update: (..._a: any[]) => {}, delete: (..._a: any[]) => {}, commit: async () => {} });
+const getDocs = async (_r: any) => ({ empty: true, docs: [] as any[], forEach: (_fn: any) => {}, size: 0 });
 const addDoc = async (_r: any, _data?: any) => ({ id: 'doc_' + Date.now() });
 
 const AuditLogTab = ({ db }: { db: any }) => {

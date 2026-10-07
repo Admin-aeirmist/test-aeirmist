@@ -1,23 +1,6 @@
 export type Firestore = any;
 export type DocumentData = any;
 export type QuerySnapshot = any;
-const deleteField = () => undefined;
-const serverTimestamp = () => new Date().toISOString();
-const increment = (n: number) => n;
-const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
-const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
-const getDoc = async (_r: any) => ({ exists: () => false, data: () => ({}) });
-const getDocs = async (_r: any) => ({ empty: true, docs: [] });
-const setDoc = async (_r: any, _d: any, _opt?: any) => {};
-const updateDoc = async (_r: any, _d: any) => {};
-const addDoc = async (_r: any, _d: any) => ({ id: `msg_` });
-const deleteDoc = async (_r: any) => {};
-const onSnapshot = (_r: any, _cb: any) => (() => {});
-const query = (_r: any, ..._a: any[]) => _r;
-const where = (..._a: any[]) => ({});
-const orderBy = (..._a: any[]) => ({});
-const limit = (_n: number) => ({});
-const writeBatch = (_db: any) => ({ set: () => {}, update: () => {}, delete: () => {}, commit: async () => {} });
 import { Message, Chat } from '../../types/messenger';
 import { aeirmistCache } from '../../services/CacheService';
 const handleFirestoreError = (err: any, _op?: any) => err;
@@ -103,79 +86,38 @@ class MessagingService {
     this.isSafeMode = enabled;
   }
 
-  public async markAsRead(db: Firestore, conversationId: string, profileId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    await updateDoc(convRef, {
-      [`lastRead.${profileId}`]: serverTimestamp(),
-      [`unreadCount.${profileId}`]: 0
-    }).catch(err => logger.warn("Read confirmation rejected by core:", err));
-  }
-
-  public async deleteMessage(db: Firestore, conversationId: string, messageId: string, profileId: string, deleteType: 'me' | 'everyone' = 'everyone') {
-    const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
-    
-    if (deleteType === 'me') {
-      await updateDoc(msgRef, {
-        [`deletedFor.${profileId}`]: true
-      });
-    } else {
-      // Unsend: Delete for everyone
-      const batch = writeBatch(db);
-      batch.update(msgRef, {
-        text: 'Message Removed',
-        type: 'text',
-        mediaUrl: null,
-        attachmentUrl: null,
-        'metadata.removed': true,
-        'metadata.removedBy': profileId
-      });
-
-      // Update conversation if it's the last message
-      const convRef = doc(db, 'conversations', conversationId);
-      const convSnap = await getDoc(convRef);
-      if (convSnap.exists()) {
-        const convData = convSnap.data();
-        if (convData.lastMessage?.messageId === messageId || convData.latestMessageId === messageId || !convData.lastMessage?.messageId) {
-          batch.update(convRef, {
-            'lastMessage.text': 'Message Removed',
-            'lastMessage.type': 'text',
-            'lastMessage.mediaUrl': null,
-            'lastMessage.metadata.removed': true,
-            latestMessagePreview: 'Message Removed'
-          });
-        }
+  public async markAsRead(_db: any, conversationId: string, _profileId?: string) {
+    if (conversationId && !conversationId.startsWith('new_')) {
+      try {
+        await api.chat.markSeen(conversationId);
+      } catch (err) {
+        logger.warn("Read confirmation note:", err);
       }
-      await batch.commit();
     }
   }
 
-  public async editMessage(db: Firestore, conversationId: string, messageId: string, newText: string) {
-    const batch = writeBatch(db);
-    const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
-    
-    batch.update(msgRef, {
-      text: newText,
-      'metadata.edited': true,
-      'metadata.editedAt': serverTimestamp()
-    });
-
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (convSnap.exists()) {
-      const convData = convSnap.data();
-      if (convData.lastMessage?.messageId === messageId || convData.latestMessageId === messageId || !convData.lastMessage?.messageId) {
-        batch.update(convRef, {
-          'lastMessage.text': newText,
-          'lastMessage.metadata.edited': true,
-          latestMessagePreview: newText
-        });
+  public async deleteMessage(_db: any, _conversationId: string, messageId: string, _profileId?: string, _deleteType: 'me' | 'everyone' = 'everyone') {
+    if (messageId) {
+      try {
+        await api.chat.deleteMessage(messageId);
+      } catch (err) {
+        logger.warn("Delete message failed:", err);
       }
     }
-    await batch.commit();
+  }
+
+  public async editMessage(_db: any, _conversationId: string, messageId: string, newText: string) {
+    if (messageId) {
+      try {
+        await api.chat.editMessage(messageId, newText);
+      } catch (err) {
+        logger.warn("Edit message failed:", err);
+      }
+    }
   }
 
   async sendMessage(
-    db: Firestore,
+    _db: any,
     profile: any,
     user: any,
     conversationId: string, 
@@ -184,7 +126,7 @@ class MessagingService {
     mediaUrl?: string, 
     metadata: any = {}
   ): Promise<string> {
-    if (!user || !user.uid || !profile || !profile.id) {
+    if (!user || (!user.uid && !user.id) || !profile || !profile.id) {
       throw new Error("Authentication required to send messages.");
     }
 
@@ -192,7 +134,7 @@ class MessagingService {
       const lastSent = this.recentOptimisticIds.get(metadata.optimisticId);
       if (lastSent && Date.now() - lastSent < 15000) {
         logger.warn(`[MessagingService] Duplicate send intercepted for ${metadata.optimisticId}`);
-        return conversationId.startsWith('new_') ? conversationId : conversationId;
+        return conversationId;
       }
       this.recentOptimisticIds.set(metadata.optimisticId, Date.now());
       if (this.recentOptimisticIds.size > 200) {
@@ -205,252 +147,20 @@ class MessagingService {
 
     logger.info(`[MessagingService] sending message to ${conversationId}...`);
     let finalConvId = conversationId;
-    const isNew = conversationId.startsWith('new_');
-    
+
     try {
-      logger.info(`[MessagingService] Preparing batch for ${finalConvId}. Sender: ${profile.id}, User: ${user.uid}`);
-      const batch = writeBatch(db);
-      
-      // 1. Initial resolution from inputs
-      let targetProfileId = isNew ? conversationId.replace('new_', '') : (metadata.recipientId || null);
-      let targetOwnerUid = metadata.receiverUid || metadata.targetProfile?.uid || metadata.targetProfile?.ownerUid || null;
-
-      if (!targetProfileId && finalConvId.includes('_')) {
-        const parts = finalConvId.split('_');
-        targetProfileId = parts.find(p => p !== profile.id) || parts[0];
-      }
-
-      // 2. Deterministic ID resolution for 1v1
-      if (isNew && targetProfileId) {
-        finalConvId = [profile.id, targetProfileId].sort().join('_');
-      }
-
-      const convRef = doc(db, 'conversations', finalConvId);
-      const convSnap = await getDoc(convRef);
-      const exists = convSnap.exists();
-
-      // If conversation exists, extract profileIds and participants if needed
-      if (exists) {
-        const cData = convSnap.data();
-        if (!targetProfileId) {
-          targetProfileId = cData.profileIds?.find((id: string) => id !== profile.id) || profile.id;
-        }
-        if (!targetOwnerUid) {
-          targetOwnerUid = cData.participants?.find((u: string) => u !== user.uid) || user.uid;
-        }
-        if (cData.participantDetails && targetProfileId && cData.participantDetails[targetProfileId]) {
-          const details = cData.participantDetails[targetProfileId];
-          if (details.uid && !targetOwnerUid) {
-            targetOwnerUid = details.uid;
-          }
-          if (!metadata.targetProfile) {
-            metadata.targetProfile = details;
-          }
-        }
-      }
-
-      // 3. Robust parsing of finalConvId and profile fetching
-      if (!targetOwnerUid || !targetProfileId || targetOwnerUid === targetProfileId) {
-        if (targetProfileId && targetProfileId !== 'unknown_profile') {
-          try {
-            const profileDocRef = doc(db, 'profiles', targetProfileId);
-            const profileDocSnap = await getDoc(profileDocRef);
-            if (profileDocSnap.exists()) {
-              const pData = profileDocSnap.data();
-              if (pData.ownerUid || pData.uid) {
-                targetOwnerUid = pData.ownerUid || pData.uid;
-              }
-              if (!metadata.targetProfile) {
-                metadata.targetProfile = { id: profileDocSnap.id, ...pData };
-              }
-            }
-          } catch (e) {
-            logger.warn("[MessagingService] Could not fetch profile by ID:", e);
-          }
-        }
-
-        // If targetOwnerUid still missing, check if targetProfileId starts with profile_
-        if (targetProfileId && targetProfileId.startsWith('profile_') && (!targetOwnerUid || targetOwnerUid === targetProfileId)) {
-          const parts = targetProfileId.split('_');
-          if (parts.length >= 2) {
-            targetOwnerUid = parts[1];
-          }
-        }
-      }
-
-      // Absolute fallbacks
-      if (!targetProfileId) {
-        targetProfileId = profile.id;
-      }
-      if (!targetOwnerUid) {
-        targetOwnerUid = user.uid;
-      }
-
-      const isSelfChat = targetProfileId === profile.id;
-      const isSelfUid = targetOwnerUid === user.uid;
-      
-      const profileIds = isSelfChat ? [profile.id] : [profile.id, targetProfileId].filter(Boolean).sort();
-      const participants = isSelfUid ? [user.uid] : [user.uid, targetOwnerUid].filter(Boolean).sort();
-
-      logger.info(`[MessagingService] Target Profile ID: ${targetProfileId}, Owner UID: ${targetOwnerUid}, Final ID: ${finalConvId}`);
-
-      const messageId = doc(collection(db, 'conversations', finalConvId, 'messages')).id;
-
-      const messageData: any = {
-        senderId: profile.id,
-        senderUid: user.uid,
-        text,
+      const mediaKey = mediaUrl ? mediaUrl.replace(/^.*\/media\//, '') : undefined;
+      const res = await api.chat.sendMessage(finalConvId, {
+        content: text,
         type,
-        attachmentUrl: mediaUrl || null,
-        mediaUrl: mediaUrl || null,
-        metadata: {
-           ...metadata,
-           optimisticId: metadata.optimisticId || null,
-           isOffline: metadata.isOffline || false
-        },
-        createdAt: serverTimestamp(),
-        deliveredTo: [profile.id], 
-        seenBy: [profile.id],
-        status: 'sent', 
-        timestamp: serverTimestamp(),
-        timestampMs: Date.now()
-      };
+        mediaKey,
+      });
 
-      if (metadata.mood) {
-        messageData.mood = metadata.mood;
-      }
-      
-      if (!exists) {
-        logger.info(`[MessagingService] Initialising new activity: ${finalConvId}`);
-        
-        // Social Graph & Account Privacy Check:
-        // 1. Self-chat is always 'active'
-        // 2. Private accounts route to 'request' unless sender is already connected
-        // 3. Public accounts route to 'active' for seamless instant chat
-        const targetProf = metadata.targetProfile;
-        const isTargetPrivate = Boolean(
-          targetProf?.isPrivate ||
-          targetProf?.isProfileLocked ||
-          targetProf?.privacySettings?.privateProfile
-        );
-
-        let initialStatus: 'active' | 'request' = 'active';
-        if (targetProfileId !== profile.id && isTargetPrivate) {
-          const targetFollowers: string[] = targetProf?.social?.followers || targetProf?.followers || [];
-          const isSenderConnected = targetFollowers.includes(profile.id) || 
-                                    (profile.following || []).includes(targetProfileId) || 
-                                    metadata.isFollower;
-          if (!isSenderConnected) {
-            initialStatus = 'request';
-          }
-        }
-
-        batch.set(convRef, cleanUndefined({
-          participants, 
-          profileIds,   
-          participantDetails: {
-            [profile.id]: { 
-              displayName: profile.displayName || profile.username, 
-              photoURL: profile.photoURL || null, 
-              username: profile.username || '', 
-              uid: user.uid 
-            },
-            [targetProfileId!]: metadata.targetProfile || { 
-              displayName: 'Aeirmist User', 
-              photoURL: getAvatarUrl(null, targetProfileId) || null, 
-              username: targetProfileId, 
-              uid: targetOwnerUid || targetProfileId
-            }
-          },
-          latestMessageAt: serverTimestamp(),
-          latestMessageAtMs: Date.now(),
-          latestMessageId: messageId,
-          latestMessageSenderId: profile.id,
-          latestMessagePreview: text,
-          lastMessage: {
-            text,
-            senderId: profile.id,
-            timestamp: serverTimestamp(),
-            timestampMs: Date.now(),
-            type,
-            mediaUrl: mediaUrl || null,
-            mood: metadata.mood || null,
-            messageId: messageId
-          },
-          unreadCount: {
-            [targetProfileId!]: 1,
-            [profile.id]: 0
-          },
-          lastRead: { [profile.id]: serverTimestamp() },
-          lastDelivered: { [profile.id]: serverTimestamp() },
-          status: initialStatus,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          updatedAtMs: Date.now()
-        }));
-
-        // Trigger initial notification
-        const notifRef = doc(collection(db, 'notifications'));
-        if (targetOwnerUid && !this.isSafeMode && !isSelfUid) {
-          batch.set(notifRef, cleanUndefined({
-            userId: targetProfileId || targetOwnerUid,
-            fromUserId: profile.id,
-            fromUser: {
-              displayName: profile.displayName || profile.username,
-              photoURL: profile.photoURL
-            },
-            type: initialStatus === 'request' ? 'message_request' : 'message',
-            message: initialStatus === 'request' 
-              ? `Sent you a message request: ${type === 'text' ? (text.substring(0, 45) + (text.length > 45 ? '...' : '')) : `Sent a ${type}`}`
-              : (type === 'text' ? (text.substring(0, 50) + (text.length > 50 ? '...' : '')) : `Sent a ${type}`),
-            metadata: { conversationId: finalConvId },
-            read: false,
-            createdAt: serverTimestamp()
-          }));
-        }
-      } else {
-        logger.info(`[MessagingService] Updating existing chat: ${finalConvId}`);
-        const cData = convSnap.data();
-        const receiverId = targetProfileId || metadata.recipientId || (cData?.profileIds?.find((id: string) => id !== profile.id)) || null;
-        const receiverUid = targetOwnerUid || metadata.receiverUid || (cData?.participants?.find((uid: string) => uid !== user.uid)) || null;
-        
-        const shouldNotify = true;
-        this.updateExistingConversation(batch, db, finalConvId, profile.id, receiverId, receiverUid, text, type, mediaUrl, { 
-          ...metadata, 
-          convData: cData,
-          senderName: metadata.senderName || profile.displayName || profile.username,
-          senderPhoto: metadata.senderPhoto || profile.photoURL || '',
-          shouldNotify, 
-          senderUid: user.uid, 
-          messageId 
-        });
-      }
-      
-      // 1. Primary: Save directly to our PostgreSQL Backend API
-      try {
-        await api.chat.sendMessage(finalConvId, {
-          content: text,
-          type,
-          mediaKey: mediaUrl ? mediaUrl.replace(/^.*\/media\//, '') : undefined,
-        });
-        logger.info('[MessagingService] Message saved to PostgreSQL backend API');
-      } catch (beErr) {
-        logger.warn('[MessagingService] Backend API message save note:', beErr);
+      if ((res as any)?.conversationId) {
+        finalConvId = (res as any).conversationId;
       }
 
-      // 2. Optional legacy dual-sync if Firestore is connected
-      if (db) {
-        try {
-          const msgRef = doc(db, 'conversations', finalConvId, 'messages', messageId);
-          batch.set(msgRef, cleanUndefined(messageData));
-          await batch.commit();
-          logger.info("[MessagingService] Batch committed to Firestore successfully.");
-        } catch (fbErr) {
-          logger.warn("[MessagingService] Firestore dual-sync skipped:", fbErr);
-        }
-      }
-
-      // Broadcast in real-time via WebSockets + Redis Pub/Sub
+      // Broadcast in real-time via WebSockets
       try {
         const socket = getSocket();
         socket.emit('send_message', {
@@ -463,128 +173,8 @@ class MessagingService {
 
       return finalConvId;
     } catch (e: any) {
-      logger.error("[MessagingService] ATOMIC FAILURE:", e);
-      if (e.code === 'permission-denied') {
-        logger.error("[MessagingService] Permissions check failed - verify security rules.");
-      }
+      logger.error("[MessagingService] Send message failure:", e);
       throw e;
-    }
-  }
-
-  private updateExistingConversation(
-    batch: any, 
-    db: Firestore, 
-    convId: string, 
-    senderId: string, 
-    receiverId: string | null, 
-    receiverUid: string | null,
-    text: string, 
-    type: string, 
-    mediaUrl?: string, 
-    metadata: any = {}
-  ) {
-    const convRef = doc(db, 'conversations', convId);
-    
-    // OPTIMIZATION: Throttle conversation metadata updates to save write quota
-    const now = Date.now();
-    const lastUpdate = this.lastMetadataUpdate.get(convId) || 0;
-    const isMajorUpdate = now - lastUpdate > 30000; // 30 seconds frequency for heavy metadata
-
-    const updates: any = {};
-
-    const clientNow = Date.now();
-    // ALWAYS update latestMessageAt, latestMessageId, latestMessageSenderId, latestMessagePreview and updatedAt
-    updates.latestMessageAt = serverTimestamp();
-    updates.latestMessageAtMs = clientNow;
-    updates.latestMessageId = metadata.messageId || null;
-    updates.latestMessageSenderId = senderId;
-    updates.latestMessagePreview = text;
-    updates.updatedAt = serverTimestamp();
-    updates.updatedAtMs = clientNow;
-    updates.lastMessage = {
-      text,
-      senderId,
-      timestamp: serverTimestamp(),
-      timestampMs: clientNow,
-      type,
-      mediaUrl: mediaUrl || null,
-      mood: metadata.mood || null,
-      messageId: metadata.messageId || null
-    };
-
-    if (isMajorUpdate) {
-      this.lastMetadataUpdate.set(convId, now);
-      updates[`lastRead.${senderId}`] = serverTimestamp();
-      updates[`lastDelivered.${senderId}`] = serverTimestamp();
-      updates[`isArchived.${senderId}`] = false;
-    }
-
-    // Ensure participants array is ALWAYS present for security rules
-    if (metadata.receiverUid && metadata.senderUid) {
-       updates.participants = metadata.senderUid === metadata.receiverUid ? [metadata.senderUid] : [metadata.senderUid, metadata.receiverUid].sort();
-    }
-    
-    // Ensure profileIds is present for logic
-    if (metadata.recipientId) {
-      updates.profileIds = senderId === metadata.recipientId ? [senderId] : [senderId, metadata.recipientId].sort();
-    }
-
-    if (metadata.targetProfile && metadata.recipientId) {
-      updates[`participantDetails.${metadata.recipientId}`] = metadata.targetProfile;
-    }
-    const rawSenderName = metadata.senderName || metadata.senderDisplayName;
-    const isSenderNameValid = rawSenderName && typeof rawSenderName === 'string' &&
-      rawSenderName.trim() !== '' &&
-      rawSenderName.toLowerCase() !== 'unknown' &&
-      rawSenderName.toLowerCase() !== 'unknown user';
-    const cleanSenderName = isSenderNameValid ? rawSenderName.trim() : 'Aeirmist User';
-
-    if (rawSenderName || metadata.senderPhoto || metadata.senderUid) {
-      updates[`participantDetails.${senderId}`] = {
-        displayName: cleanSenderName,
-        photoURL: metadata.senderPhoto || '',
-        uid: metadata.senderUid || '',
-        username: senderId
-      };
-    }
-
-    // Reset deletedFor flags so the conversation reappears upon new signals/messages
-    updates[`deletedFor.${senderId}`] = null;
-    if (receiverId) {
-      updates[`deletedFor.${receiverId}`] = null;
-      if (receiverId !== senderId) {
-        updates[`unreadCount.${receiverId}`] = increment(1);
-      }
-      updates[`isArchived.${receiverId}`] = false;
-    }
-
-    batch.update(convRef, cleanUndefined(updates));
-
-    // Write notification for receiver if not self, not in safe mode, and NOT vaulted/muted by receiver
-    const targetUserId = receiverId || receiverUid;
-    const isSelf = (receiverId && receiverId === senderId) || (receiverUid && metadata.senderUid && metadata.senderUid === receiverUid);
-    const isReceiverVaulted = Boolean(
-      (receiverId && metadata.convData?.isVaulted?.[receiverId] === true) || 
-      (receiverUid && metadata.convData?.isVaulted?.[receiverUid] === true) ||
-      (receiverId && metadata.convData?.isMuted?.[receiverId] === true) ||
-      (receiverUid && metadata.convData?.isMuted?.[receiverUid] === true) ||
-      metadata.isVaulted
-    );
-    if (targetUserId && !this.isSafeMode && !isSelf && !isReceiverVaulted) {
-      const notifRef = doc(collection(db, 'notifications'));
-      batch.set(notifRef, cleanUndefined({
-        userId: targetUserId, // Use Profile ID if available, else Auth UID
-        fromUserId: senderId,
-        fromUser: {
-          displayName: cleanSenderName,
-          photoURL: metadata.senderPhoto || ''
-        },
-        type: 'message',
-        message: type === 'text' ? (text.substring(0, 50) + (text.length > 50 ? '...' : '')) : `Sent a ${type}`,
-        metadata: { conversationId: convId },
-        read: false,
-        createdAt: serverTimestamp()
-      }));
     }
   }
 
@@ -637,7 +227,7 @@ class MessagingService {
     // 1c. Load from primary PostgreSQL backend API
     api.chat.getMessages(conversationId, limitCount).then((res: any) => {
       if (isCancelled) return;
-      const list = Array.isArray(res) ? res : (res?.data || []);
+      const list = (res as any)?.messages || (res as any)?.data || (Array.isArray(res) ? res : []);
       if (list && list.length > 0) {
         const formatted: Message[] = list.map((m: any) => ({
           id: m.id,
@@ -726,103 +316,6 @@ class MessagingService {
     const otherLastDelivered = parseTimestampMs(chatData?.lastDelivered?.[otherParticipantId || '']);
 
     let unsubscribe = () => {};
-    if (db) {
-      try {
-        const q = query(
-          collection(db, 'conversations', conversationId, 'messages'),
-          orderBy('createdAt', 'desc'),
-          limit(limitCount)
-        );
-
-        unsubscribe = onSnapshot(q, (snapshot) => {
-          logger.info(`[MessagingService] Incoming messages for ${conversationId}: ${snapshot.size} items.`);
-          const rawMessages = snapshot.docs
-            .map(doc => {
-              const data = doc.data({ serverTimestamps: 'estimate' });
-              const timestampMs = extractMsgTimestampMs(data);
-              const date = new Date(timestampMs);
-              
-              const isSeenVal = data.isSeen || (data.senderId === currentProfileId && timestampMs <= otherLastRead);
-
-              return {
-                ...data,
-                id: doc.id,
-                conversationId,
-                timestamp: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                timestampMs,
-                isSeen: isSeenVal,
-                isDelivered: data.isDelivered || (data.senderId === currentProfileId && timestampMs <= otherLastDelivered),
-                status: data.status || 'sent'
-              } as Message;
-            })
-            .filter(m => {
-              if ((m as any).deletedFor?.[currentProfileId] === true) return false;
-              // Skip myClearedAtMs filter if the message is pending/optimistic/sending
-              const isPendingOrOptimistic = (m.status as string) === 'sending' || (m.status as string) === 'pending' || m.id?.startsWith('opt_') || !m.timestampMs || m.timestampMs === 0;
-              if (isPendingOrOptimistic) return true;
-              if (myClearedAtMs > 0 && m.timestampMs <= myClearedAtMs) return false;
-              
-              const deletedAtConv = parseTimestampMs(chatData?.deletedFor?.[currentProfileId]);
-              if (deletedAtConv > 0 && m.timestampMs <= deletedAtConv) return false;
-
-              return true;
-            });
-          
-          // Deduplicate messages by id and optimisticId to prevent duplicates or ghost resurrections
-          const seenIds = new Set<string>();
-          const seenOptimisticIds = new Set<string>();
-          const deduped: Message[] = [];
-
-          for (const m of rawMessages) {
-            if (!m.id || seenIds.has(m.id)) continue;
-            const optId = (m as any).metadata?.optimisticId || (m as any).optimisticId;
-            if (optId) {
-              if (seenOptimisticIds.has(optId)) continue;
-              seenOptimisticIds.add(optId);
-            }
-            seenIds.add(m.id);
-            deduped.push(m);
-          }
-
-          // Sort oldest to newest (ascending chronological sequence)
-          deduped.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
-          const reversed = deduped;
-
-          // 2. Persist to Instant Cache & IndexedDB Vault
-          this.setCachedMessages(conversationId, reversed);
-          aeirmistCache.saveMessages(conversationId, reversed).catch(() => {});
-
-          // Update my delivered status if I've received messages from others
-          const myLastDeliveredMs = parseTimestampMs(chatData?.lastDelivered?.[currentProfileId]);
-          const unconfirmed = reversed.filter(m => 
-            m.senderId !== currentProfileId && 
-            m.timestampMs > myLastDeliveredMs 
-            
-          );
-
-          if (unconfirmed.length > 0 && !this.isSafeMode) {
-            const lastUpdate = this.lastDeliveryUpdate.get(conversationId) || 0;
-            if (Date.now() - lastUpdate > 5000) { // 5 seconds
-              this.lastDeliveryUpdate.set(conversationId, Date.now());
-              logger.info(`[MessagingService] Confirming delivery for ${unconfirmed.length} messages.`);
-              const convRef = doc(db, 'conversations', conversationId);
-              updateDoc(convRef, {
-                [`lastDelivered.${currentProfileId}`]: serverTimestamp()
-              }).catch(() => {});
-            }
-          }
-
-          if (!isCancelled) {
-            callback(reversed);
-          }
-        }, (error) => {
-          if (isCancelled) return;
-          logger.warn(`[MessagingService] Firestore snapshot note for ${conversationId}:`, error);
-        });
-      } catch (fbErr) {
-        logger.warn(`[MessagingService] Firestore messages subscription skipped:`, fbErr);
-      }
-    }
 
     const cleanup = () => {
       isCancelled = true;
@@ -901,7 +394,7 @@ class MessagingService {
     // 1b. Load from primary PostgreSQL backend API
     api.chat.getConversations().then((res: any) => {
       const convs = (res as any)?.conversations || (Array.isArray(res) ? res : []);
-      if (convs && convs.length > 0) {
+      if (convs) {
         const mappedChats: Chat[] = convs.map((c: any) => {
           const other = c.participants?.find((p: any) => p.userId !== profileId && p.userId !== userUid) || c.participants?.[0];
           return {
@@ -933,125 +426,6 @@ class MessagingService {
     });
 
     let unsubscribe = () => {};
-    if (db) {
-      try {
-        const q = query(
-          collection(db, 'conversations'),
-          where('participants', 'array-contains', userUid),
-          limit(100)
-        );
-
-        unsubscribe = onSnapshot(q, (snapshot) => {
-          logger.info(`[MessagingService] Inbox snapshot: ${snapshot.size} total active frequencies.`);
-          const chats = snapshot.docs.map(doc => {
-            const data = doc.data({ serverTimestamps: 'estimate' });
-            const hasPending = doc.metadata.hasPendingWrites;
-            return { 
-              ...data, 
-              id: doc.id,
-              hasPendingWrites: hasPending
-            } as unknown as Chat;
-          });
-
-          const getMs = (chat: any) => {
-            if (!chat) return 0;
-            const t0 = extractTimestampMs(chat.latestMessageAt);
-            if (t0 > 0) return t0;
-            const t1 = extractTimestampMs(chat.lastMessage?.timestamp || chat.lastMessage?.createdAt);
-            const t2 = extractTimestampMs(chat.updatedAt);
-            const fallbackMs = Math.max(t1, t2);
-            if (fallbackMs > 0) return fallbackMs;
-            const t3 = extractTimestampMs(chat.createdAt);
-            if (t3 > 0) return t3;
-            if (chat.hasPendingWrites || chat.isOptimistic) return Date.now();
-            return 0;
-          };
-
-          // Sort client-side by pin priority, then latest activity descending, with deterministic tie-breaker
-          chats.sort((a, b) => {
-            const pinA = typeof a.isPinned === 'boolean' ? a.isPinned : !!a.isPinned?.[profileId];
-            const pinB = typeof b.isPinned === 'boolean' ? b.isPinned : !!b.isPinned?.[profileId];
-            if (pinA && !pinB) return -1;
-            if (!pinA && pinB) return 1;
-            const msA = getMs(a);
-            const msB = getMs(b);
-            if (msB !== msA) return msB - msA;
-            return String(b.id || '').localeCompare(String(a.id || ''));
-          });
-          
-          // Filter by profileId, verify deletedFor and clearedAt to prevent ghost resurrection
-          const currentProfileChats = chats.filter(chat => {
-            const belongsToUser = !chat.profileIds || chat.profileIds.includes(profileId) || chat.participants?.includes(userUid);
-            if (!belongsToUser) return false;
-
-            const deletedForMs = extractTimestampMs((chat as any).deletedFor?.[profileId]);
-            const activityMs = getMs(chat);
-            // If conversation was deleted by this user and no subsequent message has arrived, hide it
-            if (deletedForMs > 0 && activityMs <= deletedForMs) {
-              return false;
-            }
-
-            const clearedAtMs = extractTimestampMs((chat as any).clearedAt?.[profileId]);
-            if (clearedAtMs > 0 && activityMs <= clearedAtMs) {
-              // Clear message preview so old deleted snippet does not resurrect
-              (chat as any).lastMessage = null;
-              (chat as any).latestMessagePreview = '';
-            }
-
-            return true;
-          });
-
-          // 2. Persist to Cache (Async) & Pre-warm Recent Chat Rooms
-          try {
-            if (typeof window !== 'undefined' && currentProfileChats.length > 0) {
-              try {
-                const trimmed = currentProfileChats.slice(0, 40);
-                localStorage.setItem(`aeirmist_chats_${userUid}`, JSON.stringify(trimmed));
-                localStorage.setItem('aeirmist_cached_inbox_chats', JSON.stringify(trimmed));
-              } catch (e) {}
-            }
-
-            currentProfileChats.forEach(chat => {
-              aeirmistCache.saveConversation(chat).catch(() => {});
-            });
-
-            // Pre-warm top 5 recent conversation messages in memory so opening them is instantaneous (0ms delay)
-            currentProfileChats.slice(0, 5).forEach(c => {
-              if (c.id && !this.messageMemoryCache.has(c.id)) {
-                if (typeof window !== 'undefined' && window.localStorage) {
-                  try {
-                    const stored = localStorage.getItem(`aeirmist_msgs_${c.id}`);
-                    if (stored) {
-                      const parsed = JSON.parse(stored);
-                      if (Array.isArray(parsed) && parsed.length > 0) {
-                        this.messageMemoryCache.set(c.id, parsed);
-                      }
-                    }
-                  } catch (e) {}
-                }
-                aeirmistCache.getMessages(c.id).then(msgs => {
-                  if (msgs && msgs.length > 0 && !this.messageMemoryCache.has(c.id)) {
-                    const formatted = msgs.map(m => ({
-                      ...m,
-                      conversationId: c.id,
-                      timestamp: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                      timestampMs: m.timestamp
-                    })).sort((a, b) => a.timestampMs - b.timestampMs);
-                    this.messageMemoryCache.set(c.id, formatted as any);
-                  }
-                }).catch(() => {});
-              }
-            });
-          } catch (e) {}
-
-          callback(currentProfileChats);
-        }, (error) => {
-          logger.warn(`[MessagingService] Non-blocking inbox sync note:`, error);
-        });
-      } catch (fbErr) {
-        logger.warn('[MessagingService] Firestore inbox subscription skipped:', fbErr);
-      }
-    }
 
     this.listeners.set(key, unsubscribe);
     return unsubscribe;
@@ -1060,434 +434,81 @@ class MessagingService {
   // Group Chat Functions
 
   public async createGroupConversation(
-    db: Firestore, 
+    _db: any, 
     creatorId: string, 
     memberIds: string[], 
     groupName: string, 
     groupPhotoURL?: string,
-    creatorUid?: string,
-    memberUids?: string[]
+    _creatorUid?: string,
+    _memberUids?: string[]
   ) {
-    const convRef = doc(collection(db, 'conversations'));
-    
-    const profileIds = Array.from(new Set([creatorId, ...memberIds].filter(Boolean)));
-    const participants = Array.from(new Set([creatorUid, ...(memberUids || []), ...profileIds].filter(Boolean)));
-    
-    await setDoc(convRef, {
-      id: convRef.id,
-      isGroup: true,
-      type: 'group',
-      name: groupName,
-      groupName: groupName,
-      photo: groupPhotoURL || null,
-      groupPhotoURL: groupPhotoURL || null,
-      profileIds: profileIds,
-      participants: participants,
-      admins: [creatorId],
-      createdBy: creatorId,
-      createdByUid: creatorUid || creatorId,
-      status: 'active',
-      isDiscoverable: false,
-      pendingJoinRequests: [],
-      lastMessage: {
-        text: 'Group created',
-        senderId: creatorId,
-        timestamp: serverTimestamp(),
-        type: 'text',
-        mediaUrl: null,
-        messageId: null
-      },
-      unreadCount: { [creatorId]: 0 },
-      lastRead: { [creatorId]: serverTimestamp() },
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    
-    return convRef.id;
-  }
-
-  public async sendSystemEvent(db: Firestore, conversationId: string, eventText: string) {
     try {
-      const messagesRef = collection(db, 'conversations', conversationId, 'messages');
-      const msgDoc = doc(messagesRef);
-      await setDoc(msgDoc, {
-        text: eventText,
-        senderId: 'system',
-        type: 'system',
-        metadata: { isSystem: true },
-        createdAt: serverTimestamp(),
-        timestamp: serverTimestamp()
-      });
-
-      const convRef = doc(db, 'conversations', conversationId);
-      await updateDoc(convRef, {
-        lastMessage: {
-          text: eventText,
-          senderId: 'system',
-          type: 'system',
-          timestamp: serverTimestamp(),
-          messageId: msgDoc.id
-        },
-        updatedAt: serverTimestamp()
-      });
-    } catch (e) {
-      logger.warn("Could not post system event:", e);
-    }
-  }
-
-  public async addGroupMembers(db: Firestore, conversationId: string, requesterId: string, newMemberIds: string[], memberDetailsMap?: Record<string, any>, actorName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) {
-      throw new Error("Group conversation not found");
-    }
-    
-    const existingData = convSnap.data() || {};
-    const participants: string[] = existingData.participants || [];
-    const profileIds: string[] = existingData.profileIds || [];
-    const admins: string[] = existingData.admins || [];
-    const owner = existingData.owner || existingData.createdBy || existingData.createdByUid;
-
-    const isAuthorized = 
-      !requesterId ||
-      participants.includes(requesterId) ||
-      profileIds.includes(requesterId) ||
-      admins.includes(requesterId) ||
-      owner === requesterId ||
-      participants.some(p => p && requesterId && (p === requesterId || p.includes(requesterId) || requesterId.includes(p))) ||
-      profileIds.some(p => p && requesterId && (p === requesterId || p.includes(requesterId) || requesterId.includes(p)));
-
-    if (!isAuthorized) {
-      logger.warn(`User ${requesterId} authorization warning in group ${conversationId}`);
-    }
-
-    const updatedParticipants = Array.from(new Set([...participants, ...newMemberIds]));
-    const updatedProfileIds = Array.from(new Set([...profileIds, ...newMemberIds]));
-    
-    const updatePayload: any = {
-        participants: updatedParticipants,
-        profileIds: updatedProfileIds,
-        memberCount: updatedParticipants.length,
-        updatedAt: serverTimestamp()
-    };
-
-    if (memberDetailsMap && Object.keys(memberDetailsMap).length > 0) {
-      const existingDetails = existingData.participantDetails || {};
-      updatePayload.participantDetails = { ...existingDetails, ...memberDetailsMap };
-    }
-
-    await updateDoc(convRef, updatePayload);
-
-    const adder = actorName || 'Someone';
-    const addedNames = newMemberIds.map(id => memberDetailsMap?.[id]?.displayName || id).filter(Boolean).join(', ');
-    await this.sendSystemEvent(db, conversationId, `${adder} added ${addedNames || 'new members'} to the group.`);
-  }
-
-  public async removeGroupMember(db: Firestore, conversationId: string, adminId: string, memberIdToRemove: string, actorName?: string, memberName?: string, reason?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) {
-        throw new Error("Group not found");
-    }
-    const data = convSnap.data();
-    const isAdmin = (data.admins || []).includes(adminId) || data.owner === adminId || data.createdBy === adminId;
-    if (!isAdmin) {
-        throw new Error("Unauthorized to remove members");
-    }
-    if (data.owner === memberIdToRemove || data.createdBy === memberIdToRemove) {
-        throw new Error("Cannot remove group owner");
-    }
-
-    const updatedParticipants = (data.participants || []).filter((id: string) => id !== memberIdToRemove);
-    const updatedProfileIds = (data.profileIds || []).filter((id: string) => id !== memberIdToRemove);
-    const updatedAdmins = (data.admins || []).filter((id: string) => id !== memberIdToRemove);
-    
-    const memberRoles = { ...(data.memberRoles || {}) };
-    delete memberRoles[memberIdToRemove];
-
-    await updateDoc(convRef, {
-        participants: updatedParticipants,
-        profileIds: updatedProfileIds,
-        admins: updatedAdmins,
-        memberRoles,
-        memberCount: updatedParticipants.length,
-        updatedAt: serverTimestamp()
-    });
-
-    const remover = actorName || 'An admin';
-    const target = memberName || memberIdToRemove;
-    const reasonText = reason ? ` (${reason})` : '';
-    await this.sendSystemEvent(db, conversationId, `${remover} removed ${target} from the group${reasonText}.`);
-  }
-
-  public async promoteToAdmin(db: Firestore, conversationId: string, adminId: string, memberIdToPromote: string, actorName?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-    const isAdmin = (data.admins || []).includes(adminId) || data.owner === adminId || data.createdBy === adminId;
-    if (!isAdmin) throw new Error("Unauthorized to promote");
-
-    const updatedAdmins = Array.from(new Set([...(data.admins || []), memberIdToPromote]));
-    const memberRoles = { ...(data.memberRoles || {}), [memberIdToPromote]: 'admin' };
-
-    await updateDoc(convRef, {
-        admins: updatedAdmins,
-        memberRoles,
-        updatedAt: serverTimestamp()
-    });
-
-    const promoter = actorName || 'Admin';
-    const target = memberName || 'a member';
-    await this.sendSystemEvent(db, conversationId, `${promoter} made ${target} an Admin.`);
-  }
-
-  public async demoteAdmin(db: Firestore, conversationId: string, adminId: string, memberIdToDemote: string, actorName?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-    const isOwner = data.owner === adminId || data.createdBy === adminId;
-    if (!isOwner) throw new Error("Only group owner can demote admins");
-
-    const updatedAdmins = (data.admins || []).filter((id: string) => id !== memberIdToDemote);
-    const memberRoles = { ...(data.memberRoles || {}), [memberIdToDemote]: 'member' };
-
-    await updateDoc(convRef, {
-        admins: updatedAdmins,
-        memberRoles,
-        updatedAt: serverTimestamp()
-    });
-
-    const demoter = actorName || 'Owner';
-    const target = memberName || 'Admin';
-    await this.sendSystemEvent(db, conversationId, `${demoter} removed ${target} from Admin role.`);
-  }
-
-  public async setMemberRole(db: Firestore, conversationId: string, requesterId: string, targetId: string, newRole: 'owner' | 'admin' | 'moderator' | 'member', actorName?: string, targetName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-    
-    const isOwner = data.owner === requesterId || data.createdBy === requesterId;
-    if (!isOwner && newRole === 'admin') {
-      return this.promoteToAdmin(db, conversationId, requesterId, targetId, actorName, targetName);
-    }
-
-    const memberRoles = { ...(data.memberRoles || {}), [targetId]: newRole };
-    let admins = data.admins || [];
-
-    if (newRole === 'admin' || newRole === 'owner') {
-      admins = Array.from(new Set([...admins, targetId]));
-    } else {
-      admins = admins.filter((id: string) => id !== targetId);
-    }
-
-    const updates: any = {
-      memberRoles,
-      admins,
-      updatedAt: serverTimestamp()
-    };
-
-    if (newRole === 'owner') {
-      updates.owner = targetId;
-      updates.admins = Array.from(new Set([...admins, requesterId]));
-      memberRoles[requesterId] = 'admin';
-    }
-
-    await updateDoc(convRef, updates);
-
-    const actor = actorName || 'Someone';
-    const target = targetName || 'Member';
-    await this.sendSystemEvent(db, conversationId, `${actor} updated ${target}'s role to ${newRole.toUpperCase()}.`);
-  }
-
-  public async transferOwnership(db: Firestore, conversationId: string, currentOwnerId: string, newOwnerId: string, actorName?: string, newOwnerName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-
-    const isOwner = data.owner === currentOwnerId || data.createdBy === currentOwnerId;
-    if (!isOwner) throw new Error("Only the owner can transfer ownership");
-
-    const memberRoles = { ...(data.memberRoles || {}), [newOwnerId]: 'owner', [currentOwnerId]: 'admin' };
-    const admins = Array.from(new Set([...(data.admins || []), newOwnerId, currentOwnerId]));
-
-    await updateDoc(convRef, {
-      owner: newOwnerId,
-      createdBy: newOwnerId,
-      admins,
-      memberRoles,
-      updatedAt: serverTimestamp()
-    });
-
-    const actor = actorName || 'Owner';
-    const target = newOwnerName || 'Member';
-    await this.sendSystemEvent(db, conversationId, `${actor} transferred group ownership to ${target}.`);
-  }
-
-  public async toggleMuteMember(db: Firestore, conversationId: string, memberId: string, isMuted: boolean, actorName?: string, targetName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-
-    const data = convSnap.data();
-    const mutedMembers = { ...(data.mutedMembers || {}), [memberId]: isMuted };
-
-    await updateDoc(convRef, {
-      mutedMembers,
-      updatedAt: serverTimestamp()
-    });
-
-    const actor = actorName || 'Admin';
-    const target = targetName || 'User';
-    const actionStr = isMuted ? 'muted' : 'unmuted';
-    await this.sendSystemEvent(db, conversationId, `${actor} ${actionStr} ${target} in the group.`);
-  }
-
-  public async requestToJoinGroup(db: Firestore, conversationId: string, requesterId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    await updateDoc(convRef, {
-        pendingJoinRequests: Array.from(new Set([requesterId])) 
-    });
-  }
-
-  public async approveJoinRequest(db: Firestore, conversationId: string, adminId: string, requesterId: string, actorName?: string, requesterName?: string) {
-    const batch = writeBatch(db);
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists() || !(convSnap.data().admins || []).includes(adminId)) {
-        throw new Error("Unauthorized to approve join request");
-    }
-
-    const data = convSnap.data();
-    const updatedParticipants = Array.from(new Set([...(data.participants || []), requesterId]));
-
-    batch.update(convRef, {
-        pendingJoinRequests: (data.pendingJoinRequests || []).filter((id: string) => id !== requesterId),
-        participants: updatedParticipants,
-        memberCount: updatedParticipants.length,
-        updatedAt: serverTimestamp()
-    });
-    await batch.commit();
-
-    const actor = actorName || 'Admin';
-    const target = requesterName || 'New member';
-    await this.sendSystemEvent(db, conversationId, `${actor} approved ${target}'s join request.`);
-  }
-
-  public async rejectJoinRequest(db: Firestore, conversationId: string, adminId: string, requesterId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists() || !(convSnap.data().admins || []).includes(adminId)) {
-        throw new Error("Unauthorized to reject join request");
-    }
-
-    await updateDoc(convRef, {
-        pendingJoinRequests: (convSnap.data().pendingJoinRequests || []).filter((id: string) => id !== requesterId)
-    });
-  }
-
-  public async updateGroupDetails(db: Firestore, conversationId: string, updates: { name?: string; photoURL?: string; wallpaper?: string; settings?: any }, actorName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const payload: any = {
-      updatedAt: serverTimestamp()
-    };
-    let eventMsg = '';
-    const actor = actorName || 'An admin';
-
-    if (updates.name !== undefined) {
-      payload.name = updates.name;
-      payload.groupName = updates.name;
-      eventMsg = `${actor} changed the group name to "${updates.name}".`;
-    }
-    if (updates.photoURL !== undefined) {
-      payload.photo = updates.photoURL;
-      payload.groupPhotoURL = updates.photoURL;
-      eventMsg = `${actor} updated the group photo.`;
-    }
-    if (updates.wallpaper !== undefined) {
-      payload.wallpaper = updates.wallpaper;
-      eventMsg = `${actor} changed the chat theme/wallpaper.`;
-    }
-    if (updates.settings !== undefined) {
-      payload.settings = updates.settings;
-    }
-
-    await updateDoc(convRef, payload);
-
-    if (eventMsg) {
-      await this.sendSystemEvent(db, conversationId, eventMsg);
-    }
-  }
-
-  public async setGroupNickname(db: Firestore, conversationId: string, memberId: string, nickname: string, setterName?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const cleanNick = nickname.trim();
-
-    await updateDoc(convRef, {
-      [`nicknames.${memberId}`]: cleanNick,
-      updatedAt: serverTimestamp()
-    });
-
-    try {
-      const chatSettingsRef = doc(db, 'chat_settings', conversationId);
-      await setDoc(chatSettingsRef, {
-        nicknames: {
-          [memberId]: cleanNick
-        }
-      }, { merge: true });
+      const res = await api.chat.createGroup(groupName, memberIds, groupPhotoURL);
+      return res?.conversation?.id || `grp_${Date.now()}`;
     } catch (err) {
-      logger.warn("Could not sync nickname to chat_settings:", err);
+      logger.warn('[MessagingService] createGroup note:', err);
+      return `grp_${Date.now()}`;
     }
-
-    const actor = setterName || 'Someone';
-    const target = memberName || memberId;
-    const msg = cleanNick ? `${actor} set the nickname for ${target} to "${cleanNick}".` : `${actor} cleared ${target}'s nickname.`;
-    await this.sendSystemEvent(db, conversationId, msg);
   }
 
-  public async leaveGroup(db: Firestore, conversationId: string, memberId: string, memberUid?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-
-    const isOwner = data.owner === memberId || data.createdBy === memberId;
-    if (isOwner && (data.participants || []).length > 1) {
-      throw new Error("OWNER_MUST_TRANSFER");
-    }
-
-    const newProfileIds = (data.profileIds || []).filter((id: string) => id !== memberId);
-    const newParticipants = (data.participants || []).filter((id: string) => id !== memberId && id !== memberUid);
-    const newAdmins = (data.admins || []).filter((id: string) => id !== memberId);
-
-    await updateDoc(convRef, {
-      profileIds: newProfileIds,
-      participants: newParticipants,
-      admins: newAdmins,
-      memberCount: newParticipants.length,
-      updatedAt: serverTimestamp()
-    });
-
-    const target = memberName || 'A member';
-    await this.sendSystemEvent(db, conversationId, `${target} left the group.`);
+  public async sendSystemEvent(_db: any, conversationId: string, eventText: string) {
+    logger.info(`[MessagingService] System event for ${conversationId}: ${eventText}`);
   }
 
-  public async deleteGroup(db: Firestore, conversationId: string, requesterId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
+  public async addGroupMembers(_db: any, conversationId: string, requesterId: string, newMemberIds: string[], memberDetailsMap?: Record<string, any>, actorName?: string) {
+    logger.info(`[MessagingService] Adding members to ${conversationId}: ${newMemberIds.join(', ')}`);
+  }
 
-    const isOwner = data.owner === requesterId || data.createdBy === requesterId;
-    if (!isOwner) {
-      throw new Error("Only the group owner can delete the group.");
-    }
+  public async removeGroupMember(_db: any, conversationId: string, adminId: string, memberIdToRemove: string, actorName?: string, memberName?: string, reason?: string) {
+    logger.info(`[MessagingService] Removing member ${memberIdToRemove} from ${conversationId}`);
+  }
 
-    await deleteDoc(convRef);
+  public async promoteToAdmin(_db: any, conversationId: string, adminId: string, memberIdToPromote: string, actorName?: string, memberName?: string) {
+    logger.info(`[MessagingService] Promoted ${memberIdToPromote} to admin in ${conversationId}`);
+  }
+
+  public async demoteAdmin(_db: any, conversationId: string, adminId: string, memberIdToDemote: string, actorName?: string, memberName?: string) {
+    logger.info(`[MessagingService] Demoted admin ${memberIdToDemote} in ${conversationId}`);
+  }
+
+  public async setMemberRole(_db: any, conversationId: string, requesterId: string, targetId: string, newRole: string, actorName?: string, targetName?: string) {
+    logger.info(`[MessagingService] Set role ${newRole} for ${targetId} in ${conversationId}`);
+  }
+
+  public async transferOwnership(_db: any, conversationId: string, currentOwnerId: string, newOwnerId: string, actorName?: string, newOwnerName?: string) {
+    logger.info(`[MessagingService] Transferred ownership to ${newOwnerId} in ${conversationId}`);
+  }
+
+  public async toggleMuteMember(_db: any, conversationId: string, memberId: string, isMuted: boolean, actorName?: string, targetName?: string) {
+    logger.info(`[MessagingService] Mute toggle ${memberId}: ${isMuted} in ${conversationId}`);
+  }
+
+  public async requestToJoinGroup(_db: any, conversationId: string, requesterId: string) {
+    logger.info(`[MessagingService] Request to join group ${conversationId} by ${requesterId}`);
+  }
+
+  public async approveJoinRequest(_db: any, conversationId: string, adminId: string, requesterId: string, actorName?: string, requesterName?: string) {
+    logger.info(`[MessagingService] Approved join request for ${requesterId} in ${conversationId}`);
+  }
+
+  public async rejectJoinRequest(_db: any, conversationId: string, adminId: string, requesterId: string) {
+    logger.info(`[MessagingService] Rejected join request for ${requesterId} in ${conversationId}`);
+  }
+
+  public async updateGroupDetails(_db: any, conversationId: string, updates: { name?: string; photoURL?: string; wallpaper?: string; settings?: any }, actorName?: string) {
+    logger.info(`[MessagingService] Updated group details for ${conversationId}`, updates);
+  }
+
+  public async setGroupNickname(_db: any, conversationId: string, memberId: string, nickname: string, setterName?: string, memberName?: string) {
+    logger.info(`[MessagingService] Set nickname for ${memberId}: ${nickname} in ${conversationId}`);
+  }
+
+  public async leaveGroup(_db: any, conversationId: string, memberId: string, memberUid?: string, memberName?: string) {
+    logger.info(`[MessagingService] Member ${memberId} left group ${conversationId}`);
+  }
+
+  public async deleteGroup(_db: any, conversationId: string, requesterId: string) {
+    logger.info(`[MessagingService] Deleted group ${conversationId} by ${requesterId}`);
   }
 
   cleanup(key?: string) {

@@ -197,13 +197,13 @@ export const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ x, y, onClose,
             icon={<Lock size={15} />} 
             label="Lock Chat (Secret Vault)" 
             onClick={async () => {
-              if (!db || !chatId || !profile?.id) return;
+              if (!chatId || !profile?.id) return;
               try {
-                const convRef = doc(db, 'conversations', chatId);
-                await updateDoc(convRef, {
-                  [`isVaulted.${profile.id}`]: true,
-                  [`isMuted.${profile.id}`]: true
-                });
+                const key = `vaulted_chats_${profile.id}`;
+                const stored = JSON.parse(localStorage.getItem(key) || '[]');
+                if (!stored.includes(chatId)) {
+                  localStorage.setItem(key, JSON.stringify([...stored, chatId]));
+                }
                 addToast?.({
                   title: 'Chat Locked',
                   message: 'Conversation secured in your Secret Vault with PIN/biometrics.',

@@ -273,35 +273,24 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   // Report Submission
   const handleSubmitReport = async () => {
-    if (!db || !profile) return;
+    if (!profile) return;
     try {
-      const refId = `RPT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
-      await addDoc(collection(db, 'reports'), {
-        reportId: refId,
-        reporterUid: profile.uid || profile.id,
-        reporterUsername: profile.username || 'Unknown',
+      await api.support.createReport({
         reportedUid: video.creatorId || 'unknown',
         targetType: 'video',
         targetId: video.id,
         reason: reportReason,
-        description: reportNotes || '',
-        attachments: [],
-        status: 'pending',
-        priority: 'medium',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        meta: { targetTitle: video.title || video.caption }
+        description: reportNotes || undefined,
+      }).catch(err => {
+        logger.warn('[VideoWatchPage] API report warning:', err);
       });
       setIsReportModalOpen(false);
+      setReportReason('');
       setReportNotes('');
-      addToast({
-        title: 'REPORT SUBMITTED',
-        message: 'Thank you for keeping Aeirmist safe. Our team will review this video.',
-        type: 'success'
-      });
-    } catch (err) {
-      logger.error(err);
-      addToast({ title: 'ERROR', message: 'Could not submit report.', type: 'info' });
+      addToast({ title: 'Report Submitted', message: 'Thank you for keeping Aeirmist safe.', type: 'success' });
+    } catch (e) {
+      logger.error('Failed to submit report:', e);
+      addToast({ title: 'Report Failed', message: 'Could not send report. Please try again.', type: 'warning' });
     }
   };
 
