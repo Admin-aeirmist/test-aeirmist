@@ -6,3 +6,8 @@ coverage/
 .env*
 !.env.example
 *.apk
+storage/
+storage/uploads/
+backend/dist/
+backend/node_modules/
+

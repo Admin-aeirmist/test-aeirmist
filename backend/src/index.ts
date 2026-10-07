@@ -1,0 +1,143 @@
+import express from 'express';
+import http from 'http';
+import path from 'path';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import { Server as SocketIOServer } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+
+import { env } from './config/env';
+import { checkDatabaseHealth, pool } from './db';
+import { redis, checkRedisHealth } from './db/redis';
+
+const app = express();
+const server = http.createServer(app);
+
+// -------------------------------------------------------------
+// Security & Middleware
+// -------------------------------------------------------------
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, capacitor)
+    if (!origin) return callback(null, true);
+    if (env.CORS_ORIGINS.includes(origin) || env.CORS_ORIGINS.includes('*')) {
+      return callback(null, true);
+    }
+    // Allow all local dev origins
+    if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS policy blocked access from origin: ${origin}`));
+  },
+  credentials: true,
+}));
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+if (env.NODE_ENV !== 'test') {
+  app.use(morgan('dev'));
+}
+
+// -------------------------------------------------------------
+// Serve Static Media in Local Mode (Local Storage Driver)
+// -------------------------------------------------------------
+const localUploadsPath = path.resolve(process.cwd(), env.STORAGE_PATH);
+app.use('/media', express.static(localUploadsPath));
+
+// -------------------------------------------------------------
+// Production / Health Endpoint
+// -------------------------------------------------------------
+app.get('/health', async (_req, res) => {
+  const [dbOk, redisOk] = await Promise.all([
+    checkDatabaseHealth(),
+    checkRedisHealth(),
+  ]);
+
+  const status = dbOk ? 'healthy' : 'degraded';
+  const statusCode = dbOk ? 200 : 503;
+
+  res.status(statusCode).json({
+    status,
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    services: {
+      database: dbOk ? 'up' : 'down',
+      redis: redisOk ? 'up' : 'down',
+      storageDriver: env.STORAGE_DRIVER,
+    },
+  });
+});
+
+app.get('/api/v1/ping', (_req, res) => {
+  res.json({ message: 'Aeirmist Universal API is online', version: '1.0.0' });
+});
+
+// -------------------------------------------------------------
+// Socket.IO Setup with Redis Pub/Sub
+// -------------------------------------------------------------
+export const io = new SocketIOServer(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+  transports: ['websocket', 'polling'],
+});
+
+// Wire Redis Adapter if Redis is reachable
+try {
+  const pubClient = redis;
+  const subClient = pubClient.duplicate();
+  io.adapter(createAdapter(pubClient, subClient));
+  console.log('✅ [Socket.IO] Redis pub/sub adapter attached');
+} catch (err: any) {
+  console.warn('⚠️ [Socket.IO] Running with local memory adapter:', err.message);
+}
+
+io.on('connection', (socket) => {
+  console.log(`🔌 [Socket.IO] Client connected: ${socket.id}`);
+
+  socket.on('join_room', (roomId: string) => {
+    socket.join(roomId);
+  });
+
+  socket.on('leave_room', (roomId: string) => {
+    socket.leave(roomId);
+  });
+
+  socket.on('disconnect', () => {
+    // handled cleanly
+  });
+});
+
+// -------------------------------------------------------------
+// Start Server
+// -------------------------------------------------------------
+const PORT = env.PORT;
+server.listen(PORT, () => {
+  console.log(`🚀 [Aeirmist API] Server listening on port ${PORT} (${env.NODE_ENV})`);
+  console.log(`📡 [Health Check] http://localhost:${PORT}/health`);
+  console.log(`📁 [Storage Driver] ${env.STORAGE_DRIVER.toUpperCase()} -> ${env.STORAGE_PATH}`);
+});
+
+// Graceful Shutdown
+const handleShutdown = async (signal: string) => {
+  console.log(`\n🛑 [${signal}] Gracefully shutting down...`);
+  server.close(async () => {
+    try {
+      await pool.end();
+      redis.disconnect();
+      console.log('🔒 Connections closed cleanly. Goodbye!');
+      process.exit(0);
+    } catch (e) {
+      process.exit(1);
+    }
+  });
+};
+
+process.on('SIGINT', () => handleShutdown('SIGINT'));
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
