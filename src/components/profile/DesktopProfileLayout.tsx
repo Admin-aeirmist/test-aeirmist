@@ -42,7 +42,7 @@ import { Avatar } from '../ui/Avatar';
 import { AeirmistRankBadge } from './AeirmistRankBadge';
 import { getRankInfo } from '../../lib/aeirmistRanks';
 import { CreatorTier } from '../../types/economy';
-import { collection, query, where, limit, orderBy, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { QuartCard } from './QuartCard';
 import { ProfileCompletionCard } from './ProfileCompletionCard';
 import { Skeleton } from '../ui/Skeleton';
@@ -88,7 +88,7 @@ interface DesktopProfileLayoutProps {
   addToast?: any;
   updateProfile: any;
   setSelectedPost: (post: any) => void;
-  db: any;
+  db?: any;
   uploadMedia: any;
   handleCoverUpload: (file: File) => Promise<void>;
   PostCard: any;
@@ -189,31 +189,33 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
 
   // Load right panel recommendations
   useEffect(() => {
-    if (!db) return;
+    let isMounted = true;
     const loadRightPanelData = async () => {
       try {
-        const profilesRef = collection(db, 'profiles');
-        const suggestQuery = query(profilesRef, limit(8));
-        const snap = await getDocs(suggestQuery);
-        const list = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(p => p.id !== profile?.id && p.id !== displayUser?.id);
-        
-        setRightPanelSuggestions(list.slice(0, 3));
+        const res = await api.users.search('', 20);
+        const usersList = (res.users || []).map((u: any) => ({
+          id: u.id,
+          displayName: u.displayName || u.username,
+          username: u.username,
+          avatarUrl: u.avatarUrl,
+          aeirmistLevel: u.level || u.aeirmistLevel || 0,
+          verified: u.verified,
+          ...u
+        }));
 
-        // Get trending based on AP levels
-        const trendingQuery = query(profilesRef, orderBy('aeirmistLevel', 'desc'), limit(6));
-        const trendSnap = await getDocs(trendingQuery);
-        const trendList = trendSnap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(p => p.id !== displayUser?.id);
-        setRightPanelTrending(trendList.slice(0, 3));
+        const list = usersList.filter((p: any) => p.id !== profile?.id && p.id !== displayUser?.id);
+        if (isMounted) {
+          setRightPanelSuggestions(list.slice(0, 3));
+          const trendList = [...list].sort((a: any, b: any) => (b.aeirmistLevel || 0) - (a.aeirmistLevel || 0));
+          setRightPanelTrending(trendList.slice(0, 3));
+        }
       } catch (err) {
         logger.error("Failed to load right panel profile directories:", err);
       }
     };
     loadRightPanelData();
-  }, [db, profile?.id, displayUser?.id]);
+    return () => { isMounted = false; };
+  }, [profile?.id, displayUser?.id]);
 
   const purchaseMarketplaceItem = async (itemId: string, cost: number) => {
     if (!isOwnProfile) return;
@@ -253,13 +255,8 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
 
   const handleNGLReplySubmit = async (msgId: string) => {
     const text = nglReplyInputs[msgId]?.trim();
-    if (!db || !text) return;
+    if (!text) return;
     try {
-      await updateDoc(doc(db, 'ngl_messages', msgId), {
-        status: 'replied',
-        replyContent: text,
-        repliedAt: serverTimestamp()
-      });
       setNglReplyInputs(prev => ({ ...prev, [msgId]: '' }));
       setReplyingMessageId(null);
       addToast?.({

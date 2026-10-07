@@ -10,7 +10,7 @@ import {
 import { useAeirmist } from '../../context/AeirmistContext';
 import { messagingService } from '../../modules/messaging/MessagingService';
 import { getAvatarUrl } from '../../lib/avatar';
-import { collection, query, getDocs, limit } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { MemberDetailsSheet } from './MemberDetailsSheet';
 import { SharedGroupMediaModal } from './SharedGroupMediaModal';
 import { logger } from '@/src/utils/logger';
@@ -25,7 +25,7 @@ interface GroupInfoPanelProps {
 }
 
 export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, onInitiateCall, onOpenWallpaper, chats = [] }) => {
-  const { profile, user, db, addToast, allProfiles, suggestedUsers, onlineUsers } = useAeirmist();
+  const { profile, user, addToast, allProfiles, suggestedUsers, onlineUsers } = useAeirmist();
   
   const [isEditingName, setIsEditingName] = useState(false);
   const [groupNameInput, setGroupNameInput] = useState(chat.groupName || chat.name || '');
@@ -75,27 +75,26 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     }
   }, [chat]);
 
-  // Fetch Firestore profiles when Add Member modal opens
+  // Fetch profiles when Add Member modal opens via backend API
   useEffect(() => {
-    if (!showAddMemberModal || !db) return;
+    if (!showAddMemberModal) return;
     let isMounted = true;
     const fetchRemote = async () => {
       setIsFetchingRemote(true);
       try {
-        const q = query(collection(db, 'profiles'), limit(40));
-        const snap = await getDocs(q);
-        if (isMounted) {
-          setFirestoreProfiles(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const res = await api.users.searchUsers('');
+        if (isMounted && res?.users) {
+          setFirestoreProfiles(res.users);
         }
       } catch (err) {
-        logger.warn('Failed fetching remote profiles for group:', err);
+        logger.warn('Failed fetching backend profiles for group:', err);
       } finally {
         if (isMounted) setIsFetchingRemote(false);
       }
     };
     fetchRemote();
     return () => { isMounted = false; };
-  }, [showAddMemberModal, db]);
+  }, [showAddMemberModal]);
 
   // Combine available user profiles to resolve member details
   const resolvedMembers = useMemo(() => {

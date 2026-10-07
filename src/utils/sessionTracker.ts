@@ -1,4 +1,4 @@
-// Session tracking without Firebase dependencies
+// Session tracking utility
 
 export interface DeviceSessionInfo {
   sessionKey: string;
@@ -101,7 +101,7 @@ export function maskIpAddress(ip: string = '172.56.42.109'): string {
 }
 
 /**
- * Registers or updates the active user session in Firestore upon login/page load
+ * Registers or updates the active user session upon login/page load
  */
 export async function trackUserSession(
   db: any,

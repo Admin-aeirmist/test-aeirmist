@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, Ghost, Loader2, Search, ShieldCheck } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { doc, getDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 
 interface UserInfo {
   uid: string;
@@ -13,7 +13,7 @@ interface UserInfo {
 }
 
 export const RestrictedSection = ({ onBack, onUserClick }: { onBack: () => void, onUserClick?: (user: any) => void }) => {
-  const { profile, toggleRestrictUser, db, allProfiles = [], addToast } = useAeirmist();
+  const { profile, toggleRestrictUser, allProfiles = [], addToast } = useAeirmist();
   const rawRestrictedIds: string[] = profile?.social?.restricted || [];
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,7 +23,7 @@ export const RestrictedSection = ({ onBack, onUserClick }: { onBack: () => void,
   // Load and resolve all restricted users
   useEffect(() => {
     let isMounted = true;
-    if (!db || rawRestrictedIds.length === 0) {
+    if (rawRestrictedIds.length === 0) {
       setUsers([]);
       setLoading(false);
       return;
@@ -61,101 +61,27 @@ export const RestrictedSection = ({ onBack, onUserClick }: { onBack: () => void,
           continue;
         }
 
-        // 2. Direct Firestore profile doc lookup
-        let resolved = false;
+        // 2. Lookup via PostgreSQL backend API
         try {
-          const pSnap = await getDoc(doc(db, 'profiles', targetId));
-          if (pSnap.exists()) {
-            const d = pSnap.data();
-            const key = d.username || pSnap.id;
-            if (!seenKeys.has(key)) {
-              seenKeys.add(key);
-              resolvedList.push({
-                uid: targetId,
-                profileId: pSnap.id,
-                photoURL: d.photoURL,
-                displayName: d.displayName || d.name || d.username || 'Restricted User',
-                username: d.username,
-              });
-            }
-            resolved = true;
-          }
-        } catch {}
-
-        if (resolved) continue;
-
-        // 3. Try with 'profile_' prefix
-        try {
-          const normId = targetId.startsWith('profile_') ? targetId : `profile_${targetId}`;
-          const pSnap = await getDoc(doc(db, 'profiles', normId));
-          if (pSnap.exists()) {
-            const d = pSnap.data();
-            const key = d.username || pSnap.id;
-            if (!seenKeys.has(key)) {
-              seenKeys.add(key);
-              resolvedList.push({
-                uid: targetId,
-                profileId: pSnap.id,
-                photoURL: d.photoURL,
-                displayName: d.displayName || d.name || d.username || 'Restricted User',
-                username: d.username,
-              });
-            }
-            resolved = true;
-          }
-        } catch {}
-
-        if (resolved) continue;
-
-        // 4. Query by ownerUid
-        try {
-          const q = query(collection(db, 'profiles'), where('ownerUid', '==', targetId), limit(1));
-          const qSnap = await getDocs(q);
-          if (!qSnap.empty) {
-            const d = qSnap.docs[0];
-            const data = d.data();
-            const key = data.username || d.id;
+          const res = await api.users.getProfile(targetId);
+          if (res?.profile) {
+            const d = res.profile;
+            const key = d.username || d.id;
             if (!seenKeys.has(key)) {
               seenKeys.add(key);
               resolvedList.push({
                 uid: targetId,
                 profileId: d.id,
-                photoURL: data.photoURL,
-                displayName: data.displayName || data.name || data.username || 'Restricted User',
-                username: data.username,
+                photoURL: d.photoURL || d.avatar,
+                displayName: d.displayName || d.name || d.username || 'Restricted User',
+                username: d.username,
               });
             }
-            resolved = true;
+            continue;
           }
         } catch {}
 
-        if (resolved) continue;
-
-        // 5. Query by uid
-        try {
-          const q = query(collection(db, 'profiles'), where('uid', '==', targetId), limit(1));
-          const qSnap = await getDocs(q);
-          if (!qSnap.empty) {
-            const d = qSnap.docs[0];
-            const data = d.data();
-            const key = data.username || d.id;
-            if (!seenKeys.has(key)) {
-              seenKeys.add(key);
-              resolvedList.push({
-                uid: targetId,
-                profileId: d.id,
-                photoURL: data.photoURL,
-                displayName: data.displayName || data.name || data.username || 'Restricted User',
-                username: data.username,
-              });
-            }
-            resolved = true;
-          }
-        } catch {}
-
-        if (resolved) continue;
-
-        // 6. Fallback if profile not found
+        // 3. Fallback if profile not found
         if (!seenKeys.has(targetId)) {
           seenKeys.add(targetId);
           resolvedList.push({
@@ -174,7 +100,7 @@ export const RestrictedSection = ({ onBack, onUserClick }: { onBack: () => void,
 
     fetchAll();
     return () => { isMounted = false; };
-  }, [db, JSON.stringify(rawRestrictedIds), allProfiles.length]);
+  }, [JSON.stringify(rawRestrictedIds), allProfiles.length]);
 
   const handleUnrestrict = async (u: UserInfo) => {
     setUnrestrictingId(u.uid);

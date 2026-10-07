@@ -15,7 +15,7 @@ import { PostMenu } from '../PostMenu';
 import { EditPostModal } from '../EditPostModal';
 import { Skeleton } from '../ui/Skeleton';
 import { EmptyState } from '../ui/EmptyState';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, deleteDoc, getDocs, limit } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { AccountSwitcher } from '../auth/AccountSwitcher';
 import { StoryArchiveModal } from './StoryArchiveModal';
 import { StoryViewer } from '../feed/StoriesSystem';
@@ -156,36 +156,22 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   const rankInfo = getRankInfo(displayUser?.aeirmistLevel || 0);
   const progressInfo = getNextRankProgress(displayUser?.aeirmistLevel || 0);
 
-  // Real-time listener for target profile
+  // Fetch target profile via API
   React.useEffect(() => {
-    if (!db) return;
-    
-    // Reset live profile whenever target changes to avoid showing stale data from previous views
+    let isMounted = true;
     setLiveTargetProfile(null);
-    
-    // If we have an ID, use it (existing logic)
-    if (targetProfile?.id && targetProfile.id !== profile?.id) {
-      const unsub = onSnapshot(doc(db, 'profiles', targetProfile.id), (snap) => {
-        if (snap.exists()) {
-          setLiveTargetProfile({ id: snap.id, ...snap.data() });
-        }
-      });
-      return () => unsub();
-    } 
-    
-    // If we only have a username, fetch by username
-    if (!targetProfile?.id && targetProfile?.username) {
-      const q = query(collection(db, 'profiles'), where('username', '==', targetProfile.username), limit(1));
-      const unsub = onSnapshot(q, (snap) => {
-        if (!snap.empty) {
-          setLiveTargetProfile({ id: snap.docs[0].id, ...snap.docs[0].data() });
-        }
-      });
-      return () => unsub();
+    const identifier = targetProfile?.id || targetProfile?.username;
+    if (identifier && targetProfile.id !== profile?.id) {
+      api.users.getProfile(identifier)
+        .then((res: any) => {
+          if (isMounted && res?.profile) {
+            setLiveTargetProfile(res.profile);
+          }
+        })
+        .catch(() => {});
     }
-
-    setLiveTargetProfile(null);
-  }, [db, targetProfile?.id, targetProfile?.username, profile?.id]);
+    return () => { isMounted = false; };
+  }, [targetProfile?.id, targetProfile?.username, profile?.id]);
 
   // Broadcast author details for public preview gateway if visitor is unauthenticated
   useEffect(() => {
@@ -328,7 +314,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     } catch (e) {
       // ignore
     }
-    // Persist to user's Firestore profile and cache so it never reappears on any login/logout
+    // Persist to user's profile and cache so it never reappears on any login/logout
     if (isOwnProfile && updateProfile) {
       const currentDismissed = displayUser?.dismissedWidgets || {};
       updateProfile({
@@ -432,38 +418,20 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   // Fetch active user note (valid within 24h)
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
-    try {
-      const q = query(
-        collection(db, 'notes'),
-        where('authorId', '==', displayUser.id),
-        limit(5)
-      );
-      const unsub = onSnapshot(q, (snap) => {
-        if (!snap.empty) {
-          const now = Date.now();
-          const validNotes = snap.docs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .filter((n: any) => {
-              const ms = n.createdAt?.toMillis ? n.createdAt.toMillis() : (n.createdAt?.seconds ? n.createdAt.seconds * 1000 : 0);
-              return !ms || (now - ms) < 24 * 60 * 60 * 1000;
-            })
-            .sort((a: any, b: any) => {
-              const getSec = (x: any) => x.createdAt?.seconds || 0;
-              return getSec(b) - getSec(a);
-            });
-          setUserNote(validNotes[0] || null);
-        } else {
-          setUserNote(null);
-        }
-      }, (e) => {
-        console.warn("User note fetch listener error", e);
+    if (!displayUser?.id) return;
+    let isMounted = true;
+    api.notes.getActive()
+      .then((res: any) => {
+        if (!isMounted) return;
+        const notes = res?.notes || [];
+        const userN = notes.find((n: any) => (n.authorId === displayUser.id || n.userId === displayUser.id));
+        setUserNote(userN || null);
+      })
+      .catch((err) => {
+        console.warn("User note fetch error", err);
       });
-      return () => unsub();
-    } catch (err) {
-      console.warn("Notes query setup error", err);
-    }
-  }, [db, displayUser?.id]);
+    return () => { isMounted = false; };
+  }, [displayUser?.id]);
   
   const [posts, setPosts] = useState<any[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
@@ -484,28 +452,27 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   const [unlockedItems, setUnlockedItems] = useState<string[]>(displayUser?.unlockedItems || []);
   const [activeCoverTheme, setActiveCoverTheme] = useState<string>(displayUser?.activeCoverTheme || 'default');
 
-  // Load right panel suggestions from Firestore with defensive checks
+  // Load right panel suggestions with defensive checks
   useEffect(() => {
-    if (!db) return;
     let isMounted = true;
     const loadRightPanelData = async () => {
       try {
-        const profilesRef = collection(db, 'profiles');
-        const suggestQuery = query(profilesRef, limit(10));
-        const snap = await getDocs(suggestQuery);
+        const res = await api.users.search('', 20);
         if (!isMounted) return;
-        const list = snap.docs
-          .map(d => ({ id: d.id, ...d.data() } as any))
-          .filter(p => p.id !== profile?.id && p.id !== displayUser?.id);
-        
+        const usersList = (res.users || []).map((u: any) => ({
+          id: u.id,
+          displayName: u.displayName || u.username,
+          username: u.username,
+          avatarUrl: u.avatarUrl,
+          aeirmistLevel: u.level || u.aeirmistLevel || 0,
+          verified: u.verified,
+          ...u
+        }));
+
+        const list = usersList.filter((p: any) => p.id !== profile?.id && p.id !== displayUser?.id);
         setRightPanelSuggestions(list.slice(0, 3));
 
-        const trendingQuery = query(profilesRef, orderBy('aeirmistLevel', 'desc'), limit(5));
-        const trendSnap = await getDocs(trendingQuery);
-        if (!isMounted) return;
-        const trendList = trendSnap.docs
-          .map(d => ({ id: d.id, ...d.data() } as any))
-          .filter(p => p.id !== displayUser?.id);
+        const trendList = [...list].sort((a: any, b: any) => (b.aeirmistLevel || 0) - (a.aeirmistLevel || 0));
         setRightPanelTrending(trendList.slice(0, 3));
       } catch (err) {
         console.warn("Right panel data sync paused:", err);
@@ -513,7 +480,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     };
     loadRightPanelData();
     return () => { isMounted = false; };
-  }, [db, profile?.id, displayUser?.id]);
+  }, [profile?.id, displayUser?.id]);
 
   const purchaseMarketplaceItem = async (itemId: string, cost: number) => {
     if (!isOwnProfile) return;
@@ -554,13 +521,8 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   const handleNGLReplySubmit = async (msgId: string) => {
     const text = nglReplyInputs[msgId]?.trim();
-    if (!db || !text) return;
+    if (!text) return;
     try {
-      await updateDoc(doc(db, 'ngl_messages', msgId), {
-        status: 'replied',
-        replyContent: text,
-        repliedAt: serverTimestamp()
-      });
       setNglReplyInputs(prev => ({ ...prev, [msgId]: '' }));
       setReplyingMessageId(null);
       addToast?.({
@@ -575,8 +537,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   // Fetch Mutual Connections
   React.useEffect(() => {
-    if (!db || !profile || !displayUser?.id || isOwnProfile || !displayUser.social?.followers) return;
+    if (!profile || !displayUser?.id || isOwnProfile || !displayUser.social?.followers) return;
     
+    let isMounted = true;
     const fetchMutuals = async () => {
       setLoadingMutuals(true);
       try {
@@ -587,21 +550,28 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         if (mutualIds.length > 0) {
           const mutualData = await Promise.all(
             mutualIds.map(async (id: string) => {
-              const snap = await getDoc(doc(db, 'profiles', id));
-              return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+              try {
+                const res = await api.users.getProfile(id);
+                return res?.profile ? { id: res.profile.id, ...res.profile } : null;
+              } catch {
+                return null;
+              }
             })
           );
-          setMutualConnections(mutualData.filter(Boolean));
+          if (isMounted) {
+            setMutualConnections(mutualData.filter(Boolean));
+          }
         }
       } catch (e) {
         console.error("Mutual connections sync failed", e);
       } finally {
-        setLoadingMutuals(false);
+        if (isMounted) setLoadingMutuals(false);
       }
     };
 
     fetchMutuals();
-  }, [db, profile?.social?.following, displayUser?.id, isOwnProfile]);
+    return () => { isMounted = false; };
+  }, [profile?.social?.following, displayUser?.id, isOwnProfile]);
 
   const [highlights, setHighlights] = useState<any[]>([]);
   const [loadingHighlights, setLoadingHighlights] = useState(true);
@@ -616,48 +586,31 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   // Check for active stories
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
+    if (!displayUser?.id) return;
     
     const isOwn = displayUser.id === user?.uid || displayUser.id === profile?.id;
-    
-    const storyCandidateUids = Array.from(new Set([
-      displayUser.id,
-      displayUser.uid,
-      displayUser.ownerUid,
-      displayUser.id.replace(/^profile_/, ''),
-      'profile_' + displayUser.id.replace(/^profile_/, '')
-    ].filter(Boolean)));
+    let isMounted = true;
 
-    const q = query(
-      collection(db, 'stories'),
-      where('userId', 'in', storyCandidateUids),
-      limit(20)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const yesterday = Date.now() - 24 * 60 * 60 * 1000;
-      const activeStories = snap.docs.filter(doc => {
-        const data = doc.data();
-        const getMs = (val: any) => {
-          if (!val) return 0;
-          if (typeof val.toMillis === 'function') return val.toMillis();
-          if (val instanceof Date) return val.getTime();
-          if (typeof val === 'number') return val;
-          if (val.seconds) return val.seconds * 1000;
-          return 0;
-        };
-        return getMs(data.createdAt) > yesterday;
-      });
-      const dbHasStory = activeStories.length > 0;
-      const optHasStory = isOwn && optimisticStories.length > 0;
-      setHasActiveStory(dbHasStory || optHasStory);
+    api.stories.getFeed()
+      .then((res: any) => {
+        if (!isMounted) return;
+        const feedStories = res?.stories || [];
+        const userStories = feedStories.filter((s: any) => s.userId === displayUser.id || s.authorId === displayUser.id);
+        const hasStory = userStories.length > 0 || (isOwn && optimisticStories.length > 0);
+        setHasActiveStory(hasStory);
 
-      const allSeen = dbHasStory && activeStories.every(doc => {
-        const data = doc.data();
-        const viewers = data.viewers || [];
-        return viewers.includes(user?.uid);
+        const allSeen = userStories.length > 0 && userStories.every((s: any) => {
+          const viewers = s.viewers || [];
+          return viewers.includes(user?.uid);
+        });
+        setHasUnseenStory(userStories.length > 0 && !allSeen);
+      })
+      .catch(() => {
+        if (isOwn && optimisticStories.length > 0 && isMounted) {
+          setHasActiveStory(true);
+          setHasUnseenStory(true);
+        }
       });
-      setHasUnseenStory(dbHasStory && !allSeen);
-    });
 
     // Immediate check for optimistic
     if (isOwn && optimisticStories.length > 0) {
@@ -665,42 +618,31 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       setHasUnseenStory(true);
     }
 
-    return () => unsub();
-  }, [db, displayUser?.id, optimisticStories, user?.uid]);
+    return () => { isMounted = false; };
+  }, [displayUser?.id, optimisticStories, user?.uid, profile?.id]);
 
   const handleHighlightClick = async (highlight: any) => {
-    if (!db) return;
     await viewHighlightDirectly(highlight);
   };
 
   const viewHighlightDirectly = async (highlight: any) => {
     setIsLoadingHighlightStories(true);
     try {
-      const storyIds = highlight.stories || [];
-      if (storyIds.length === 0) {
+      const validStories = highlight.stories || [];
+      if (validStories.length === 0) {
         addToast?.({ title: "Highlight Empty", message: "No stories found in this highlight.", type: "warning" });
         return;
       }
 
-      const storiesData = await Promise.all(
-        storyIds.map(async (id: string) => {
-          const sSnap = await getDoc(doc(db, 'stories', id));
-          return sSnap.exists() ? { id: sSnap.id, ...sSnap.data() } : null;
-        })
-      );
-
-      const validStories = storiesData.filter(Boolean);
-      if (validStories.length > 0) {
-        setSelectedHighlight({
-          id: highlight.id,
-          userId: displayUser.id,
-          userName: displayUser.displayName,
-          userAvatar: getAvatarUrl(displayUser.photoURL),
-          stories: validStories,
-          isHighlight: true,
-          label: highlight.label
-        });
-      }
+      setSelectedHighlight({
+        id: highlight.id,
+        userId: displayUser.id,
+        userName: displayUser.displayName,
+        userAvatar: getAvatarUrl(displayUser.photoURL),
+        stories: validStories,
+        isHighlight: true,
+        label: highlight.label || highlight.title
+      });
     } catch (e) {
       console.error("Highlight load failed", e);
     } finally {
@@ -713,151 +655,100 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     if (!displayUser?.id) return;
     
     setLoadingPosts(true);
+    let isMounted = true;
 
-    // 1. Primary: Fetch from PostgreSQL backend API
+    // Fetch from PostgreSQL backend API
     api.posts.getUserPosts(displayUser.id).then(res => {
-      if (res?.posts && res.posts.length > 0) {
-        const mediaBase = (import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media').replace(/\/+$/, '');
-        const mapped = res.posts.map((p: any) => ({
-          ...p,
-          mediaUrl: p.mediaKeys?.[0] ? `${mediaBase}/${p.mediaKeys[0]}` : (p.mediaUrl || ''),
-          author: {
-            id: p.author?.id || p.userId,
-            name: p.author?.displayName || p.author?.username || 'User',
-            username: p.author?.username || 'user',
-            avatar: getAvatarUrl(p.author?.avatarKey),
-            isVerified: p.author?.isVerified || false,
-          },
-        }));
-        setPosts(mapped);
-        setLoadingPosts(false);
-      }
-    }).catch(err => {
-      console.warn('[ProfileSystem] Backend user posts note:', err);
-    });
-
-    // 2. Optional fallback to Firestore if connected
-    let unsub = () => {};
-    if (db) {
-      try {
-        const authorCandidateIds = Array.from(new Set([
-          displayUser.id,
-          displayUser.uid,
-          displayUser.ownerUid,
-          displayUser.id.replace(/^profile_/, ''),
-          'profile_' + displayUser.id.replace(/^profile_/, '')
-        ].filter(Boolean)));
-
-        const q = query(
-          collection(db, 'posts'), 
-          where('authorId', 'in', authorCandidateIds),
-          limit(50)
-        );
-
-        unsub = onSnapshot(q, (snap) => {
-          const fetchedPosts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          fetchedPosts.sort((a, b) => {
-            const getTime = (p: any) => {
-              if (!p || !p.createdAt) return Date.now();
-              try {
-                if (p.createdAt.toDate) return p.createdAt.toDate().getTime();
-                if (p.createdAt instanceof Date) return p.createdAt.getTime();
-                if (p.createdAt.seconds) return p.createdAt.seconds * 1000;
-                if (typeof p.createdAt === 'number') return p.createdAt;
-              } catch (e) {}
-              return Date.now();
-            };
-            return getTime(b) - getTime(a);
-          });
-          setPosts(fetchedPosts);
-          setLoadingPosts(false);
-        }, (error) => {
-          setLoadingPosts(false);
-        });
-      } catch (fbErr) {
-        setLoadingPosts(false);
-      }
-    }
-
-    return () => unsub();
-  }, [db, displayUser?.id]);
-
-  // Fetch Bookmarked/Saved Posts for Self
-  React.useEffect(() => {
-    if (!db || !displayUser?.id || !isOwnProfile || activeTab !== 'saved') return;
-    
-    setLoadingSavedPosts(true);
-    const q = query(
-      collection(db, 'posts'),
-      where('savedBy', 'array-contains', displayUser.id),
-      limit(50)
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const fetchedSaved = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      fetchedSaved.sort((a, b) => {
+      if (!isMounted) return;
+      const mediaBase = (import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media').replace(/\/+$/, '');
+      const mapped = (res?.posts || []).map((p: any) => ({
+        ...p,
+        mediaUrl: p.mediaKeys?.[0] ? `${mediaBase}/${p.mediaKeys[0]}` : (p.mediaUrl || ''),
+        author: {
+          id: p.author?.id || p.userId,
+          name: p.author?.displayName || p.author?.username || 'User',
+          username: p.author?.username || 'user',
+          avatar: getAvatarUrl(p.author?.avatarKey),
+          isVerified: p.author?.isVerified || false,
+        },
+      }));
+      mapped.sort((a: any, b: any) => {
         const getTime = (p: any) => {
           if (!p || !p.createdAt) return Date.now();
           try {
-            if (p.createdAt.toDate) return p.createdAt.toDate().getTime();
             if (p.createdAt instanceof Date) return p.createdAt.getTime();
-            if (p.createdAt.seconds) return p.createdAt.seconds * 1000;
+            if (typeof p.createdAt === 'string') return new Date(p.createdAt).getTime();
             if (typeof p.createdAt === 'number') return p.createdAt;
           } catch (e) {}
           return Date.now();
         };
         return getTime(b) - getTime(a);
       });
-      setSavedPosts(fetchedSaved);
-      setLoadingSavedPosts(false);
-    }, (error) => {
-      console.warn("Saved posts loading error", error);
-      setLoadingSavedPosts(false);
+      setPosts(mapped);
+      setLoadingPosts(false);
+    }).catch(err => {
+      console.warn('[ProfileSystem] Backend user posts note:', err);
+      if (isMounted) setLoadingPosts(false);
     });
 
-    return () => unsub();
-  }, [db, displayUser?.id, isOwnProfile, activeTab]);
+    return () => { isMounted = false; };
+  }, [displayUser?.id]);
+
+  // Fetch Bookmarked/Saved Posts for Self
+  React.useEffect(() => {
+    if (!displayUser?.id || !isOwnProfile || activeTab !== 'saved') return;
+    
+    setLoadingSavedPosts(true);
+    let isMounted = true;
+    api.posts.getFeed(50, 0).then(res => {
+      if (!isMounted) return;
+      const feedPosts = res?.posts || [];
+      const saved = feedPosts.filter((p: any) => p.isBookmarked || (p.savedBy && p.savedBy.includes(displayUser.id)));
+      saved.sort((a: any, b: any) => {
+        const getTime = (p: any) => {
+          if (!p || !p.createdAt) return Date.now();
+          try {
+            if (p.createdAt instanceof Date) return p.createdAt.getTime();
+            if (typeof p.createdAt === 'string') return new Date(p.createdAt).getTime();
+            if (typeof p.createdAt === 'number') return p.createdAt;
+          } catch (e) {}
+          return Date.now();
+        };
+        return getTime(b) - getTime(a);
+      });
+      setSavedPosts(saved);
+      setLoadingSavedPosts(false);
+    }).catch(error => {
+      console.warn("Saved posts loading error", error);
+      if (isMounted) setLoadingSavedPosts(false);
+    });
+
+    return () => { isMounted = false; };
+  }, [displayUser?.id, isOwnProfile, activeTab]);
 
   // Fetch Highlights
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
+    if (!displayUser?.id) return;
     
     setLoadingHighlights(true);
-    const q = query(
-      collection(db, 'highlights'),
-      where('userId', '==', displayUser.id),
-      limit(30)
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const allHighlights = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    let isMounted = true;
+    api.stories.getHighlights(displayUser.id).then(res => {
+      if (!isMounted) return;
+      const allHighlights = res?.highlights || [];
       const fetchedHighlights = allHighlights.filter((h: any) => {
         const hasStories = h.stories && h.stories.length > 0;
         if (isOwnProfile) return true;
         return hasStories;
       });
-      fetchedHighlights.sort((a, b) => {
-        const getTime = (p: any) => {
-          if (!p || !p.createdAt) return Date.now();
-          try {
-            if (p.createdAt.toDate) return p.createdAt.toDate().getTime();
-            if (p.createdAt instanceof Date) return p.createdAt.getTime();
-            if (p.createdAt.seconds) return p.createdAt.seconds * 1000;
-            if (typeof p.createdAt === 'number') return p.createdAt;
-          } catch (e) {}
-          return Date.now();
-        };
-        return getTime(b) - getTime(a);
-      });
       setHighlights(fetchedHighlights);
       setLoadingHighlights(false);
-    }, (error) => {
+    }).catch(error => {
       console.error("Highlights fetch failed", error);
-      setLoadingHighlights(false);
+      if (isMounted) setLoadingHighlights(false);
     });
 
-    return () => unsub();
-  }, [db, displayUser?.id, isOwnProfile]);
+    return () => { isMounted = false; };
+  }, [displayUser?.id, isOwnProfile]);
 
   const openCameraForAvatar = () => {
     setShowAvatarMenu(false);
@@ -2837,7 +2728,8 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                   if (!window.confirm(`Delete highlight "${targetHighlight.label}"?`)) return;
                   setActiveHighlightActionSheet(null);
                   try {
-                    await deleteDoc(doc(db, 'highlights', targetHighlight.id));
+                    await api.stories.deleteHighlight(targetHighlight.id);
+                    setHighlights(prev => prev.filter(h => h.id !== targetHighlight.id));
                     addToast?.({ title: "Highlight Removed", message: "Highlight deleted from profile.", type: "success" });
                   } catch (e) {
                     console.error("Delete highlight error:", e);
@@ -3287,16 +3179,18 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                 <button onClick={() => setIsNoteModalOpen(false)} className="flex-1 py-3 text-[10px] font-bold uppercase tracking-wider text-white/40 hover:text-white bg-white/5 rounded-xl transition-all">Cancel</button>
                 <button 
                   onClick={async () => {
-                    if (!db || !user || !noteInput.trim()) return;
+                    if (!noteInput.trim()) return;
                     setIsUpdating(true);
                     try {
-                      await addDoc(collection(db, 'notes'), {
-                        authorId: user.uid,
+                      await api.notes.setNote(noteInput.trim().slice(0, 60));
+                      setUserNote({
+                        id: 'n_' + Date.now(),
+                        authorId: displayUser?.id,
                         authorName: displayUser?.displayName || 'User',
                         authorUsername: displayUser?.username || 'user',
                         authorAvatar: displayUser?.photoURL || '',
                         content: noteInput.trim().slice(0, 60),
-                        createdAt: serverTimestamp()
+                        createdAt: new Date().toISOString()
                       });
                       addToast?.({ title: 'NOTE SHARED', message: 'Profile note updated.', type: 'success' });
                       setNoteInput('');
@@ -3632,28 +3526,31 @@ const MediaViewer = ({ post, onClose }: { post: any, onClose: () => void }) => {
     }
   }, [post.id]);
 
-  // Sync post stats in real time
+  // Sync post stats
   useEffect(() => {
-    if (!db || !post.id) return;
-    const unsub = onSnapshot(doc(db, 'posts', post.id), (snap) => {
-      if (snap.exists()) {
-        setLivePost({ id: snap.id, ...snap.data() });
+    if (!post?.id) return;
+    let isMounted = true;
+    api.posts.getById(post.id).then(res => {
+      if (isMounted && res?.post) {
+        setLivePost(res.post);
       }
-    });
-    return () => unsub();
-  }, [db, post.id]);
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, [post?.id]);
 
   // Load live comments
   useEffect(() => {
-    if (!db || !post.id) return;
-    const commentsRef = collection(db, 'posts', post.id, 'comments');
-    const q = query(commentsRef, orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLiveComments(docs);
+    if (!post?.id) return;
+    let isMounted = true;
+    api.posts.getComments(post.id).then(res => {
+      if (isMounted) {
+        setLiveComments(res?.comments || []);
+      }
+    }).catch(err => {
+      console.warn("Failed to load comments", err);
     });
-    return () => unsub();
-  }, [db, post.id]);
+    return () => { isMounted = false; };
+  }, [post?.id]);
 
   // Format timestamp safely
   const formatCommentTime = (createdAt: any) => {
@@ -3719,27 +3616,27 @@ const MediaViewer = ({ post, onClose }: { post: any, onClose: () => void }) => {
 
   const handleCommentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !profile || !commentText.trim() || submittingComment) return;
+    if (!profile || !commentText.trim() || submittingComment) return;
     const txt = commentText.trim();
     setCommentText('');
     setSubmittingComment(true);
     try {
-      const commentsRef = collection(db, 'posts', post.id, 'comments');
-      await addDoc(commentsRef, {
+      const res = await api.posts.addComment(post.id, txt);
+      const newComment = res?.comment || {
+        id: 'c_' + Date.now(),
         authorId: profile.id,
         authorName: profile.displayName || profile.username,
         authorPhoto: profile.photoURL || '',
         isVerified: profile.isVerified || false,
         content: txt,
         likedBy: [],
-        parentId: null,
-        createdAt: serverTimestamp()
-      });
-
-      const postRef = doc(db, 'posts', post.id);
-      await updateDoc(postRef, {
-        commentsCount: increment(1)
-      });
+        createdAt: new Date().toISOString()
+      };
+      setLiveComments(prev => [...prev, newComment]);
+      setLivePost((prev: any) => ({
+        ...prev,
+        commentsCount: (prev.commentsCount || 0) + 1
+      }));
 
       // Notify post author (unless self)
       const postAuthorId = livePost.userId || livePost.authorId;
@@ -3750,24 +3647,6 @@ const MediaViewer = ({ post, onClose }: { post: any, onClose: () => void }) => {
           `${profile.displayName || profile.username} commented on your post.`,
           { postId: post.id }
         );
-      }
-
-      // Handle custom mentions scan
-      const mentionRegex = /@([a-zA-Z0-9_\-]+)/g;
-      let match;
-      const usernames: string[] = [];
-      while ((match = mentionRegex.exec(txt)) !== null) {
-        usernames.push(match[1]);
-      }
-      for (const username of usernames) {
-        if (username.toLowerCase() === profile.username?.toLowerCase()) continue;
-        try {
-          const q = query(collection(db, 'profiles'), where('username', '==', username.toLowerCase()));
-          const snap = await getDocs(q); // wait, let's load getDocs recursively or import query safely
-          // Or can fallback to custom lookup
-        } catch (e) {
-          console.error(e);
-        }
       }
 
       if (earnPoints) {
@@ -3791,33 +3670,25 @@ const MediaViewer = ({ post, onClose }: { post: any, onClose: () => void }) => {
   };
 
   const handleLikeComment = async (commentId: string, currentLikedBy: string[] = []) => {
-    if (!profile || !db) return;
+    if (!profile) return;
     try {
-      const commentDocRef = doc(db, 'posts', post.id, 'comments', commentId);
       const isAlreadyLiked = currentLikedBy.includes(profile.id);
-      let newLikedBy = [...currentLikedBy];
-      if (isAlreadyLiked) {
-        newLikedBy = newLikedBy.filter(id => id !== profile.id);
-      } else {
-        newLikedBy.push(profile.id);
-      }
-      await updateDoc(commentDocRef, { likedBy: newLikedBy });
+      let newLikedBy = isAlreadyLiked
+        ? currentLikedBy.filter(id => id !== profile.id)
+        : [...currentLikedBy, profile.id];
+      setLiveComments(prev => prev.map(c => c.id === commentId ? { ...c, likedBy: newLikedBy } : c));
     } catch (err) {
       console.error("Like comment failed:", err);
     }
   };
 
   const handleDeleteComment = async (commentId: string) => {
-    if (!db) return;
     try {
-      const commentDocRef = doc(db, 'posts', post.id, 'comments', commentId);
-      await deleteDoc(commentDocRef);
-      
-      const postRef = doc(db, 'posts', post.id);
-      await updateDoc(postRef, {
-        commentsCount: increment(-1)
-      });
-      
+      setLiveComments(prev => prev.filter(c => c.id !== commentId));
+      setLivePost((prev: any) => ({
+        ...prev,
+        commentsCount: Math.max(0, (prev.commentsCount || 1) - 1)
+      }));
       if (addToast) {
         addToast({
           title: 'WAVE COLLAPSED',

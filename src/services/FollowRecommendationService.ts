@@ -1,6 +1,4 @@
-import { collection, getDocs, doc, updateDoc, arrayUnion, arrayRemove, getDoc, query, limit, Firestore, serverTimestamp } from 'firebase/firestore';
-import { logger } from '@/src/utils/logger';
-
+import { logger } from '../utils/logger';
 
 export interface RecommendationInfo {
   userId: string;
@@ -29,45 +27,14 @@ class FollowRecommendationService {
   private cacheExpiryKey = 'aeirmist_recomm_cache_expiry';
 
   /**
-   * Sync local signals to Firestore for persistence
+   * Sync local signals (stored locally in localStorage)
    */
-  public async syncSignalsToFirestore(db: Firestore, profileId: string): Promise<void> {
-    if (!db || !profileId) return;
-    try {
-      const interests = this.getUserInterests().slice(0, 20);
-      const rawVisits = this.getProfileVisits();
-      const rawSearches = this.getSearchQueries();
-
-      // Sort and slice top 8 profiles by visit count (reduced from 10 to be safer)
-      const topVisitedProfiles = Object.entries(rawVisits)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 8)
-        .map(([uid]) => uid);
-
-      // Sort and slice top 8 search terms by frequency (reduced from 10)
-      const topSearchTerms = Object.entries(rawSearches)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 8)
-        .map(([term]) => term);
-
-      const summary = {
-        recommendationSignals: {
-          interests,
-          topVisitedProfiles,
-          topSearchTerms,
-          lastSyncedAt: serverTimestamp()
-        }
-      };
-
-      await updateDoc(doc(db, 'profiles', profileId), summary);
-      logger.info(`[RecommService] Signals synced to Firestore for ${profileId}`);
-    } catch (e) {
-      logger.warn("[RecommService] Firestore sync failed:", e);
-    }
+  public async syncSignalsToFirestore(_db?: any, _profileId?: string): Promise<void> {
+    return Promise.resolve();
   }
 
   /**
-   * Hydrate local storage from remote Firestore signals if local is empty
+   * Hydrate local storage from remote signals if local is empty
    */
   public hydrateFromFirestoreIfEmpty(remoteSignals: any): void {
     if (!remoteSignals) return;
@@ -97,7 +64,7 @@ class FollowRecommendationService {
         }
         
         this.clearCache();
-        logger.info("[RecommService] Local storage hydrated from Firestore signals.");
+        logger.info("[RecommService] Local storage hydrated from remote signals.");
       }
     } catch (e) {
       logger.warn("[RecommService] Hydration failed:", e);

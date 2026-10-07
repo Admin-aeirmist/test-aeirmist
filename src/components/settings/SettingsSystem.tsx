@@ -457,7 +457,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
       );
       const field = editingImage.type === 'avatar' ? 'photoURL' : 'bannerURL';
       
-      // Update local state and instantly persist to Firebase
+      // Update local state and instantly persist to server
       const updateData = editingImage.type === 'avatar' 
         ? { photoURL: url } 
         : { coverURL: url, bannerURL: url };

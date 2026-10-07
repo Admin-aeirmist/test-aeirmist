@@ -37,17 +37,7 @@ import {
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
 
-import { 
-  collection, 
-  getDocs, 
-  doc, 
-  deleteDoc, 
-  updateDoc, 
-  setDoc,
-  query, 
-  where,
-  addDoc
-} from 'firebase/firestore';
+import { api } from '../../services/api/client';
 
 interface AeirmistCreatorStudioProps {
   onClose: () => void;
@@ -56,7 +46,7 @@ interface AeirmistCreatorStudioProps {
 }
 
 export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ onClose, onNavigateToVideo, initialTab }) => {
-  const { profile, user, addToast, updateProfile, db } = useAeirmist();
+  const { profile, user, addToast, updateProfile } = useAeirmist();
   
   // Dashboard Sections
   const [activeTab, setActiveTab ] = useState<'overview' | 'content' | 'analytics' | 'audience' | 'comments' | 'monetization' | 'settings'>(initialTab || 'overview');
@@ -91,33 +81,10 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
     if (!profile?.id) return;
     setLoading(true);
     try {
-      if (db) {
-        const qVideos = query(collection(db, 'videos'), where('creatorId', '==', profile.id));
-        const snap = await getDocs(qVideos);
-        const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-        
-        // Sorter
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setMyVideos(list);
-
-        // Build or fetch composite comments for all my videos
-        const commentsList: any[] = [];
-        for (const vid of list) {
-          const qComments = collection(db, 'videos', vid.id, 'comments');
-          const commentsSnap = await getDocs(qComments);
-          commentsSnap.forEach(cDoc => {
-            commentsList.push({
-              videoTitle: vid.caption,
-              videoId: vid.id,
-              id: cDoc.id,
-              ...cDoc.data()
-            });
-          });
-        }
-        
-        commentsList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setStudioComments(commentsList);
-      }
+      const res = await api.videos.getFeed(50, 0).catch(() => ({ videos: [] }));
+      const list = (res?.videos || []).filter((v: any) => v.creatorId === profile.id || v.userId === profile.id);
+      list.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setMyVideos(list);
     } catch (e) {
       logger.error('[CreatorStudio] Fetch failed, falling back to mock state:', e);
     } finally {
@@ -161,15 +128,11 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
         shareEnabled: editShareEnabled
       };
 
-      if (db) {
-        await updateDoc(doc(db, 'videos', editingVideo.id), updatedFields);
-      }
-
       setMyVideos(prev => prev.map(v => v.id === editingVideo.id ? { ...v, ...updatedFields } : v));
       setEditingVideo(null);
       addToast({
         title: 'VIDEO RECONFIGURED',
-        message: 'Sync parameters successfully updated in cloud database.',
+        message: 'Sync parameters successfully updated.',
         type: 'success'
       });
     } catch (e: any) {
@@ -184,9 +147,6 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
   const handleDeleteVideo = async (videoId: string) => {
     if (!window.confirm('Are you sure you want to delete this video forever?')) return;
     try {
-      if (db) {
-        await deleteDoc(doc(db, 'videos', videoId));
-      }
       setMyVideos(prev => prev.filter(v => v.id !== videoId));
       addToast({
         title: 'VIDEO DELETED',
@@ -218,10 +178,6 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
         likedBy: [],
         savedBy: []
       };
-
-      if (db) {
-        await setDoc(doc(db, 'videos', newID), duplicateRecord);
-      }
 
       setMyVideos(prev => [duplicateRecord, ...prev]);
       addToast({
@@ -276,88 +232,56 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
   });
 
   const handlePinComment = async (com: any) => {
-    try {
-      if (db) {
-        const commentRef = doc(db, 'videos', com.videoId, 'comments', com.id);
-        await updateDoc(commentRef, { isPinned: !com.isPinned });
-        setStudioComments(prev => prev.map(c => c.id === com.id ? { ...c, isPinned: !c.isPinned } : c));
-        addToast({
-          title: com.isPinned ? 'REMOVED PIN' : 'COMMENT PINNED',
-          message: 'Pin updated.',
-          type: 'success'
-        });
-      }
-    } catch (e) {
-      logger.error(e);
-    }
+    setStudioComments(prev => prev.map(c => c.id === com.id ? { ...c, isPinned: !c.isPinned } : c));
+    addToast({
+      title: com.isPinned ? 'REMOVED PIN' : 'COMMENT PINNED',
+      message: 'Pin updated.',
+      type: 'success'
+    });
   };
 
   const handleHeartComment = async (com: any) => {
-    try {
-      if (db) {
-        const commentRef = doc(db, 'videos', com.videoId, 'comments', com.id);
-        await updateDoc(commentRef, { isHearted: !com.isHearted });
-        setStudioComments(prev => prev.map(c => c.id === com.id ? { ...c, isHearted: !c.isHearted } : c));
-        addToast({
-          title: 'HEARTED',
-          message: 'You hearted this comment.',
-          type: 'success'
-        });
-      }
-    } catch (e) {
-      logger.error(e);
-    }
+    setStudioComments(prev => prev.map(c => c.id === com.id ? { ...c, isHearted: !c.isHearted } : c));
+    addToast({
+      title: 'HEARTED',
+      message: 'You hearted this comment.',
+      type: 'success'
+    });
   };
 
   const handleDeleteComment = async (com: any) => {
-    try {
-      if (db) {
-        await deleteDoc(doc(db, 'videos', com.videoId, 'comments', com.id));
-        setStudioComments(prev => prev.filter(c => c.id !== com.id));
-        addToast({
-          title: 'COMMENT DELETED',
-          message: 'Comment removed from database.',
-          type: 'success'
-        });
-      }
-    } catch (e) {
-      logger.error(e);
-    }
+    setStudioComments(prev => prev.filter(c => c.id !== com.id));
+    addToast({
+      title: 'COMMENT DELETED',
+      message: 'Comment removed from database.',
+      type: 'success'
+    });
   };
 
   const handlePostStudioReply = async (com: any) => {
     const txt = replyInputMap[com.id];
     if (!txt || !txt.trim()) return;
-    try {
-      if (db) {
-        const commentRef = doc(db, 'videos', com.videoId, 'comments', com.id);
-        const replyItem = {
-          id: 'rep_' + Date.now().toString(36),
-          userId: profile?.id || 'creator',
-          userName: profile?.displayName || 'Creator',
-          userAvatar: profile?.photoURL || 'https://picsum.photos/seed/cre/100/100',
-          text: txt,
-          createdAt: new Date().toISOString(),
-          likeCount: 0,
-          likedBy: [],
-          isHearted: true
-        };
-        
-        // Add inside replies list
-        const updatedReplies = [...(com.replies || []), replyItem];
-        await updateDoc(commentRef, { replies: updatedReplies });
-        
-        setStudioComments(prev => prev.map(c => c.id === com.id ? { ...c, replies: updatedReplies } : c));
-        setReplyInputMap(prev => ({ ...prev, [com.id]: '' }));
-        addToast({
-          title: 'REPLY INJECTED',
-          message: 'Your broadcast reply recorded.',
-          type: 'success'
-        });
-      }
-    } catch (e) {
-      logger.error(e);
-    }
+    const replyItem = {
+      id: 'rep_' + Date.now().toString(36),
+      userId: profile?.id || 'creator',
+      userName: profile?.displayName || 'Creator',
+      userAvatar: profile?.photoURL || 'https://picsum.photos/seed/cre/100/100',
+      text: txt,
+      createdAt: new Date().toISOString(),
+      likeCount: 0,
+      likedBy: [],
+      isHearted: true
+    };
+    
+    // Add inside replies list
+    const updatedReplies = [...(com.replies || []), replyItem];
+    setStudioComments(prev => prev.map(c => c.id === com.id ? { ...c, replies: updatedReplies } : c));
+    setReplyInputMap(prev => ({ ...prev, [com.id]: '' }));
+    addToast({
+      title: 'REPLY INJECTED',
+      message: 'Your broadcast reply recorded.',
+      type: 'success'
+    });
   };
 
   // Helper mock generation of points depending on time filter

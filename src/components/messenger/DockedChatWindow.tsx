@@ -21,7 +21,7 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
 import { messagingService } from '../../modules/messaging/MessagingService';
 import { getAvatarUrl } from '../../lib/avatar';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { Message } from '../../types/messenger';
 import { logger } from '../../utils/logger';
 import { formatActiveStatus, extractTimestampMs, formatTimeOnly } from '../../lib/date';
@@ -49,7 +49,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   onClose,
   onMaximize
 }) => {
-  const { db, user, profile, startCall, uploadMedia, onlineUsers, addToast } = useAeirmist();
+  const { user, profile, startCall, uploadMedia, onlineUsers, addToast } = useAeirmist();
   const { settings } = useAppearance();
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -67,27 +67,26 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
 
   // Subscribe to participant profile in real time for presence
   useEffect(() => {
-    if (!db || !targetUserId) return;
-    const unsub = onSnapshot(doc(db, 'profiles', targetUserId), (snap) => {
-      if (snap.exists()) {
-        setTargetProfile({ id: snap.id, ...snap.data() });
+    if (!targetUserId) return;
+    let isMounted = true;
+    api.users.getProfile(targetUserId).then(res => {
+      if (isMounted && res?.profile) {
+        setTargetProfile(res.profile);
       }
-    }, () => {});
-    return () => unsub();
-  }, [db, targetUserId]);
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, [targetUserId]);
 
-  // Subscribe to conversation document in real time for shared themeSettings & wallpaper
+  // Load conversation settings
   useEffect(() => {
-    if (!db || !chatId) return;
-    const unsub = onSnapshot(doc(db, 'conversations', chatId), (snap) => {
-      if (snap.exists()) {
-        setConversationData(snap.data());
+    if (!chatId) return;
+    try {
+      const stored = localStorage.getItem(`chat_settings_${chatId}`);
+      if (stored) {
+        setConversationData(JSON.parse(stored));
       }
-    }, (err) => {
-      logger.warn('[DockedChatWindow] Failed to load conversation doc:', err);
-    });
-    return () => unsub();
-  }, [db, chatId]);
+    } catch {}
+  }, [chatId]);
 
   const avatar = getAvatarUrl(chatPhoto || targetProfile?.photoURL);
   const lastSeenMs = extractTimestampMs(targetProfile?.lastSeen) || extractTimestampMs(targetProfile?.lastActiveAt) || extractTimestampMs(targetProfile?.updatedAt);

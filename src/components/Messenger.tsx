@@ -63,22 +63,7 @@ import { ChatWallpaperLayer } from './messenger/ChatWallpaperLayer';
 import { ChatWallpaperController } from './messenger/ChatWallpaperController';
 import { GroupCreationModal } from './messenger/GroupCreationModal';
 import { GroupInfoPanel } from './messenger/GroupInfoPanel';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  orderBy, 
-  addDoc, 
-  serverTimestamp, 
-  doc, 
-  getDoc,
-  updateDoc,
-  limit,
-  deleteDoc,
-  arrayUnion
-} from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { api } from '../services/api/client';
 import { Chat, Message } from '../types/messenger';
 import { 
   formatAeirmistTimestamp, 
@@ -3696,11 +3681,10 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
-                          await updateDoc(doc(db, 'conversations', chat.id), {
-                            status: 'active',
-                            acceptedAt: serverTimestamp()
-                          });
                           onChatUpdate?.({ ...chat, status: 'active' });
+                          if (chat?.id) {
+                            api.chat.markSeen(chat.id).catch(() => {});
+                          }
                           if (otherId) {
                             try {
                               await toggleFollow(otherId);
@@ -3729,7 +3713,6 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
-                          await deleteDoc(doc(db, 'conversations', chat.id));
                           onBack();
                           addToast?.({
                             title: 'Deleted',
@@ -3752,12 +3735,9 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
-                          if (otherId) {
-                            await updateDoc(doc(db, 'profiles', profile.id), {
-                              'social.blocked': arrayUnion(otherId)
-                            });
+                          if (otherId && toggleBlockUser) {
+                            await toggleBlockUser(otherId);
                           }
-                          await deleteDoc(doc(db, 'conversations', chat.id));
                           onBack();
                           addToast?.({
                             title: 'Connection Severed',

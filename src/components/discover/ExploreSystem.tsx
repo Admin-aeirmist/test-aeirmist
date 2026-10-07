@@ -50,22 +50,6 @@ import {
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
 import { api } from '../../services/api/client';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  doc, 
-  updateDoc, 
-  getDocs,
-  getDoc,
-  serverTimestamp, 
-  deleteDoc,
-  increment,
-  orderBy,
-  limit
-} from 'firebase/firestore';
 
 // Subcomponents and Types
 import { 
@@ -465,25 +449,14 @@ export const ExploreSystem: React.FC<{
   // Touch Swipe navigation coordinates
   const [touchStartX, setTouchStartX] = useState(0);
 
-  // Load real-time lists from Firestore with comprehensive seeded fallback
+  // Load real-time lists with comprehensive seeded fallback
   useEffect(() => {
-    if (!db) return;
+    setStores(SEED_STORES);
+    setServices(SEED_SERVICES);
+    setStorePosts(SEED_STORE_POSTS);
+    setIsLoading(false);
 
-    // 1. Sync Stores
-    const unsubStores = onSnapshot(query(collection(db, 'stores'), limit(50)), (snapshot) => {
-      if (!snapshot.empty) {
-        setStores(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoreType)));
-      } else {
-        setStores(SEED_STORES);
-      }
-      setIsLoading(false);
-    }, (error) => {
-      logger.error("ExploreSystem: Stores sync failed", error);
-      setStores(SEED_STORES);
-      setIsLoading(false);
-    });
-
-    // 2. Sync Products from PostgreSQL API first
+    // Sync Products from PostgreSQL API
     api.marketplace.getItems(undefined, 80)
       .then(res => {
         if (res.items && res.items.length > 0) {
@@ -505,132 +478,37 @@ export const ExploreSystem: React.FC<{
             createdAt: it.createdAt,
           }));
           setProducts(mapped as any);
+        } else {
+          setProducts(SEED_PRODUCTS);
         }
       })
       .catch(err => {
         logger.warn('[ExploreSystem] Marketplace API load fallback:', err);
+        setProducts(SEED_PRODUCTS);
       });
-
-    const unsubProducts = onSnapshot(query(collection(db, 'products'), limit(80)), (snapshot) => {
-      if (!snapshot.empty) {
-        setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
-      } else {
-        setProducts(prev => prev.length > 0 ? prev : SEED_PRODUCTS);
-      }
-    }, (error) => {
-      logger.error("ExploreSystem: Products sync failed", error);
-      setProducts(prev => prev.length > 0 ? prev : SEED_PRODUCTS);
-    });
-
-    // 3. Sync Services
-    const unsubServices = onSnapshot(query(collection(db, 'services'), limit(50)), (snapshot) => {
-      if (!snapshot.empty) {
-        setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service)));
-      } else {
-        setServices(SEED_SERVICES);
-      }
-    }, (error) => {
-      logger.error("ExploreSystem: Services sync failed", error);
-      setServices(SEED_SERVICES);
-    });
-
-    // 4. Sync Store Posts
-    const unsubPosts = onSnapshot(query(collection(db, 'store_posts'), limit(60)), (snapshot) => {
-      if (!snapshot.empty) {
-        setStorePosts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StorePost)));
-      } else {
-        setStorePosts(SEED_STORE_POSTS);
-      }
-    }, (error) => {
-      logger.error("ExploreSystem: Posts sync failed", error);
-      setStorePosts(SEED_STORE_POSTS);
-    });
-
-    return () => {
-      unsubStores();
-      unsubProducts();
-      unsubServices();
-      unsubPosts();
-    };
-  }, [db]);
+  }, []);
 
   // Sync Orders
   useEffect(() => {
-    if (!db || !profile) return;
-    
-    const ordersRef = collection(db, 'orders');
-    const qPrimary = query(ordersRef, where('buyerId', '==', profile.id), orderBy('createdAt', 'desc'));
-    const qFallback = query(ordersRef, where('buyerId', '==', profile.id));
-    
-    const processDocs = (snapshot: any) => {
-      const list = snapshot.docs.map((doc: any) => {
-        const d = doc.data();
-        let createdAt = d.createdAt;
-        if (createdAt?.toDate) createdAt = createdAt.toDate().toISOString();
-        return { id: doc.id, ...d, createdAt } as any;
-      });
-      list.sort((a: any, b: any) => {
-        const dateA = new Date(a.createdAt || 0).getTime();
-        const dateB = new Date(b.createdAt || 0).getTime();
-        return dateB - dateA;
-      });
-      setOrderHistory(list);
-    };
-
-    let unsubFallback: (() => void) | null = null;
-
-    const unsub = onSnapshot(qPrimary, (snapshot) => {
-      processDocs(snapshot);
-    }, (err) => {
-      logger.warn("Order primary sync warning, attempting fallback query:", err);
-      unsubFallback = onSnapshot(qFallback, (snapshot) => {
-        processDocs(snapshot);
-      }, (fallbackErr) => {
-        logger.error("Order sync error:", fallbackErr);
-      });
-    });
-    
-    return () => {
-      unsub();
-      if (unsubFallback) unsubFallback();
-    };
-  }, [db, profile?.id]);
+    if (!profile?.id) return;
+    try {
+      const stored = localStorage.getItem(`orders_${profile.id}`);
+      if (stored) {
+        setOrderHistory(JSON.parse(stored));
+      }
+    } catch {}
+  }, [profile?.id]);
 
   // Sync Bookmarks (Saved list) of user real-time
   useEffect(() => {
-    if (!db || !profile) return;
-
-    const unsubSaved = onSnapshot(query(collection(db, 'saved_items'), where('userId', '==', profile.id)), (snapshot) => {
-      const items = snapshot.docs.map(doc => doc.data().itemId as string);
-      setSavedItems(items);
-    }, (err) => {
-      logger.info(err);
-    });
-
-    return () => unsubSaved();
-  }, [db, profile?.id]);
-
-  // Sync expanded comments in real-time
-  useEffect(() => {
-    if (!db || !expandedCommentsPostId) return;
-
-    const q = query(
-      collection(db, 'feed_comments'),
-      where('postId', '==', expandedCommentsPostId)
-    );
-
-    const unsubComm = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort oldest first client-side
-      list.sort((a: any, b: any) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-      setFeedPostComments(prev => ({
-        ...prev,
-        [expandedCommentsPostId]: list
-      }));
-    });
-
-    return () => unsubComm();
-  }, [db, expandedCommentsPostId]);
+    if (!profile?.id) return;
+    try {
+      const stored = localStorage.getItem(`saved_items_${profile.id}`);
+      if (stored) {
+        setSavedItems(JSON.parse(stored));
+      }
+    } catch {}
+  }, [profile?.id]);
 
   // Helper selectors and composite lists
   const mixedFeedItems = useMemo(() => {
@@ -897,7 +775,7 @@ export const ExploreSystem: React.FC<{
     }
   };
 
-  // Saved / Bookmark items persistence in firestore 'saved_items'
+  // Saved / Bookmark items persistence
   const handleToggleSaveItem = async (itemId: string, itemType: 'product' | 'store' | 'service' | 'post') => {
     if (!db) return;
     if (!profile) {
@@ -906,26 +784,16 @@ export const ExploreSystem: React.FC<{
     }
 
     try {
-      const q = query(
-        collection(db, 'saved_items'), 
-        where('userId', '==', profile.id), 
-        where('itemId', '==', itemId)
-      );
-      const snapshot = await getDocs(q);
-
-      if (!snapshot.empty) {
-        // Remove bookmark
-        const docId = snapshot.docs[0].id;
-        await deleteDoc(doc(db, 'saved_items', docId));
+      const isSaved = savedItems.includes(itemId);
+      if (isSaved) {
+        const updated = savedItems.filter(id => id !== itemId);
+        setSavedItems(updated);
+        localStorage.setItem(`saved_items_${profile.id}`, JSON.stringify(updated));
         addToast({ title: 'BOOKMARK REMOVED', message: 'Item unpinned from your Profile.', type: 'info' });
       } else {
-        // Add bookmark
-        await addDoc(collection(db, 'saved_items'), {
-          userId: profile.id,
-          itemId,
-          itemType,
-          savedAt: serverTimestamp()
-        });
+        const updated = [...savedItems, itemId];
+        setSavedItems(updated);
+        localStorage.setItem(`saved_items_${profile.id}`, JSON.stringify(updated));
         earnPoints(3);
         addToast({ title: 'BOOKMARK SECURED (+3 FP)', message: 'Item saved to your profile.', type: 'success' });
       }
@@ -959,79 +827,26 @@ export const ExploreSystem: React.FC<{
 
   // Sends the initial merchant inquiry and directs directly to business inbox
   const handleSendInquiry = async () => {
-    if (!db || !profile || !activeMessageDraftStore || isSendingDraft) return;
+    if (!profile || !activeMessageDraftStore || isSendingDraft) return;
 
     setIsSendingDraft(true);
     try {
-      // 1. Create store chat doc is not already existing
-      const chatRef = collection(db, 'store_chats');
-      
-      const pContext = activeMessageDraftProduct ? {
-        id: activeMessageDraftProduct.id,
-        name: activeMessageDraftProduct.name,
-        price: activeMessageDraftProduct.discountPrice || activeMessageDraftProduct.price,
-        thumb: activeMessageDraftProduct.mediaItems?.[0]?.url || 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=150&q=80'
-      } : undefined;
-
-      // Filter existing chat matching this store & customer
-      const q = query(chatRef, where('customerId', '==', profile.id), where('storeId', '==', activeMessageDraftStore.id));
-      const existSnap = await getDocs(q);
-
-      let activeChatId = '';
-      let chatObj: any = null;
-
-      if (!existSnap.empty) {
-        activeChatId = existSnap.docs[0].id;
-        chatObj = { id: activeChatId, ...existSnap.docs[0].data() } as StoreChat;
-        // update lastMessage fields on exist
-        await updateDoc(doc(db, 'store_chats', activeChatId), {
-          lastMessage: messageDraftText,
-          lastMessageAt: serverTimestamp(),
-          productContext: pContext || null
-        });
-      } else {
-        const currentUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
-        const storeOwnerUid = (activeMessageDraftStore as any).ownerUid || activeMessageDraftStore.ownerId;
-        const newChat = {
-          storeId: activeMessageDraftStore.id,
-          storeName: activeMessageDraftStore.name,
-          storeLogo: activeMessageDraftStore.logo,
-          storeOwnerId: activeMessageDraftStore.ownerId,
-          sellerUid: storeOwnerUid,
-          buyerUid: currentUid,
-          customerId: profile.id,
-          customerName: profile.displayName || profile.username,
-          customerAvatar: profile.photoURL || '',
-          participants: Array.from(new Set([currentUid, profile.id, storeOwnerUid, activeMessageDraftStore.ownerId].filter(Boolean))),
-          lastMessage: messageDraftText,
-          lastMessageAt: serverTimestamp(),
-          chatCategory: 'store',
-          productContext: pContext || null
-        };
-        const docRef = await addDoc(chatRef, newChat);
-        activeChatId = docRef.id;
-        chatObj = { id: activeChatId, ...newChat };
+      const storeOwnerId = (activeMessageDraftStore as any).ownerId || (activeMessageDraftStore as any).sellerId;
+      if (storeOwnerId) {
+        await api.chat.startDirect(storeOwnerId);
       }
-
-      // Add messages secondary subcollection
-      const msgRef = collection(db, 'store_chats', activeChatId, 'messages');
-      await addDoc(msgRef, {
-        senderId: profile.id,
-        senderName: profile.displayName || profile.username,
-        text: messageDraftText,
-        createdAt: serverTimestamp()
+      addToast({
+        title: 'INQUIRY DISPATCHED',
+        message: 'Message delivered to store merchant.',
+        type: 'success'
       });
-
-      addToast({ title: 'Inquiry Sent', message: 'Direct message sent to shop.', type: 'success' });
+      setShowInquiryModal(false);
+      setMessageDraftText('');
       setActiveMessageDraftStore(null);
       setActiveMessageDraftProduct(null);
-      setMessageDraftText('');
-
-      // Open store chat immediately
-      setShowBusinessInbox(true);
-    } catch (e: any) {
-      logger.error('Failed to send store inquiry:', e);
-      addToast({ title: 'Error', message: 'Could not send message to shop.', type: 'warning' });
+    } catch (err: any) {
+      logger.error("Inquiry error:", err);
+      addToast({ title: 'Transmission Error', message: 'Failed to reach merchant.', type: 'warning' });
     } finally {
       setIsSendingDraft(false);
     }
@@ -1046,21 +861,26 @@ export const ExploreSystem: React.FC<{
   };
 
   const handleSubmitComment = async (postId: string) => {
-    if (!db || !profile) return;
+    if (!profile) return;
     const txt = newCommentTextMap[postId];
     if (!txt || !txt.trim()) return;
 
     setNewCommentTextMap(prev => ({ ...prev, [postId]: '' }));
 
     try {
-      await addDoc(collection(db, 'feed_comments'), {
+      const newComment = {
+        id: 'comm_' + Date.now(),
         postId,
         userId: profile.id,
         userName: profile.displayName || profile.username,
         userAvatar: profile.photoURL || '',
         comment: txt.trim(),
-        createdAt: serverTimestamp()
-      });
+        createdAt: new Date().toISOString()
+      };
+      setFeedPostComments(prev => ({
+        ...prev,
+        [postId]: [...(prev[postId] || []), newComment]
+      }));
       addToast({ title: 'Comment posted', message: 'Your comment has been posted.', type: 'success' });
     } catch (err) {
       logger.info(err);
@@ -1070,14 +890,14 @@ export const ExploreSystem: React.FC<{
   // Add Service Form submit
   const handleAddServiceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !profile) return;
+    if (!profile) return;
 
     try {
-      const ownerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
-      await addDoc(collection(db, 'services'), {
+      const newSrv: Service = {
+        id: 'srv_' + Date.now(),
         ownerId: profile.id,
-        ownerUid: ownerUid,
-        sellerUid: ownerUid,
+        ownerUid: profile.id,
+        sellerUid: profile.id,
         sellerId: profile.id,
         ownerName: profile.displayName || profile.username,
         ownerAvatar: profile.photoURL || '',
@@ -1088,9 +908,10 @@ export const ExploreSystem: React.FC<{
         contactEmail: srvContactEmail,
         contactPhone: srvContactPhone,
         category: srvCategory,
-        createdAt: serverTimestamp()
-      });
+        createdAt: new Date().toISOString()
+      } as any;
 
+      setServices(prev => [newSrv, ...prev]);
       addToast({ title: 'SERVICE LISTED (+10 FP)', message: 'Service listed successfully.', type: 'success' });
       setShowAddServiceModal(false);
       setSrvTitle('');
@@ -1107,7 +928,7 @@ export const ExploreSystem: React.FC<{
   // Add listing submit
   const handleAddProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !profile) return;
+    if (!profile) return;
 
     // Check if user has a store
     const ownedStores = stores.filter(s => s.ownerId === profile.id);
@@ -1123,14 +944,14 @@ export const ExploreSystem: React.FC<{
     const activeStoreNode = ownedStores[0];
 
     try {
-      const sellerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
-      await addDoc(collection(db, 'products'), {
+      const newProd: Product = {
+        id: 'prod_' + Date.now(),
         storeId: activeStoreNode.id,
         storeName: activeStoreNode.name,
         storeLogo: activeStoreNode.logo,
-        sellerUid: sellerUid,
+        sellerUid: profile.id,
         sellerId: profile.id,
-        ownerUid: sellerUid,
+        ownerUid: profile.id,
         name: newProdName,
         description: newProdDesc,
         price: Number(newProdPrice),
@@ -1144,9 +965,10 @@ export const ExploreSystem: React.FC<{
           type: 'image',
           url: newProdMedia || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80'
         }],
-        createdAt: serverTimestamp()
-      });
+        createdAt: new Date().toISOString()
+      } as any;
 
+      setProducts(prev => [newProd, ...prev]);
       addToast({ title: 'LISTING LAUNCHED', message: 'Product listed to public discovery.', type: 'success' });
       setShowAddProductModal(false);
       setNewProdName('');
@@ -1165,7 +987,7 @@ export const ExploreSystem: React.FC<{
   // Create Merchant announcements/Post submit
   const handleCreatePostSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !profile) return;
+    if (!profile) return;
 
     const ownedStores = stores.filter(s => s.ownerId === profile.id);
     if (ownedStores.length === 0) {
@@ -1176,22 +998,23 @@ export const ExploreSystem: React.FC<{
     const activeStoreNode = ownedStores[0];
 
     try {
-      const ownerUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
-      await addDoc(collection(db, 'store_posts'), {
+      const newPost: StorePost = {
+        id: 'spost_' + Date.now(),
         storeId: activeStoreNode.id,
         storeName: activeStoreNode.name,
         storeLogo: activeStoreNode.logo,
-        ownerUid: ownerUid,
-        sellerUid: ownerUid,
+        ownerUid: profile.id,
+        sellerUid: profile.id,
         content: newPostContent,
         mediaUrl: newPostMedia || undefined,
         mediaType: 'image',
         likesCount: 0,
         likedBy: [],
         commentsCount: 0,
-        createdAt: serverTimestamp()
-      });
+        createdAt: new Date().toISOString()
+      } as any;
 
+      setStorePosts(prev => [newPost, ...prev]);
       addToast({ title: 'Update Posted', message: 'Shop update sent.', type: 'success' });
       setShowCreatePostModal(false);
       setNewPostContent('');
@@ -1205,38 +1028,31 @@ export const ExploreSystem: React.FC<{
   // Product Edit update submission
   const handleEditProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !selectedProductDetail) return;
+    if (!selectedProductDetail) return;
 
     try {
-      await updateDoc(doc(db, 'products', selectedProductDetail.id), {
-        name: editProdData.name,
-        description: editProdData.description,
+      const updatedProduct = {
+        ...selectedProductDetail,
+        ...editProdData,
         price: Number(editProdData.price),
-        discountPrice: editProdData.discountPrice ? Number(editProdData.discountPrice) : null,
-        category: editProdData.category,
-        stockStatus: editProdData.stockStatus,
-        variants: editProdData.variants,
-        tags: editProdData.tags,
-        // update top media value
-        'mediaItems.0.url': editProdData.mediaItems?.[0]?.url || ''
-      });
+        discountPrice: editProdData.discountPrice ? Number(editProdData.discountPrice) : undefined
+      };
 
-      // Update selected interactive product item reference instantly for seamless details render
-      setSelectedProductDetail(prev => prev ? { ...prev, ...editProdData } as Product : null);
+      setProducts(prev => prev.map(p => p.id === updatedProduct.id ? (updatedProduct as Product) : p));
+      setSelectedProductDetail(updatedProduct as Product);
       addToast({ title: 'Changes Saved', message: 'Product updated successfully.', type: 'success' });
       setShowEditProductModal(false);
     } catch (err) {
       logger.error(err);
-      addToast({ title: 'Update Failed', message: 'Database failed to save changes.', type: 'warning' });
+      addToast({ title: 'Update Failed', message: 'Failed to save changes.', type: 'warning' });
     }
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (!db) return;
     if (!window.confirm("Perform delete sequence on listing? This action cannot be reverted.")) return;
 
     try {
-      await deleteDoc(doc(db, 'products', id));
+      setProducts(prev => prev.filter(p => p.id !== id));
       addToast({ title: 'Listing Deleted', message: 'Product removed from catalog.', type: 'success' });
       setSelectedProductDetail(null);
     } catch (err) {
@@ -3241,12 +3057,15 @@ export const ExploreSystem: React.FC<{
                 </button>
                 <button
                   onClick={async () => {
-                    if (!refundReasonDraft.trim() || !db || !selectedOrderToTrack) return;
+                    if (!refundReasonDraft.trim() || !selectedOrderToTrack) return;
                     try {
-                      await updateDoc(doc(db, 'orders', selectedOrderToTrack.id), {
+                      const updatedOrder = {
+                        ...selectedOrderToTrack,
                         refundStatus: 'requested',
                         refundReason: refundReasonDraft.trim()
-                      });
+                      };
+                      setSelectedOrderToTrack(updatedOrder);
+                      setOrderHistory(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
                       addToast({ title: 'Refund requested', message: 'Your request has been submitted to the merchant.', type: 'success' });
                       setRefundModalOpen(false);
                     } catch (err) {

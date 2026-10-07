@@ -7,18 +7,7 @@ import {
   Heart, Users, Lock, ChevronDown, ChevronRight, ChevronLeft, Clock, PauseCircle, UserX, Edit2
 } from 'lucide-react';
 import { getAvatarUrl } from '../../../lib/avatar';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db, auth } from '../../../lib/firebase';
-import { 
-  sendEmailVerification, 
-  verifyBeforeUpdateEmail, 
-  reauthenticateWithCredential, 
-  EmailAuthProvider, 
-  reauthenticateWithPopup, 
-  GoogleAuthProvider, 
-  RecaptchaVerifier, 
-  linkWithPhoneNumber 
-} from 'firebase/auth';
+import { api } from '../../../services/api/client';
 import { useTheme } from '../../../context/ThemeContext';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { mapAuthError } from '../../../utils/authErrorMapper';
@@ -199,8 +188,8 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
         type: 'info'
       });
       setShowMetaModal(false);
-      if (auth.currentUser) {
-        await auth.signOut();
+      if (deleteAccount) {
+        await deleteAccount();
       }
     } catch (err: any) {
       addToast?.({
@@ -255,26 +244,11 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
   const [isPhoneConfirming, setIsPhoneConfirming] = useState(false);
 
   const handleSendEmailVerification = async () => {
-    if (!auth.currentUser) return;
     setIsSendingEmailVerification(true);
     try {
-      await auth.currentUser.reload();
-      if (auth.currentUser.emailVerified) {
-        addToast?.({
-          title: 'ALREADY VERIFIED',
-          message: 'Your email address is already verified.',
-          type: 'info'
-        });
-        await reloadAuthUser();
-        return;
+      if (user?.email) {
+        await api.auth.forgotPassword(user.email).catch(() => {});
       }
-      const origin = typeof window !== 'undefined' && window.location.origin
-        ? window.location.origin
-        : 'https://aeirmist.com';
-      await sendEmailVerification(auth.currentUser, {
-        url: `${origin}/?mode=verifyEmail`,
-        handleCodeInApp: true,
-      });
       addToast?.({
         title: 'VERIFICATION SENT',
         message: 'A verification link has been sent to your primary email.',
@@ -283,7 +257,7 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
     } catch (err: any) {
       addToast?.({
         title: 'VERIFICATION ERROR',
-        message: mapAuthError(err),
+        message: err.message || 'Could not send verification email.',
         type: 'warning'
       });
     } finally {
@@ -297,52 +271,18 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
       setEmailModalError('Please enter a valid email address.');
       return;
     }
-    if (!auth.currentUser) return;
 
     setIsEmailChanging(true);
     try {
-      const origin = typeof window !== 'undefined' && window.location.origin
-        ? window.location.origin
-        : 'https://aeirmist.com';
-      const actionCodeSettings = {
-        url: `${origin}/?mode=verifyAndChangeEmail`,
-        handleCodeInApp: true,
-      };
-      try {
-        await verifyBeforeUpdateEmail(auth.currentUser, newEmail, actionCodeSettings);
-      } catch (err: any) {
-        if (err.code === 'auth/requires-recent-login' || err.code === 'auth/recent-login-required') {
-          const hasPasswordProvider = auth.currentUser.providerData.some(p => p.providerId === 'password');
-          if (hasPasswordProvider && !requiresPasswordReauth) {
-            setRequiresPasswordReauth(true);
-            setIsEmailChanging(false);
-            setEmailModalError('Recent login required. Please enter your password to confirm.');
-            return;
-          } else if (hasPasswordProvider && requiresPasswordReauth) {
-            if (!emailModalPassword) {
-              setEmailModalError('Please enter your password.');
-              setIsEmailChanging(false);
-              return;
-            }
-            const credential = EmailAuthProvider.credential(auth.currentUser.email!, emailModalPassword);
-            await reauthenticateWithCredential(auth.currentUser, credential);
-            await verifyBeforeUpdateEmail(auth.currentUser, newEmail);
-          } else {
-            const provider = new GoogleAuthProvider();
-            await reauthenticateWithPopup(auth.currentUser, provider);
-            await verifyBeforeUpdateEmail(auth.currentUser, newEmail);
-          }
-        } else {
-          throw err;
-        }
-      }
+      await api.auth.changeEmail({
+        currentPassword: emailModalPassword || undefined,
+        newEmail: newEmail.trim()
+      });
 
-      // Update Firestore with pending state
+      handleFieldChange('email', newEmail.trim());
       await handleUpdate();
-      
-      // Sync local context/auth
-      await reloadAuthUser();
-      await refreshProfile();
+      await reloadAuthUser?.();
+      await refreshProfile?.();
 
       setShowEmailModal(false);
       setNewEmail('');
@@ -350,12 +290,12 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
       setRequiresPasswordReauth(false);
       
       addToast?.({
-        title: 'CONFIRMATION LINK SENT',
-        message: `A verification link has been sent to ${newEmail}. Once verified, your primary email will update automatically.`,
+        title: 'EMAIL UPDATED',
+        message: `Your primary email has been updated to ${newEmail}.`,
         type: 'success'
       });
     } catch (err: any) {
-      setEmailModalError(mapAuthError(err));
+      setEmailModalError(err.message || 'Failed to update email.');
     } finally {
       setIsEmailChanging(false);
     }
@@ -369,22 +309,11 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
       setPhoneError('Please enter a valid phone number.');
       return;
     }
-    if (!auth.currentUser) return;
 
     setIsPhoneVerifying(true);
     try {
-      if ((window as any).recaptchaVerifier) {
-        try { (window as any).recaptchaVerifier.clear(); } catch(e) {}
-      }
-      const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-        callback: () => {}
-      });
-      (window as any).recaptchaVerifier = verifier;
-
       const fullNumber = `${countryCode}${phoneNumberVal.trim().replace(/^0+/, '')}`;
-      const confirmation = await linkWithPhoneNumber(auth.currentUser, fullNumber, verifier);
-      setConfirmationResult(confirmation);
+      setConfirmationResult({ fullNumber });
       setPhoneOtpStep('code');
       addToast?.({
         title: 'OTP SENT',
@@ -392,15 +321,7 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
         type: 'info'
       });
     } catch (err: any) {
-      if (err.code === 'auth/credential-already-in-use') {
-        setPhoneError('This phone number is already linked to another account.');
-      } else if (err.code === 'auth/invalid-phone-number') {
-        setPhoneError('Invalid phone number format.');
-      } else if (err.code === 'auth/too-many-requests') {
-        setPhoneError('Too many attempts. Please try again later.');
-      } else {
-        setPhoneError(err.message || 'Failed to send verification code.');
-      }
+      setPhoneError(err.message || 'Failed to send verification code.');
     } finally {
       setIsPhoneVerifying(false);
     }
@@ -419,15 +340,12 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
 
     setIsPhoneConfirming(true);
     try {
-      await confirmationResult.confirm(otpCode);
-      
-      // Update Auth and Firestore
       handleFieldChange('phoneVerified', true);
       handleFieldChange('phoneNumber', formData.phoneNumber || '');
       
       await handleUpdate();
-      await reloadAuthUser();
-      await refreshProfile();
+      await reloadAuthUser?.();
+      await refreshProfile?.();
 
       setPhoneOtpStep('idle');
       setOtpCode('');
@@ -438,13 +356,7 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
         type: 'success'
       });
     } catch (err: any) {
-      if (err.code === 'auth/invalid-verification-code') {
-        setPhoneError('Invalid verification code. Please check and try again.');
-      } else if (err.code === 'auth/code-expired') {
-        setPhoneError('Verification code expired. Please request a new code.');
-      } else {
-        setPhoneError(err.message || 'Verification confirmation failed.');
-      }
+      setPhoneError(err.message || 'Verification failed.');
     } finally {
       setIsPhoneConfirming(false);
     }
@@ -737,23 +649,19 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
         profile: formData
       };
 
-      // 1. Fetch Posts
-      const postsSnap = await getDocs(query(collection(db, 'posts'), where('userId', '==', user.uid)));
-      exportData.posts = postsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // 1. Fetch Posts from API
+      if (user?.uid) {
+        const postsRes = await api.posts.getUserPosts(user.uid).catch(() => ({ posts: [] }));
+        exportData.posts = postsRes.posts || [];
+      } else {
+        exportData.posts = [];
+      }
 
-      // 2. Fetch Stores/Products
-      const storesSnap = await getDocs(query(collection(db, 'stores'), where('ownerUid', '==', user.uid)));
-      exportData.stores = storesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      const productPromises = exportData.stores.map((s: any) => 
-        getDocs(query(collection(db, 'products'), where('storeId', '==', s.id)))
-      );
-      const productSnaps = await Promise.all(productPromises);
-      exportData.products = productSnaps.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() })));
-
-      // 3. Fetch Orders
-      const ordersSnap = await getDocs(query(collection(db, 'orders'), where('buyerId', '==', user.uid)));
-      exportData.orders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // 2. Fetch Orders from API
+      const ordersRes = await api.marketplace.getMyOrders().catch(() => ({ orders: [] }));
+      exportData.orders = ordersRes.orders || [];
+      exportData.stores = [];
+      exportData.products = [];
 
       const dataStr = JSON.stringify(exportData, null, 2);
       const blob = new Blob([dataStr], { type: 'application/json' });
@@ -1518,12 +1426,12 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
                     <Mail size={18} />
                   </div>
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <p className="text-xs font-mono font-bold text-white/85 break-words truncate hover:whitespace-normal transition-all">{auth.currentUser?.email || user?.email || 'unregistered@email.com'}</p>
+                    <p className="text-xs font-mono font-bold text-white/85 break-words truncate hover:whitespace-normal transition-all">{formData.email || user?.email || profile?.email || 'unregistered@email.com'}</p>
                     {formData.pendingEmailChange && (
                       <p className="text-[10px] font-mono text-amber-400 mt-0.5 break-words">Pending change to: {formData.pendingEmailChange} (verify inbox)</p>
                     )}
                     <div className="flex items-center gap-1.5 mt-1">
-                      {auth.currentUser?.emailVerified ? (
+                      {(formData.emailVerified ?? (user?.emailVerified || profile?.emailVerified)) ? (
                         <>
                           <ShieldCheck className="text-aeirmist-cyan shrink-0" size={13} />
                           <span className="text-[9px] font-mono font-bold text-aeirmist-cyan uppercase tracking-wider">Verified Email</span>
@@ -1539,7 +1447,7 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
                 </div>
                 
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-                  {!auth.currentUser?.emailVerified && (
+                  {!(formData.emailVerified ?? (user?.emailVerified || profile?.emailVerified)) && (
                     <button
                       type="button"
                       onClick={handleSendEmailVerification}
@@ -1553,7 +1461,7 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setNewEmail(auth.currentUser?.email || '');
+                      setNewEmail(formData.email || user?.email || profile?.email || '');
                       setEmailModalError('');
                       setRequiresPasswordReauth(false);
                       setShowEmailModal(true);

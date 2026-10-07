@@ -4,7 +4,7 @@ import { X, Camera, Search, Check, Loader2, Image as ImageIcon } from 'lucide-re
 import { useAeirmist } from '../../context/AeirmistContext';
 import { messagingService } from '../../modules/messaging/MessagingService';
 import { getAvatarUrl } from '../../lib/avatar';
-import { collection, query, getDocs, limit } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 
@@ -24,7 +24,7 @@ const FALLBACK_CONTACTS = [
 ];
 
 export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose, onGroupCreated, chats = [] }) => {
-    const { allProfiles, suggestedUsers, profile, user, db, addToast } = useAeirmist();
+    const { allProfiles, suggestedUsers, profile, user, addToast } = useAeirmist();
     const [step, setStep] = useState(1);
     const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
     const [groupName, setGroupName] = useState('');
@@ -49,29 +49,25 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
         reader.readAsDataURL(file);
     };
 
-    // Fetch users from Firestore on mount
+    // Fetch users via backend API on mount
     useEffect(() => {
         let isMounted = true;
         const fetchRemoteUsers = async () => {
-            if (!db) return;
             setIsFetchingUsers(true);
             try {
-                const profilesRef = collection(db, 'profiles');
-                const q = query(profilesRef, limit(40));
-                const snap = await getDocs(q);
-                if (isMounted) {
-                    const fetched = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setFirestoreProfiles(fetched);
+                const res = await api.users.searchUsers('');
+                if (isMounted && res?.users) {
+                    setFirestoreProfiles(res.users);
                 }
             } catch (e) {
-                logger.warn('Failed to fetch Firestore profiles for group modal:', e);
+                logger.warn('Failed to fetch backend profiles for group modal:', e);
             } finally {
                 if (isMounted) setIsFetchingUsers(false);
             }
         };
         fetchRemoteUsers();
         return () => { isMounted = false; };
-    }, [db]);
+    }, []);
 
     // Extract users from chats
     const chatUsers = useMemo(() => {
@@ -148,15 +144,24 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
                 return found?.uid || found?.ownerUid || id;
             });
 
-            const newGroupId = await messagingService.createGroupConversation(
-                db, 
-                profile.id, 
-                selectedMembers, 
-                groupName.trim(), 
-                groupPhoto || undefined,
-                user?.uid || profile.id,
-                selectedMemberUids
-            );
+            let newGroupId = '';
+            try {
+                const res = await api.chat.createGroup(groupName.trim(), selectedMembers, groupPhoto || undefined);
+                if (res?.conversation?.id) {
+                    newGroupId = res.conversation.id;
+                }
+            } catch (err) {
+                logger.warn('Backend API createGroup fallback:', err);
+                newGroupId = await messagingService.createGroupConversation(
+                    null as any, 
+                    profile.id, 
+                    selectedMembers, 
+                    groupName.trim(), 
+                    groupPhoto || undefined,
+                    user?.uid || profile.id,
+                    selectedMemberUids
+                );
+            }
 
             addToast({ title: 'Group Created', message: 'Your group is ready.', type: 'success' });
             

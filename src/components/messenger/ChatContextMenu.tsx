@@ -3,7 +3,6 @@ import { motion } from 'motion/react';
 import { Pin, BellOff, Trash2, Archive, CheckCircle, UserMinus, ShieldAlert, Edit2, Heart, UserPlus, UserCircle, Share2, Ban, Eraser, Flag, Lock } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useReport } from '../reporting/ReportContext';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
 
@@ -24,7 +23,7 @@ interface ChatContextMenuProps {
 
 export const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ x, y, onClose, isPinned, isMuted, isArchived, isUnread, isCloseFriend, chatId, otherParticipantId, onViewProfile }) => {
   const { openReportModal } = useReport();
-  const { toggleCloseFriend, user, profile, db, toggleNotification, deleteConversation, markAsRead, markAsUnread, toggleBlockUser, toggleRestrictUser, clearChat, submitReport, addToast } = useAeirmist();
+  const { toggleCloseFriend, user, profile, toggleNotification, deleteConversation, markAsRead, markAsUnread, toggleBlockUser, toggleRestrictUser, clearChat, submitReport, addToast } = useAeirmist();
   const [reportModalOpen, setReportModalOpen] = React.useState(false);
   const [reportReason, setReportReason] = React.useState('');
   const [confirmAction, setConfirmAction] = React.useState<null | {
@@ -40,7 +39,7 @@ export const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ x, y, onClose,
   const [adjustedPos, setAdjustedPos] = React.useState({ left: x, top: y });
 
   const handleAction = async (type: 'mute' | 'pin' | 'delete' | 'read' | 'unread' | 'archive' | 'block' | 'restrict' | 'clear' | 'report') => {
-    if (!db || !chatId) return;
+    if (!chatId) return;
     try {
       if (type === 'mute' || type === 'pin' || type === 'archive') {
         await toggleNotification(type, chatId);
@@ -114,14 +113,11 @@ export const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ x, y, onClose,
 
   const handleToggleCloseFriend = async () => {
     // We need the other user's ID
-    if (!db || !chatId) return;
+    if (!chatId) return;
     try {
-      const chatDoc = await getDoc(doc(db, 'conversations', chatId));
-      if (chatDoc.exists()) {
-        const otherId = chatDoc.data().participants?.find((id: string) => id !== profile?.id);
-        if (otherId) {
-          await toggleCloseFriend(otherId);
-        }
+      const otherId = otherParticipantId || chatId.split('_').find(id => id !== profile?.id);
+      if (otherId) {
+        await toggleCloseFriend(otherId);
       }
     } catch (e) {
       logger.error("Context menu close friend error", e);

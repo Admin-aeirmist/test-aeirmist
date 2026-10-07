@@ -18,18 +18,7 @@ import {
   ShieldCheck,
   Eye
 } from 'lucide-react';
-import { 
-  doc, 
-  updateDoc, 
-  increment, 
-  collection, 
-  query, 
-  orderBy, 
-  onSnapshot, 
-  addDoc, 
-  serverTimestamp, 
-  deleteDoc 
-} from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useBackHandler } from '../../utils/backNavigation';
 import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
@@ -65,7 +54,6 @@ const renderAeirmistVerifiedBadge = (isVerified?: boolean, plan?: string, size =
 
 export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose, onNavigate }) => {
   const { 
-    db, 
     user, 
     profile, 
     toggleLike, 
@@ -123,23 +111,33 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
   // Fetch Post Document
   useEffect(() => {
-    if (!db || !postId) return;
+    if (!postId) return;
 
     setLoading(true);
     setError(null);
+    let isCancelled = false;
 
-    const unsubPost = onSnapshot(doc(db, 'posts', postId), (postDoc) => {
-      if (postDoc.exists()) {
-        const data = postDoc.data();
+    const fetchPost = async () => {
+      try {
+        const res = await api.posts.getById(postId);
+        if (isCancelled) return;
+        const data = res.post;
+        if (!data) {
+          setError('Post not found');
+          setLoading(false);
+          return;
+        }
+
+        const mediaBase = (import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media').replace(/\/+$/, '');
         const authorId = data.userId || data.authorId || data.author?.id || data.author?.uid || data.ownerUid;
         const postData = {
-          id: postDoc.id,
+          id: data.id,
           ...data,
           authorId,
           author: {
             id: authorId,
             name: data.userName || data.authorName || data.author?.displayName || data.author?.username || 'Aeirmist User',
-            avatar: getAvatarUrl(data.author?.photoURL || data.userAvatar || data.authorAvatar),
+            avatar: getAvatarUrl(data.author?.avatarKey ? `${mediaBase}/${data.author.avatarKey}` : (data.author?.photoURL || data.userAvatar || data.authorAvatar)),
             isVerified: Boolean(data.author?.isVerified || data.isVerified || data.verified),
             verificationPlan: data.author?.verificationPlan || data.verificationPlan
           },
@@ -164,41 +162,56 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
         }
 
         if (profile?.id) {
-          setIsLiked(Boolean(postData.likedBy?.includes(profile.id)));
-          setIsBookmarked(Boolean(postData.savedBy?.includes(profile.id)));
+          setIsLiked(Boolean(postData.isLiked || postData.likedBy?.includes(profile.id)));
+          setIsBookmarked(Boolean(postData.isSaved || postData.savedBy?.includes(profile.id)));
         }
-      } else {
-        setError('Post not found');
+        setLoading(false);
+      } catch (err: any) {
+        if (isCancelled) return;
+        logger.error('Error fetching post:', err);
+        setError('Failed to load post');
+        setLoading(false);
       }
-      setLoading(false);
-    }, (err) => {
-      logger.error('Error fetching post:', err);
-      setError('Failed to load post');
-      setLoading(false);
-    });
+    };
 
-    return () => unsubPost();
-  }, [db, postId, profile?.id]);
+    fetchPost();
 
-  // Subscribe to live comments
-  useEffect(() => {
-    if (!db || !postId) return;
+    return () => {
+      isCancelled = true;
+    };
+  }, [postId, profile?.id]);
 
-    const commentsRef = collection(db, 'posts', postId, 'comments');
-    const q = query(commentsRef, orderBy('createdAt', 'asc'));
-
-    const unsubComments = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data()
+  // Fetch comments
+  const loadComments = React.useCallback(async () => {
+    if (!postId) return;
+    try {
+      const res = await api.posts.getComments(postId);
+      const rawComments = res?.comments || [];
+      const mapped = rawComments.map((c: any) => ({
+        id: c.id,
+        authorId: c.authorId || c.userId,
+        authorUid: c.authorId || c.userId,
+        userId: c.userId || c.authorId,
+        authorName: c.author?.displayName || c.author?.username || c.authorName || 'User',
+        authorPhoto: c.author?.avatarKey || c.authorPhoto || '',
+        isVerified: c.author?.isVerified || c.isVerified || false,
+        content: c.content,
+        likedBy: c.likedBy || [],
+        parentId: c.parentId || null,
+        replyToId: c.replyToId || null,
+        replyToUsername: c.replyToUsername || null,
+        createdAt: c.createdAt,
+        ...c
       }));
-      setComments(docs);
-    }, (err) => {
-      logger.error('Comments listener error:', err);
-    });
+      setComments(mapped);
+    } catch (err) {
+      logger.error('Comments load error:', err);
+    }
+  }, [postId]);
 
-    return () => unsubComments();
-  }, [db, postId]);
+  useEffect(() => {
+    loadComments();
+  }, [loadComments]);
 
   // Parse media items
   const mediaList: MediaItem[] = useMemo(() => {
@@ -262,7 +275,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
       }
       return;
     }
-    if (!db || !post) return;
+    if (!post) return;
     const newLiked = !isLiked;
     setIsLiked(newLiked);
     setLikesCount(prev => newLiked ? prev + 1 : Math.max(0, prev - 1));
@@ -273,7 +286,13 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
     }
 
     try {
-      await toggleLike(post.id, isLiked, postAuthorId);
+      const res = await api.posts.toggleLike(post.id);
+      if (res && typeof res.liked === 'boolean') {
+        setIsLiked(res.liked);
+        setLikesCount(res.likesCount);
+      } else if (toggleLike) {
+        await toggleLike(post.id, isLiked, postAuthorId);
+      }
     } catch (err) {
       setIsLiked(!newLiked);
       setLikesCount(prev => !newLiked ? prev + 1 : Math.max(0, prev - 1));
@@ -298,11 +317,16 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
       }
       return;
     }
-    if (!db || !post) return;
+    if (!post) return;
     const newBookmarked = !isBookmarked;
     setIsBookmarked(newBookmarked);
     try {
-      await toggleBookmark(post.id, isBookmarked);
+      const res = await api.posts.toggleBookmark(post.id);
+      if (res && typeof res.bookmarked === 'boolean') {
+        setIsBookmarked(res.bookmarked);
+      } else if (toggleBookmark) {
+        await toggleBookmark(post.id, isBookmarked);
+      }
       if (newBookmarked && addToast) {
         addToast({
           title: 'SAVED',
@@ -350,7 +374,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
       }
       return;
     }
-    if (!db || !commentText.trim() || submittingComment) return;
+    if (!commentText.trim() || submittingComment || !post) return;
 
     const txt = commentText.trim();
     const replyTarget = replyingTo;
@@ -359,30 +383,10 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
     setSubmittingComment(true);
 
     try {
-      const commentsRef = collection(db, 'posts', post.id, 'comments');
-      const activeParentId = replyTarget ? (replyTarget.parentId || replyTarget.id) : null;
-
-      const newComment = {
-        authorId: profile.id,
-        authorUid: user?.uid || profile.id,
-        userId: user?.uid || profile.id,
-        authorName: profile.displayName || profile.username || 'User',
-        authorPhoto: profile.photoURL || '',
-        isVerified: profile.isVerified || false,
-        content: txt,
-        likedBy: [],
-        parentId: activeParentId,
-        replyToId: replyTarget?.id || null,
-        replyToUsername: replyTarget?.authorName || null,
-        createdAt: serverTimestamp()
-      };
-
-      await addDoc(commentsRef, newComment);
-
-      const postRef = doc(db, 'posts', post.id);
-      await updateDoc(postRef, {
-        commentsCount: increment(1)
-      });
+      const activeParentId = replyTarget ? (replyTarget.parentId || replyTarget.id) : undefined;
+      await api.posts.addComment(post.id, txt, activeParentId);
+      await loadComments();
+      setPost((prev: any) => prev ? { ...prev, commentsCount: (prev.commentsCount || 0) + 1 } : prev);
 
       if (replyTarget && activeParentId) {
         setExpandedReplies(prev => ({ ...prev, [activeParentId]: true }));
@@ -417,19 +421,14 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
   // Like comment
   const handleLikeComment = async (commentId: string, currentLikedBy: string[] = []) => {
-    if (!profile || !db) return;
+    if (!profile) return;
     try {
-      const commentDocRef = doc(db, 'posts', post.id, 'comments', commentId);
       const isAlreadyLiked = currentLikedBy.includes(profile.id);
-      let newLikedBy = [...currentLikedBy];
+      const newLikedBy = isAlreadyLiked
+        ? currentLikedBy.filter(id => id !== profile.id)
+        : [...currentLikedBy, profile.id];
 
-      if (isAlreadyLiked) {
-        newLikedBy = newLikedBy.filter(id => id !== profile.id);
-      } else {
-        newLikedBy.push(profile.id);
-      }
-
-      await updateDoc(commentDocRef, { likedBy: newLikedBy });
+      setComments(prev => prev.map(c => c.id === commentId ? { ...c, likedBy: newLikedBy } : c));
     } catch (err) {
       logger.error('Like comment error:', err);
     }
@@ -437,12 +436,10 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
   // Delete comment
   const handleDeleteComment = async (commentId: string) => {
-    if (!db || !post) return;
+    if (!post) return;
     try {
-      await deleteDoc(doc(db, 'posts', post.id, 'comments', commentId));
-      await updateDoc(doc(db, 'posts', post.id), {
-        commentsCount: increment(-1)
-      });
+      setComments(prev => prev.filter(c => c.id !== commentId && c.parentId !== commentId));
+      setPost((prev: any) => prev ? { ...prev, commentsCount: Math.max(0, (prev.commentsCount || 1) - 1) } : prev);
       if (addToast) {
         addToast({
           title: 'DELETED',
@@ -482,10 +479,13 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
   // Delete own post
   const handleDeletePost = async () => {
-    if (!isOwnPost || !deletePost || !post) return;
+    if (!isOwnPost || !post) return;
     if (window.confirm('Are you sure you want to delete this post?')) {
       try {
-        await deletePost(post.id);
+        await api.posts.delete(post.id);
+        if (deletePost) {
+          await deletePost(post.id);
+        }
         onClose();
         if (addToast) {
           addToast({

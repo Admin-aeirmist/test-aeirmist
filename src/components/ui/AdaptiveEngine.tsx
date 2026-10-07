@@ -13,7 +13,7 @@ export const AdaptiveEngine: React.FC = () => {
 
   useEffect(() => {
     // Adaptive device/network performance profile. This is intentionally lightweight:
-    // it changes rendering policy, not application behavior or Firebase data flow.
+    // it changes rendering policy, not application behavior or backend data flow.
     const stopPerformanceObserver = observePerformanceProfile((_profile: PerformanceProfile) => {
       // Dynamic rendering profile classes (device-lite, adaptive-reduced-motion, etc.)
       // are applied non-destructively to document.documentElement without overwriting user preferences.

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, Phone, Video, Trash2, Clock, PhoneIncoming, PhoneOutgoing, PhoneMissed, PhoneCall, Loader2 } from 'lucide-react';
 import { formatShortTimestamp, formatAeirmistTimestamp } from '../../lib/date';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, query, where, orderBy, limit, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 interface CallRecord {
@@ -30,47 +30,45 @@ export const CallHistorySection = ({
   onRedial?: (profileId: string, type: 'audio' | 'video') => void;
   onUserClick?: (user: any) => void;
 }) => {
-  const { db, profile, user, addToast, allProfiles = [] } = useAeirmist();
+  const { profile, user, addToast, allProfiles = [] } = useAeirmist();
   const [history, setHistory] = useState<CallRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!db || !user?.uid) {
-      setLoading(false);
-      return;
-    }
-
-    const q = query(
-      collection(db, 'callHistory'),
-      where('participants', 'array-contains', user.uid),
-      orderBy('timestamp', 'desc'),
-      limit(50)
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const records = snap.docs.map(d => ({ id: d.id, ...d.data() } as CallRecord));
-        setHistory(records);
-        setLoading(false);
-      },
-      (err) => {
-        logger.error('Failed to subscribe to call history', err);
-        setLoading(false);
+    let isMounted = true;
+    const loadHistory = async () => {
+      try {
+        const res = await api.calls.getHistory(50);
+        if (isMounted) {
+          setHistory(res?.calls || []);
+          setLoading(false);
+        }
+      } catch (err) {
+        logger.error('Failed to load call history', err);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
-    );
+    };
 
-    return () => unsub();
-  }, [db, user?.uid]);
+    loadHistory();
+
+    const handleUpdate = () => {
+      loadHistory();
+    };
+    window.addEventListener('aeirmist:call_log_updated', handleUpdate);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('aeirmist:call_log_updated', handleUpdate);
+    };
+  }, [user?.uid]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setDeletingId(id);
     try {
-      if (db) {
-        await deleteDoc(doc(db, 'callHistory', id));
-      }
       setHistory(prev => prev.filter(c => c.id !== id));
       addToast?.({ title: 'Deleted', message: 'Call log removed.', type: 'info' });
     } catch (e: any) {

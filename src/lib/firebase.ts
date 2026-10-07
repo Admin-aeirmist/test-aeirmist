@@ -1,117 +1,75 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
-import {
-  getAuth,
-  setPersistence,
-  browserLocalPersistence,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-  sendPasswordResetEmail
-} from 'firebase/auth';
+// Self-hosted Compatibility Layer (Firebase SDK dependencies retired)
+import { api } from '../services/api/client';
+import { logger } from '../utils/logger';
 
-import {
-  initializeFirestore,
-  memoryLocalCache,
-  getFirestore,
-  clearIndexedDbPersistence
-} from 'firebase/firestore';
+// Safe Mock Auth
+class MockAuth {
+  private listeners: Set<(user: any) => void> = new Set();
+  public currentUser: any = null;
 
-import { getStorage } from 'firebase/storage';
-
-import config from '../../firebase-applet-config.json';
-import { logger } from '@/src/utils/logger';
-
-
-if (!config || !config.projectId) {
-  logger.error('❌ Firebase config invalid or missing:', config);
-  throw new Error(
-    'Invalid Firebase configuration. Ensure firebase-applet-config.json exists and contains valid projectId.'
-  );
-}
-
-logger.info('✅ [Firebase] Initializing with project:', config.projectId);
-const activeConfig = config;
-
-const app =
-  getApps().length > 0
-    ? getApp()
-    : initializeApp(activeConfig);
-
-
-
-// Initialize Firebase App Check safely
-let appCheck;
-if (typeof window !== 'undefined') {
-  const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LcIm9EtAAAAADzAlaECvnGsifEw38S9OOs0Tbe6';
-  
-  // Enable debug mode automatically on localhost
-  if (window.location.hostname === 'localhost' || import.meta.env.DEV) {
-    (window as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
-    console.log('[AppCheck] Running in debug mode for localhost');
+  constructor() {
+    this.hydrateUser();
   }
 
-  // TEMPORARILY DISABLED: While waiting for Google reCAPTCHA domain propagation,
-  // sending an invalid token causes Firebase Auth to reject the request even in Unenforced mode.
-  // Uncomment this once the reCAPTCHA domain is fully propagated.
-  /*
-  try {
-    appCheck = initializeAppCheck(app, {
-      provider: new ReCaptchaV3Provider(recaptchaSiteKey),
-      isTokenAutoRefreshEnabled: true
-    });
-    console.log('[AppCheck] Initialized successfully');
-  } catch (error) {
-    console.error('[AppCheck] Failed to initialize:', error);
-  }
-  */
-}
-
-export const auth = getAuth(app);
-
-setPersistence(auth, browserLocalPersistence)
-  .catch(console.error);
-
-const dbId = (!activeConfig.firestoreDatabaseId || activeConfig.firestoreDatabaseId === '(default)') ? undefined : activeConfig.firestoreDatabaseId;
-
-let firestoreInstance;
-try {
-  firestoreInstance = getFirestore(app, dbId);
-} catch (e) {
-  firestoreInstance = initializeFirestore(app, {}, dbId);
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('unhandledrejection', (event) => {
-    const msg = event?.reason?.message || String(event?.reason || '');
-    if (
-      msg.includes('IndexedDbTransactionError') ||
-      msg.includes('prefixPath') ||
-      msg.includes('Failed to fetch dynamically imported module') ||
-      msg.includes('AbortError')
-    ) {
-      logger.warn('Background promise notice:', msg);
-    }
-  });
-}
-
-export const db = firestoreInstance;
-
-async function testConnection() {
-  if (typeof window === 'undefined') return;
-  try {
-    const { doc, getDocFromServer } = await import('firebase/firestore');
-    await getDocFromServer(doc(db, '_connection_test_', 'status'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      logger.error("Please check your Firebase configuration.");
+  private hydrateUser() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const cached = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_session');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        this.currentUser = {
+          uid: parsed.id || parsed.uid || 'usr_self',
+          id: parsed.id || parsed.uid || 'usr_self',
+          email: parsed.email || 'user@aeirmist.local',
+          displayName: parsed.displayName || parsed.username || 'User',
+          photoURL: parsed.avatarUrl || parsed.photoURL || null,
+        };
+      }
+    } catch (e) {
+      // silent
     }
   }
-}
-testConnection();
 
-export const storage = getStorage(app);
+  public onAuthStateChanged(callback: (user: any) => void) {
+    this.listeners.add(callback);
+    callback(this.currentUser);
+    return () => {
+      this.listeners.delete(callback);
+    };
+  }
+
+  public async signOut() {
+    this.currentUser = null;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('aeirmist_session');
+      localStorage.removeItem('aeirmist_user_profile');
+    }
+    this.listeners.forEach((cb) => cb(null));
+  }
+}
+
+export const auth: any = new MockAuth();
+
+// Safe Mock Database
+export const db: any = {
+  collection: (_col: string) => ({
+    doc: (_id: string) => ({
+      get: async () => ({ exists: () => false, data: () => ({}) }),
+      set: async () => {},
+      update: async () => {},
+      delete: async () => {},
+    }),
+    add: async () => ({ id: `doc_${Date.now()}` }),
+  }),
+};
+
+// Safe Mock Storage
+export const storage: any = {
+  ref: (_path: string) => ({
+    fullPath: _path,
+  }),
+};
 
 export const isConfigValid = true;
 
@@ -124,107 +82,58 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
-}
-
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
+  logger.warn('Database note:', error, operationType, path);
+  return error;
+}
+
+export async function registerUser(email: string, password: string) {
+  try {
+    const res = await api.auth.register({ email, password });
+    if (res?.token && typeof localStorage !== 'undefined') {
+      localStorage.setItem('auth_token', res.token);
+    }
+    return res?.user;
+  } catch (err: any) {
+    logger.error('Registration error:', err);
+    throw err;
   }
-  const errorJson = JSON.stringify(errInfo);
-  logger.error('Firestore Error: ', errorJson);
-  throw new Error(errorJson);
 }
 
-// ==========================================
-// ১. সাইন-আপ (Register) ফাংশন
-// ==========================================
-export function registerUser(email: string, password: string) {
-  return createUserWithEmailAndPassword(auth, email, password)
-    .then((userCredential) => {
-      const user = userCredential.user;
-      logger.info("সফলভাবে অ্যাকাউন্ট তৈরি হয়েছে:", user.email);
-      return user;
-    })
-    .catch((error) => {
-      logger.error("ত্রুটি:", error.code, error.message);
-      throw error;
-    });
-}
-
-// ==========================================
-// ২. লগইন (Login) ফাংশন
-// ==========================================
-export function loginUser(email: string, password: string) {
-  return signInWithEmailAndPassword(auth, email, password)
-    .then((userCredential) => {
-      const user = userCredential.user;
-      logger.info("সফলভাবে লগইন হয়েছে:", user.email);
-      return user;
-    })
-    .catch((error) => {
-      logger.error("লগইন ত্রুটি:", error.code, error.message);
-      throw error;
-    });
-}
-
-// ==========================================
-// ৩. পাসওয়ার্ড রিসেট মেইল পাঠানোর ফাংশন (Firebase Templates)
-// ==========================================
-export function handleForgotPassword(userEmail: string) {
-  const origin = typeof window !== 'undefined' && window.location.origin
-    ? window.location.origin
-    : 'https://aeirmist.com';
-
-  return sendPasswordResetEmail(auth, userEmail, {
-    url: `${origin}/?mode=resetPassword`,
-    handleCodeInApp: true,
-  })
-    .then(() => {
-      logger.info("পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে:", userEmail);
-    })
-    .catch((error) => {
-      logger.error("পাসওয়ার্ড রিসেট ত্রুটি:", error.message);
-      throw error;
-    });
-}
-
-// ==========================================
-// ৪. ইউজার লগড-ইন আছে কিনা তা চেক করা (State Observer)
-// ==========================================
-onAuthStateChanged(auth, (user) => {
-  if (user) {
-    logger.info("বর্তমান ইউজার:", user.email);
-  } else {
-    logger.info("কোনো ইউজার লগইন করা নেই।");
+export async function loginUser(email: string, password: string) {
+  try {
+    const res = await api.auth.login({ email, password });
+    if (res?.token && typeof localStorage !== 'undefined') {
+      localStorage.setItem('auth_token', res.token);
+    }
+    return res?.user;
+  } catch (err: any) {
+    logger.error('Login error:', err);
+    throw err;
   }
-});
+}
+
+export async function handleForgotPassword(userEmail: string) {
+  try {
+    await api.auth.forgotPassword(userEmail);
+    logger.info('Password reset requested for:', userEmail);
+  } catch (err: any) {
+    logger.error('Password reset error:', err);
+    throw err;
+  }
+}
+
+export function onAuthStateChanged(authInstance: any, callback: (user: any) => void) {
+  if (authInstance?.onAuthStateChanged) {
+    return authInstance.onAuthStateChanged(callback);
+  }
+  callback(null);
+  return () => {};
+}
+
+const app: any = {
+  name: '[DEFAULT]',
+  options: {},
+};
 
 export default app;

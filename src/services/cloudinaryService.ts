@@ -31,34 +31,15 @@ export class CloudinaryService {
     }
   }
 
-  public async syncWithFirestore(db: any) {
-    if (!db || this.isInitialized) return;
-    try {
-      const { doc, getDoc } = await import('firebase/firestore');
-      const snap = await getDoc(doc(db, 'system_config', 'cloudinary'));
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.cloudName && data.uploadPreset) {
-          this.cloudName = data.cloudName;
-          this.uploadPreset = data.uploadPreset;
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('aeirmist_cloudinary_cloud_name', data.cloudName);
-            localStorage.setItem('aeirmist_cloudinary_upload_preset', data.uploadPreset);
-          }
-          logger.info('[CloudinaryService] Synced config from Firestore successfully');
-        }
-      }
-      this.isInitialized = true;
-    } catch (e) {
-      logger.warn('[CloudinaryService] Could not sync config from Firestore:', e);
-    }
+  public async syncWithFirestore(_db?: any) {
+    this.isInitialized = true;
   }
 
   public setConfig(cloudName: string, uploadPreset: string) {
     this.saveConfig(cloudName, uploadPreset);
   }
 
-  public async saveConfig(cloudName: string, uploadPreset: string, db?: any) {
+  public async saveConfig(cloudName: string, uploadPreset: string, _db?: any) {
     const trimmedCloud = cloudName.trim();
     const trimmedPreset = uploadPreset.trim();
     this.cloudName = trimmedCloud;
@@ -67,15 +48,6 @@ export class CloudinaryService {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('aeirmist_cloudinary_cloud_name', trimmedCloud);
         localStorage.setItem('aeirmist_cloudinary_upload_preset', trimmedPreset);
-      }
-      if (db) {
-        const { doc, setDoc } = await import('firebase/firestore');
-        await setDoc(doc(db, 'system_config', 'cloudinary'), {
-          cloudName: trimmedCloud,
-          uploadPreset: trimmedPreset,
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-        logger.info('[CloudinaryService] Configuration saved to Firestore system_config/cloudinary');
       }
     } catch (e) {
       logger.error('[CloudinaryService] Error saving Cloudinary config:', e);

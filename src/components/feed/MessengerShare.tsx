@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, X, Send, Users, User, Check, Loader2 } from 'lucide-react';
-import { collection, query, where, orderBy, limit, getDocs, onSnapshot } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
 
@@ -10,11 +10,11 @@ interface MessengerShareProps {
   isOpen: boolean;
   onClose: () => void;
   onShare: (chatId: string) => Promise<void>;
-  db: any;
+  db?: any;
   profile: any;
 }
 
-export const MessengerShare: React.FC<MessengerShareProps> = ({ isOpen, onClose, onShare, db, profile }) => {
+export const MessengerShare: React.FC<MessengerShareProps> = ({ isOpen, onClose, onShare, profile }) => {
   const [chats, setChats] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -22,28 +22,41 @@ export const MessengerShare: React.FC<MessengerShareProps> = ({ isOpen, onClose,
   const [sentIds, setSentIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!isOpen || !db || !profile?.id) return;
+    if (!isOpen || !profile?.id) return;
 
-    const chatsRef = collection(db, 'conversations');
-    const q = query(
-      chatsRef,
-      where('profileIds', 'array-contains', profile.id),
-      orderBy('lastMessageAt', 'desc'),
-      limit(20)
-    );
+    let isCancelled = false;
+    setLoading(true);
 
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(doc => {
-        const data = doc.data();
-        const otherId = data.profileIds?.find((id: string) => id !== profile.id);
-        return { id: doc.id, ...data, otherId };
+    api.chat.getConversations().then((res: any) => {
+      if (isCancelled) return;
+      const convs = (res as any)?.conversations || (Array.isArray(res) ? res : []);
+      const mediaBase = (import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media').replace(/\/+$/, '');
+      const mapped = convs.map((c: any) => {
+        const other = c.participants?.find((p: any) => p.userId !== profile.id && p.userId !== profile.uid) || c.participants?.[0];
+        const isGroup = Boolean(c.isGroup || (c.participants && c.participants.length > 2) || c.title);
+        return {
+          id: c.id,
+          ...c,
+          isGroup,
+          groupName: c.title || 'Group Chat',
+          otherParticipantName: other?.displayName || other?.username || 'User',
+          groupAvatar: c.avatarKey ? `${mediaBase}/${c.avatarKey}` : (c.avatarUrl || undefined),
+          otherParticipantPhoto: other?.avatarKey ? `${mediaBase}/${other.avatarKey}` : (other?.avatarUrl || getAvatarUrl(other?.photoURL || null, other?.userId)),
+          otherId: other?.userId
+        };
       });
-      setChats(list);
+      setChats(mapped);
+      setLoading(false);
+    }).catch(err => {
+      if (isCancelled) return;
+      logger.error('Failed to load conversations for sharing:', err);
       setLoading(false);
     });
 
-    return () => unsub();
-  }, [isOpen, db, profile?.id]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, profile?.id, profile?.uid]);
 
   const filteredChats = chats.filter(chat => {
     const name = chat.isGroup ? chat.groupName : chat.otherParticipantName;

@@ -400,7 +400,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
     };
   }, []);
 
-  // Sync state transitions from Firestore signaling
+  // Sync state transitions from call signaling
   useEffect(() => {
     let closeTimer: any = null;
     if (activeCall?.status === 'accepted' || activeCall?.status === 'ongoing') {

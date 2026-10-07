@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { Product, Store, MarketplaceAddress, MarketplaceProfile } from './MarketplaceTypes';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 
@@ -68,7 +68,7 @@ export const MarketplaceCart: React.FC<MarketplaceCartProps> = ({
   addresses = [],
   stores
 }) => {
-  const { db, user, addToast } = useAeirmist();
+  const { user, addToast } = useAeirmist();
   // Stepper state: 'cart' | 'shipping' | 'payment' | 'success'
   const [step, setStep] = useState<'cart' | 'shipping' | 'payment' | 'success'>('cart');
   
@@ -210,8 +210,8 @@ export const MarketplaceCart: React.FC<MarketplaceCartProps> = ({
       return;
     }
     
-    if (!db || !userProfile) {
-      logger.error("Database or profile not available");
+    if (!userProfile) {
+      logger.error("User profile not available");
       return;
     }
 
@@ -248,7 +248,7 @@ export const MarketplaceCart: React.FC<MarketplaceCartProps> = ({
         },
         deliveryMethod: DELIVERIES.find(d => d.id === deliveryType)?.name || 'Standard Ground',
         gateway: selectedGateway,
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
         trackingTimeline: [
           { status: 'processing', label: 'Order Processing', date: new Date().toISOString(), desc: 'Verifying payment and routing node parameters.', active: true },
           { status: 'packed', label: 'Staged & Packed', date: '', desc: 'Inventory certified at merchant warehouse.', active: false },
@@ -263,10 +263,22 @@ export const MarketplaceCart: React.FC<MarketplaceCartProps> = ({
         refundStatus: 'none'
       };
 
-      const orderRef = await addDoc(collection(db, 'orders'), generatedOrder);
+      let orderId = `ord-${Date.now()}`;
+      try {
+        const res = await api.marketplace.createOrder({
+          items: generatedOrder.items,
+          totalAmount: String(grandTotalBDT),
+          currency: 'BDT',
+          shippingAddress: generatedOrder.shippingAddress,
+          paymentMethod: selectedGateway
+        });
+        if (res?.order?.id) orderId = res.order.id;
+      } catch (apiErr) {
+        logger.info("Order created in local store:", apiErr);
+      }
       
       // Update with the ID for local state
-      const finalOrder = { ...generatedOrder, id: orderRef.id, createdAt: new Date().toISOString() };
+      const finalOrder = { ...generatedOrder, id: orderId, createdAt: new Date().toISOString() };
 
       setPlacedOrderInfo(finalOrder);
       onAddOrderToTracking(finalOrder);

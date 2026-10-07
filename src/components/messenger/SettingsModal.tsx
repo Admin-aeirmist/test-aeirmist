@@ -13,7 +13,6 @@ import {
   Check, 
   Loader2 
 } from 'lucide-react';
-import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { MediaQuality } from '../../services/MediaService';
 import { getAvatarUrl } from '../../lib/avatar';
@@ -140,23 +139,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         [key]: nextVal
       };
 
-      let success = false;
       if (updateProfile) {
-        try {
-          await updateProfile({
-            messagingSettings: updatedMessaging
-          });
-          success = true;
-        } catch (upErr) {
-          logger.warn(`[SettingsModal] updateProfile fallback for ${key}:`, upErr);
-        }
-      }
-
-      if (!success && db) {
-        await setDoc(doc(db, 'profiles', profile.id), {
+        await updateProfile({
           messagingSettings: updatedMessaging
-        }, { merge: true });
-        success = true;
+        });
       }
 
       const statusText = key === 'muteNotifications' 

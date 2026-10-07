@@ -259,7 +259,7 @@ const CloudinaryConfigSection = React.memo(({ addToast }: { addToast: any }) => 
           <div>
             <h4 className="text-xs font-bold uppercase tracking-widest text-white/90">Unlimited CDN Media Acceleration</h4>
             <p className="text-[10px] text-white/40 mt-1 leading-relaxed">
-              Zero-cost image and video storage via Cloudinary CDN with automatic fallback to Firebase.
+              Zero-cost image and video storage via Cloudinary CDN with automatic fallback to Aeirmist Media Engine.
             </p>
           </div>
           <button

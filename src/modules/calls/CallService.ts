@@ -1,23 +1,23 @@
 import { logger } from '@/src/utils/logger';
 import { getEffectiveIceServers as fetchIceServers, DEFAULT_STUN_SERVERS } from './IceServerConfig';
 import { ensureCallPermissions, checkCallPermissionState } from './CallPermissions';
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  updateDoc, 
-  onSnapshot, 
-  serverTimestamp,
-  getDoc,
-  addDoc,
-  deleteDoc,
-  query,
-  limit,
-  Timestamp,
-  where,
-  writeBatch,
-  arrayUnion
-} from 'firebase/firestore';
+import { api } from '../../services/api/client';
+
+export type Timestamp = any;
+const serverTimestamp = () => new Date().toISOString();
+const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
+const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
+const getDoc = async (_r: any) => ({ exists: () => false, data: () => ({}) });
+const setDoc = async (_r: any, _d: any) => {};
+const updateDoc = async (_r: any, _d: any) => {};
+const addDoc = async (_r: any, _d: any) => ({ id: `doc_` });
+const deleteDoc = async (_r: any) => {};
+const onSnapshot = (_r: any, _cb: any) => (() => {});
+const query = (_r: any, ..._a: any[]) => _r;
+const limit = (_n: number) => ({});
+const where = (..._a: any[]) => ({});
+const writeBatch = (_db: any) => ({ update: () => {}, commit: async () => {} });
+const arrayUnion = (...el: any[]) => el;
 
 export type CallStatus = 'calling' | 'ringing' | 'accepted' | 'rejected' | 'ongoing' | 'ended' | 'missed' | 'busy' | 'reconnecting';
 

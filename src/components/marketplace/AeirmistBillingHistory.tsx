@@ -10,27 +10,32 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 
 export const AeirmistBillingHistory: React.FC = () => {
-  const { user, db } = useAeirmist();
+  const { user } = useAeirmist();
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user || !db) return;
+    if (!user) return;
 
     const fetchHistory = async () => {
       try {
-        const q = query(
-          collection(db, 'transactions'),
-          where('userId', '==', user.uid),
-          orderBy('timestamp', 'desc')
-        );
-        const snap = await getDocs(q);
-        setTransactions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const res = await api.marketplace.getMyOrders().catch(() => ({ orders: [] }));
+        if (res?.orders && res.orders.length > 0) {
+          setTransactions(res.orders.map((o: any) => ({
+            id: o.id,
+            paymentType: o.paymentType || (o.type === 'premium' ? 'premium' : 'marketplace'),
+            amount: o.totalAmount || o.amount || 0,
+            timestamp: o.createdAt ? new Date(o.createdAt) : new Date(),
+            ...o
+          })));
+        } else {
+          setTransactions([]);
+        }
       } catch (e) {
         logger.error('Failed to sync billing history:', e);
       } finally {
@@ -39,7 +44,7 @@ export const AeirmistBillingHistory: React.FC = () => {
     };
 
     fetchHistory();
-  }, [user, db]);
+  }, [user]);
 
   if (loading) {
     return (
@@ -80,7 +85,7 @@ export const AeirmistBillingHistory: React.FC = () => {
                   {tx.paymentType === 'premium' ? 'Premium Upgrade' : 'Identity Verification'}
                 </p>
                 <p className="text-[9px] font-bold text-white/30 uppercase tracking-widest mt-0.5">
-                  {tx.timestamp?.toDate ? tx.timestamp.toDate().toLocaleDateString() : 'Syncing...'}
+                  {tx.timestamp instanceof Date ? tx.timestamp.toLocaleDateString() : (tx.timestamp?.toDate ? tx.timestamp.toDate().toLocaleDateString() : (typeof tx.timestamp === 'string' ? new Date(tx.timestamp).toLocaleDateString() : 'Syncing...'))}
                 </p>
               </div>
             </div>

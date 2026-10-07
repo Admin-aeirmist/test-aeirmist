@@ -187,6 +187,11 @@ export const api = {
       request<{ success: boolean }>(`/api/v1/chat/conversations/${conversationId}/seen`, {
         method: 'POST',
       }),
+    createGroup: (title: string, memberIds: string[], avatarKey?: string) =>
+      request<{ conversation: any }>('/api/v1/chat/conversations/group', {
+        method: 'POST',
+        body: JSON.stringify({ title, memberIds, avatarKey }),
+      }),
   },
 
   // Videos & Video Creator Studio

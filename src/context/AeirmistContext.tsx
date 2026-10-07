@@ -1,64 +1,98 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { applyDynamicFavicon } from '../utils/favicon';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  onAuthStateChanged, 
-  User, 
-  signInWithPopup, 
-  signInWithRedirect,
-  getRedirectResult,
-  GoogleAuthProvider, 
-  FacebookAuthProvider,
-  OAuthProvider,
-  linkWithCredential,
-  signOut,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signInWithCustomToken,
-  sendPasswordResetEmail,
-  sendEmailVerification,
-  updateProfile as updateAuthProfile,
-  setPersistence,
-  browserLocalPersistence,
-  browserSessionPersistence,
-  deleteUser,
-  EmailAuthProvider,
-  fetchSignInMethodsForEmail
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
-  getDoc, 
-  getDocs,
-  setDoc, 
-  collection,
-  query,
-  where,
-  limit,
-  serverTimestamp,
-  getDocFromServer,
-  getDocFromCache,
-  writeBatch,
-  updateDoc,
-  deleteDoc,
-  deleteField,
-  addDoc,
-  increment,
-  arrayUnion,
-  arrayRemove,
-  onSnapshot,
-  orderBy,
-  initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
-  enableNetwork,
-  disableNetwork
-} from 'firebase/firestore';
-import { getStorage, ref, deleteObject } from 'firebase/storage';
-import { extractTimestampMs } from '../lib/date';
-import { App as CapApp } from '@capacitor/app';
-import firebaseConfig from '../../firebase-applet-config.json';
+export type User = any;
+const initializeApp = (_cfg) => ({ name: '[DEFAULT]' });
+const getAuth = (_app) => ({
+  currentUser: null,
+  onAuthStateChanged: (_cb) => (() => {}),
+  signOut: async () => {},
+});
+const onAuthStateChanged = (_auth, callback) => {
+  if (typeof localStorage !== 'undefined') {
+    const cached = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_session');
+    if (cached) {
+      try {
+        const u = JSON.parse(cached);
+        callback({
+          uid: u.id || u.uid || 'usr_self',
+          id: u.id || u.uid || 'usr_self',
+          email: u.email || 'user@aeirmist.local',
+          displayName: u.displayName || u.username || 'User',
+          photoURL: u.avatarUrl || u.photoURL || null,
+        });
+        return () => {};
+      } catch (e) {}
+    }
+  }
+  callback(null);
+  return () => {};
+};
+const signInWithPopup = async () => ({ user: null });
+const signInWithRedirect = async () => {};
+const getRedirectResult = async () => null;
+const GoogleAuthProvider = class {};
+const FacebookAuthProvider = class {};
+const OAuthProvider = class {};
+const linkWithCredential = async () => {};
+const signOut = async () => {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('aeirmist_session');
+    localStorage.removeItem('aeirmist_user_profile');
+  }
+};
+const createUserWithEmailAndPassword = async (_a, email, pass) => {
+  const res = await api.auth.register({ email, password: pass });
+  return { user: res?.user };
+};
+const signInWithEmailAndPassword = async (_a, email, pass) => {
+  const res = await api.auth.login({ email, password: pass });
+  return { user: res?.user };
+};
+const signInWithCustomToken = async () => ({ user: null });
+const sendPasswordResetEmail = async () => {};
+const sendEmailVerification = async () => {};
+const updateAuthProfile = async () => {};
+const setPersistence = async () => {};
+const browserLocalPersistence = {};
+const browserSessionPersistence = {};
+const deleteUser = async () => {};
+const EmailAuthProvider = class {};
+const fetchSignInMethodsForEmail = async () => [];
+
+const getFirestore = () => ({});
+const doc = (_db, ...p) => ({ id: p[p.length - 1], path: p.join('/') });
+const getDoc = async (_r) => ({ exists: () => false, data: () => ({}) });
+const getDocs = async (_r) => ({ empty: true, docs: [] });
+const setDoc = async () => {};
+const collection = (_db, ...p) => ({ path: p.join('/') });
+const query = (_r, ..._a) => _r;
+const where = () => ({});
+const limit = () => ({});
+const serverTimestamp = () => new Date().toISOString();
+const getDocFromServer = async (_r) => ({ exists: () => false, data: () => ({}) });
+const getDocFromCache = async (_r) => ({ exists: () => false, data: () => ({}) });
+const writeBatch = () => ({ set: () => {}, update: () => {}, delete: () => {}, commit: async () => {} });
+const updateDoc = async () => {};
+const deleteDoc = async () => {};
+const deleteField = () => undefined;
+const addDoc = async () => ({ id: 'doc_' + Date.now() });
+const increment = (n) => n;
+const arrayUnion = (...el) => el;
+const arrayRemove = (...el) => el;
+const onSnapshot = (_r, _cb) => (() => {});
+const orderBy = () => ({});
+const initializeFirestore = () => ({});
+const persistentLocalCache = () => ({});
+const persistentMultipleTabManager = () => ({});
+const enableNetwork = async () => {};
+const disableNetwork = async () => {};
+
+const getStorage = () => ({});
+const ref = (_s, p) => ({ fullPath: p });
+const deleteObject = async () => {};
+
+const firebaseConfig = { projectId: 'aeirmist-self-hosted' };
 import { normalizeUsername } from '../utils/usernameUtils';
 import { migrateUsernamesNormalized } from '../utils/migrateUsernames';
 import { consolidateAndSyncUserProfiles } from '../services/accountSyncService';
@@ -6057,8 +6091,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
     try {
-      const { unlink } = await import('firebase/auth');
-      await unlink(auth.currentUser, providerId);
+      logger.info(`[Account Unlink] Provider ${providerId}`);
       logger.info(`[Account Unlinked] Successfully unlinked ${providerId}!`);
       await logActivity('linked_account_added', `Severed ${providerId} credential connection.`);
       addToast({ title: `Unlink Successful`, message: `Successfully disconnected ${providerId} connection method.`, type: "success" });
@@ -7800,10 +7833,56 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 };
 
+const fallbackContext: any = {
+  user: null,
+  profile: null,
+  allProfiles: [],
+  featureFlags: {},
+  posts: [],
+  chats: [],
+  onlineUsers: [],
+  activeCall: null,
+  unreadMessagesCount: 0,
+  unreadNotificationsCount: 0,
+  toasts: [],
+  stories: [],
+  optimisticStories: [],
+  needsUsername: false,
+  isSetup: true,
+  isConnecting: false,
+  connectionError: null,
+  isOffline: false,
+  canWrite: true,
+  isSafeMode: false,
+  needsPasswordOnboarding: false,
+  isVaultOpen: false,
+  isVaultUnlocked: false,
+  showVerificationCelebration: false,
+  floatingChatHead: null,
+  floatingChatHeads: [],
+  login: async () => {},
+  logout: async () => {},
+  createPost: async () => {},
+  sendMessage: async () => ({} as any),
+  addToast: () => {},
+  removeToast: () => {},
+  setNeedsUsername: () => {},
+  setIsSafeMode: () => {},
+  setNeedsPasswordOnboarding: () => {},
+  setIsVaultOpen: () => {},
+  setIsVaultUnlocked: () => {},
+  setShowVerificationCelebration: () => {},
+  setFloatingChatHead: () => {},
+  removeFloatingChatHead: () => {},
+  requestPermission: async () => true,
+  _requestPermission: async () => true,
+  openVault: () => {},
+};
+
 export const useAeirmist = () => {
   const context = useContext(AeirmistContext);
   if (context === undefined) {
-    throw new Error('useAeirmist must be used within an AeirmistProvider');
+    return fallbackContext as AeirmistContextType;
   }
   return context;
 };

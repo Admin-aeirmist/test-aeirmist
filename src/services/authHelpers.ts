@@ -1,23 +1,25 @@
-import { 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword, 
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  User
-} from "firebase/auth";
-import { auth } from "../lib/firebase";
-import { api, setAuthToken } from "./api/client";
+import { api, setAuthToken, getAuthToken } from "./api/client";
+
+export interface User {
+  uid: string;
+  id: string;
+  email: string;
+  displayName: string;
+  photoURL?: string | null;
+  username?: string;
+  providerData?: Array<{ providerId: string; email: string }>;
+  [key: string]: any;
+}
 
 // ==========================================
-// ১. সাইন-আপ (Register) ফাংশন
+// 1. সাইন-আপ (Register) ফাংশন
 // ==========================================
 export async function registerUser(
   email: string, 
   password: string, 
   username?: string, 
   displayName?: string
-): Promise<any> {
-  let backendUser: any = null;
+): Promise<User | null> {
   try {
     const cleanUsername = username || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_');
     const cleanDisplay = displayName || cleanUsername;
@@ -27,97 +29,98 @@ export async function registerUser(
       username: cleanUsername, 
       displayName: cleanDisplay 
     });
+    
     if (backendRes?.token) {
+      localStorage.setItem('auth_token', backendRes.token);
       setAuthToken(backendRes.token);
-      backendUser = {
+      const user: User = {
         uid: backendRes.user?.id,
         id: backendRes.user?.id,
-        email: backendRes.user?.email,
-        displayName: cleanDisplay,
-        photoURL: null,
-        providerData: [{ providerId: 'password', email }]
-      };
-      console.info("[AuthHelpers] Backend registration successful, JWT stored for:", backendRes.user?.email);
-    }
-  } catch (backendErr: any) {
-    console.warn("[AuthHelpers] Backend registration notice:", backendErr.message);
-  }
-
-  // Client Firebase session sync (if available)
-  try {
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    return userCredential.user;
-  } catch (error: any) {
-    if (backendUser) {
-      return backendUser;
-    }
-    console.error("[AuthHelpers] Registration error:", error.code, error.message);
-    return null;
-  }
-}
-
-// ==========================================
-// ২. লগইন (Login) ফাংশন
-// ==========================================
-export async function loginUser(email: string, password: string): Promise<any> {
-  let backendUser: any = null;
-  try {
-    const backendRes = await api.auth.login({ email, password });
-    if (backendRes?.token) {
-      setAuthToken(backendRes.token);
-      backendUser = {
-        uid: backendRes.user?.id,
-        id: backendRes.user?.id,
-        email: backendRes.user?.email,
-        displayName: backendRes.user?.displayName || backendRes.user?.username,
+        email: backendRes.user?.email || email,
+        displayName: backendRes.user?.displayName || cleanDisplay,
+        username: backendRes.user?.username || cleanUsername,
         photoURL: backendRes.user?.avatarKey || null,
         providerData: [{ providerId: 'password', email }]
       };
-      console.info("[AuthHelpers] Backend login successful, JWT token stored for:", backendRes.user?.email);
+      console.info("[AuthHelpers] Backend registration successful, token stored for:", user.email);
+      return user;
     }
-  } catch (backendErr: any) {
-    console.warn("[AuthHelpers] Backend login notice:", backendErr.message);
-  }
-
-  try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    return userCredential.user;
-  } catch (error: any) {
-    if (backendUser) {
-      return backendUser;
-    }
-    console.error("[AuthHelpers] Login error:", error.code, error.message);
     return null;
+  } catch (error: any) {
+    console.error("[AuthHelpers] Registration error:", error.message);
+    throw error;
   }
 }
 
 // ==========================================
-// ৩. ইউজার লগড-ইন আছে কিনা তা চেক করা (State Observer)
+// 2. লগইন (Login) ফাংশন
+// ==========================================
+export async function loginUser(email: string, password: string): Promise<User | null> {
+  try {
+    const backendRes = await api.auth.login({ email, password });
+    if (backendRes?.token) {
+      localStorage.setItem('auth_token', backendRes.token);
+      setAuthToken(backendRes.token);
+      const user: User = {
+        uid: backendRes.user?.id,
+        id: backendRes.user?.id,
+        email: backendRes.user?.email || email,
+        displayName: backendRes.user?.displayName || backendRes.user?.username || email.split('@')[0],
+        username: backendRes.user?.username,
+        photoURL: backendRes.user?.avatarKey || null,
+        providerData: [{ providerId: 'password', email }]
+      };
+      console.info("[AuthHelpers] Backend login successful, token stored for:", user.email);
+      return user;
+    }
+    return null;
+  } catch (error: any) {
+    console.error("[AuthHelpers] Login error:", error.message);
+    throw error;
+  }
+}
+
+// ==========================================
+// 3. ইউজার লগড-ইন আছে কিনা তা চেক করা (State Observer)
 // ==========================================
 export function initAuthStateObserver(callback?: (user: User | null) => void) {
-  return onAuthStateChanged(auth, (user) => {
-    if (user) {
-      console.info("[AuthHelpers] Auth state: signed in as", user.email);
-    } else {
-      console.info("[AuthHelpers] Auth state: signed out");
-    }
-    if (callback) {
-      callback(user);
-    }
-  });
+  const token = localStorage.getItem('auth_token') || getAuthToken();
+  if (token) {
+    api.auth.me()
+      .then((res) => {
+        if (res?.user) {
+          const user: User = {
+            uid: res.user.id,
+            id: res.user.id,
+            email: res.user.email,
+            displayName: res.user.displayName || res.user.username,
+            username: res.user.username,
+            photoURL: res.user.avatarKey || null,
+            providerData: [{ providerId: 'password', email: res.user.email }]
+          };
+          if (callback) callback(user);
+        } else {
+          if (callback) callback(null);
+        }
+      })
+      .catch(() => {
+        if (callback) callback(null);
+      });
+  } else {
+    if (callback) callback(null);
+  }
+
+  return () => {
+    // Unsubscribe no-op
+  };
 }
 
 // ==========================================
-// ৪. সাইন-আউট (Logout) ফাংশন
+// 4. সাইন-আউট (Logout) ফাংশন
 // ==========================================
-export async function signOutUser() {
+export async function signOutUser(): Promise<boolean> {
+  localStorage.removeItem('auth_token');
   setAuthToken(null);
-  try {
-    await firebaseSignOut(auth);
-  } catch {
-    // Ignore fallback signout error
-  }
   return true;
 }
 
-export { firebaseSignOut };

@@ -1,5 +1,3 @@
-import { Timestamp } from 'firebase/firestore';
-
 export const extractTimestampMs = (val: any): number => {
   if (!val) return 0;
   if (typeof val === 'number' && !isNaN(val) && val > 0) {
@@ -9,11 +7,7 @@ export const extractTimestampMs = (val: any): number => {
   if (val instanceof Date && !isNaN(val.getTime())) {
     return val.getTime();
   }
-  if (val instanceof Timestamp) {
-    try {
-      return val.toMillis();
-    } catch (e) {}
-  }
+
   if (typeof val?.toMillis === 'function') {
     try {
       const ms = val.toMillis();

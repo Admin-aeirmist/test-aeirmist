@@ -36,7 +36,6 @@ import { getAvatarUrl } from '../../lib/avatar';
 import { PrivacyFolderLayout } from './vault/PrivacyFolderLayout';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
-import { auth } from '../../lib/firebase';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { checkDeviceBiometrics, authenticateWithBiometrics } from '../../lib/nativeBiometrics';
 

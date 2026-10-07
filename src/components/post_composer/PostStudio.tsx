@@ -9,9 +9,7 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
-import { db } from '../../lib/firebase';
 import { api } from '../../services/api/client';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { MediaEditor } from './MediaEditor';
 import { PollComposer } from './PollComposer';
 import { LocationSearch } from './LocationSearch';
@@ -353,8 +351,8 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
         likesCount: 0,
         commentsCount: 0,
         likedBy: [],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         audience,
         allowComments,
         hideLikes,
@@ -392,15 +390,6 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
         logger.info('[PostStudio] Post saved successfully to PostgreSQL backend');
       } catch (apiErr: any) {
         logger.error('[PostStudio] Backend post error:', apiErr);
-      }
-
-      // Optional legacy dual-sync if Firestore is connected
-      if (db) {
-        try {
-          await addDoc(collection(db, 'posts'), payload);
-        } catch (fbErr) {
-          logger.warn('[PostStudio] Firebase dual-sync skipped:', fbErr);
-        }
       }
 
       setUploadProgress(100);

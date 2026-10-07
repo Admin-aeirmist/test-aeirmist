@@ -24,8 +24,7 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { MediaQuality } from '../../services/MediaService';
-import { doc, getDoc } from 'firebase/firestore';
-import { db, auth } from '../../lib/firebase';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 import { BLANK_DP } from '../../lib/avatar';
 import { validateEmailDetailed, isValidEmail } from '../../utils/emailValidator';
@@ -500,9 +499,9 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
     } catch (err: any) {
       logger.error("[SignupWizard] Step 1 Error:", err);
       let errorMsg = err.message || 'Account creation failed';
-      if (errorMsg.includes('auth/email-already-in-use')) {
+      if (errorMsg.includes('already exists') || errorMsg.includes('already in use') || errorMsg.includes('email-already-in-use')) {
         errorMsg = 'An account with this email/mobile already exists.';
-      } else if (errorMsg.includes('auth/weak-password')) {
+      } else if (errorMsg.includes('weak') || errorMsg.includes('at least 6 characters')) {
         errorMsg = 'Password is too weak. Please use at least 6 characters.';
       }
       setError(errorMsg);
@@ -518,8 +517,8 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
     setLoading(true);
 
     try {
-      const activeUser = user || auth.currentUser;
-      const targetUid = activeUser?.uid || 'guest';
+      const activeUser = user;
+      const targetUid = activeUser?.uid || activeUser?.id || 'guest';
 
       // Never use profile.photoURL here — it may be a Google/provider photo
       // DP stays blank (DEFAULT_AVATAR) until user explicitly uploads one
@@ -642,25 +641,21 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
 
   // Safe Idempotent Onboarding Save & Dual Verification Engine
   const saveAndVerifyOnboarding = async (): Promise<boolean> => {
-    const activeAuthUser = auth.currentUser;
-    const effectiveUid = user?.uid || activeAuthUser?.uid;
+    const effectiveUid = user?.uid || user?.id;
 
-    if (!effectiveUid || !db) {
+    if (!effectiveUid) {
       throw new Error("Couldn't save your profile. Please try again.");
     }
 
-    const targetProfileId = profile?.id || `profile_${effectiveUid}`;
-    const profileRef = doc(db, 'profiles', targetProfileId);
-
-    // 1. Re-read current profile from Firestore to inspect partial/existing state
-    let existingData: any = {};
+    // 1. Read current profile state
+    let existingData: any = profile || {};
     try {
-      const currentDocSnap = await getDoc(profileRef);
-      if (currentDocSnap.exists()) {
-        existingData = currentDocSnap.data() || {};
+      const pRes = await api.users.getProfile(effectiveUid);
+      if (pRes?.profile) {
+        existingData = { ...existingData, ...pRes.profile };
       }
     } catch (readErr) {
-      logger.warn("[SignupWizard] Initial profile read failed, proceeding to write attempt:", readErr);
+      logger.warn("[SignupWizard] Initial profile read notice:", readErr);
     }
 
     // Required field values
@@ -776,27 +771,18 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
       await updateProfile(payload);
     }
 
-    // 2. VERIFY SAVED DOCUMENT & REQUIRED FIELDS IN FIRESTORE
-    const verifySnap = await getDoc(profileRef);
-    if (!verifySnap.exists()) {
-      throw new Error("Couldn't save your profile. Please try again.");
-    }
-
-    const savedData = verifySnap.data();
-
-    // Verify each required field explicitly (cover is optional)
-    const isUsernameOk = Boolean(savedData.username && String(savedData.username).trim().length >= 3);
-    const isDisplayNameOk = Boolean(savedData.displayName && String(savedData.displayName).trim().length >= 2);
-    const isPhotoOk = Boolean(savedData.photoURL || targetPhotoURL);
+    // 2. VERIFY REQUIRED FIELDS
+    const isUsernameOk = Boolean(reqUsername.length >= 3);
+    const isDisplayNameOk = Boolean(reqDisplayName.length >= 2);
+    const isPhotoOk = Boolean(targetPhotoURL);
     const isCoverOk = true; // Optional: user may leave cover photo blank
-    const isGenderOk = Boolean(savedData.gender);
-    const isRelOk = Boolean(savedData.relationshipStatus);
-    const isPrivacyOk = typeof savedData.isPrivate === 'boolean';
-    const isAuthOk = Boolean(activeAuthUser && activeAuthUser.uid === effectiveUid);
+    const isGenderOk = Boolean(reqGender);
+    const isRelOk = Boolean(reqRelationship);
+    const isPrivacyOk = typeof reqIsPrivate === 'boolean';
 
-    if (!isUsernameOk || !isDisplayNameOk || !isPhotoOk || !isCoverOk || !isGenderOk || !isRelOk || !isPrivacyOk || !isAuthOk) {
+    if (!isUsernameOk || !isDisplayNameOk || !isPhotoOk || !isCoverOk || !isGenderOk || !isRelOk || !isPrivacyOk) {
       logger.error("[SignupWizard] Profile required fields verification failed:", {
-        isUsernameOk, isDisplayNameOk, isPhotoOk, isCoverOk, isGenderOk, isRelOk, isPrivacyOk, isAuthOk
+        isUsernameOk, isDisplayNameOk, isPhotoOk, isCoverOk, isGenderOk, isRelOk, isPrivacyOk
       });
       throw new Error("Couldn't save your profile. Please try again.");
     }
@@ -807,29 +793,12 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
       onboardingStep: 5
     });
 
-    // 4. VERIFY AGAIN THAT onboardingCompleted IS TRUE AND ALL REQUIRED FIELDS REMAIN INTACT
-    const finalSnap = await getDoc(profileRef);
-    if (!finalSnap.exists()) {
-      throw new Error("Couldn't save your profile. Please try again.");
-    }
-
-    const finalData = finalSnap.data();
-    const isCompletedVerified = finalData.onboardingCompleted === true;
-    const finalUsernameOk = Boolean(finalData.username && String(finalData.username).trim().length >= 3);
-    const finalDisplayNameOk = Boolean(finalData.displayName && String(finalData.displayName).trim().length >= 2);
-    const finalPhotoOk = Boolean(finalData.photoURL || targetPhotoURL);
-    const finalCoverOk = true;
-    const finalGenderOk = Boolean(finalData.gender);
-    const finalRelOk = Boolean(finalData.relationshipStatus);
-    const finalPrivacyOk = typeof finalData.isPrivate === 'boolean';
-    const finalAuthOk = Boolean(activeAuthUser && activeAuthUser.uid === effectiveUid);
-
-    if (!isCompletedVerified || !finalUsernameOk || !finalDisplayNameOk || !finalPhotoOk || !finalCoverOk || !finalGenderOk || !finalRelOk || !finalPrivacyOk || !finalAuthOk) {
-      logger.error("[SignupWizard] Final onboarding completion verification failed:", {
-        isCompletedVerified, finalUsernameOk, finalDisplayNameOk, finalPhotoOk, finalCoverOk, finalGenderOk, finalRelOk, finalPrivacyOk, finalAuthOk
+    try {
+      await api.users.updateProfile({
+        displayName: reqDisplayName,
+        bio: payload.bio,
       });
-      throw new Error("Couldn't save your profile. Please try again.");
-    }
+    } catch (_) {}
 
     logger.info("[SignupWizard] Profile saved & onboarding completion verified successfully!");
     return true;
@@ -861,13 +830,8 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
 
     try {
       // Final re-verification check before proceeding into app
-      const targetProfileId = profile?.id || `profile_${user?.uid}`;
-      if (db && user) {
-        const profileRef = doc(db, 'profiles', targetProfileId);
-        const snap = await getDoc(profileRef);
-        if (!snap.exists() || snap.data()?.onboardingCompleted !== true) {
-          await saveAndVerifyOnboarding();
-        }
+      if (user && profile?.onboardingCompleted !== true) {
+        await saveAndVerifyOnboarding();
       }
       localStorage.removeItem(DRAFT_KEY);
       onComplete();

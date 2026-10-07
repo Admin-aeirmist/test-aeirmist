@@ -4,8 +4,7 @@ import { Lock, Eye, EyeOff, ShieldCheck, Loader2, Sparkles, Check, AlertCircle, 
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { useTheme } from '../../context/ThemeContext';
-import { getAuth, EmailAuthProvider, linkWithCredential, updatePassword } from 'firebase/auth';
-import { doc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { mapAuthError } from '../../utils/authErrorMapper';
 import { logger } from '@/src/utils/logger';
 
@@ -76,54 +75,13 @@ export const CompleteYourAccountScreen: React.FC = () => {
     setError(null);
 
     try {
-      const auth = getAuth();
-      const currentUser = auth.currentUser;
-      
-      if (!currentUser || !currentUser.email) {
-        throw new Error("No active user session detected. Please sign in again.");
-      }
+      await api.auth.changePassword({ newPassword: password });
 
-      // Link Email/Password credential securely to current user
-      const credential = EmailAuthProvider.credential(currentUser.email, password);
       try {
-        await linkWithCredential(currentUser, credential);
-      } catch (linkErr: any) {
-        // If credential/provider is already linked or in use, fallback to updatePassword
-        if (
-          linkErr.code === 'auth/provider-already-linked' ||
-          linkErr.code === 'auth/credential-already-in-use' ||
-          linkErr.code === 'auth/email-already-in-use'
-        ) {
-          await updatePassword(currentUser, password);
-        } else {
-          throw linkErr;
-        }
-      }
-
-      // Update Firestore profile document
-      if (db && profile?.id) {
-        const profileRef = doc(db, 'profiles', profile.id);
-        await updateDoc(profileRef, {
-          hasPassword: true,
-          passwordCreated: true,
-          passwordCreatedAt: serverTimestamp(),
-          providers: arrayUnion('password'),
-          lastPasswordUpdate: serverTimestamp()
+        await api.users.updateProfile({
+          privacySettings: { hasPassword: true }
         });
-      }
-
-      // Sync via server API fallback if available
-      try {
-        const idToken = await currentUser.getIdToken();
-        await fetch('/api/auth/set-password', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`
-          },
-          body: JSON.stringify({ hasPassword: true })
-        });
-      } catch {}
+      } catch (_) {}
 
       setIsSuccess(true);
       addToast({

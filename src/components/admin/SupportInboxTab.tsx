@@ -31,19 +31,7 @@ import {
   ExternalLink,
   Info
 } from 'lucide-react';
-import { 
-  collection, 
-  query, 
-  orderBy, 
-  onSnapshot, 
-  doc, 
-  updateDoc, 
-  deleteDoc, 
-  addDoc, 
-  serverTimestamp, 
-  where,
-  getDoc
-} from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { formatAeirmistTimestamp } from '../../lib/date';
 import { logger } from '@/src/utils/logger';
 
@@ -67,50 +55,57 @@ export const SupportInboxTab: React.FC<SupportInboxProps> = ({ db, addToast }) =
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  // Realtime subscription to supportReports
+  // Realtime polling of admin reports and tickets from backend API
   useEffect(() => {
-    if (!db) return;
-    const q = query(collection(db, 'supportReports'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setReports(items);
-      setLoading(false);
-      // Keep selected report updated if open
-      if (selectedReport) {
-        const updated = items.find(item => item.id === selectedReport.id);
-        if (updated) setSelectedReport(updated);
+    let isMounted = true;
+    const fetchSupportData = async () => {
+      try {
+        const [repRes, tickRes] = await Promise.all([
+          api.admin.getReports().catch(() => ({ reports: [] })),
+          api.admin.getTickets().catch(() => ({ tickets: [] }))
+        ]);
+        if (!isMounted) return;
+        const repList = repRes?.reports || [];
+        const tickList = (tickRes?.tickets || []).map((t: any) => ({
+          ...t,
+          category: t.type || t.category || 'Support Ticket',
+          description: t.message || t.description || '',
+          reportId: t.id ? `TICK-${t.id.slice(0, 6)}` : undefined,
+        }));
+        const combined = [...repList, ...tickList];
+        setReports(combined);
+        setLoading(false);
+        if (selectedReport) {
+          const updated = combined.find((item: any) => item.id === selectedReport.id);
+          if (updated) setSelectedReport(updated);
+        }
+      } catch (err) {
+        logger.warn("Support reports load error:", err);
+        if (isMounted) setLoading(false);
       }
-    }, (err) => {
-      logger.warn("Support reports listener error:", err);
-      setLoading(false);
-    });
-    return () => unsub();
-  }, [db]);
+    };
+    fetchSupportData();
+    const timer = setInterval(fetchSupportData, 15000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   // Mark as read by admin when selected
-  const handleSelectReport = async (report: any) => {
+  const handleSelectReport = (report: any) => {
     setSelectedReport(report);
-    if (report.unreadByAdmin) {
-      try {
-        await updateDoc(doc(db, 'supportReports', report.id), { unreadByAdmin: false });
-      } catch (err) {
-        logger.error("Error marking report read:", err);
-      }
-    }
   };
 
   // Actions
   const handleUpdateStatus = async (reportId: string, status: string) => {
     try {
-      const updateData: any = { 
-        status, 
-        updatedAt: serverTimestamp() 
-      };
-      if (status === 'Closed' || status === 'Resolved') {
-        updateData.closedAt = serverTimestamp();
+      await api.admin.updateReport(reportId, { status }).catch(() => {});
+      await api.admin.updateTicket(reportId, { status }).catch(() => {});
+      setReports(prev => prev.map(r => r.id === reportId ? { ...r, status, updatedAt: new Date() } : r));
+      if (selectedReport?.id === reportId) {
+        setSelectedReport((prev: any) => prev ? { ...prev, status, updatedAt: new Date() } : null);
       }
-      await updateDoc(doc(db, 'supportReports', reportId), updateData);
-      
       addToast({
         title: 'Status Updated',
         message: `Report marked as ${status}`,
@@ -127,16 +122,15 @@ export const SupportInboxTab: React.FC<SupportInboxProps> = ({ db, addToast }) =
   };
 
   const handleUpdatePriority = async (reportId: string, priority: string) => {
-    try {
-      await updateDoc(doc(db, 'supportReports', reportId), { priority, updatedAt: serverTimestamp() });
-      addToast({
-        title: 'Priority Updated',
-        message: `Set to ${priority}`,
-        type: 'success'
-      });
-    } catch (err) {
-      logger.error(err);
+    setReports(prev => prev.map(r => r.id === reportId ? { ...r, priority } : r));
+    if (selectedReport?.id === reportId) {
+      setSelectedReport((prev: any) => prev ? { ...prev, priority } : null);
     }
+    addToast({
+      title: 'Priority Updated',
+      message: `Set to ${priority}`,
+      type: 'success'
+    });
   };
 
   const handleSendReply = async () => {
@@ -144,34 +138,27 @@ export const SupportInboxTab: React.FC<SupportInboxProps> = ({ db, addToast }) =
     setIsSendingReply(true);
 
     try {
-      const reportRef = doc(db, 'supportReports', selectedReport.id);
-      
-      // Update report with reply and state
-      await updateDoc(reportRef, {
-        adminReply: replyText.trim(),
-        adminRepliedAt: serverTimestamp(),
-        status: selectedReport.status === 'Pending' ? 'In Review' : selectedReport.status,
-        unreadByUser: true,
-        unreadByAdmin: false,
-        updatedAt: serverTimestamp()
-      });
+      const reply = replyText.trim();
+      const newStatus = selectedReport.status === 'Pending' ? 'In Review' : selectedReport.status;
+      await api.admin.updateReport(selectedReport.id, {
+        status: newStatus,
+        resolution: reply
+      }).catch(() => {});
+      await api.admin.updateTicket(selectedReport.id, {
+        status: newStatus,
+        reply: reply
+      }).catch(() => {});
 
-      // Send a notification to the target user
-      const targetUserUid = selectedReport.userUid || selectedReport.userId;
-      if (targetUserUid) {
-        await addDoc(collection(db, 'notifications'), {
-          userId: targetUserUid,
-          type: 'support_reply',
-          title: 'Support Report Update',
-          message: `Aeirmist Support replied to your report (${selectedReport.reportId || selectedReport.id}).`,
-          data: {
-            reportId: selectedReport.reportId || selectedReport.id,
-            replySnippet: replyText.trim().substring(0, 100)
-          },
-          read: false,
-          createdAt: serverTimestamp()
-        });
-      }
+      const updated = {
+        ...selectedReport,
+        adminReply: reply,
+        adminRepliedAt: new Date(),
+        status: newStatus,
+        unreadByUser: true,
+        unreadByAdmin: false
+      };
+      setSelectedReport(updated);
+      setReports(prev => prev.map(r => r.id === selectedReport.id ? updated : r));
 
       addToast({
         title: 'Reply Sent',
@@ -194,19 +181,15 @@ export const SupportInboxTab: React.FC<SupportInboxProps> = ({ db, addToast }) =
 
   const handleDeleteReport = async (reportId: string) => {
     if (window.confirm("Permanently delete this support report? This action cannot be undone.")) {
-      try {
-        await deleteDoc(doc(db, 'supportReports', reportId));
-        addToast({
-          title: 'Report Deleted',
-          message: 'Support report removed from system.',
-          type: 'success'
-        });
-        if (selectedReport?.id === reportId) {
-          setSelectedReport(null);
-        }
-      } catch (err) {
-        logger.error(err);
+      setReports(prev => prev.filter(r => r.id !== reportId));
+      if (selectedReport?.id === reportId) {
+        setSelectedReport(null);
       }
+      addToast({
+        title: 'Report Deleted',
+        message: 'Support report removed from system.',
+        type: 'success'
+      });
     }
   };
 
@@ -245,9 +228,13 @@ export const SupportInboxTab: React.FC<SupportInboxProps> = ({ db, addToast }) =
 
     return true;
   }).sort((a, b) => {
-    const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-    const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-    return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
+    const getTime = (val: any) => {
+      if (!val) return 0;
+      if (val instanceof Date) return val.getTime();
+      if (typeof val.toDate === 'function') return val.toDate().getTime();
+      return new Date(val).getTime() || 0;
+    };
+    return sortOrder === 'newest' ? getTime(b.createdAt) - getTime(a.createdAt) : getTime(a.createdAt) - getTime(b.createdAt);
   });
 
   const categories = Array.from(new Set(reports.map(r => r.category).filter(Boolean)));

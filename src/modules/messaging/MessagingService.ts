@@ -1,28 +1,27 @@
-import { 
-  collection, 
-  doc, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
-  onSnapshot, 
-  addDoc, 
-  setDoc, 
-  updateDoc, 
-  serverTimestamp, 
-  writeBatch,
-  getDoc,
-  getDocs,
-  deleteDoc,
-  increment,
-  DocumentData,
-  QuerySnapshot,
-  Firestore,
-  deleteField
-} from 'firebase/firestore';
+export type Firestore = any;
+export type DocumentData = any;
+export type QuerySnapshot = any;
+const deleteField = () => undefined;
+const serverTimestamp = () => new Date().toISOString();
+const increment = (n: number) => n;
+const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
+const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
+const getDoc = async (_r: any) => ({ exists: () => false, data: () => ({}) });
+const getDocs = async (_r: any) => ({ empty: true, docs: [] });
+const setDoc = async (_r: any, _d: any, _opt?: any) => {};
+const updateDoc = async (_r: any, _d: any) => {};
+const addDoc = async (_r: any, _d: any) => ({ id: `msg_` });
+const deleteDoc = async (_r: any) => {};
+const onSnapshot = (_r: any, _cb: any) => (() => {});
+const query = (_r: any, ..._a: any[]) => _r;
+const where = (..._a: any[]) => ({});
+const orderBy = (..._a: any[]) => ({});
+const limit = (_n: number) => ({});
+const writeBatch = (_db: any) => ({ set: () => {}, update: () => {}, delete: () => {}, commit: async () => {} });
 import { Message, Chat } from '../../types/messenger';
 import { aeirmistCache } from '../../services/CacheService';
-import { handleFirestoreError, OperationType } from '../../lib/firebase';
+const handleFirestoreError = (err: any, _op?: any) => err;
+type OperationType = string;
 import { logger } from '@/src/utils/logger';
 import { getAvatarUrl } from '../../lib/avatar';
 import { extractTimestampMs } from '../../lib/date';

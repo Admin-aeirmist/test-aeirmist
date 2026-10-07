@@ -1,11 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ChevronLeft, Shield, Trash2, UserPlus, Ghost, Loader2 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
-
-
 
 const extractMessageText = (val: any): string => {
   if (!val) return 'No messages yet';
@@ -19,27 +16,20 @@ const extractMessageText = (val: any): string => {
 };
 
 export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { chats: any[], onBack: () => void, onUserClick?: (user: any) => void, onChatSelect?: (id: string) => void }) => {
-  const { db, profile, toggleFollow, addToast } = useAeirmist();
+  const { profile, toggleFollow, toggleBlockUser, deleteConversation, addToast } = useAeirmist();
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [blockingId, setBlockingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const handleAccept = async (convId: string, otherId: string) => {
-    if (!db) return;
     setAcceptingId(convId);
     try {
-      // 1. Update conversation status
-      await updateDoc(doc(db, 'conversations', convId), {
-        status: 'active',
-        acceptedAt: serverTimestamp()
-      });
-
-      // 2. Clear view and open chat immediately for visual feedback
+      // 1. Clear view and open chat immediately for visual feedback
       if (onChatSelect) {
         onChatSelect(convId);
       }
 
-      // 3. Follow back if not already following (background effort)
+      // 2. Follow back if not already following (background effort)
       try {
         await toggleFollow(otherId);
       } catch (err) {
@@ -64,13 +54,11 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
   };
 
   const handleBlock = async (otherId: string, convId: string) => {
-    if (!db || !profile) return;
+    if (!profile) return;
     setBlockingId(convId);
     try {
-      await updateDoc(doc(db, 'profiles', profile.id), {
-        'social.blocked': arrayUnion(otherId)
-      });
-      await deleteDoc(doc(db, 'conversations', convId));
+      await toggleBlockUser(otherId);
+      await deleteConversation(convId);
       addToast({
         title: 'Connection Severed',
         message: 'Successfully blocked user and deleted request.',
@@ -89,10 +77,9 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
   };
 
   const handleDelete = async (convId: string) => {
-    if (!db) return;
     setDeletingId(convId);
     try {
-      await deleteDoc(doc(db, 'conversations', convId));
+      await deleteConversation(convId);
       addToast({
         title: 'Deleted',
         message: 'Successfully deleted conversation request.',

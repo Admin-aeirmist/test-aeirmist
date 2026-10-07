@@ -9,11 +9,9 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { useTheme } from '../../context/ThemeContext';
 import { analytics } from '../../services/AnalyticsService';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
-import { confirmPasswordReset, sendPasswordResetEmail, getAuth, applyActionCode } from 'firebase/auth';
-import { auth } from '../../lib/firebase';
+import { api, setAuthToken } from '../../services/api/client';
 import { handleForgotPassword } from '../../services/forgotPassword';
 import { applyEmailVerificationCode, verifyResetCode } from '../../services/authActionService';
-import { collection, addDoc, serverTimestamp, getDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { mapAuthError } from '../../utils/authErrorMapper';
 import { SignupWizard } from './SignupWizard';
 import { logger } from '@/src/utils/logger';
@@ -124,12 +122,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
           };
           // Also update profile lastLoginLocation & coords
           try {
-            const { db: firestoreDb } = await import('../../lib/firebase');
-            const { updateDoc, doc: fsDoc } = await import('firebase/firestore');
-            await updateDoc(fsDoc(firestoreDb, 'profiles', `profile_${userUid}`), {
-              lastLoginLocation: locationData.locationString,
-              lastLoginAt: new Date().toISOString(),
-              lastLoginCoords: { lat: locResult.latitude, lng: locResult.longitude }
+            await api.users.updateProfile({
+              location: locationData.locationString,
             });
           } catch (_) {}
         } else {
@@ -142,16 +136,6 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       } catch (_) {
         locationData = { localTime: new Date().toISOString(), isPrecise: false, locationType: 'unavailable' };
       }
-      await addDoc(collection(db, 'login_sessions'), {
-        userId: userUid,
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        loginAt: serverTimestamp(),
-        lastActiveAt: serverTimestamp(),
-        revoked: false,
-        sessionKey: sessionKey,
-        ...locationData
-      });
       localStorage.setItem('aeirmist_session_key', sessionKey);
     } catch (err) {
       logger.warn("Failed to track login session:", err);
@@ -226,17 +210,40 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     }
 
     try {
-      const userCredential = await loginWithEmail(selectedAccount.username, password, true);
+      let userCredential = null;
+      try {
+        const backendRes = await api.auth.login({ email: selectedAccount.username, password });
+        if (backendRes?.token) {
+          localStorage.setItem('auth_token', backendRes.token);
+          setAuthToken(backendRes.token);
+          userCredential = {
+            user: {
+              uid: backendRes.user?.id,
+              id: backendRes.user?.id,
+              email: backendRes.user?.email,
+              displayName: backendRes.user?.displayName,
+            }
+          };
+        }
+      } catch (apiErr: any) {
+        logger.warn('[AuthSystem] API login notice:', apiErr.message);
+      }
+
+      if (!userCredential) {
+        userCredential = await loginWithEmail(selectedAccount.username, password, true);
+      }
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
       
       if (userUid) {
-        const profileSnap = await getDoc(doc(db, 'profiles', `profile_${userUid}`));
-        if (profileSnap.exists() && profileSnap.data().twoFactorEnabled) {
-          setPendingUserUid(userUid);
-          setView('two_factor');
-          setLoading(false);
-          return;
-        }
+        try {
+          const pRes = await api.users.getProfile(userUid);
+          if (pRes?.profile?.twoFactorEnabled) {
+            setPendingUserUid(userUid);
+            setView('two_factor');
+            setLoading(false);
+            return;
+          }
+        } catch (_) {}
         logger.security("Login Success", { uid: userUid }); 
         await trackLoginSession(userUid, acquiredLoc);
       }
@@ -258,7 +265,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
   const handleVerify2FA = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !pendingUserUid || !twoFactorCode) return;
+    if (!pendingUserUid || !twoFactorCode) return;
     
     setError(null);
     setTwoFactorError(null);
@@ -266,12 +273,12 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     
     try {
       // 1. Fetch user profile
-      const profileSnap = await getDoc(doc(db, 'profiles', `profile_${pendingUserUid}`));
-      if (!profileSnap.exists()) {
+      const pRes = await api.users.getProfile(pendingUserUid);
+      const profileData = pRes?.profile;
+      if (!profileData) {
         throw new Error("Profile Sync failed.");
       }
       
-      const profileData = profileSnap.data();
       const hashes = profileData.backupCodeHashes || [];
       const used = profileData.backupCodesUsed || [];
       
@@ -284,9 +291,14 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       // 3. Check validity
       if (hashes.includes(hashHex) && !used.includes(hashHex)) {
         // Valid code
-        await updateDoc(doc(db, 'profiles', `profile_${pendingUserUid}`), {
-          backupCodesUsed: arrayUnion(hashHex)
-        });
+        try {
+          await api.users.updateProfile({
+            privacySettings: {
+              ...(profileData.privacySettings || {}),
+              backupCodesUsed: [...used, hashHex]
+            }
+          });
+        } catch (_) {}
         
         await trackLoginSession(pendingUserUid);
         resetRouteToHomeFeed();
@@ -436,7 +448,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
           setView('verify_email');
           setVerifyEmailStatus('verifying');
           try {
-            await applyActionCode(auth, oobCode);
+            await applyEmailVerificationCode(oobCode);
             setVerifyEmailStatus('success');
             setVerifyEmailMessage("Your email address update has been verified and applied successfully.");
           } catch (err: any) {
@@ -538,17 +550,40 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     }
 
     try {
-      const userCredential = await loginWithEmail(identifier, password, true);
+      let userCredential = null;
+      try {
+        const backendRes = await api.auth.login({ email: identifier, password });
+        if (backendRes?.token) {
+          localStorage.setItem('auth_token', backendRes.token);
+          setAuthToken(backendRes.token);
+          userCredential = {
+            user: {
+              uid: backendRes.user?.id,
+              id: backendRes.user?.id,
+              email: backendRes.user?.email,
+              displayName: backendRes.user?.displayName,
+            }
+          };
+        }
+      } catch (apiErr: any) {
+        logger.warn('[AuthSystem] API login notice:', apiErr.message);
+      }
+
+      if (!userCredential) {
+        userCredential = await loginWithEmail(identifier, password, true);
+      }
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
       
       if (userUid) {
-        const profileSnap = await getDoc(doc(db, 'profiles', `profile_${userUid}`));
-        if (profileSnap.exists() && profileSnap.data().twoFactorEnabled) {
-          setPendingUserUid(userUid);
-          setView('two_factor');
-          setLoading(false);
-          return;
-        }
+        try {
+          const pRes = await api.users.getProfile(userUid);
+          if (pRes?.profile?.twoFactorEnabled) {
+            setPendingUserUid(userUid);
+            setView('two_factor');
+            setLoading(false);
+            return;
+          }
+        } catch (_) {}
         logger.security("Login Success", { uid: userUid }); 
         await trackLoginSession(userUid, acquiredLoc);
       }
@@ -601,7 +636,35 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     }
 
     try {
-      const userCredential = await completeSignup(emailValidation.normalizedEmail || identifier.trim().toLowerCase(), password, username, fullName, null, null);
+      const emailToUse = emailValidation.normalizedEmail || identifier.trim().toLowerCase();
+      let userCredential = null;
+      try {
+        const backendRes = await api.auth.register({
+          email: emailToUse,
+          password,
+          username,
+          displayName: fullName,
+        });
+        if (backendRes?.token) {
+          localStorage.setItem('auth_token', backendRes.token);
+          setAuthToken(backendRes.token);
+          userCredential = {
+            uid: backendRes.user?.id,
+            user: {
+              uid: backendRes.user?.id,
+              id: backendRes.user?.id,
+              email: backendRes.user?.email,
+              displayName: backendRes.user?.displayName,
+            }
+          };
+        }
+      } catch (apiErr: any) {
+        logger.warn("[AuthSystem] API register notice:", apiErr.message);
+      }
+
+      if (!userCredential) {
+        userCredential = await completeSignup(emailToUse, password, username, fullName, null, null);
+      }
       const userUid = (userCredential as any)?.uid || (userCredential as any)?.user?.uid;
       if (userUid) {
         logger.security("Login Success", { uid: userUid }); 
@@ -631,12 +694,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     setLoading(true);
     try {
       const trimmed = identifier.trim();
-      if (trimmed.includes('@')) {
-        await handleForgotPassword(trimmed);
-      } else {
-        await resetPassword(trimmed);
-        setSuccess("Password reset link sent to your email. Please check your inbox.");
-      }
+      const res = await api.auth.forgotPassword(trimmed);
+      setSuccess(res?.message || "Password reset link sent to your registered email. Please check your inbox.");
       setForgotStep(2);
       analytics.trackEvent({ action: 'password_reset_request', category: 'Auth' });
     } catch (err: any) {
@@ -652,7 +711,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     setError(null);
     setLoading(true);
     try {
-      await confirmPasswordReset(auth, resetCode, password);
+      await api.auth.resetPassword({ token: resetCode, newPassword: password });
       setResetStep(2);
       if (navigator.vibrate) navigator.vibrate([50, 100]);
     } catch (err: any) {
@@ -683,13 +742,15 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
       
       if (userUid) {
-        const profileSnap = await getDoc(doc(db, 'profiles', `profile_${userUid}`));
-        if (profileSnap.exists() && profileSnap.data().twoFactorEnabled) {
-          setPendingUserUid(userUid);
-          setView('two_factor');
-          setLoading(false);
-          return;
-        }
+        try {
+          const pRes = await api.users.getProfile(userUid);
+          if (pRes?.profile?.twoFactorEnabled) {
+            setPendingUserUid(userUid);
+            setView('two_factor');
+            setLoading(false);
+            return;
+          }
+        } catch (_) {}
         logger.security("Login Success", { uid: userUid }); 
         await trackLoginSession(userUid, acquiredLoc);
       }
@@ -1510,7 +1571,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
                   </motion.form>
                 )}
 
-                {/* 5.1 DIRECT EMAIL VERIFICATION (URL oobCode Triggered Flow from Firebase Email Template) */}
+                {/* 5.1 DIRECT EMAIL VERIFICATION (URL oobCode Triggered Flow) */}
                 {view === 'verify_email' && (
                   <motion.div
                     key="verify_email"

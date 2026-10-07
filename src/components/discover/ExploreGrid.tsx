@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Play, MessageSquare, Heart, Zap, Sparkles, Loader2 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, query, where, limit, onSnapshot, orderBy } from 'firebase/firestore';
-
+import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
 
@@ -14,74 +13,49 @@ interface ExploreGridProps {
 }
 
 export const ExploreGrid: React.FC<ExploreGridProps> = ({ category, onUserClick }) => {
-  const { db, user, profile, addToast } = useAeirmist();
+  const { user, profile, addToast } = useAeirmist();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    if (!db || !user) return;
-
+    let isMounted = true;
     setLoading(true);
-    // Fetch posts that have media
-    const q = query(
-      collection(db, 'posts'),
-      where('mediaUrls', '!=', []),
-      limit(20)
-    );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const blockedList = new Set(profile?.social?.blocked || []);
-      const fetchedItems = snapshot.docs.map(doc => {
-        const data = doc.data();
-        const authorId = data.authorId || data.userId || data.author?.id || '';
-        const authorUid = data.authorUid || data.author?.uid || '';
+    api.posts.getFeed(40)
+      .then(res => {
+        if (!isMounted) return;
+        const posts = res?.posts || [];
+        const blockedList = new Set(profile?.social?.blocked || []);
+        const fetchedItems = posts.map((data: any) => {
+          const authorId = data.authorId || data.userId || data.author?.id || '';
+          if (blockedList.has(authorId)) return null;
 
-        if (blockedList.has(authorId) || blockedList.has(authorUid)) {
-          return null;
-        }
+          const mediaList = data.mediaUrls || (data.mediaUrl ? [data.mediaUrl] : []);
+          if (!mediaList || mediaList.length === 0) return null;
 
-        const isDeleted = Boolean(
-          data.isDeletedAuthor ||
-          data.scheduledForPurge ||
-          data.isDeleted ||
-          data.hidden ||
-          data.authorName === 'Aeirmist User' ||
-          data.userName === 'Aeirmist User' ||
-          data.author?.name === 'Aeirmist User'
-        );
-        if (isDeleted) return null;
-        return {
-          id: doc.id,
-          type: data.mediaType || 'image',
-          url: data.mediaUrls?.[0] || '',
-          likes: data.likesCount || 0,
-          comments: data.commentsCount || 0,
-          author: data.author?.username || data.userName || 'Anonymous',
-          authorDisplayName: data.author?.displayName || data.author?.username || 'User',
-          authorId: data.authorId || data.userId || '',
-          authorAvatar: getAvatarUrl(data.author?.photoURL || data.userAvatar || '', data.author?.username || data.userName || 'Anonymous')
-        };
-      }).filter(Boolean) as any[];
-      setItems(fetchedItems);
-      setLoading(false);
-    }, (error) => {
-      logger.error("Explore grid fetch error:", error);
-      setLoading(false);
-      addToast({
-        title: "Explore Sync Interrupted",
-        message: "Failed to fetch grid media. Retrying Link...",
-        type: "warning"
+          return {
+            id: data.id,
+            type: data.mediaType || 'image',
+            url: mediaList[0] || '',
+            likes: data.likesCount || 0,
+            comments: data.commentsCount || 0,
+            author: data.author?.username || data.userName || 'Anonymous',
+            authorDisplayName: data.author?.displayName || data.author?.username || 'User',
+            authorId: authorId,
+            authorAvatar: getAvatarUrl(data.author?.photoURL || data.userAvatar || '', data.author?.username || data.userName || 'Anonymous')
+          };
+        }).filter(Boolean) as any[];
+
+        setItems(fetchedItems);
+        setLoading(false);
+      })
+      .catch(err => {
+        logger.error("Explore grid fetch error:", err);
+        if (isMounted) setLoading(false);
       });
-      if (retryCount < 5) {
-        setTimeout(() => {
-          setRetryCount(prev => prev + 1);
-        }, 5000);
-      }
-    });
 
-    return () => unsubscribe();
-  }, [db, user, category, retryCount]);
+    return () => { isMounted = false; };
+  }, [profile?.id, category]);
 
   if (loading) {
     return (

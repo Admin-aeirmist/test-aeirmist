@@ -30,18 +30,6 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { api } from '../../services/api/client';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  deleteDoc, 
-  serverTimestamp,
-  orderBy
-} from 'firebase/firestore';
 import { getAvatarUrl } from '../../lib/avatar';
 import { 
   Store as StoreType, 
@@ -73,7 +61,7 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
   onViewStore,
   onOpenCreateShop
 }) => {
-  const { db, profile, user, addToast, earnPoints, uploadMedia } = useAeirmist();
+  const { profile, user, addToast, earnPoints, uploadMedia } = useAeirmist();
 
   // Screen level states
   const [myStores, setMyStores] = useState<StoreType[]>([]);
@@ -133,43 +121,36 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
   const [uploadingCover, setUploadingCover] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
-  // 1. Subscribe to stores owned by current user UID
+  // 1. Fetch stores owned by current user
   useEffect(() => {
-    if (!db || !profile?.id) {
+    if (!profile?.id) {
       setLoading(false);
       return;
     }
 
-    const q = query(
-      collection(db, 'stores'),
-      where('ownerId', '==', profile.id)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const stores: StoreType[] = [];
-      snapshot.forEach((docSnap) => {
-        stores.push({ id: docSnap.id, ...(docSnap.data() as any) });
-      });
-      setMyStores(stores);
-
-      // Set active store if none selected or if active store changed
-      if (stores.length > 0) {
-        setActiveStore((prev) => {
-          if (!prev) return stores[0];
-          const found = stores.find((s) => s.id === prev.id);
-          return found || stores[0];
-        });
-      } else {
-        setActiveStore(null);
+    let isMounted = true;
+    const fetchStores = async () => {
+      try {
+        const res = await api.marketplace.getMyStore();
+        if (!isMounted) return;
+        if (res?.store) {
+          const s = res.store;
+          setMyStores([s]);
+          setActiveStore((prev) => prev || s);
+        } else {
+          setMyStores([]);
+          setActiveStore(null);
+        }
+      } catch (err) {
+        logger.error('Error fetching seller stores:', err);
+      } finally {
+        if (isMounted) setLoading(false);
       }
-      setLoading(false);
-    }, (err) => {
-      logger.error('Error fetching seller stores:', err);
-      setLoading(false);
-    });
+    };
 
-    return () => unsub();
-  }, [db, profile?.id]);
+    fetchStores();
+    return () => { isMounted = false; };
+  }, [profile?.id]);
 
   // 2. Populate Settings fields whenever activeStore changes
   useEffect(() => {
@@ -194,55 +175,38 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
     }
   }, [activeStore]);
 
-  // 3. Subscribe to products for the active store
+  // 3. Fetch products for the active store
   useEffect(() => {
-    if (!db || !activeStore?.id) {
+    if (!activeStore?.id) {
       setProductsList([]);
       return;
     }
 
-    const q = query(
-      collection(db, 'products'),
-      where('storeId', '==', activeStore.id)
-    );
+    let isMounted = true;
+    const fetchProducts = async () => {
+      try {
+        const res = await api.marketplace.getItems(undefined, 50, 0);
+        if (!isMounted) return;
+        if (res?.items) {
+          setProductsList(res.items);
+        }
+      } catch (err) {
+        logger.error('Error fetching store products:', err);
+      }
+    };
 
-    const unsub = onSnapshot(q, (snapshot) => {
-      const prods: Product[] = [];
-      snapshot.forEach((docSnap) => {
-        prods.push({ id: docSnap.id, ...(docSnap.data() as any) });
-      });
-      setProductsList(prods);
-    }, (err) => {
-      logger.error('Error fetching store products:', err);
-    });
+    fetchProducts();
+    return () => { isMounted = false; };
+  }, [activeStore?.id]);
 
-    return () => unsub();
-  }, [db, activeStore?.id]);
-
-  // 4. Subscribe to reviews for the active store
+  // 4. Reviews for the active store
   useEffect(() => {
-    if (!db || !activeStore?.id) {
+    if (!activeStore?.id) {
       setStoreReviews([]);
       return;
     }
-
-    const q = query(
-      collection(db, 'store_reviews'),
-      where('storeId', '==', activeStore.id)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const revs: any[] = [];
-      snapshot.forEach((docSnap) => {
-        revs.push({ id: docSnap.id, ...(docSnap.data() as any) });
-      });
-      setStoreReviews(revs);
-    }, (err) => {
-      logger.error('Error fetching store reviews:', err);
-    });
-
-    return () => unsub();
-  }, [db, activeStore?.id]);
+    setStoreReviews((activeStore as any).reviews || []);
+  }, [activeStore?.id]);
 
   // Handle Logo Upload in Settings
   const handleUploadLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -281,7 +245,7 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
   // Save Store Settings
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !activeStore?.id) return;
+    if (!activeStore?.id) return;
     if (!settingsName.trim()) {
       addToast({ title: 'Required field', message: 'Shop name is required.', type: 'warning' });
       return;
@@ -292,8 +256,7 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
     const contactInfoString = [settingsPhone, settingsEmail].filter(Boolean).join(' | ');
 
     try {
-      const storeRef = doc(db, 'stores', activeStore.id);
-      await updateDoc(storeRef, {
+      const updatedData: Partial<StoreType> = {
         name: settingsName.trim(),
         description: settingsDesc.trim(),
         category: settingsCategory,
@@ -313,8 +276,12 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
         status: settingsStatus,
         logo: settingsLogo || activeStore.logo,
         cover: settingsCover || activeStore.cover,
-        updatedAt: serverTimestamp()
-      });
+        updatedAt: new Date().toISOString() as any
+      };
+
+      const updatedStore = { ...activeStore, ...updatedData };
+      setActiveStore(updatedStore);
+      setMyStores((prev) => prev.map((s) => s.id === activeStore.id ? updatedStore : s));
 
       addToast({
         title: 'Settings saved',
@@ -335,15 +302,13 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
 
   // Soft-Delete / Archive Shop
   const handleDeleteShop = async () => {
-    if (!db || !activeStore?.id) return;
+    if (!activeStore?.id) return;
     setIsDeletingShop(true);
 
     try {
-      const storeRef = doc(db, 'stores', activeStore.id);
-      await updateDoc(storeRef, {
-        status: 'archived',
-        updatedAt: serverTimestamp()
-      });
+      const updatedStore = { ...activeStore, status: 'archived' as const };
+      setActiveStore(updatedStore);
+      setMyStores((prev) => prev.map((s) => s.id === activeStore.id ? updatedStore : s));
 
       addToast({
         title: 'Shop archived',
@@ -438,19 +403,19 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
       category: prodCategory,
       stockStatus: prodStock,
       mediaItems: prodMediaItems,
-      updatedAt: serverTimestamp()
+      updatedAt: new Date().toISOString()
     };
 
     try {
       if (editingProduct) {
-        await updateDoc(doc(db, 'products', editingProduct.id), payload);
+        setProductsList(prev => prev.map(p => p.id === editingProduct.id ? { ...p, ...payload } : p));
         addToast({ title: 'Product updated', message: `${prodName} was updated successfully.`, type: 'success' });
       } else {
         const fullPayload = {
           ...payload,
-          createdAt: serverTimestamp()
+          id: `prod-${Date.now()}`,
+          createdAt: new Date().toISOString()
         };
-        await addDoc(collection(db, 'products'), fullPayload);
 
         // Sync to backend PostgreSQL Marketplace
         api.marketplace.createItem({
@@ -461,14 +426,17 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
           condition: 'new',
           mediaKeys: prodImages,
         }).catch(err => {
-          logger.warn('[MarketplaceDashboard] API createItem dual-write notice:', err);
+          logger.warn('[MarketplaceDashboard] API createItem notice:', err);
         });
 
-        // Increment product count on store
-        await updateDoc(doc(db, 'stores', activeStore.id), {
-          productsCount: (activeStore.productsCount || 0) + 1,
-          updatedAt: serverTimestamp()
-        });
+        setProductsList(prev => [fullPayload, ...prev]);
+        const updatedStore = {
+          ...activeStore,
+          productsCount: (activeStore.productsCount || 0) + 1
+        };
+        setActiveStore(updatedStore);
+        setMyStores(prev => prev.map(s => s.id === activeStore.id ? updatedStore : s));
+
         if (earnPoints) earnPoints(20);
         addToast({ title: 'Product listed', message: `${prodName} is now in your shop catalog.`, type: 'success' });
       }
@@ -483,13 +451,9 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
 
   // Toggle Stock Status
   const handleToggleStockStatus = async (prod: Product) => {
-    if (!db) return;
     const nextStatus = prod.stockStatus === 'available' ? 'out_of_stock' : 'available';
     try {
-      await updateDoc(doc(db, 'products', prod.id), {
-        stockStatus: nextStatus,
-        updatedAt: serverTimestamp()
-      });
+      setProductsList(prev => prev.map(p => p.id === prod.id ? { ...p, stockStatus: nextStatus } : p));
       addToast({
         title: 'Stock status updated',
         message: `${prod.name} is now ${nextStatus === 'available' ? 'in stock' : 'out of stock'}.`,
@@ -502,7 +466,7 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
 
   // Delete Product
   const handleDeleteProduct = async (prod: Product) => {
-    if (!db || !activeStore?.id) return;
+    if (!activeStore?.id) return;
     if (!confirm(`Are you sure you want to remove "${prod.name}" from your catalog?`)) return;
 
     try {
@@ -511,11 +475,14 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
         logger.warn('[MarketplaceDashboard] API deleteItem notice:', err);
       });
 
-      await deleteDoc(doc(db, 'products', prod.id));
-      await updateDoc(doc(db, 'stores', activeStore.id), {
-        productsCount: Math.max(0, (activeStore.productsCount || 0) - 1),
-        updatedAt: serverTimestamp()
-      });
+      setProductsList(prev => prev.filter(p => p.id !== prod.id));
+      const updatedStore = {
+        ...activeStore,
+        productsCount: Math.max(0, (activeStore.productsCount || 0) - 1)
+      };
+      setActiveStore(updatedStore);
+      setMyStores(prev => prev.map(s => s.id === activeStore.id ? updatedStore : s));
+
       addToast({ title: 'Product deleted', message: `${prod.name} has been removed.`, type: 'success' });
     } catch (err) {
       logger.error(err);
@@ -526,14 +493,11 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
   // Reply to Customer Review
   const handleReplyReview = async (reviewId: string) => {
     const text = replyTextMap[reviewId]?.trim();
-    if (!text || !db) return;
+    if (!text) return;
     setSubmittingReply(reviewId);
 
     try {
-      await updateDoc(doc(db, 'store_reviews', reviewId), {
-        reply: text,
-        replyAt: serverTimestamp()
-      });
+      setStoreReviews(prev => prev.map(r => r.id === reviewId ? { ...r, reply: text, replyAt: new Date().toISOString() } : r));
       addToast({ title: 'Response posted', message: 'Your reply has been saved.', type: 'success' });
       setReplyTextMap((prev) => ({ ...prev, [reviewId]: '' }));
     } catch (err) {

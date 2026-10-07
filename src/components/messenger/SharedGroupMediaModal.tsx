@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, Copy, ExternalLink, Loader2, 
   FileCode, FileArchive, Music, ShieldCheck, Calendar, User
 } from 'lucide-react';
-import { collection, query, orderBy, limit, onSnapshot, Firestore } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
 import { DownloadManagerService } from '../../services/DownloadManagerService';
@@ -15,7 +15,7 @@ interface SharedGroupMediaModalProps {
   isOpen: boolean;
   onClose: () => void;
   chat: any;
-  db: Firestore | null;
+  db?: any;
   initialTab?: 'media' | 'files' | 'all';
   addToast?: (toast: { title: string; message: string; type: 'info' | 'success' | 'warning' | 'error' }) => void;
 }
@@ -43,7 +43,6 @@ export const SharedGroupMediaModal: React.FC<SharedGroupMediaModalProps> = ({
   isOpen,
   onClose,
   chat,
-  db,
   initialTab = 'media',
   addToast
 }) => {
@@ -59,37 +58,38 @@ export const SharedGroupMediaModal: React.FC<SharedGroupMediaModalProps> = ({
     }
   }, [isOpen, initialTab]);
 
-  // Real-time Firestore query for messages with attachments
+  // Query messages with attachments via backend API
   useEffect(() => {
-    if (!isOpen || !db || !chat?.id) return;
+    if (!isOpen || !chat?.id) return;
 
+    let isMounted = true;
     setLoading(true);
-    const msgsRef = collection(db, 'conversations', chat.id, 'messages');
-    const q = query(msgsRef, orderBy('timestamp', 'desc'), limit(500));
+    api.chat.getMessages(chat.id, 100)
+      .then(res => {
+        if (!isMounted) return;
+        const fetched: any[] = [];
+        (res?.messages || []).forEach((data: any) => {
+          const url = data.mediaUrl || data.attachmentUrl || data.url || data.mediaKey;
+          const type = (data.type || data.mediaType || '').toLowerCase();
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetched: any[] = [];
-      snapshot.docs.forEach((doc) => {
-        const data = doc.data();
-        const url = data.mediaUrl || data.attachmentUrl || data.url;
-        const type = (data.type || data.mediaType || '').toLowerCase();
-
-        if (url || ['image', 'video', 'media', 'file', 'document', 'attachment', 'voice'].includes(type)) {
-          fetched.push({
-            id: doc.id,
-            ...data
-          });
-        }
+          if (url || ['image', 'video', 'media', 'file', 'document', 'attachment', 'voice'].includes(type)) {
+            fetched.push({
+              id: data.id,
+              ...data,
+              mediaUrl: url
+            });
+          }
+        });
+        setMessages(fetched);
+        setLoading(false);
+      })
+      .catch((error) => {
+        logger.error("Error loading group shared media:", error);
+        if (isMounted) setLoading(false);
       });
-      setMessages(fetched);
-      setLoading(false);
-    }, (error) => {
-      logger.error("Error loading group shared media:", error);
-      setLoading(false);
-    });
 
-    return () => unsubscribe();
-  }, [isOpen, db, chat?.id]);
+    return () => { isMounted = false; };
+  }, [isOpen, chat?.id]);
 
   // Filter messages by tab & search query
   const filteredMessages = useMemo(() => {

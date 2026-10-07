@@ -1,4 +1,5 @@
-export type FirestoreTimestamp = string | number | { seconds: number; nanoseconds: number };
+export type Timestamp = Date | string | number;
+export type FirestoreTimestamp = Timestamp;
 
 export interface Story {
   id: string;
@@ -7,8 +8,8 @@ export interface Story {
   userAvatar: string;
   mediaUrl: string;
   type: 'image' | 'video';
-  createdAt: FirestoreTimestamp;
-  expiresAt: FirestoreTimestamp;
+  createdAt: Date | string | number;
+  expiresAt: Date | string | number;
   viewers: string[];
 }
 
@@ -22,7 +23,7 @@ export interface Post {
   mediaType: 'image' | 'video';
   likes: string[];
   comments: Comment[];
-  createdAt: FirestoreTimestamp;
+  createdAt: Date | string | number;
   location?: string;
   tags?: string[];
 }
@@ -33,5 +34,5 @@ export interface Comment {
   userName: string;
   userAvatar: string;
   text: string;
-  createdAt: FirestoreTimestamp;
+  createdAt: Date | string | number;
 }

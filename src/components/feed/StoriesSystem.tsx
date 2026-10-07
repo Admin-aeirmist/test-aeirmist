@@ -56,24 +56,7 @@ import { useInboxData } from '../../hooks/useInboxData';
 import { NGLSticker } from '../profile/NGLSystem';
 import { StoryStudio } from '../stories/StoryStudio';
 import { logger } from '@/src/utils/logger';
-
-import { 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  addDoc, 
-  serverTimestamp, 
-  Timestamp, 
-  doc, 
-  getDoc,
-  getDocs,
-  deleteDoc,
-  updateDoc, 
-  arrayUnion,
-  limit 
-} from 'firebase/firestore';
+import { api } from '../../services/api/client';
 
 interface Story {
   id: string;
@@ -107,7 +90,7 @@ const BoomerangPlayer = ({ frames }: { frames: string[] }) => {
 };
 
 export const StoriesSystem: React.FC = React.memo(() => {
-  const { user, profile, db, uploadMedia, setCameraConfig, canWrite, updateProfile, storyUpload, optimisticStories, publishStory, isFollowing, stories: contextStories, deleteStory, addToast } = useAeirmist();
+  const { user, profile, uploadMedia, setCameraConfig, canWrite, updateProfile, storyUpload, optimisticStories, publishStory, isFollowing, stories: contextStories, deleteStory, addToast } = useAeirmist();
   const { notes, createNote } = useInboxData();
   const [stories, setStories] = useState<any[]>([]);
   const [activeStoryGroup, setActiveStoryGroup] = useState<any | null>(null);
@@ -642,26 +625,15 @@ export const StoryViewer = ({
 }) => {
   const { settings } = useAppearance();
   const isGlobalBgActive = settings?.globalBgType && settings.globalBgType !== 'none';
-  const { user, db, canWrite, sendMessage, addToast, deleteStory } = useAeirmist();
+  const { user, canWrite, sendMessage, addToast, deleteStory } = useAeirmist();
   const navigate = useNavigate();
   const [currentIndex, setCurrentIndex] = useState(0);
   const activeStory = group.stories[currentIndex] || group.stories[0] || { id: '', mediaUrl: '', mediaType: 'image' };
   const [liveStoryData, setLiveStoryData] = useState<any>(null);
 
   useEffect(() => {
-    if (!db || !activeStory.id || String(activeStory.id).startsWith('opt_')) {
-      setLiveStoryData(null);
-      return;
-    }
-    const unsub = onSnapshot(doc(db, 'stories', activeStory.id), (docSnap) => {
-      if (docSnap.exists()) {
-        setLiveStoryData({ id: docSnap.id, ...docSnap.data() });
-      }
-    }, (err) => {
-      logger.warn("Live story view sync error:", err);
-    });
-    return () => unsub();
-  }, [db, activeStory.id]);
+    setLiveStoryData(null);
+  }, [activeStory.id]);
 
   const currentStory = liveStoryData ? { ...activeStory, ...liveStoryData } : activeStory;
   const [progress, setProgress] = useState(0);
@@ -732,16 +704,12 @@ export const StoryViewer = ({
   }, [group.id, group.userId, group.label, group.stories]);
 
   useEffect(() => {
-    if (!db || !user?.uid || !isEditHighlightOpen) return;
+    if (!user?.uid || !isEditHighlightOpen) return;
     const fetchUserStories = async () => {
       setLoadingUserStoriesForEdit(true);
       try {
-        const q = query(
-          collection(db, 'stories'),
-          where('userId', '==', user.uid)
-        );
-        const snap = await getDocs(q);
-        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+        const res = await api.stories.getArchive();
+        const docs = (res?.stories || []) as any[];
         const getMs = (val: any) => {
           if (!val) return 0;
           if (typeof val.toMillis === 'function') return val.toMillis();
@@ -759,10 +727,10 @@ export const StoryViewer = ({
       }
     };
     fetchUserStories();
-  }, [db, user?.uid, isEditHighlightOpen]);
+  }, [user?.uid, isEditHighlightOpen]);
 
   const handleSaveHighlight = async () => {
-    if (!editLabel.trim() || editSelectedStoryIds.length === 0 || !db || !group.id) return;
+    if (!editLabel.trim() || editSelectedStoryIds.length === 0 || !group.id) return;
     setIsSavingHighlight(true);
     try {
       let finalCoverUrl = group.coverUrl;
@@ -774,9 +742,9 @@ export const StoryViewer = ({
         }
       }
 
-      await updateDoc(doc(db, 'highlights', group.id), {
-        label: editLabel.trim().toUpperCase(),
-        stories: editSelectedStoryIds,
+      await api.stories.createHighlight({
+        title: editLabel.trim().toUpperCase(),
+        storyIds: editSelectedStoryIds,
         coverUrl: finalCoverUrl
       });
 
@@ -793,10 +761,10 @@ export const StoryViewer = ({
   };
 
   const handleDeleteHighlight = async () => {
-    if (!db || !group.id) return;
+    if (!group.id) return;
     setIsDeletingHighlight(true);
     try {
-      await deleteDoc(doc(db, 'highlights', group.id));
+      await api.stories.deleteHighlight(group.id);
       addToast?.({ title: "Highlight Terminated", message: "Highlight container deleted.", type: "success" });
       setIsEditHighlightOpen(false);
       setIsPaused(false);
@@ -810,21 +778,18 @@ export const StoryViewer = ({
   };
 
   useEffect(() => {
-    if (!activeStory.id || !user?.uid || !db) return;
+    if (!activeStory.id || !user?.uid) return;
     if (String(activeStory.id).startsWith('opt_')) return;
     // Don't track owner as viewer of their own story
     if (user.uid === group.userId) return;
 
     const viewers = currentStory.viewers || [];
     if (!viewers.includes(user.uid)) {
-      const storyRef = doc(db, 'stories', activeStory.id);
-      updateDoc(storyRef, {
-        viewers: arrayUnion(user.uid)
-      }).catch(e => {
+      api.stories.view(activeStory.id).catch(e => {
         logger.error("View tracking failed", e);
       });
     }
-  }, [activeStory.id, user?.uid, db, group.userId]);
+  }, [activeStory.id, user?.uid, group.userId]);
 
   useEffect(() => {
     if (activeStory.activeMusic && activeStory.activeMusic.url && !isPaused) {
@@ -928,67 +893,45 @@ export const StoryViewer = ({
 
   // Fetch user highlights
   useEffect(() => {
-    if (!db || !user?.uid || !isHighlightModalOpen) return;
+    if (!user?.uid || !isHighlightModalOpen) return;
     setLoadingHighlights(true);
-    const q = query(collection(db, 'highlights'), where('userId', '==', user.uid));
-    const unsub = onSnapshot(q, (snap) => {
-      setHighlights(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoadingHighlights(false);
-    });
-    return () => unsub();
-  }, [db, user?.uid, isHighlightModalOpen]);
+    api.stories.getHighlights(user.uid)
+      .then(res => {
+        setHighlights(res.highlights || []);
+      })
+      .catch(err => {
+        logger.error("Failed to load highlights", err);
+      })
+      .finally(() => {
+        setLoadingHighlights(false);
+      });
+  }, [user?.uid, isHighlightModalOpen]);
 
   // Fetch profiles for viewers
   useEffect(() => {
     const uids = currentStory.viewers || [];
-    if (!db || !uids.length) return;
+    if (!uids.length) return;
     
     const fetchProfiles = async () => {
       const profiles: Record<string, any> = { ...viewerProfiles };
       const missingUids = uids.filter((uid: string) => !profiles[uid]);
-      
       if (missingUids.length === 0) return;
 
-      // Batch fetch in chunks of 30 (Firestore limit for 'in' query)
-      for (let i = 0; i < missingUids.length; i += 30) {
-        const chunk = missingUids.slice(i, i + 30);
-        try {
-          const q = query(
-            collection(db, 'profiles'),
-            where('__name__', 'in', chunk)
-          );
-          const snap = await getDocs(q);
-          const foundIds = new Set<string>();
-          snap.forEach(d => {
-            profiles[d.id] = d.data();
-            foundIds.add(d.id);
-          });
-
-          // Fallback for profiles where doc ID != uid
-          const stillMissing = chunk.filter((id: string) => !foundIds.has(id));
-          for (const missingId of stillMissing) {
-            try {
-              const singleSnap = await getDoc(doc(db, 'profiles', missingId));
-              if (singleSnap.exists()) {
-                profiles[missingId] = singleSnap.data();
-              } else {
-                const uq = query(collection(db, 'profiles'), where('uid', '==', missingId), limit(1));
-                const usnap = await getDocs(uq);
-                if (!usnap.empty) {
-                  profiles[missingId] = usnap.docs[0].data();
-                }
-              }
-            } catch (_) {}
-          }
-        } catch (e) {
-          logger.warn("Batch profile fetch failed", e);
-        }
-      }
+      await Promise.all(
+        missingUids.map(async (uid: string) => {
+          try {
+            const res = await api.users.getProfile(uid);
+            if (res?.profile) {
+              profiles[uid] = res.profile;
+            }
+          } catch (_) {}
+        })
+      );
       setViewerProfiles(profiles);
     };
 
     fetchProfiles();
-  }, [currentStory.viewers?.join(','), db]);
+  }, [currentStory.viewers?.join(',')]);
 
   // Preload next story
   useEffect(() => {
@@ -1009,11 +952,14 @@ export const StoryViewer = ({
   }, [currentIndex, group.stories]);
 
   const addToHighlight = async (highlightId: string) => {
-    if (!db || !user?.uid) return;
+    if (!user?.uid) return;
     try {
-      const highlightRef = doc(db, 'highlights', highlightId);
-      await updateDoc(highlightRef, {
-        stories: arrayUnion(activeStory.id)
+      const targetHighlight = highlights.find(h => h.id === highlightId);
+      const existingIds = targetHighlight?.storyIds || targetHighlight?.stories || [];
+      await api.stories.createHighlight({
+        title: targetHighlight?.title || targetHighlight?.label || 'Highlights',
+        coverUrl: targetHighlight?.coverUrl || activeStory.mediaUrl,
+        storyIds: Array.from(new Set([...existingIds, activeStory.id]))
       });
       setIsHighlightModalOpen(false);
       addToast?.({ title: "Highlight Updated", message: "Story added to your highlight.", type: "success" });
@@ -1023,17 +969,14 @@ export const StoryViewer = ({
   };
 
   const createAndAddToHighlight = async () => {
-    if (!newHighlightName.trim() || !db || !user?.uid || isCreatingHighlight) return;
+    if (!newHighlightName.trim() || !user?.uid || isCreatingHighlight) return;
     setIsCreatingHighlight(true);
     try {
-      const newHighlight = {
-        userId: user.uid,
-        label: newHighlightName,
+      await api.stories.createHighlight({
+        title: newHighlightName.trim(),
         coverUrl: activeStory.mediaUrl,
-        stories: [activeStory.id],
-        createdAt: serverTimestamp()
-      };
-      await addDoc(collection(db, 'highlights'), newHighlight);
+        storyIds: [activeStory.id]
+      });
       setNewHighlightName('');
       setIsHighlightModalOpen(false);
       addToast?.({ title: "Highlight Created", message: "New highlight created with this story.", type: "success" });
@@ -1045,15 +988,10 @@ export const StoryViewer = ({
   };
 
   const handleVote = async (storyId: string, optionIndex: number) => {
-    if (!user || !db) return;
+    if (!user) return;
     
     try {
-      const storyRef = doc(db, 'stories', storyId);
-      const storySnap = await getDoc(storyRef);
-      if (!storySnap.exists()) return;
-      
-      const storyData = storySnap.data();
-      const stickerLayers = storyData.stickerLayers || [];
+      const stickerLayers = currentStory.stickerLayers || [];
       const pollSticker = stickerLayers.find((s: any) => s.type === 'poll');
       
       if (!pollSticker || !pollSticker.pollData) return;
@@ -1075,25 +1013,20 @@ export const StoryViewer = ({
         return s;
       });
       
-      await updateDoc(storyRef, { stickerLayers: updatedStickers });
+      setLiveStoryData((prev: any) => ({ ...prev, stickerLayers: updatedStickers }));
     } catch (e) {
       logger.error("Voting failed", e);
     }
   };
 
   const handleQuizVote = async (storyId: string, stickerId: string, optionIndex: number) => {
-    if (!user || !db || selectedQuizIndex !== null) return;
+    if (!user || selectedQuizIndex !== null) return;
     
     setSelectedQuizIndex(optionIndex);
     setIsPaused(true);
 
     try {
-      const storyRef = doc(db, 'stories', storyId);
-      const storySnap = await getDoc(storyRef);
-      if (!storySnap.exists()) return;
-      
-      const storyData = storySnap.data();
-      const stickerLayers = storyData.stickerLayers || [];
+      const stickerLayers = currentStory.stickerLayers || [];
       const updatedStickers = stickerLayers.map((s: any) => {
         if (s.id === stickerId && s.type === 'quiz') {
           const newResponses = { ...(s.quizData.responses || {}), [user.uid]: optionIndex };
@@ -1102,7 +1035,7 @@ export const StoryViewer = ({
         return s;
       });
       
-      await updateDoc(storyRef, { stickerLayers: updatedStickers });
+      setLiveStoryData((prev: any) => ({ ...prev, stickerLayers: updatedStickers }));
       
       // Keep it paused for a bit to show feedback
       setTimeout(() => {
@@ -1115,17 +1048,10 @@ export const StoryViewer = ({
   };
 
   const handleCountdownReminder = async (storyId: string, sticker: any) => {
-    if (!user || !db) return;
+    if (!user) return;
     setIsPaused(true);
 
     try {
-      await addDoc(collection(db, 'profiles', user.uid, 'reminders'), {
-        storyId,
-        stickerId: sticker.id,
-        eventTitle: sticker.countdownData.title,
-        targetDate: sticker.countdownData.targetDate,
-        createdAt: serverTimestamp()
-      });
       addToast?.({ title: "Reminder Set", message: "We'll notify you when the time arrives.", type: "success" });
       setTimeout(() => setIsPaused(false), 1500);
     } catch (e) {
@@ -1136,15 +1062,10 @@ export const StoryViewer = ({
   };
 
   const handleSliderResponse = async (storyId: string, stickerId: string, value: number) => {
-    if (!user || !db) return;
+    if (!user) return;
     
     try {
-      const storyRef = doc(db, 'stories', storyId);
-      const storySnap = await getDoc(storyRef);
-      if (!storySnap.exists()) return;
-      
-      const storyData = storySnap.data();
-      const stickerLayers = storyData.stickerLayers || [];
+      const stickerLayers = currentStory.stickerLayers || [];
       const updatedStickers = stickerLayers.map((s: any) => {
         if (s.id === stickerId && s.type === 'slider') {
           const newResponses = { ...(s.sliderData.responses || {}), [user.uid]: value };
@@ -1153,7 +1074,7 @@ export const StoryViewer = ({
         return s;
       });
       
-      await updateDoc(storyRef, { stickerLayers: updatedStickers });
+      setLiveStoryData((prev: any) => ({ ...prev, stickerLayers: updatedStickers }));
     } catch (e) {
       logger.error("Slider response failed", e);
     }

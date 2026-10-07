@@ -535,7 +535,7 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    // Only dismiss splash once Firebase Auth or local profile hydration has actually resolved
+    // Only dismiss splash once auth or local profile hydration has actually resolved
     if (!loading && (profile || user || !localStorage.getItem('aeirmist_session'))) {
       const timer = setTimeout(() => {
         setShowSplash(false);
@@ -554,7 +554,7 @@ function AppContent() {
     }
 
     if (connectionError) {
-      setNetworkWarningText(connectionError.includes('Firebase') || connectionError.includes('network') ? 'Network Error' : 'Connection Error');
+      setNetworkWarningText(connectionError.includes('network') ? 'Network Error' : 'Connection Error');
       setShowSafeExit(true);
       return;
     }
@@ -1478,13 +1478,13 @@ function AppContent() {
     location.pathname.startsWith('/product/')
   );
 
-  // Check if an incoming Firebase Authentication Template action code is present (e.g. verifyEmail, resetPassword)
+  // Check if an incoming Authentication action code is present (e.g. verifyEmail, resetPassword)
   const hasAuthActionCode = typeof window !== 'undefined' && Boolean(
     new URLSearchParams(window.location.search).get('oobCode') &&
     new URLSearchParams(window.location.search).get('mode')
   );
 
-  // Prevent AuthSystem flashing for logged-in users while Firebase is verifying or profile is hydrating
+  // Prevent AuthSystem flashing for logged-in users while verifying or profile is hydrating
   const hasCachedAuth = typeof window !== 'undefined' && Boolean(
     localStorage.getItem('aeirmist_session') || 
     localStorage.getItem('aeirmist_user_profile') || 
@@ -1504,7 +1504,7 @@ function AppContent() {
   // Only show public preview gateway if an actual shared URL is being viewed!
   if ((!user || hasAuthActionCode) && (showFullAuth || !isSharedUrl || hasAuthActionCode)) {
     // CRITICAL: If the user has a valid cached session, NEVER flash AuthSystem!
-    // Instead, continue waiting or showing the fallback screen until Firebase Auth restores or the user explicitly clicks login.
+    // Instead, continue waiting or showing the fallback screen until auth restores or the user explicitly clicks login.
     if (hasCachedAuth && !showFullAuth && !hasAuthActionCode) {
       return (
         <div className="fixed inset-0 bg-[#050508] flex items-center justify-center z-[100]">
