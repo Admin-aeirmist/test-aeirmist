@@ -155,7 +155,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
   };
 
   useEffect(() => {
-    if (!db || !user || !profile) return;
+    if (!user || !profile) return;
     
     const uidsToQuery: string[] = JSON.parse(uidsToQueryString);
     if (!isInitialLoad.current) setIsRefreshing(true);
@@ -368,57 +368,63 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
     // Subscriptions container
     const unsubscribes: (() => void)[] = [];
 
-    // Mode: Saved
-    if (feedMode === 'saved') {
-      const qSaved = query(
-        collection(db, 'posts'),
-        where('savedBy', 'array-contains', profile.id),
-        limit(postLimit)
-      );
-      unsubscribes.push(onSnapshot(qSaved, (s) => processSnapshot(s, 'saved_posts'), handleError));
-      return () => {
-        if (commitTimer) clearTimeout(commitTimer);
-        unsubscribes.forEach(unsub => unsub());
-      };
-    }
+    if (db) {
+      try {
+        // Mode: Saved
+        if (feedMode === 'saved') {
+          const qSaved = query(
+            collection(db, 'posts'),
+            where('savedBy', 'array-contains', profile.id),
+            limit(postLimit)
+          );
+          unsubscribes.push(onSnapshot(qSaved, (s) => processSnapshot(s, 'saved_posts'), handleError));
+          return () => {
+            if (commitTimer) clearTimeout(commitTimer);
+            unsubscribes.forEach(unsub => unsub());
+          };
+        }
 
-    // Modes: Following or Friends with 0 contacts
-    if ((feedMode === 'following' || feedMode === 'friends') && uidsToQuery.length === 0) {
-      setPosts([]);
-      setLoading(false);
-      setIsRefreshing(false);
-      return;
-    }
+        // Modes: Following or Friends with 0 contacts
+        if ((feedMode === 'following' || feedMode === 'friends') && uidsToQuery.length === 0) {
+          setPosts([]);
+          setLoading(false);
+          setIsRefreshing(false);
+          return;
+        }
 
-    // Author batches for following / network
-    const BATCH_SIZE = 30;
-    const batches: string[][] = [];
-    for (let i = 0; i < uidsToQuery.length; i += BATCH_SIZE) {
-      batches.push(uidsToQuery.slice(i, i + BATCH_SIZE));
-    }
+        // Author batches for following / network
+        const BATCH_SIZE = 30;
+        const batches: string[][] = [];
+        for (let i = 0; i < uidsToQuery.length; i += BATCH_SIZE) {
+          batches.push(uidsToQuery.slice(i, i + BATCH_SIZE));
+        }
 
-    batches.forEach((batch, batchIndex) => {
-      const q1 = query(
-        collection(db, 'posts'),
-        where('authorId', 'in', batch),
-        limit(postLimit)
-      );
-      const q2 = query(
-        collection(db, 'posts'),
-        where('authorUid', 'in', batch),
-        limit(postLimit)
-      );
-      unsubscribes.push(onSnapshot(q1, (s) => processSnapshot(s, `batch_${batchIndex}_id`), handleError));
-      unsubscribes.push(onSnapshot(q2, (s) => processSnapshot(s, `batch_${batchIndex}_uid`), handleError));
-    });
+        batches.forEach((batch, batchIndex) => {
+          const q1 = query(
+            collection(db, 'posts'),
+            where('authorId', 'in', batch),
+            limit(postLimit)
+          );
+          const q2 = query(
+            collection(db, 'posts'),
+            where('authorUid', 'in', batch),
+            limit(postLimit)
+          );
+          unsubscribes.push(onSnapshot(q1, (s) => processSnapshot(s, `batch_${batchIndex}_id`), handleError));
+          unsubscribes.push(onSnapshot(q2, (s) => processSnapshot(s, `batch_${batchIndex}_uid`), handleError));
+        });
 
-    // In smart and latest modes, also stream general platform posts directly (deduped and ranked client-side)
-    if (feedMode === 'smart' || feedMode === 'latest') {
-      const qGeneral = query(
-        collection(db, 'posts'),
-        limit(postLimit)
-      );
-      unsubscribes.push(onSnapshot(qGeneral, (s) => processSnapshot(s, 'general_discovery'), handleError));
+        // In smart and latest modes, also stream general platform posts directly (deduped and ranked client-side)
+        if (feedMode === 'smart' || feedMode === 'latest') {
+          const qGeneral = query(
+            collection(db, 'posts'),
+            limit(postLimit)
+          );
+          unsubscribes.push(onSnapshot(qGeneral, (s) => processSnapshot(s, 'general_discovery'), handleError));
+        }
+      } catch (fbErr) {
+        logger.warn('[HomeFeedSystem] Firestore stream sync skipped:', fbErr);
+      }
     }
 
     return () => {

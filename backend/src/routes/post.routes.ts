@@ -23,6 +23,13 @@ const AddCommentSchema = z.object({
   parentId: z.string().uuid().optional(),
 });
 
+async function resolveUserId(rawId: string): Promise<string> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+  if (isUuid) return rawId;
+  const user = await UserDAL.findByEmailOrUsername(rawId) || await UserDAL.findByFirebaseUid(rawId);
+  return user?.id || rawId;
+}
+
 // Feed
 router.get('/', async (req, res: Response) => {
   try {
@@ -33,6 +40,20 @@ router.get('/', async (req, res: Response) => {
   } catch (err) {
     console.error('[Feed Error]', err);
     res.status(500).json({ error: 'Failed to fetch feed' });
+  }
+});
+
+// User Posts
+router.get('/user/:userId', async (req, res: Response) => {
+  try {
+    const targetUserId = await resolveUserId(req.params.userId);
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const list = await PostDAL.getUserPosts(targetUserId, limit, offset);
+    res.json({ posts: list });
+  } catch (err) {
+    console.error('[User Posts Error]', err);
+    res.status(500).json({ error: 'Failed to fetch user posts' });
   }
 });
 

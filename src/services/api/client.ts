@@ -97,6 +97,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ content, parentId }),
       }),
+    getUserPosts: (userId: string, limit = 50, offset = 0) =>
+      request<{ posts: any[] }>(`/api/v1/posts/user/${encodeURIComponent(userId)}?limit=${limit}&offset=${offset}`),
   },
 
   // Users & Profiles

@@ -710,51 +710,74 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   // Fetch Posts
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
+    if (!displayUser?.id) return;
     
     setLoadingPosts(true);
-    const authorCandidateIds = Array.from(new Set([
-      displayUser.id,
-      displayUser.uid,
-      displayUser.ownerUid,
-      displayUser.id.replace(/^profile_/, ''),
-      'profile_' + displayUser.id.replace(/^profile_/, '')
-    ].filter(Boolean)));
 
-    const q = query(
-      collection(db, 'posts'), 
-      where('authorId', 'in', authorCandidateIds),
-      limit(50)
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const fetchedPosts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      console.log("[Diagnostics - Profile Posts] fetchedPosts from Firestore:", fetchedPosts.map((p: any) => ({
-        id: p.id,
-        content: (p.content || '').substring(0, 50),
-        mediaType: p.mediaType || 'none',
-        isArchived: !!p.isArchived,
-        hasImage: !!((p.mediaUrls && p.mediaUrls.length > 0) || p.mediaUrl || p.mediaURL || (p.mediaItems && p.mediaItems.some((item: any) => item?.type === 'image')))
-      })));
-      fetchedPosts.sort((a, b) => {
-        const getTime = (p: any) => {
-          if (!p || !p.createdAt) return Date.now();
-          try {
-            if (p.createdAt.toDate) return p.createdAt.toDate().getTime();
-            if (p.createdAt instanceof Date) return p.createdAt.getTime();
-            if (p.createdAt.seconds) return p.createdAt.seconds * 1000;
-            if (typeof p.createdAt === 'number') return p.createdAt;
-          } catch (e) {}
-          return Date.now();
-        };
-        return getTime(b) - getTime(a);
-      });
-      setPosts(fetchedPosts);
-      setLoadingPosts(false);
-    }, (error) => {
-      console.error("Posts fetch failed", error);
-      setLoadingPosts(false);
+    // 1. Primary: Fetch from PostgreSQL backend API
+    api.posts.getUserPosts(displayUser.id).then(res => {
+      if (res?.posts && res.posts.length > 0) {
+        const mediaBase = (import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media').replace(/\/+$/, '');
+        const mapped = res.posts.map((p: any) => ({
+          ...p,
+          mediaUrl: p.mediaKeys?.[0] ? `${mediaBase}/${p.mediaKeys[0]}` : (p.mediaUrl || ''),
+          author: {
+            id: p.author?.id || p.userId,
+            name: p.author?.displayName || p.author?.username || 'User',
+            username: p.author?.username || 'user',
+            avatar: getAvatarUrl(p.author?.avatarKey),
+            isVerified: p.author?.isVerified || false,
+          },
+        }));
+        setPosts(mapped);
+        setLoadingPosts(false);
+      }
+    }).catch(err => {
+      console.warn('[ProfileSystem] Backend user posts note:', err);
     });
+
+    // 2. Optional fallback to Firestore if connected
+    let unsub = () => {};
+    if (db) {
+      try {
+        const authorCandidateIds = Array.from(new Set([
+          displayUser.id,
+          displayUser.uid,
+          displayUser.ownerUid,
+          displayUser.id.replace(/^profile_/, ''),
+          'profile_' + displayUser.id.replace(/^profile_/, '')
+        ].filter(Boolean)));
+
+        const q = query(
+          collection(db, 'posts'), 
+          where('authorId', 'in', authorCandidateIds),
+          limit(50)
+        );
+
+        unsub = onSnapshot(q, (snap) => {
+          const fetchedPosts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          fetchedPosts.sort((a, b) => {
+            const getTime = (p: any) => {
+              if (!p || !p.createdAt) return Date.now();
+              try {
+                if (p.createdAt.toDate) return p.createdAt.toDate().getTime();
+                if (p.createdAt instanceof Date) return p.createdAt.getTime();
+                if (p.createdAt.seconds) return p.createdAt.seconds * 1000;
+                if (typeof p.createdAt === 'number') return p.createdAt;
+              } catch (e) {}
+              return Date.now();
+            };
+            return getTime(b) - getTime(a);
+          });
+          setPosts(fetchedPosts);
+          setLoadingPosts(false);
+        }, (error) => {
+          setLoadingPosts(false);
+        });
+      } catch (fbErr) {
+        setLoadingPosts(false);
+      }
+    }
 
     return () => unsub();
   }, [db, displayUser?.id]);

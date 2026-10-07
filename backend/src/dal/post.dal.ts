@@ -111,6 +111,33 @@ export class PostDAL {
     }));
   }
 
+  static async getUserPosts(targetUserId: string, limit: number = 50, offset: number = 0) {
+    const rows = await db
+      .select({
+        post: posts,
+        author: {
+          id: users.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarKey: profiles.avatarKey,
+          isVerified: profiles.isVerified,
+          badge: profiles.badge,
+        },
+      })
+      .from(posts)
+      .innerJoin(users, eq(posts.userId, users.id))
+      .innerJoin(profiles, eq(users.id, profiles.userId))
+      .where(and(eq(posts.userId, targetUserId), isNull(posts.deletedAt)))
+      .orderBy(desc(posts.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    return rows.map((r) => ({
+      ...r.post,
+      author: r.author,
+    }));
+  }
+
   static async likePost(postId: string, userId: string) {
     const [like] = await db
       .insert(postLikes)
