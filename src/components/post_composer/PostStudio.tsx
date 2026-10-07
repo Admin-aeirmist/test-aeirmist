@@ -10,6 +10,7 @@ import {
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { db } from '../../lib/firebase';
+import { api } from '../../services/api/client';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { MediaEditor } from './MediaEditor';
 import { PollComposer } from './PollComposer';
@@ -376,6 +377,19 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
             .replace('/video/upload/', '/video/upload/so_0.5,f_jpg,q_auto/')
             .replace(/\.[a-zA-Z0-9]+(\?.*)?$/, '.jpg$1');
         }
+      }
+
+      // Publish to Universal Backend API (PostgreSQL 16)
+      try {
+        await api.posts.create({
+          content: payload.content || caption || '',
+          mediaKeys: uploadedUrls.map(u => u.replace(/^.*\/media\//, '')),
+          mediaType: selectedType || 'image',
+          tags: tags || [],
+        });
+        logger.info('[PostStudio] Post synced to Universal Backend API');
+      } catch (apiErr: any) {
+        logger.warn('[PostStudio] Backend post sync note:', apiErr?.message);
       }
 
       await addDoc(collection(db, 'posts'), payload);

@@ -113,6 +113,7 @@ import { voiceService } from '../services/VoiceService';
 import { LocationTrackingService } from '../services/LocationTrackingService';
 import { REWARDS, getRankInfo } from '../lib/aeirmistRanks';
 import { analytics } from '../services/AnalyticsService';
+import { api, setAuthToken, getAuthToken } from '../services/api/client';
 import { followRecommService } from '../services/FollowRecommendationService';
 import { handleNotificationPermissionFlow, showSystemNotification, NativeSettings } from '../utils/nativeSettings';
 import { logger } from '@/src/utils/logger';
@@ -2419,6 +2420,39 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     };
 
+    // 0. Instant Universal Backend API session restore
+    const existingToken = getAuthToken();
+    if (existingToken) {
+      api.auth.me().then(res => {
+        if (res?.user) {
+          const bUser = res.user;
+          const mappedUser: any = {
+            uid: bUser.id,
+            id: bUser.id,
+            email: bUser.email,
+            displayName: bUser.profile?.displayName || bUser.profile?.username || bUser.email.split('@')[0],
+            photoURL: bUser.profile?.avatarKey || null,
+            role: bUser.role || 'user',
+            getIdToken: async () => existingToken,
+            reload: async () => {},
+          };
+          setUser(mappedUser);
+          if (bUser.profile) {
+            setProfile({
+              ...bUser.profile,
+              id: bUser.profile.id || `profile_${bUser.id}`,
+              uid: bUser.id,
+              ownerUid: bUser.id,
+            });
+          }
+          setLoading(false);
+          logger.info("[Auth] Session restored via Universal Backend API:", bUser.email);
+        }
+      }).catch(err => {
+        logger.warn("[Auth] Token verification failed / expired:", err?.message);
+      });
+    }
+
     const unsub = onAuthStateChanged(auth, async (user) => {
       logger.info("[Diagnostics - Auth] onAuthStateChanged Message:", user?.uid);
       
@@ -3564,6 +3598,47 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const loginWithEmail = async (identifier: string, pass: string, remember: boolean = true) => {
     const input = identifier.trim();
     logger.info("[Diagnostics - Auth] loginWithEmail: Started routine for identifier:", input);
+
+    // 1. Primary: Universal Backend API Authentication (PostgreSQL + JWT)
+    try {
+      const backendRes = await api.auth.login({ identifier: input, password: pass });
+      if (backendRes?.token && backendRes?.user) {
+        setAuthToken(backendRes.token);
+        const bUser = backendRes.user;
+        const mappedUser: any = {
+          uid: bUser.id,
+          id: bUser.id,
+          email: bUser.email,
+          displayName: bUser.profile?.displayName || bUser.profile?.username || bUser.email.split('@')[0],
+          photoURL: bUser.profile?.avatarKey || null,
+          role: bUser.role || 'user',
+          getIdToken: async () => backendRes.token,
+          reload: async () => {},
+        };
+        setUser(mappedUser);
+        if (bUser.profile) {
+          setProfile({
+            ...bUser.profile,
+            id: bUser.profile.id || `profile_${bUser.id}`,
+            uid: bUser.id,
+            ownerUid: bUser.id,
+          });
+        }
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('aeirmist_session', JSON.stringify({
+              uid: bUser.id,
+              email: bUser.email,
+              displayName: mappedUser.displayName,
+            }));
+          } catch (e) {}
+        }
+        logger.info("[Auth] Successfully authenticated via Universal Backend API:", bUser.email);
+        return { user: mappedUser };
+      }
+    } catch (apiErr: any) {
+      logger.warn("[Auth] Backend login note:", apiErr?.message, "- falling back to legacy handler");
+    }
     
     if (!auth) {
       throw new Error("That username or email doesn't match an account.");
@@ -4059,6 +4134,64 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       throw new Error("Username already taken");
     }
 
+    // 0. Primary: Universal Backend API Registration (PostgreSQL + JWT)
+    try {
+      const backendRes = await api.auth.register({
+        email: cleanEmail,
+        password: pass,
+        username: username.trim(),
+        displayName: fullName.trim(),
+      });
+      if (backendRes?.token && backendRes?.user) {
+        setAuthToken(backendRes.token);
+        const bUser = backendRes.user;
+        let photoURL = presetPhotoURL || null;
+        if (avatarFile) {
+          try {
+            const uploadRes = await api.media.upload(avatarFile, 'profiles');
+            photoURL = uploadRes?.url || photoURL;
+          } catch (mErr) {}
+        }
+        const mappedUser: any = {
+          uid: bUser.id,
+          id: bUser.id,
+          email: bUser.email,
+          displayName: fullName.trim(),
+          photoURL: photoURL,
+          role: bUser.role || 'user',
+          getIdToken: async () => backendRes.token,
+          reload: async () => {},
+        };
+        setUser(mappedUser);
+        if (bUser.profile) {
+          setProfile({
+            ...bUser.profile,
+            id: bUser.profile.id || `profile_${bUser.id}`,
+            uid: bUser.id,
+            ownerUid: bUser.id,
+            displayName: fullName.trim(),
+            avatarKey: photoURL,
+          });
+        }
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('aeirmist_session', JSON.stringify({
+              uid: bUser.id,
+              email: bUser.email,
+              displayName: fullName.trim(),
+            }));
+          } catch (e) {}
+        }
+        logger.info("[Auth] Successfully registered via Universal Backend API:", bUser.email);
+        if (auth) {
+          createUserWithEmailAndPassword(auth, cleanEmail, pass).catch(() => {});
+        }
+        return mappedUser;
+      }
+    } catch (apiRegErr: any) {
+      logger.warn("[Auth] Backend registration note:", apiRegErr?.message, "- falling back to legacy handler");
+    }
+
     // 1. Auth Creation, Linking, or Sign In
     let newUser;
     try {
@@ -4176,6 +4309,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const logout = async () => {
+    setAuthToken(null);
     try {
       await logActivity('logout', 'User logged out and system link severed.').catch(() => {});
     } catch (e) {

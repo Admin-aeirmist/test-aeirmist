@@ -10,4 +10,7 @@ storage/
 storage/uploads/
 backend/dist/
 backend/node_modules/
+pgsql/
+pgsql-data/
+*.zip
 

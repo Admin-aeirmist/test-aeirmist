@@ -12,6 +12,18 @@ export class UserDAL {
     return user || null;
   }
 
+  static async findByEmailOrUsername(identifier: string) {
+    const clean = identifier.trim().toLowerCase().replace(/^@+/, '');
+    if (clean.includes('@')) {
+      return this.findByEmail(clean);
+    }
+    const profile = await this.getProfileByUsername(clean);
+    if (profile && profile.userId) {
+      return this.findById(profile.userId);
+    }
+    return this.findByEmail(clean);
+  }
+
   static async findById(id: string) {
     const [user] = await db
       .select()

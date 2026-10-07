@@ -26,6 +26,7 @@ import { handleFirestoreError, OperationType } from '../../lib/firebase';
 import { logger } from '@/src/utils/logger';
 import { getAvatarUrl } from '../../lib/avatar';
 import { extractTimestampMs } from '../../lib/date';
+import { getSocket, joinChatRoom, leaveChatRoom } from '../../services/api/socket';
 
 function cleanUndefined(obj: any): any {
   if (obj === null || typeof obj !== 'object') {
@@ -431,6 +432,18 @@ class MessagingService {
       logger.info("[MessagingService] Committing neural batch...");
       await batch.commit();
       logger.info("[MessagingService] Batch committed successfully.");
+
+      // Broadcast in real-time via WebSockets + Redis Pub/Sub
+      try {
+        const socket = getSocket();
+        socket.emit('send_message', {
+          conversationId: finalConvId,
+          content: text,
+          type,
+          mediaUrl,
+        });
+      } catch (sErr) {}
+
       return finalConvId;
     } catch (e: any) {
       logger.error("[MessagingService] ATOMIC FAILURE:", e);
@@ -604,6 +617,32 @@ class MessagingService {
       this.listeners.get(key)!();
     }
 
+    // Join real-time WebSockets + Redis room
+    joinChatRoom(`conv:${conversationId}`);
+    const socket = getSocket();
+    const handleNewSocketMsg = (data: any) => {
+      if (data?.conversationId === conversationId && data?.message) {
+        const m = data.message;
+        const msgObj: Message = {
+          id: m.id,
+          conversationId,
+          senderId: m.senderId,
+          text: m.content || '',
+          type: m.type || 'text',
+          mediaUrl: m.mediaKey ? `${(import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media')}/${m.mediaKey}` : undefined,
+          timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestampMs: new Date(m.createdAt).getTime(),
+          status: 'delivered',
+          isDelivered: true,
+          isSeen: false,
+        } as any;
+        if (!isCancelled) {
+          callback([msgObj]);
+        }
+      }
+    };
+    socket.on('new_message', handleNewSocketMsg);
+
     const otherParticipantId = chatData.otherParticipantId ||
                              chatData.profileIds?.find((id: string) => id !== currentProfileId) || 
                              chatData.participants?.find((uid: string) => uid !== currentProfileId); // Fallback uid
@@ -739,6 +778,8 @@ class MessagingService {
       if (this.listeners.get(key) === cleanup) {
         this.listeners.delete(key);
       }
+      leaveChatRoom(`conv:${conversationId}`);
+      socket.off('new_message', handleNewSocketMsg);
       unsubscribe();
     };
 

@@ -17,6 +17,7 @@ import {
   Compass
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
+import { api } from '../../services/api/client';
 import { collection, query, orderBy, onSnapshot, limit, where } from 'firebase/firestore';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
 import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
@@ -158,6 +159,47 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
     
     const uidsToQuery: string[] = JSON.parse(uidsToQueryString);
     if (!isInitialLoad.current) setIsRefreshing(true);
+
+    // 0. Primary: Fetch feed from Universal Backend API (PostgreSQL + Redis)
+    let isCancelled = false;
+    api.posts.getFeed(postLimit, 0).then(res => {
+      if (isCancelled) return;
+      if (res?.posts && res.posts.length > 0) {
+        const mediaBase = (import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media').replace(/\/+$/, '');
+        const mapped = res.posts.map((p: any) => ({
+          id: p.id,
+          userId: p.userId,
+          content: p.content,
+          caption: p.content,
+          mediaKeys: p.mediaKeys || [],
+          mediaType: p.mediaType || 'none',
+          mediaUrl: p.mediaKeys?.[0] ? `${mediaBase}/${p.mediaKeys[0]}` : (p.mediaUrl || ''),
+          author: {
+            id: p.author?.id || p.userId,
+            name: p.author?.displayName || p.author?.username || 'User',
+            username: p.author?.username || 'user',
+            avatar: getAvatarUrl(p.author?.avatarKey),
+            isVerified: p.author?.isVerified || false,
+          },
+          likesCount: p.likesCount || 0,
+          commentsCount: p.commentsCount || 0,
+          sharesCount: p.sharesCount || 0,
+          createdAt: p.createdAt,
+          timestamp: new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          __sortTime: new Date(p.createdAt).getTime(),
+        }));
+        setPosts(mapped);
+        setLoading(false);
+        setIsRefreshing(false);
+        setError(null);
+        isInitialLoad.current = false;
+        try {
+          localStorage.setItem('aeirmist_home_feed_cache', JSON.stringify(mapped.slice(0, 20)));
+        } catch (e) {}
+      }
+    }).catch(err => {
+      logger.warn('[Feed] Universal API load note:', err?.message, '- utilizing fallback stream');
+    });
 
     const resultsByBatch = new Map<string, any[]>();
     let commitTimer: any = null;
