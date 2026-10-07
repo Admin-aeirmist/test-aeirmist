@@ -2,6 +2,7 @@ import { ref, uploadBytesResumable, getDownloadURL, uploadBytes } from 'firebase
 import { aeirmistCache } from './CacheService';
 import { logger } from '@/src/utils/logger';
 import { cloudinaryService } from './cloudinaryService';
+import { api } from './api/client';
 
 
 export enum MediaQuality {
@@ -264,6 +265,21 @@ class MediaService {
         reader.readAsDataURL(fileToConvert);
       });
     };
+
+    // Priority 1: Try Universal Backend API (S3 / Local Storage module)
+    try {
+      const folderName = path.split('/')[0] || 'general';
+      const uploadRes = await api.media.upload(uploadFile, folderName);
+      if (uploadRes?.url) {
+        logger.info("[MediaService] Uploaded via Universal Storage:", uploadRes.url);
+        aeirmistCache.saveMedia(uploadRes.url, uploadFile, uploadFile.type).catch(() => {});
+        aeirmistCache.removePendingUpload(task.id).catch(() => {});
+        onProgress(100, 'Done');
+        return uploadRes.url;
+      }
+    } catch (apiErr: any) {
+      logger.warn("[MediaService] Backend storage upload notice (falling back):", apiErr.message);
+    }
 
     // Try Cloudinary CDN Upload First if configured
     if (cloudinaryService.isConfigured()) {
