@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { UserDAL } from '../dal/user.dal';
 import { NotificationDAL } from '../dal/notification.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 
 const router = Router();
@@ -63,6 +64,20 @@ router.get('/:identifier', async (req, res: Response) => {
 router.patch('/profile', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = UpdateProfileSchema.parse(req.body);
+
+    if (data.avatarKey) {
+      const canUseAvatar = await assertMediaOwnership(data.avatarKey, req.user!.userId);
+      if (!canUseAvatar) {
+        return res.status(403).json({ error: 'Unauthorized: Avatar asset belongs to another user' });
+      }
+    }
+    if (data.bannerKey) {
+      const canUseBanner = await assertMediaOwnership(data.bannerKey, req.user!.userId);
+      if (!canUseBanner) {
+        return res.status(403).json({ error: 'Unauthorized: Banner asset belongs to another user' });
+      }
+    }
+
     const updated = await UserDAL.updateProfile(req.user!.userId, data);
     res.json({ profile: updated });
   } catch (err: any) {

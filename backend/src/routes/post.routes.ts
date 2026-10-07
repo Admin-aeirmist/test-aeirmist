@@ -5,6 +5,7 @@ import { CommentDAL } from '../dal/comment.dal';
 import { UserDAL } from '../dal/user.dal';
 import { NotificationDAL } from '../dal/notification.dal';
 import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
+import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 
 const router = Router();
@@ -61,6 +62,16 @@ router.get('/user/:userId', async (req, res: Response) => {
 router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreatePostSchema.parse(req.body);
+
+    if (data.mediaKeys && data.mediaKeys.length > 0) {
+      for (const key of data.mediaKeys) {
+        const canUse = await assertMediaOwnership(key, req.user!.userId);
+        if (!canUse) {
+          return res.status(403).json({ error: 'Unauthorized: Media asset belongs to another user' });
+        }
+      }
+    }
+
     const post = await PostDAL.createPost({
       userId: req.user!.userId,
       content: data.content,
@@ -234,6 +245,12 @@ router.post('/:id/poll/vote', authenticateToken, async (req: AuthenticatedReques
     const result = await PostDAL.votePoll(req.params.id, req.user!.userId, optionIndex);
     if (!result) {
       return res.status(404).json({ error: 'Post or poll not found' });
+    }
+    if ((result as any).invalidOption) {
+      return res.status(400).json({ error: (result as any).error || 'Invalid poll option index' });
+    }
+    if ((result as any).alreadyVoted) {
+      return res.status(409).json({ error: 'You have already voted on this poll', pollData: (result as any).pollData });
     }
 
     res.json(result);

@@ -94,7 +94,13 @@ const AuditLogTab = ({ db }: { db: any }) => {
           id: l.id,
           action: l.action,
           targetUid: l.targetId,
-          reason: l.details?.reason || l.metadata?.reason || '',
+          adminEmail: l.adminEmail || l.actorEmail || 'System Admin',
+          adminRole: l.adminRole || 'admin',
+          reason: l.details?.reason || l.metadata?.reason || (l.details && typeof l.details === 'object' && Object.keys(l.details).length > 0 ? JSON.stringify(l.details) : ''),
+          severity: l.details?.severity || (l.action?.includes('DELETE') || l.action?.includes('BAN') ? 'high' : 'medium'),
+          ip: l.details?.ip || '127.0.0.1',
+          before: l.details?.before,
+          after: l.details?.after,
           timestamp: l.createdAt,
         })));
         setLoading(false);
@@ -156,7 +162,11 @@ const AuditLogTab = ({ db }: { db: any }) => {
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-mono text-white/60">
-                  {log.timestamp?.toDate ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(log.timestamp.toDate()) : 'Recent'}
+                  {log.timestamp
+                    ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(
+                        typeof log.timestamp?.toDate === 'function' ? log.timestamp.toDate() : new Date(log.timestamp)
+                      )
+                    : 'Recent'}
                 </p>
                 <p className="text-[9px] font-mono text-white/30">IP: {log.ip || '127.0.0.1'}</p>
               </div>

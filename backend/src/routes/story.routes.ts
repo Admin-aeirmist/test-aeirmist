@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { StoryDAL } from '../dal/story.dal';
 import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
+import { assertMediaOwnership } from '../utils/mediaValidator';
 
 const router = Router();
 
@@ -45,6 +46,18 @@ router.get('/archive', authenticateToken, async (req: AuthenticatedRequest, res:
 router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreateStorySchema.parse(req.body);
+
+    const canUseMedia = await assertMediaOwnership(data.mediaUrl, req.user!.userId);
+    if (!canUseMedia) {
+      return res.status(403).json({ error: 'Unauthorized: Media asset belongs to another user' });
+    }
+    if (data.thumbnailUrl) {
+      const canUseThumb = await assertMediaOwnership(data.thumbnailUrl, req.user!.userId);
+      if (!canUseThumb) {
+        return res.status(403).json({ error: 'Unauthorized: Thumbnail asset belongs to another user' });
+      }
+    }
+
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     const story = await StoryDAL.create({
@@ -92,6 +105,14 @@ router.get('/highlights/:userId', async (req, res: Response) => {
 router.post('/highlights', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreateHighlightSchema.parse(req.body);
+
+    if (data.coverUrl) {
+      const canUseCover = await assertMediaOwnership(data.coverUrl, req.user!.userId);
+      if (!canUseCover) {
+        return res.status(403).json({ error: 'Unauthorized: Cover asset belongs to another user' });
+      }
+    }
+
     const highlight = await StoryDAL.createHighlight(
       req.user!.userId,
       data.title,

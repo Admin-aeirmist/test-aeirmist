@@ -6,6 +6,7 @@ import { mediaAssets } from '../db/schema';
 import { redis } from '../db/redis';
 import { VideoDAL } from '../dal/video.dal';
 import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
+import { assertMediaOwnership } from '../utils/mediaValidator';
 
 const router = Router();
 
@@ -63,16 +64,21 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
   try {
     const data = CreateVideoSchema.parse(req.body);
 
-    // Validate mediaKey ownership if provided
+    // Validate videoUrl, mediaKey, and thumbnailUrl ownership
+    const canUseVideo = await assertMediaOwnership(data.videoUrl, req.user!.userId);
+    if (!canUseVideo) {
+      return res.status(403).json({ error: 'Unauthorized: Video asset belongs to another user' });
+    }
     if (data.mediaKey) {
-      const [asset] = await db
-        .select()
-        .from(mediaAssets)
-        .where(eq(mediaAssets.key, data.mediaKey))
-        .limit(1);
-
-      if (asset && asset.ownerId && asset.ownerId !== req.user!.userId) {
-        return res.status(403).json({ error: 'Unauthorized: Media asset belongs to another user' });
+      const canUseKey = await assertMediaOwnership(data.mediaKey, req.user!.userId);
+      if (!canUseKey) {
+        return res.status(403).json({ error: 'Unauthorized: Media key belongs to another user' });
+      }
+    }
+    if (data.thumbnailUrl) {
+      const canUseThumb = await assertMediaOwnership(data.thumbnailUrl, req.user!.userId);
+      if (!canUseThumb) {
+        return res.status(403).json({ error: 'Unauthorized: Thumbnail asset belongs to another user' });
       }
     }
 

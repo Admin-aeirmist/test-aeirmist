@@ -1,6 +1,8 @@
 import { db } from '../db';
-import { stories, storyHighlights, users, profiles } from '../db/schema';
+import { stories, storyHighlights, users, profiles, mediaAssets } from '../db/schema';
 import { eq, gt, desc, and, sql } from 'drizzle-orm';
+import { storage } from '../storage';
+import { extractMediaKey } from '../utils/mediaValidator';
 
 export interface CreateStoryDTO {
   userId: string;
@@ -131,6 +133,24 @@ export class StoryDAL {
   }
 
   static async deleteStory(storyId: string, userId: string) {
+    const [story] = await db
+      .select({ id: stories.id, mediaUrl: stories.mediaUrl })
+      .from(stories)
+      .where(and(eq(stories.id, storyId), eq(stories.userId, userId)))
+      .limit(1);
+
+    if (!story) return false;
+
+    const mediaKey = extractMediaKey(story.mediaUrl);
+    if (mediaKey) {
+      try {
+        await storage.delete(mediaKey);
+      } catch (err) {}
+      try {
+        await db.delete(mediaAssets).where(eq(mediaAssets.key, mediaKey));
+      } catch (err) {}
+    }
+
     const [deleted] = await db
       .delete(stories)
       .where(and(eq(stories.id, storyId), eq(stories.userId, userId)))

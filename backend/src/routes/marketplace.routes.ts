@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { MarketplaceDAL } from '../dal/marketplace.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { assertMediaOwnership } from '../utils/mediaValidator';
 
 const router = Router();
 
@@ -57,6 +58,16 @@ router.get('/items', async (req, res: Response) => {
 router.post('/items', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreateItemSchema.parse(req.body);
+
+    if (data.mediaKeys && data.mediaKeys.length > 0) {
+      for (const key of data.mediaKeys) {
+        const canUse = await assertMediaOwnership(key, req.user!.userId);
+        if (!canUse) {
+          return res.status(403).json({ error: 'Unauthorized: Media asset belongs to another user' });
+        }
+      }
+    }
+
     const item = await MarketplaceDAL.createItem({
       sellerId: req.user!.userId,
       ...data,
@@ -127,6 +138,20 @@ router.delete('/items/:id', authenticateToken, async (req: AuthenticatedRequest,
 router.post('/stores', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreateStoreSchema.parse(req.body);
+
+    if (data.logoUrl) {
+      const canUseLogo = await assertMediaOwnership(data.logoUrl, req.user!.userId);
+      if (!canUseLogo) {
+        return res.status(403).json({ error: 'Unauthorized: Store logo asset belongs to another user' });
+      }
+    }
+    if (data.bannerUrl) {
+      const canUseBanner = await assertMediaOwnership(data.bannerUrl, req.user!.userId);
+      if (!canUseBanner) {
+        return res.status(403).json({ error: 'Unauthorized: Store banner asset belongs to another user' });
+      }
+    }
+
     const existing = await MarketplaceDAL.getStoreByHandle(data.handle);
     if (existing) {
       return res.status(409).json({ error: 'Store handle already taken' });
@@ -234,12 +259,12 @@ router.post('/orders', authenticateToken, async (req: AuthenticatedRequest, res:
 
     const finalTotalAmount = serverCalculatedTotal.toFixed(2);
 
-    // If client provided a totalAmount, prevent undercutting the server-verified total
+    // Strict price verification: reject any discrepancy between client and server calculated total
     if (data.totalAmount) {
       const clientTotal = parseFloat(data.totalAmount);
-      if (!isNaN(clientTotal) && clientTotal < serverCalculatedTotal * 0.95) {
+      if (isNaN(clientTotal) || Math.abs(clientTotal - serverCalculatedTotal) > 0.05) {
         return res.status(400).json({
-          error: 'Security alert: Submitted order total is lower than verified item prices',
+          error: 'Security alert: Submitted order total does not match verified server item prices',
           calculatedTotal: finalTotalAmount,
           submittedTotal: data.totalAmount,
         });

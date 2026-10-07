@@ -4282,6 +4282,59 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const sessionGuestId = Math.random().toString(36).substring(2, 10);
     const guestEmail = `guest_${sessionGuestId}@aeirmist.social`;
     const guestPass = "AeirmistGuest123!";
+
+    // 1. Primary: Universal Backend API Registration (PostgreSQL + JWT)
+    try {
+      const regRes = await api.auth.register({
+        email: guestEmail,
+        password: guestPass,
+        username: `guest_${sessionGuestId}`,
+        displayName: `Guest Account ${sessionGuestId}`,
+      });
+      if (regRes?.token && regRes?.user) {
+        setAuthToken(regRes.token);
+        const bUser = regRes.user;
+        const mappedUser: any = {
+          uid: bUser.id,
+          id: bUser.id,
+          email: bUser.email,
+          displayName: bUser.profile?.displayName || `Guest Account ${sessionGuestId}`,
+          photoURL: bUser.profile?.avatarKey || BLANK_DP,
+          role: bUser.role || 'user',
+          getIdToken: async () => regRes.token,
+          reload: async () => {},
+        };
+        setUser(mappedUser);
+        const mappedProfile = {
+          ...(bUser.profile || {}),
+          id: bUser.profile?.id || `profile_${bUser.id}`,
+          uid: bUser.id,
+          ownerUid: bUser.id,
+          username: bUser.profile?.username || `guest_${sessionGuestId}`,
+          displayName: bUser.profile?.displayName || `Guest Account ${sessionGuestId}`,
+          photoURL: BLANK_DP,
+          bio: "Ephemeral Guest Account initialized.",
+          tagline: "Guest Explorer",
+          followersCount: 0,
+          followingCount: 0,
+          aeirmistLevel: 50,
+          createdAt: new Date(),
+          isActive: true,
+          socialLinks: { instagram: '', twitter: '', github: '', discord: '', website: '', youtube: '', tiktok: '', facebook: '' },
+          privacySettings: { privateProfile: false, showActivity: true, allowMessages: 'everyone', hideFollowers: false },
+          themeSettings: { accentColor: '#00f2ff', glowIntensity: 0.8, noiseEffect: true }
+        };
+        setProfile(mappedProfile as any);
+        setAllProfiles([mappedProfile]);
+        setActiveProfileId(mappedProfile.id);
+        setNeedsUsername(false);
+        setLoading(false);
+        logger.info("[Auth] Guest authenticated via Universal Backend API:", guestEmail);
+        return;
+      }
+    } catch (apiErr) {
+      logger.warn("[Auth] Backend guest registration note, trying fallback:", apiErr);
+    }
     
     try {
       await setPersistence(auth, browserLocalPersistence);
@@ -4600,6 +4653,37 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const refreshProfile = async () => {
+    try {
+      const meRes = await api.auth.me();
+      if (meRes?.user && meRes?.profile) {
+        const bUser = meRes.user;
+        const mappedUser: any = {
+          uid: bUser.id,
+          id: bUser.id,
+          email: bUser.email,
+          displayName: meRes.profile?.displayName || meRes.profile?.username || bUser.email.split('@')[0],
+          photoURL: meRes.profile?.avatarKey || null,
+          role: bUser.role || 'user',
+          getIdToken: async () => getAuthToken() || '',
+          reload: async () => {},
+        };
+        setUser(mappedUser);
+        const mappedProfile = {
+          ...meRes.profile,
+          id: meRes.profile.id || `profile_${bUser.id}`,
+          uid: bUser.id,
+          ownerUid: bUser.id,
+          isActive: true,
+        };
+        setProfile(mappedProfile);
+        setAllProfiles([mappedProfile]);
+        setActiveProfileId(mappedProfile.id);
+        return;
+      }
+    } catch (e) {
+      logger.warn("[AeirmistContext] Universal backend api.auth.me profile refresh note:", e);
+    }
+
     if (!user || !db) return;
     try {
       const q = query(collection(db, 'profiles'), where('ownerUid', '==', user.uid));
@@ -5207,6 +5291,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const requestDeleteAccount = async () => {
+    try {
+      await api.users.deactivate().catch((err) => {
+        logger.warn("[requestDeleteAccount] api.users.deactivate note:", err);
+      });
+    } catch (apiErr) {}
+
     if (!db || !profile || !user) return;
     try {
       const profileRef = doc(db, 'profiles', profile.id);
@@ -5270,6 +5360,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const cancelDeleteAccount = async () => {
+    try {
+      await api.users.updateProfile({ status: 'ACTIVE' } as any).catch((err) => {
+        logger.warn("[cancelDeleteAccount] api.users.updateProfile note:", err);
+      });
+    } catch (apiErr) {}
+
     if (!db || !profile || !user) return;
     try {
       const profileRef = doc(db, 'profiles', profile.id);
