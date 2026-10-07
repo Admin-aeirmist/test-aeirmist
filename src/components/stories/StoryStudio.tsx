@@ -16,7 +16,6 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { analytics } from '../../services/AnalyticsService';
 import { MediaQuality } from '../../services/MediaService';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 import { MusicSearchModal } from '../music/MusicSearchModal';
 import { logger } from '@/src/utils/logger';

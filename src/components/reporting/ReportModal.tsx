@@ -6,6 +6,7 @@ import { db, storage } from '../../lib/firebase';
 import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 
 interface ReportModalProps {
@@ -78,7 +79,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       }
 
       let attachmentObj = null;
-      if (file && storage) {
+      let uploadedAttachmentUrl: string | null = null;
+      if (file) {
         if (!file.type || !file.type.startsWith('image/')) {
           addToast({ title: 'Invalid File', message: 'Only image files are supported.', type: 'warning' });
           setIsSubmitting(false);
@@ -90,42 +92,82 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           return;
         }
 
-        const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
-        const base = file.name.split('.').slice(0, -1).join('.').toLowerCase().replace(/[^a-z0-9_-]/g, '_').substring(0, 30);
-        const rand = Math.random().toString(36).substring(2, 8);
-        const safeName = `${base || 'screenshot'}_${Date.now()}_${rand}.${ext}`;
+        // Try local/S3 driver first
+        try {
+          const mediaRes = await api.media.upload(file, 'reports');
+          if (mediaRes && mediaRes.url) {
+            uploadedAttachmentUrl = mediaRes.url;
+            attachmentObj = {
+              url: mediaRes.url,
+              name: file.name,
+              contentType: file.type || 'image/png',
+              size: file.size,
+              uploadedAt: new Date().toISOString()
+            };
+          }
+        } catch (mediaErr) {
+          if (storage) {
+            const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+            const base = file.name.split('.').slice(0, -1).join('.').toLowerCase().replace(/[^a-z0-9_-]/g, '_').substring(0, 30);
+            const rand = Math.random().toString(36).substring(2, 8);
+            const safeName = `${base || 'screenshot'}_${Date.now()}_${rand}.${ext}`;
 
-        const fileRef = ref(storage, `reports/${user.uid}/${safeName}`);
-        await uploadBytes(fileRef, file, { contentType: file.type || 'image/png' });
-        const downloadUrl = await getDownloadURL(fileRef);
+            const fileRef = ref(storage, `reports/${user.uid}/${safeName}`);
+            await uploadBytes(fileRef, file, { contentType: file.type || 'image/png' });
+            const downloadUrl = await getDownloadURL(fileRef);
 
-        attachmentObj = {
-          url: downloadUrl,
-          name: file.name,
-          contentType: file.type || 'image/png',
-          size: file.size,
-          uploadedAt: new Date().toISOString()
-        };
+            uploadedAttachmentUrl = downloadUrl;
+            attachmentObj = {
+              url: downloadUrl,
+              name: file.name,
+              contentType: file.type || 'image/png',
+              size: file.size,
+              uploadedAt: new Date().toISOString()
+            };
+          }
+        }
       }
 
       const priority = AUTO_PRIORITIES[selectedReason] || 'low';
-      const refId = `RPT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
+      let refId = `RPT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
       
-      await addDoc(collection(db, 'reports'), {
-        reportId: refId,
-        reporterUid: user.uid,
-        reporterUsername: profile?.username || 'Unknown',
-        reportedUid,
-        targetType,
-        targetId,
-        reason: selectedReason,
-        description,
-        attachments: attachmentObj ? [attachmentObj] : [],
-        status: 'pending',
-        priority,
-        createdAt: serverTimestamp(),
-        meta: meta || {}
-      });
+      // Try Backend PostgreSQL Report first
+      let sentViaBackend = false;
+      try {
+        const reportRes = await api.support.createReport({
+          reportedUid,
+          targetType,
+          targetId,
+          reason: selectedReason,
+          description,
+          attachmentUrl: uploadedAttachmentUrl,
+        });
+        if (reportRes && reportRes.reportId) {
+          refId = reportRes.reportId;
+          sentViaBackend = true;
+        }
+      } catch (beErr) {
+        logger.warn('[Backend Report Fallback]', beErr);
+      }
+
+      // Dual-sync / fallback to Firestore
+      if (!sentViaBackend && db) {
+        await addDoc(collection(db, 'reports'), {
+          reportId: refId,
+          reporterUid: user.uid,
+          reporterUsername: profile?.username || 'Unknown',
+          reportedUid,
+          targetType,
+          targetId,
+          reason: selectedReason,
+          description,
+          attachments: attachmentObj ? [attachmentObj] : [],
+          status: 'pending',
+          priority,
+          createdAt: serverTimestamp(),
+          meta: meta || {}
+        });
+      }
 
       setReportId(refId);
       setStep('success');

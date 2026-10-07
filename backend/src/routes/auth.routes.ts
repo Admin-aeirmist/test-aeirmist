@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { UserDAL } from '../dal/user.dal';
 import { hashPassword, comparePassword, generateAccessToken } from '../lib/auth';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { authRateLimiter, passwordResetRateLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
@@ -22,7 +23,7 @@ const LoginSchema = z.object({
 });
 
 // Register
-router.post('/register', async (req, res: Response) => {
+router.post('/register', authRateLimiter, async (req, res: Response) => {
   try {
     const data = RegisterSchema.parse(req.body);
 
@@ -74,7 +75,7 @@ router.post('/register', async (req, res: Response) => {
 });
 
 // Login (Supports Bcrypt & Firebase Scrypt Auto-upgrade & Universal Identifier)
-router.post('/login', async (req, res: Response) => {
+router.post('/login', authRateLimiter, async (req, res: Response) => {
   try {
     const data = LoginSchema.parse(req.body);
     const loginIdentifier = (data.identifier || data.email || '').trim();
@@ -160,7 +161,7 @@ router.get('/me', authenticateToken, async (req: AuthenticatedRequest, res: Resp
 });
 
 // Forgot Password (generates temporary reset token)
-router.post('/forgot-password', async (req, res: Response) => {
+router.post('/forgot-password', passwordResetRateLimiter, async (req, res: Response) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });

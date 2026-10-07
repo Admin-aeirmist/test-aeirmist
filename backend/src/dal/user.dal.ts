@@ -165,4 +165,41 @@ export class UserDAL {
       .limit(1);
     return !!res;
   }
+
+  static async searchUsers(queryText: string, limit = 20) {
+    const clean = queryText.trim().replace(/^@+/, '');
+    if (!clean) return [];
+
+    const searchPattern = `%${clean.toLowerCase()}%`;
+    return db
+      .select({
+        id: users.id,
+        email: users.email,
+        username: profiles.username,
+        displayName: profiles.displayName,
+        avatarKey: profiles.avatarKey,
+        bio: profiles.bio,
+        isVerified: profiles.isVerified,
+        followersCount: profiles.followersCount,
+      })
+      .from(profiles)
+      .innerJoin(users, eq(profiles.userId, users.id))
+      .where(
+        and(
+          eq(users.status, 'ACTIVE'),
+          eq(users.isBanned, false),
+          sql`(LOWER(${profiles.username}) LIKE ${searchPattern} OR LOWER(${profiles.displayName}) LIKE ${searchPattern})`
+        )
+      )
+      .limit(limit);
+  }
+
+  static async deactivateAccount(userId: string) {
+    const [user] = await db
+      .update(users)
+      .set({ status: 'DELETED', updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return !!user;
+  }
 }

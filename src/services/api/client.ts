@@ -120,6 +120,12 @@ export const api = {
       request<{ following: boolean }>(`/api/v1/users/${targetUserId}/follow`, {
         method: 'POST',
       }),
+    search: (query: string, limit = 20) =>
+      request<{ users: any[] }>(`/api/v1/users/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+    deactivate: () =>
+      request<{ success: boolean }>('/api/v1/users/deactivate', {
+        method: 'POST',
+      }),
   },
 
   // Notifications
@@ -219,5 +225,26 @@ export const api = {
         body: JSON.stringify({ ban, reason }),
       }),
     getAuditLogs: () => request<{ logs: any[] }>('/api/v1/admin/audit-logs'),
+  },
+
+  // Support & Reports
+  support: {
+    createTicket: (data: { type: string; message: string; area?: string | null; attachmentUrl?: string | null }) =>
+      request<{ success: boolean; ticketId: string }>('/api/v1/support/tickets', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    createReport: (data: {
+      reportedUid: string;
+      targetType: string;
+      targetId: string;
+      reason: string;
+      description?: string;
+      attachmentUrl?: string | null;
+    }) =>
+      request<{ success: boolean; reportId: string }>('/api/v1/support/reports', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 };

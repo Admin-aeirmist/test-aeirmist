@@ -89,6 +89,7 @@ import userRoutes from './routes/user.routes';
 import notificationRoutes from './routes/notification.routes';
 import storyRoutes from './routes/story.routes';
 import adminRoutes from './routes/admin.routes';
+import supportRoutes from './routes/support.routes';
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/posts', postRoutes);
@@ -99,6 +100,7 @@ app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/stories', storyRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/support', supportRoutes);
 
 // -------------------------------------------------------------
 // Socket.IO Setup with Redis Pub/Sub & WebRTC Signaling

@@ -6784,8 +6784,26 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     // Normalize: strip leading '@' if user typed "@username"
     const cleanText = trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
-    if (!cleanText) return [];
     const cleanLower = cleanText.toLowerCase();
+
+    // High-speed PostgreSQL search priority
+    try {
+      const apiRes = await api.users.search(cleanText, 25);
+      if (apiRes && Array.isArray(apiRes.users) && apiRes.users.length > 0) {
+        return apiRes.users.map(u => ({
+          id: u.id,
+          uid: u.id,
+          username: u.username,
+          displayName: u.displayName,
+          avatarUrl: u.avatarKey ? `${(import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '')}/media/${u.avatarKey}` : undefined,
+          bio: u.bio,
+          isVerified: u.isVerified,
+          followersCount: u.followersCount || 0,
+        }));
+      }
+    } catch (err) {
+      logger.warn('[Postgres Search Fallback]', err);
+    }
 
     const resultsMap = new Map<string, any>();
     const blockedIds = new Set(profile?.social?.blocked || []);

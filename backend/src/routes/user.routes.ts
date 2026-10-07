@@ -17,6 +17,22 @@ const UpdateProfileSchema = z.object({
   privacySettings: z.any().optional(),
 });
 
+// Search Users
+router.get('/search', async (req, res: Response) => {
+  try {
+    const q = ((req.query.q as string) || '').trim();
+    if (!q) {
+      return res.json({ users: [] });
+    }
+    const limit = Math.min(parseInt((req.query.limit as string) || '20', 10), 50);
+    const results = await UserDAL.searchUsers(q, limit);
+    res.json({ users: results });
+  } catch (err) {
+    console.error('[Search Users Error]', err);
+    res.status(500).json({ error: 'Failed to search users' });
+  }
+});
+
 // Get User Profile by Username or User ID
 router.get('/:identifier', async (req, res: Response) => {
   try {
@@ -92,6 +108,17 @@ router.post('/:id/follow', authenticateToken, async (req: AuthenticatedRequest, 
   } catch (err) {
     console.error('[Follow Error]', err);
     res.status(500).json({ error: 'Failed to toggle follow' });
+  }
+});
+
+// Deactivate Account
+router.post('/deactivate', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const success = await UserDAL.deactivateAccount(req.user!.userId);
+    res.json({ success });
+  } catch (err) {
+    console.error('[Deactivate Error]', err);
+    res.status(500).json({ error: 'Failed to deactivate account' });
   }
 });
 

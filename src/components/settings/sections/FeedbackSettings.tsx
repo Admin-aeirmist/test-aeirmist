@@ -27,6 +27,7 @@ import { db, storage } from '../../../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../../services/api/client';
 
 
 const AREAS = [
@@ -89,22 +90,50 @@ const FeedbackSettings = () => {
     
     try {
       let attachmentUrl = null;
-      if (screenshot && storage) {
-        const fileRef = ref(storage, `supportTickets/${user.uid}/${Date.now()}_${screenshot.name}`);
-        await uploadBytes(fileRef, screenshot);
-        attachmentUrl = await getDownloadURL(fileRef);
+
+      // Try local/S3 media upload first
+      if (screenshot) {
+        try {
+          const mediaRes = await api.media.upload(screenshot, 'support');
+          if (mediaRes && mediaRes.url) {
+            attachmentUrl = mediaRes.url;
+          }
+        } catch (mediaErr) {
+          if (storage) {
+            const fileRef = ref(storage, `supportTickets/${user.uid}/${Date.now()}_${screenshot.name}`);
+            await uploadBytes(fileRef, screenshot);
+            attachmentUrl = await getDownloadURL(fileRef);
+          }
+        }
       }
 
-      await addDoc(collection(db, 'supportTickets'), {
-        userId: user.uid,
-        username: profile?.username || 'Unknown',
-        type,
-        area: type === 'bug' ? area.id : null,
-        message,
-        attachmentUrl,
-        status: 'open',
-        createdAt: serverTimestamp()
-      });
+      // Try Backend PostgreSQL support ticket first
+      let sentViaBackend = false;
+      try {
+        await api.support.createTicket({
+          type,
+          area: type === 'bug' ? area.id : null,
+          message,
+          attachmentUrl,
+        });
+        sentViaBackend = true;
+      } catch (beErr) {
+        logger.warn('[Backend Support Ticket Fallback]', beErr);
+      }
+
+      // Dual-sync / fallback to Firestore
+      if (!sentViaBackend && db) {
+        await addDoc(collection(db, 'supportTickets'), {
+          userId: user.uid,
+          username: profile?.username || 'Unknown',
+          type,
+          area: type === 'bug' ? area.id : null,
+          message,
+          attachmentUrl,
+          status: 'open',
+          createdAt: serverTimestamp()
+        });
+      }
 
       setSent(true);
       addToast?.({
