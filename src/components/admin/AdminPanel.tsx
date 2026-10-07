@@ -78,8 +78,8 @@ import {
 
 doc, getDoc, updateDoc, collection, query, orderBy, limit, onSnapshot, where, serverTimestamp, setDoc, deleteDoc, writeBatch, getDocs, addDoc } from 'firebase/firestore';
 import {
-
 fadeTransition } from '../../lib/motion';
+import { api } from '../../services/api/client';
 
 const AuditLogTab = ({ db }: { db: any }) => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -87,16 +87,35 @@ const AuditLogTab = ({ db }: { db: any }) => {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
+    let isCancelled = false;
+    api.admin.getAuditLogs().then(res => {
+      if (!isCancelled && res.logs && res.logs.length > 0) {
+        setLogs(res.logs.map(l => ({
+          id: l.id,
+          action: l.action,
+          targetUid: l.targetId,
+          reason: l.metadata?.reason || '',
+          timestamp: l.createdAt,
+        })));
+        setLoading(false);
+      }
+    }).catch(() => {});
+
     if (!db) return;
     const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(150));
     const unsub = onSnapshot(q, (snapshot) => {
-      setLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
+      if (!isCancelled) {
+        setLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      }
     }, (err) => {
       logger.warn("Audit logs error:", err);
-      setLoading(false);
+      if (!isCancelled) setLoading(false);
     });
-    return () => unsub();
+    return () => {
+      isCancelled = true;
+      unsub();
+    };
   }, [db]);
 
   const filteredLogs = logs.filter(l => 

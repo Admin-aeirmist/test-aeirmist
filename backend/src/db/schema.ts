@@ -303,6 +303,22 @@ export const marketplaceItems = pgTable('marketplace_items', {
   index('idx_marketplace_status').on(table.status),
 ]);
 
+export const stories = pgTable('stories', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  mediaUrl: text('media_url').notNull(),
+  thumbnailUrl: text('thumbnail_url'),
+  mediaType: varchar('media_type', { length: 32 }).default('image').notNull(),
+  caption: text('caption'),
+  audience: varchar('audience', { length: 32 }).default('public').notNull(),
+  viewers: jsonb('viewers').$type<string[]>().default([]).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, (table) => [
+  index('idx_stories_user_id').on(table.userId),
+  index('idx_stories_expires_at').on(table.expiresAt),
+]);
+
 // -------------------------------------------------------------
 // Drizzle Relations
 // -------------------------------------------------------------

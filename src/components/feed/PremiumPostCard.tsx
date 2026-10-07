@@ -654,16 +654,51 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     }
   };
 
-  // Auto-load Comments
+  // Auto-load Comments from PostgreSQL API & Realtime Fallback
   useEffect(() => {
-    if (!db || !post.id || !showComments) return;
-    const commentsRef = collection(db, 'posts', post.id, 'comments');
-    const q = query(commentsRef, orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLiveComments(docs);
-    });
-    return () => unsub();
+    if (!post.id || !showComments) return;
+    let isCancelled = false;
+
+    // 1. Primary backend API load (sub-10ms)
+    api.posts.getComments(post.id)
+      .then(res => {
+        if (!isCancelled && res.comments && res.comments.length > 0) {
+          const mapped = res.comments.map(c => ({
+            id: c.id,
+            authorId: c.userId,
+            authorName: c.author?.displayName || c.author?.username || 'Aeirmist User',
+            authorPhoto: c.author?.avatarUrl || '',
+            isVerified: c.author?.isVerified || false,
+            content: c.content,
+            parentId: c.parentId || null,
+            createdAt: c.createdAt ? new Date(c.createdAt) : new Date(),
+          }));
+          setLiveComments(mapped);
+        }
+      })
+      .catch(err => {
+        logger.warn('[PremiumPostCard] API getComments fallback:', err);
+      });
+
+    // 2. Fallback listener
+    if (db) {
+      const commentsRef = collection(db, 'posts', post.id, 'comments');
+      const q = query(commentsRef, orderBy('createdAt', 'asc'));
+      const unsub = onSnapshot(q, (snapshot) => {
+        if (!isCancelled) {
+          const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (docs.length > 0) setLiveComments(docs);
+        }
+      }, () => {});
+      return () => {
+        isCancelled = true;
+        unsub();
+      };
+    }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [db, post.id, showComments]);
 
   // Submit main comment

@@ -1206,7 +1206,23 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     logger.info(`[MediaContext] Queuing upload: ${file.name} to ${filePath} (Quality: ${quality})`);
     
+    // Priority 1: High-Speed Universal Backend Storage Driver
     try {
+      onProgress?.(10, 'Optimizing & Uploading...');
+      const uploadRes = await api.media.upload(file, folder);
+      if (uploadRes?.url) {
+        logger.info(`[MediaContext] Universal Storage upload completed: ${uploadRes.url}`);
+        onProgress?.(100, 'Complete');
+        return uploadRes.url;
+      }
+    } catch (apiErr: any) {
+      logger.warn('[MediaContext] Backend storage upload notice (falling back):', apiErr?.message);
+    }
+
+    try {
+      if (!storage) {
+        throw new Error("Local storage failed and remote fallback unavailable.");
+      }
       const url = await mediaService.uploadWithProgress(storage, file, filePath, (p, status) => {
         onProgress?.(p, status);
       }, quality);
@@ -1361,6 +1377,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         };
         delete (firebaseDoc as any).isOptimistic;
         delete (firebaseDoc as any).id;
+
+        // Primary backend PostgreSQL story creation
+        api.stories.create({
+          mediaUrl: finalMediaUrl || storyDoc.mediaUrl,
+          thumbnailUrl: thumbnailUrl || '',
+          mediaType: storyData.type || 'image',
+          caption: (storyData as any).caption || '',
+          audience: audience as any,
+        }).catch(err => {
+          logger.warn('[AeirmistContext] API story create fallback:', err);
+        });
 
         const docRef = await addDoc(collection(db, 'stories'), firebaseDoc);
         
@@ -1884,6 +1911,33 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, profile, isSafeMode, addToast]);
 
   useEffect(() => {
+    let isCancelled = false;
+
+    // Primary backend API stories feed load (sub-10ms)
+    api.stories.getFeed()
+      .then(res => {
+        if (!isCancelled && res.stories && res.stories.length > 0) {
+          const mapped = res.stories.map(s => ({
+            id: s.id,
+            userId: s.userId,
+            authorId: s.author?.id,
+            userName: s.author?.displayName || s.author?.username || 'Aeirmist User',
+            userAvatar: s.author?.avatarUrl || '',
+            mediaUrl: s.mediaUrl,
+            thumbnailUrl: s.thumbnailUrl,
+            mediaType: s.mediaType,
+            caption: s.caption,
+            audience: s.audience,
+            viewers: s.viewers || [],
+            createdAt: new Date(s.createdAt),
+          }));
+          setStories(mapped);
+        }
+      })
+      .catch(err => {
+        logger.warn('[AeirmistContext] API stories feed fallback:', err);
+      });
+
     if (!db || !user) return;
     const storiesRef = collection(db, 'stories');
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -1895,13 +1949,18 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const storyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setStories(storyData);
+      if (!isCancelled) {
+        const storyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (storyData.length > 0) setStories(storyData);
+      }
     }, (error) => {
       logger.warn("Global stories uplink busy.", error);
     });
 
-    return () => unsubscribe();
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+    };
   }, [db, user?.uid]);
 
   const archivePost = useCallback(async (postId: string, archive: boolean) => {

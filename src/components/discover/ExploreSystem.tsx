@@ -49,6 +49,7 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
+import { api } from '../../services/api/client';
 import { 
   collection, 
   query, 
@@ -482,16 +483,43 @@ export const ExploreSystem: React.FC<{
       setIsLoading(false);
     });
 
-    // 2. Sync Products
+    // 2. Sync Products from PostgreSQL API first
+    api.marketplace.getItems(undefined, 80)
+      .then(res => {
+        if (res.items && res.items.length > 0) {
+          const mapped = res.items.map(it => ({
+            id: it.id,
+            title: it.title,
+            name: it.title,
+            description: it.description,
+            price: parseFloat(it.price) || 0,
+            category: it.category,
+            condition: it.condition,
+            mediaUrls: it.mediaKeys || [],
+            images: it.mediaKeys || [],
+            image: it.mediaKeys?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500',
+            storeId: it.sellerId,
+            storeName: it.seller?.displayName || it.seller?.username || 'Aeirmist Merchant',
+            currency: it.currency || 'BDT',
+            status: it.status,
+            createdAt: it.createdAt,
+          }));
+          setProducts(mapped as any);
+        }
+      })
+      .catch(err => {
+        logger.warn('[ExploreSystem] Marketplace API load fallback:', err);
+      });
+
     const unsubProducts = onSnapshot(query(collection(db, 'products'), limit(80)), (snapshot) => {
       if (!snapshot.empty) {
         setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
       } else {
-        setProducts(SEED_PRODUCTS);
+        setProducts(prev => prev.length > 0 ? prev : SEED_PRODUCTS);
       }
     }, (error) => {
       logger.error("ExploreSystem: Products sync failed", error);
-      setProducts(SEED_PRODUCTS);
+      setProducts(prev => prev.length > 0 ? prev : SEED_PRODUCTS);
     });
 
     // 3. Sync Services

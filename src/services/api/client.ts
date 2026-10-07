@@ -197,4 +197,27 @@ export const api = {
       );
     },
   },
+
+  // Stories
+  stories: {
+    getFeed: () => request<{ stories: any[] }>('/api/v1/stories'),
+    create: (data: { mediaUrl: string; thumbnailUrl?: string; mediaType?: string; caption?: string; audience?: string }) =>
+      request<{ story: any }>('/api/v1/stories', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    view: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/stories/${id}/view`, { method: 'POST' }),
+  },
+
+  // Admin
+  admin: {
+    getStats: () => request<{ stats: any }>('/api/v1/admin/stats'),
+    banUser: (id: string, ban: boolean, reason?: string) =>
+      request<{ success: boolean; status: string }>(`/api/v1/admin/users/${id}/ban`, {
+        method: 'POST',
+        body: JSON.stringify({ ban, reason }),
+      }),
+    getAuditLogs: () => request<{ logs: any[] }>('/api/v1/admin/audit-logs'),
+  },
 };

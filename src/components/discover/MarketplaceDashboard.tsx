@@ -29,6 +29,7 @@ import {
   Inbox
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
+import { api } from '../../services/api/client';
 import { 
   collection, 
   query, 
@@ -450,6 +451,19 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
           createdAt: serverTimestamp()
         };
         await addDoc(collection(db, 'products'), fullPayload);
+
+        // Sync to backend PostgreSQL Marketplace
+        api.marketplace.createItem({
+          title: prodName,
+          description: prodDesc || 'No description provided',
+          price: String(prodPrice),
+          category: prodCategory || 'general',
+          condition: 'new',
+          mediaKeys: prodImages,
+        }).catch(err => {
+          logger.warn('[MarketplaceDashboard] API createItem dual-write notice:', err);
+        });
+
         // Increment product count on store
         await updateDoc(doc(db, 'stores', activeStore.id), {
           productsCount: (activeStore.productsCount || 0) + 1,
@@ -492,6 +506,11 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
     if (!confirm(`Are you sure you want to remove "${prod.name}" from your catalog?`)) return;
 
     try {
+      // Primary backend API delete
+      api.marketplace.deleteItem(prod.id).catch(err => {
+        logger.warn('[MarketplaceDashboard] API deleteItem notice:', err);
+      });
+
       await deleteDoc(doc(db, 'products', prod.id));
       await updateDoc(doc(db, 'stores', activeStore.id), {
         productsCount: Math.max(0, (activeStore.productsCount || 0) - 1),
