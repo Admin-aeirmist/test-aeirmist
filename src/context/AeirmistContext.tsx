@@ -975,31 +975,55 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [isSafeMode]);
 
   const createNotification = useCallback(async (targetId: string, type: any, message: string, metadata: any = {}) => {
-    if (!db || !profile) return; 
+    if (!profile) return;
+    
+    // 1. Primary: Save directly to our PostgreSQL backend API
     try {
-      await addDoc(collection(db, 'notifications'), {
-        userId: targetId,
-        fromUserId: profile.id,
-        fromUserUid: user?.uid || profile.id,
-        user: {
-          name: profile.displayName || profile.username || 'User',
-          avatar: profile.photoURL || '',
-          username: profile.username || 'user',
-          isVerified: profile.isVerified || false
-        },
-        type,
-        message,
+      await api.notifications.create({
+        recipientId: targetId,
+        type: String(type || 'general'),
+        title: profile.displayName || profile.username || 'Aeirmist',
+        body: message,
+        actionUrl: metadata?.postId ? `/post/${metadata.postId}` : metadata?.conversationId ? `/messages` : undefined,
         metadata: {
           ...metadata,
           senderPhoto: profile.photoURL || '',
           senderName: profile.displayName || profile.username || 'User',
-          senderUsername: profile.username || ''
+          senderUsername: profile.username || '',
         },
-        read: false,
-        createdAt: serverTimestamp()
       });
-    } catch (e) {
-      logger.warn("Notification creation failed", e);
+      logger.info('[AeirmistContext] Notification created via PostgreSQL backend API');
+    } catch (apiErr) {
+      logger.warn('[AeirmistContext] Backend notification creation note:', apiErr);
+    }
+
+    // 2. Optional legacy dual-sync if Firestore is connected
+    if (db) {
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          userId: targetId,
+          fromUserId: profile.id,
+          fromUserUid: user?.uid || profile.id,
+          user: {
+            name: profile.displayName || profile.username || 'User',
+            avatar: profile.photoURL || '',
+            username: profile.username || 'user',
+            isVerified: profile.isVerified || false
+          },
+          type,
+          message,
+          metadata: {
+            ...metadata,
+            senderPhoto: profile.photoURL || '',
+            senderName: profile.displayName || profile.username || 'User',
+            senderUsername: profile.username || ''
+          },
+          read: false,
+          createdAt: serverTimestamp()
+        });
+      } catch (e) {
+        logger.warn("Firestore notification sync skipped:", e);
+      }
     }
   }, [db, profile, user?.uid]);
 
@@ -1379,17 +1403,30 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         delete (firebaseDoc as any).id;
 
         // Primary backend PostgreSQL story creation
-        api.stories.create({
-          mediaUrl: finalMediaUrl || storyDoc.mediaUrl,
-          thumbnailUrl: thumbnailUrl || '',
-          mediaType: storyData.type || 'image',
-          caption: (storyData as any).caption || '',
-          audience: audience as any,
-        }).catch(err => {
-          logger.warn('[AeirmistContext] API story create fallback:', err);
-        });
+        let storyBackendId = null;
+        try {
+          const res = await api.stories.create({
+            mediaUrl: finalMediaUrl || storyDoc.mediaUrl,
+            thumbnailUrl: thumbnailUrl || '',
+            mediaType: storyData.type || 'image',
+            caption: (storyData as any).caption || '',
+            audience: audience as any,
+          });
+          storyBackendId = res?.story?.id;
+          logger.info('[AeirmistContext] Story saved to PostgreSQL backend:', storyBackendId);
+        } catch (err) {
+          logger.warn('[AeirmistContext] API story create note:', err);
+        }
 
-        const docRef = await addDoc(collection(db, 'stories'), firebaseDoc);
+        let storyDocId = storyBackendId || `story_${Date.now()}`;
+        if (db) {
+          try {
+            const docRef = await addDoc(collection(db, 'stories'), firebaseDoc);
+            storyDocId = docRef.id;
+          } catch (fbErr) {
+            logger.warn('[AeirmistContext] Firestore story sync skipped:', fbErr);
+          }
+        }
         
         // Send notifications to mentioned users
         const mentions = storyData.stickerLayers?.filter((s: any) => s.type === 'mention' && s.mentionId) || [];
@@ -1398,7 +1435,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             mention.mentionId, 
             'mention', 
             `tagged you in a story`, 
-            { storyId: docRef.id, storyUrl: finalMediaUrl || storyDoc.mediaUrl }
+            { storyId: storyDocId, storyUrl: finalMediaUrl || storyDoc.mediaUrl }
           ).catch(console.error);
         }
         
@@ -1428,7 +1465,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Modular Services
   const sendMessage = useCallback(async (conversationId: string, text: string, type: any = 'text', mediaUrl?: string, metadata: any = {}) => {
-    if (!db || !profile || !user || !canWrite(`send_${conversationId}_${Date.now()}`, 100)) return;
+    if (!profile || !user || !canWrite(`send_${conversationId}_${Date.now()}`, 100)) return;
     
     // Determine if the receiver is online for notification optimization
     let isReceiverOnline = false;
@@ -1444,7 +1481,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       isFollowing = (profile.social?.following || []).includes(targetId);
       isFollower = (profile.social?.followers || []).includes(targetId);
       
-      if (!targetProfile) {
+      if (!targetProfile && db) {
         try {
           const snap = await getDoc(doc(db, 'profiles', targetId));
           if (snap.exists()) {
@@ -1455,15 +1492,38 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     try {
-      const msgId = await messagingService.sendMessage(db, profile, user, conversationId, text, type, mediaUrl, { 
-        ...metadata, 
-        isReceiverOnline,
-        targetProfile,
-        isFollowing,
-        isFollower
-      });
+      // 1. Primary: Send directly to our PostgreSQL Backend API
+      let backendMsgId = null;
+      try {
+        const res = await api.chat.sendMessage(conversationId, {
+          content: text,
+          type: type || 'text',
+          mediaKey: mediaUrl ? mediaUrl.replace(/^.*\/media\//, '') : undefined,
+        });
+        backendMsgId = res?.message?.id;
+        logger.info('[AeirmistContext] Message sent to PostgreSQL backend:', backendMsgId);
+      } catch (apiErr) {
+        logger.error('[AeirmistContext] Backend sendMessage error:', apiErr);
+      }
+
+      // 2. Optional legacy dual-sync if Firestore is connected
+      let msgId = backendMsgId || `msg_${Date.now()}`;
+      if (db) {
+        try {
+          msgId = await messagingService.sendMessage(db, profile, user, conversationId, text, type, mediaUrl, { 
+            ...metadata, 
+            isReceiverOnline,
+            targetProfile,
+            isFollowing,
+            isFollower
+          });
+        } catch (fbErr) {
+          logger.warn('[AeirmistContext] Firestore message sync skipped:', fbErr);
+        }
+      }
+
       analytics.trackEngagement('message', { type, conversationId });
-      await earnPoints(REWARDS.MESSAGE);
+      earnPoints(REWARDS.MESSAGE).catch(() => {});
       return msgId;
     } catch (e: any) {
       logger.error("Message send failed", e);
@@ -1474,7 +1534,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
       throw e;
     }
-  }, [db, profile, user]);
+  }, [profile, user, db]);
 
   const startCall = useCallback(async (conversationId: string, type: 'audio' | 'video', targetUid?: string) => {
     if (!db || !profile || !user || isSafeMode || !canWrite('startCall', 2000)) return;
@@ -1776,31 +1836,55 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, profile?.id]);
 
   const createPost = useCallback(async (content: string, mediaUrls: string[] = []) => {
-    if (!db || !profile || !user || isSafeMode) return;
+    if (!profile || !user || isSafeMode) return;
     try {
-      const postData = {
-        content,
-        mediaUrls,
-        authorId: profile.id,
-        authorUid: user.uid,
-        author: {
-          displayName: profile.displayName,
-          username: profile.username,
-          photoURL: profile.photoURL,
-          isVerified: profile.isVerified || false
-        },
-        likesCount: 0,
-        commentsCount: 0,
-        likedBy: [],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      };
-      await addDoc(collection(db, 'posts'), postData);
+      // 1. Primary: Save directly to our PostgreSQL Backend
+      let newPost = null;
+      try {
+        const createRes = await api.posts.create({
+          content,
+          mediaKeys: mediaUrls.map(u => u.replace(/^.*\/media\//, '')),
+          mediaType: mediaUrls.length > 0 ? 'image' : 'text',
+        });
+        newPost = createRes?.post;
+        logger.info('[AeirmistContext] Post created on PostgreSQL backend:', newPost?.id);
+      } catch (beErr) {
+        logger.error('[AeirmistContext] Backend createPost error:', beErr);
+      }
+
       await earnPoints(REWARDS.POST_CREATED);
+
+      // 2. Optional legacy dual-sync to Firestore if available
+      if (db) {
+        try {
+          const postData = {
+            content,
+            mediaUrls,
+            authorId: profile.id,
+            authorUid: user.uid,
+            author: {
+              displayName: profile.displayName,
+              username: profile.username,
+              photoURL: profile.photoURL,
+              isVerified: profile.isVerified || false
+            },
+            likesCount: 0,
+            commentsCount: 0,
+            likedBy: [],
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          };
+          await addDoc(collection(db, 'posts'), postData);
+        } catch (fbErr) {
+          logger.warn('[AeirmistContext] Firestore post dual-sync skipped:', fbErr);
+        }
+      }
+
+      return newPost;
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'posts');
+      logger.error('createPost failed:', e);
     }
-  }, [db, profile, isSafeMode]);
+  }, [profile, user, isSafeMode, db]);
 
   const editPost = useCallback(async (postId: string, content: string, mediaUrls: string[] = []) => {
     if (!db || !profile || isSafeMode) return;
@@ -3166,23 +3250,48 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Listen for Unread Notifications
   useEffect(() => {
-    if (!db || !profile) return;
+    if (!profile) return;
 
-    const targetIds = Array.from(new Set([profile.id, user?.uid].filter(Boolean)));
-    if (targetIds.length === 0) return;
+    // 1. Primary: Fetch unread notifications from PostgreSQL backend
+    api.notifications.getAll(30).then(res => {
+      if (typeof res?.unreadCount === 'number') {
+        setUnreadNotificationsCount(res.unreadCount);
+      }
+    }).catch(err => {
+      logger.warn('[AeirmistContext] Primary notifications fetch note:', err);
+    });
 
-    const q = query(
-      collection(db, 'notifications'),
-      where('userId', 'in', targetIds),
-      where('read', '==', false)
-    );
+    // 2. Real-time WebSocket notification listener
+    const socket = getSocket();
+    const handleNewNotif = (notif: any) => {
+      if (!notif) return;
+      playNotificationSound();
+      addToast({
+        title: notif.type ? String(notif.type).toUpperCase().replace('_', ' ') : 'Notification',
+        message: notif.body || notif.title || 'New notification',
+        type: 'info'
+      });
+      setUnreadNotificationsCount(prev => prev + 1);
+    };
+    socket.on('new_notification', handleNewNotif);
 
-    // Record the exact moment this listener starts — only show toasts for notifications
-    // created AFTER this point, so old unread notifications never pop up on refresh/page load
-    const listenerStartTime = Date.now();
-    let isInitialLoad = true;
+    let unsubscribe = () => {};
+    if (db) {
+      try {
+        const targetIds = Array.from(new Set([profile.id, user?.uid].filter(Boolean)));
+        if (targetIds.length > 0) {
+          const q = query(
+            collection(db, 'notifications'),
+            where('userId', 'in', targetIds),
+            where('read', '==', false)
+          );
 
-    const unsubscribe = onSnapshot(q, (snap) => {
+          // Record the exact moment this listener starts — only show toasts for notifications
+          // created AFTER this point, so old unread notifications never pop up on refresh/page load
+          const listenerStartTime = Date.now();
+          let isInitialLoad = true;
+
+          unsubscribe = onSnapshot(q, (snap) => {
       // Skip the very first batch (historical data loaded on startup)
       if (isInitialLoad) {
         isInitialLoad = false;
@@ -3265,8 +3374,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       setUnreadNotificationsCount(nonMessageUnreadCount);
     }, (error) => logger.warn("Notifications unread count sync failed", error));
+        }
+      } catch (fbErr) {
+        logger.warn('[AeirmistContext] Firestore notifications listener skipped:', fbErr);
+      }
+    }
 
-    return () => unsubscribe();
+    return () => {
+      socket.off('new_notification', handleNewNotif);
+      unsubscribe();
+    };
   }, [db, profile?.id, user?.uid]);
 
   // Listen for Message Requests (Sound & Toast)
@@ -6488,12 +6605,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const toggleFollow = async (targetId: string, targetProfileData?: any) => {
     logger.info("Toggle follow called:", { targetId, profileId: profile?.id });
-    if (!db || !profile || !user) {
-      logger.info("Toggle follow aborted: Missing db, profile, or user", { db: !!db, profile: !!profile, user: !!user });
+    if (!profile || !user) {
+      logger.info("Toggle follow aborted: Missing profile or user");
       return;
     }
     
-    if (!canWrite(`follow_${targetId}`, 2000)) {
+    if (!canWrite(`follow_${targetId}`, 1000)) {
       logger.info("Toggle follow aborted: Throttled");
       return;
     }
@@ -6502,10 +6619,15 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const isPending = (profile.social?.pendingFollowing || []).includes(targetId);
     logger.info("Toggle follow state:", { isFollowing, isPending });                
     
-    // Primary sync to backend PostgreSQL follow system
-    api.users.toggleFollow(targetId).catch((err) => {
-      logger.warn("[AeirmistContext] API toggleFollow dual-sync fallback:", err);
-    });
+    // 1. Primary: Save directly to our PostgreSQL Backend
+    let backendFollowingResult: boolean | null = null;
+    try {
+      const followRes = await api.users.toggleFollow(targetId);
+      backendFollowingResult = followRes?.following;
+      logger.info("[AeirmistContext] API toggleFollow executed on PostgreSQL backend:", { targetId, following: backendFollowingResult });
+    } catch (err) {
+      logger.error("[AeirmistContext] API toggleFollow error:", err);
+    }
 
     try {
       if (isFollowing) {
@@ -6519,16 +6641,20 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           followingCount: Math.max(0, (prev?.followingCount || 1) - 1)
         }));
 
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'profiles', profile.id), {
-          'social.following': arrayRemove(targetId),
-          followingCount: increment(-1)
-        });
-        batch.update(doc(db, 'profiles', targetId), {
-          'social.followers': arrayRemove(profile.id),
-          followersCount: increment(-1)
-        });
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
+        if (db) {
+          try {
+            const batch = writeBatch(db);
+            batch.update(doc(db, 'profiles', profile.id), {
+              'social.following': arrayRemove(targetId),
+              followingCount: increment(-1)
+            });
+            batch.update(doc(db, 'profiles', targetId), {
+              'social.followers': arrayRemove(profile.id),
+              followersCount: increment(-1)
+            });
+            await batch.commit();
+          } catch (fbErr) {}
+        }
         return;
       }
 
@@ -6605,19 +6731,23 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           followingCount: (prev?.followingCount || 0) + 1
         }));
 
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'profiles', profile.id), {
-          'social.following': arrayUnion(targetId),
-          followingCount: increment(1),
-          aeirmistLevel: increment(REWARDS.FOLLOW_GIVEN)
-        });
-        
-        batch.update(doc(db, 'profiles', targetId), {
-          'social.followers': arrayUnion(profile.id),
-          followersCount: increment(1)
-        });
+        if (db) {
+          try {
+            const batch = writeBatch(db);
+            batch.update(doc(db, 'profiles', profile.id), {
+              'social.following': arrayUnion(targetId),
+              followingCount: increment(1),
+              aeirmistLevel: increment(REWARDS.FOLLOW_GIVEN)
+            });
+            
+            batch.update(doc(db, 'profiles', targetId), {
+              'social.followers': arrayUnion(profile.id),
+              followersCount: increment(1)
+            });
 
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
+            await batch.commit();
+          } catch (fbErr) {}
+        }
         if (targetFollowsMe) {
           await createNotification(targetId, 'follow_back', `${profile.displayName || 'Someone'} followed you back! Link established.`, { profileId: profile.id });
         } else {
@@ -7288,14 +7418,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const toggleLike = async (postId: string, isLiked: boolean, postAuthorId?: string) => {
     if (!profile) return;
+    // 1. Primary high-speed backend API (PostgreSQL + Redis + Socket.IO)
     try {
-      // 1. Primary high-speed backend API (PostgreSQL + Redis + Socket.IO)
-      await api.posts.toggleLike(postId).catch((e) => {
-        logger.warn("[AeirmistContext] API toggleLike dual-sync fallback:", e);
-      });
-    } catch (e) {}
+      await api.posts.toggleLike(postId);
+      logger.info('[AeirmistContext] Post like updated in PostgreSQL backend');
+    } catch (e) {
+      logger.error("[AeirmistContext] API toggleLike error:", e);
+    }
 
-    // 2. Dual-sync to Firestore if available
+    if (!isLiked) {
+      earnPoints(REWARDS.LIKE_GIVEN).catch(() => {});
+    }
+
+    // 2. Optional dual-sync to Firestore if available
     if (db && canWrite(`like_${postId}`, 600)) {
       try {
         await updateDoc(doc(db, 'posts', postId), {
@@ -7303,30 +7438,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           likedBy: isLiked ? arrayRemove(profile.id) : arrayUnion(profile.id),
           updatedAt: serverTimestamp()
         });
-        if (!isLiked) {
-          await earnPoints(REWARDS.LIKE_GIVEN);
-          
-          // Notify post author
-          let targetAuthorId = postAuthorId;
-          if (!targetAuthorId) {
-            try {
-              const postDoc = await getDoc(doc(db, 'posts', postId));
-              if (postDoc.exists()) {
-                const d = postDoc.data();
-                targetAuthorId = d.authorId || d.userId || d.author?.id || d.author?.uid;
-              }
-            } catch (e) {}
-          }
-
-          if (targetAuthorId && targetAuthorId !== profile.id) {
-            await createNotification(
-              targetAuthorId,
-              'like',
-              `${profile.displayName || profile.username || 'Someone'} liked your post.`,
-              { postId }
-            );
-          }
-        }
       } catch (e) {
         logger.warn("Like toggle fallback failed", e);
       }
@@ -7335,23 +7446,25 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const toggleBookmark = async (postId: string, isBookmarked: boolean) => {
     if (!profile) return;
+    // 1. Primary backend API (PostgreSQL)
     try {
-      // 1. Primary backend API (PostgreSQL)
-      await api.posts.toggleBookmark(postId).catch((e) => {
-        logger.warn("[AeirmistContext] API toggleBookmark dual-sync fallback:", e);
-      });
-    } catch (e) {}
+      await api.posts.toggleBookmark(postId);
+      logger.info('[AeirmistContext] Post bookmark updated in PostgreSQL backend');
+    } catch (e) {
+      logger.error("[AeirmistContext] API toggleBookmark error:", e);
+    }
 
-    // 2. Dual-sync to Firestore
+    if (!isBookmarked) {
+      earnPoints(5).catch(() => {});
+    }
+
+    // 2. Optional dual-sync to Firestore
     if (db && canWrite(`bookmark_${postId}`, 600)) {
       try {
         await updateDoc(doc(db, 'posts', postId), {
           savedBy: isBookmarked ? arrayRemove(profile.id) : arrayUnion(profile.id),
           updatedAt: serverTimestamp()
         });
-        if (!isBookmarked) {
-          await earnPoints(5);
-        }
       } catch (e) {
         logger.warn("Bookmark toggle fallback failed", e);
       }

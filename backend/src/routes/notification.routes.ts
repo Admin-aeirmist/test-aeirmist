@@ -1,8 +1,41 @@
 import { Router, Response } from 'express';
 import { NotificationDAL } from '../dal/notification.dal';
+import { UserDAL } from '../dal/user.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { io } from '../index';
 
 const router = Router();
+
+async function resolveUserId(rawId: string): Promise<string> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+  if (isUuid) return rawId;
+  const user = await UserDAL.findByEmailOrUsername(rawId) || await UserDAL.findByFirebaseUid(rawId);
+  return user?.id || rawId;
+}
+
+// Create Notification
+router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { recipientId, type, title, body, actionUrl, metadata } = req.body;
+    const targetUserId = await resolveUserId(recipientId);
+    const notif = await NotificationDAL.create({
+      recipientId: targetUserId,
+      actorId: req.user!.userId,
+      type: type || 'general',
+      title: title || '',
+      body: body || '',
+      actionUrl,
+      metadata,
+    });
+    try {
+      io.to(`user:${targetUserId}`).emit('new_notification', notif);
+    } catch (e) {}
+    res.status(201).json({ notification: notif });
+  } catch (err) {
+    console.error('[Create Notification Error]', err);
+    res.status(500).json({ error: 'Failed to create notification' });
+  }
+});
 
 // Get Notifications
 router.get('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {

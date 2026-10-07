@@ -2984,7 +2984,7 @@ const ChatWindow = ({
   };
 
   const handleSendMediaUrl = async (mediaUrl: string, type: 'image' | 'video' | 'voice' | 'media' | 'text') => {
-    if (!db || !profile || !user || !chat.id) return;
+    if (!profile || !user || !chat.id) return;
 
     const optimisticId = `opt_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const optimisticMsg: Message = {
@@ -3066,7 +3066,7 @@ const ChatWindow = ({
   };
 
   const handleSendMessage = async (text: string, mood?: string) => {
-    if (!db || !profile || !user || !chat.id) return;
+    if (!profile || !user || !chat.id) return;
     
     // Deterministic deduplication ID for instant UI feedback
     const optimisticId = `opt_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -3165,7 +3165,7 @@ const ChatWindow = ({
   };
 
   const handleSendMedia = async (file: File, requestedHD?: boolean, replyToParam?: any) => {
-    if (!db || !profile || !user || !chat.id) return;
+    if (!profile || !user || !chat.id) return;
 
     const useHD = requestedHD ?? isHDActive;
     const optimisticId = `opt_media_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -3295,7 +3295,7 @@ const ChatWindow = ({
     metadata?: any;
     replyingTo?: any;
   }) => {
-    if (!db || !profile || !user || !chat.id) return;
+    if (!profile || !user || !chat.id) return;
     const { type, text = '', mediaUrl, metadata = {}, replyingTo: replyParam } = params;
     const optimisticId = `opt_${type}_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const optimisticMsg: Message = {

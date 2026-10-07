@@ -27,6 +27,7 @@ import { logger } from '@/src/utils/logger';
 import { getAvatarUrl } from '../../lib/avatar';
 import { extractTimestampMs } from '../../lib/date';
 import { getSocket, joinChatRoom, leaveChatRoom } from '../../services/api/socket';
+import { api } from '../../services/api/client';
 
 function cleanUndefined(obj: any): any {
   if (obj === null || typeof obj !== 'object') {
@@ -426,12 +427,29 @@ class MessagingService {
         });
       }
       
-      const msgRef = doc(db, 'conversations', finalConvId, 'messages', messageId);
-      batch.set(msgRef, cleanUndefined(messageData));
-      
-      logger.info("[MessagingService] Committing neural batch...");
-      await batch.commit();
-      logger.info("[MessagingService] Batch committed successfully.");
+      // 1. Primary: Save directly to our PostgreSQL Backend API
+      try {
+        await api.chat.sendMessage(finalConvId, {
+          content: text,
+          type,
+          mediaKey: mediaUrl ? mediaUrl.replace(/^.*\/media\//, '') : undefined,
+        });
+        logger.info('[MessagingService] Message saved to PostgreSQL backend API');
+      } catch (beErr) {
+        logger.warn('[MessagingService] Backend API message save note:', beErr);
+      }
+
+      // 2. Optional legacy dual-sync if Firestore is connected
+      if (db) {
+        try {
+          const msgRef = doc(db, 'conversations', finalConvId, 'messages', messageId);
+          batch.set(msgRef, cleanUndefined(messageData));
+          await batch.commit();
+          logger.info("[MessagingService] Batch committed to Firestore successfully.");
+        } catch (fbErr) {
+          logger.warn("[MessagingService] Firestore dual-sync skipped:", fbErr);
+        }
+      }
 
       // Broadcast in real-time via WebSockets + Redis Pub/Sub
       try {
@@ -617,6 +635,31 @@ class MessagingService {
       this.listeners.get(key)!();
     }
 
+    // 1c. Load from primary PostgreSQL backend API
+    api.chat.getMessages(conversationId, limitCount).then((res: any) => {
+      if (isCancelled) return;
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      if (list && list.length > 0) {
+        const formatted: Message[] = list.map((m: any) => ({
+          id: m.id,
+          conversationId,
+          senderId: m.senderId,
+          text: m.content || '',
+          type: m.type || 'text',
+          mediaUrl: m.mediaKey ? `${(import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media')}/${m.mediaKey}` : undefined,
+          timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestampMs: new Date(m.createdAt).getTime(),
+          status: m.isRead ? 'read' : m.isDelivered ? 'delivered' : 'sent',
+          isDelivered: !!m.isDelivered,
+          isSeen: !!m.isRead,
+        })).sort((a: any, b: any) => a.timestampMs - b.timestampMs);
+        this.setCachedMessages(conversationId, formatted);
+        callback(formatted);
+      }
+    }).catch(err => {
+      logger.warn('[MessagingService] Primary PostgreSQL getMessages note:', err);
+    });
+
     // Join real-time WebSockets + Redis room
     joinChatRoom(`conv:${conversationId}`);
     const socket = getSocket();
@@ -637,7 +680,12 @@ class MessagingService {
           isSeen: false,
         } as any;
         if (!isCancelled) {
-          callback([msgObj]);
+          const prev = this.getCachedMessages(conversationId) || [];
+          const exists = prev.some(x => x.id === msgObj.id || (x.metadata?.optimisticId && x.metadata?.optimisticId === m.metadata?.optimisticId));
+          const updated = exists ? prev.map(x => (x.id === msgObj.id ? msgObj : x)) : [...prev, msgObj];
+          updated.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+          this.setCachedMessages(conversationId, updated);
+          callback(updated);
         }
       }
     };
@@ -678,100 +726,104 @@ class MessagingService {
     const otherLastRead = parseTimestampMs(chatData?.lastRead?.[otherParticipantId || '']);
     const otherLastDelivered = parseTimestampMs(chatData?.lastDelivered?.[otherParticipantId || '']);
 
-    const q = query(
-      collection(db, 'conversations', conversationId, 'messages'),
-      orderBy('createdAt', 'desc'),
-      limit(limitCount)
-    );
+    let unsubscribe = () => {};
+    if (db) {
+      try {
+        const q = query(
+          collection(db, 'conversations', conversationId, 'messages'),
+          orderBy('createdAt', 'desc'),
+          limit(limitCount)
+        );
 
-    const myClearedAtMs = parseTimestampMs(chatData?.clearedAt?.[currentProfileId]);
+        unsubscribe = onSnapshot(q, (snapshot) => {
+          logger.info(`[MessagingService] Incoming messages for ${conversationId}: ${snapshot.size} items.`);
+          const rawMessages = snapshot.docs
+            .map(doc => {
+              const data = doc.data({ serverTimestamps: 'estimate' });
+              const timestampMs = extractMsgTimestampMs(data);
+              const date = new Date(timestampMs);
+              
+              const isSeenVal = data.isSeen || (data.senderId === currentProfileId && timestampMs <= otherLastRead);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      logger.info(`[MessagingService] Incoming messages for ${conversationId}: ${snapshot.size} items.`);
-      const rawMessages = snapshot.docs
-        .map(doc => {
-          const data = doc.data({ serverTimestamps: 'estimate' });
-          const timestampMs = extractMsgTimestampMs(data);
-          const date = new Date(timestampMs);
+              return {
+                ...data,
+                id: doc.id,
+                conversationId,
+                timestamp: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                timestampMs,
+                isSeen: isSeenVal,
+                isDelivered: data.isDelivered || (data.senderId === currentProfileId && timestampMs <= otherLastDelivered),
+                status: data.status || 'sent'
+              } as Message;
+            })
+            .filter(m => {
+              if ((m as any).deletedFor?.[currentProfileId] === true) return false;
+              // Skip myClearedAtMs filter if the message is pending/optimistic/sending
+              const isPendingOrOptimistic = (m.status as string) === 'sending' || (m.status as string) === 'pending' || m.id?.startsWith('opt_') || !m.timestampMs || m.timestampMs === 0;
+              if (isPendingOrOptimistic) return true;
+              if (myClearedAtMs > 0 && m.timestampMs <= myClearedAtMs) return false;
+              
+              const deletedAtConv = parseTimestampMs(chatData?.deletedFor?.[currentProfileId]);
+              if (deletedAtConv > 0 && m.timestampMs <= deletedAtConv) return false;
+
+              return true;
+            });
           
-          const isSeenVal = data.isSeen || (data.senderId === currentProfileId && timestampMs <= otherLastRead);
+          // Deduplicate messages by id and optimisticId to prevent duplicates or ghost resurrections
+          const seenIds = new Set<string>();
+          const seenOptimisticIds = new Set<string>();
+          const deduped: Message[] = [];
 
-          return {
-            ...data,
-            id: doc.id,
-            conversationId,
-            timestamp: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            timestampMs,
-            isSeen: isSeenVal,
-            isDelivered: data.isDelivered || (data.senderId === currentProfileId && timestampMs <= otherLastDelivered),
-            status: data.status || 'sent'
-          } as Message;
-        })
-        .filter(m => {
-          if ((m as any).deletedFor?.[currentProfileId] === true) return false;
-          // Skip myClearedAtMs filter if the message is pending/optimistic/sending
-          const isPendingOrOptimistic = (m.status as string) === 'sending' || (m.status as string) === 'pending' || m.id?.startsWith('opt_') || !m.timestampMs || m.timestampMs === 0;
-          if (isPendingOrOptimistic) return true;
-          if (myClearedAtMs > 0 && m.timestampMs <= myClearedAtMs) return false;
-          
-          const deletedAtConv = parseTimestampMs(chatData?.deletedFor?.[currentProfileId]);
-          if (deletedAtConv > 0 && m.timestampMs <= deletedAtConv) return false;
+          for (const m of rawMessages) {
+            if (!m.id || seenIds.has(m.id)) continue;
+            const optId = (m as any).metadata?.optimisticId || (m as any).optimisticId;
+            if (optId) {
+              if (seenOptimisticIds.has(optId)) continue;
+              seenOptimisticIds.add(optId);
+            }
+            seenIds.add(m.id);
+            deduped.push(m);
+          }
 
-          return true;
+          // Sort oldest to newest (ascending chronological sequence)
+          deduped.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+          const reversed = deduped;
+
+          // 2. Persist to Instant Cache & IndexedDB Vault
+          this.setCachedMessages(conversationId, reversed);
+          aeirmistCache.saveMessages(conversationId, reversed).catch(() => {});
+
+          // Update my delivered status if I've received messages from others
+          const myLastDeliveredMs = parseTimestampMs(chatData?.lastDelivered?.[currentProfileId]);
+          const unconfirmed = reversed.filter(m => 
+            m.senderId !== currentProfileId && 
+            m.timestampMs > myLastDeliveredMs 
+            
+          );
+
+          if (unconfirmed.length > 0 && !this.isSafeMode) {
+            const lastUpdate = this.lastDeliveryUpdate.get(conversationId) || 0;
+            if (Date.now() - lastUpdate > 5000) { // 5 seconds
+              this.lastDeliveryUpdate.set(conversationId, Date.now());
+              logger.info(`[MessagingService] Confirming delivery for ${unconfirmed.length} messages.`);
+              const convRef = doc(db, 'conversations', conversationId);
+              updateDoc(convRef, {
+                [`lastDelivered.${currentProfileId}`]: serverTimestamp()
+              }).catch(() => {});
+            }
+          }
+
+          if (!isCancelled) {
+            callback(reversed);
+          }
+        }, (error) => {
+          if (isCancelled) return;
+          logger.warn(`[MessagingService] Firestore snapshot note for ${conversationId}:`, error);
         });
-      
-      // Deduplicate messages by id and optimisticId to prevent duplicates or ghost resurrections
-      const seenIds = new Set<string>();
-      const seenOptimisticIds = new Set<string>();
-      const deduped: Message[] = [];
-
-      for (const m of rawMessages) {
-        if (!m.id || seenIds.has(m.id)) continue;
-        const optId = (m as any).metadata?.optimisticId || (m as any).optimisticId;
-        if (optId) {
-          if (seenOptimisticIds.has(optId)) continue;
-          seenOptimisticIds.add(optId);
-        }
-        seenIds.add(m.id);
-        deduped.push(m);
+      } catch (fbErr) {
+        logger.warn(`[MessagingService] Firestore messages subscription skipped:`, fbErr);
       }
-
-      // Sort oldest to newest (ascending chronological sequence)
-      deduped.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
-      const reversed = deduped;
-
-      // 2. Persist to Instant Cache & IndexedDB Vault
-      this.setCachedMessages(conversationId, reversed);
-      aeirmistCache.saveMessages(conversationId, reversed).catch(() => {});
-
-      // Update my delivered status if I've received messages from others
-      const myLastDeliveredMs = parseTimestampMs(chatData?.lastDelivered?.[currentProfileId]);
-      const unconfirmed = reversed.filter(m => 
-        m.senderId !== currentProfileId && 
-        m.timestampMs > myLastDeliveredMs 
-        
-      );
-
-      if (unconfirmed.length > 0 && !this.isSafeMode) {
-        const lastUpdate = this.lastDeliveryUpdate.get(conversationId) || 0;
-        if (Date.now() - lastUpdate > 5000) { // 5 seconds
-          this.lastDeliveryUpdate.set(conversationId, Date.now());
-          logger.info(`[MessagingService] Confirming delivery for ${unconfirmed.length} messages.`);
-          const convRef = doc(db, 'conversations', conversationId);
-          updateDoc(convRef, {
-            [`lastDelivered.${currentProfileId}`]: serverTimestamp()
-          }).catch(() => {});
-        }
-      }
-
-      if (!isCancelled) {
-        callback(reversed);
-      }
-    }, (error) => {
-      if (isCancelled) return;
-      logger.error(`[MessagingService] Snapshot error for ${conversationId}:`, error);
-      handleFirestoreError(error, OperationType.LIST, `conversations/${conversationId}/messages`);
-    });
+    }
 
     const cleanup = () => {
       isCancelled = true;
@@ -847,120 +899,160 @@ class MessagingService {
       this.listeners.get(key)!();
     }
 
-    const q = query(
-      collection(db, 'conversations'),
-      where('participants', 'array-contains', userUid),
-      limit(100)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      logger.info(`[MessagingService] Inbox snapshot: ${snapshot.size} total active frequencies.`);
-      const chats = snapshot.docs.map(doc => {
-        const data = doc.data({ serverTimestamps: 'estimate' });
-        const hasPending = doc.metadata.hasPendingWrites;
-        return { 
-          ...data, 
-          id: doc.id,
-          hasPendingWrites: hasPending
-        } as unknown as Chat;
-      });
-
-      const getMs = (chat: any) => {
-        if (!chat) return 0;
-        const t0 = extractTimestampMs(chat.latestMessageAt);
-        if (t0 > 0) return t0;
-        const t1 = extractTimestampMs(chat.lastMessage?.timestamp || chat.lastMessage?.createdAt);
-        const t2 = extractTimestampMs(chat.updatedAt);
-        const fallbackMs = Math.max(t1, t2);
-        if (fallbackMs > 0) return fallbackMs;
-        const t3 = extractTimestampMs(chat.createdAt);
-        if (t3 > 0) return t3;
-        if (chat.hasPendingWrites || chat.isOptimistic) return Date.now();
-        return 0;
-      };
-
-      // Sort client-side by pin priority, then latest activity descending, with deterministic tie-breaker
-      chats.sort((a, b) => {
-        const pinA = typeof a.isPinned === 'boolean' ? a.isPinned : !!a.isPinned?.[profileId];
-        const pinB = typeof b.isPinned === 'boolean' ? b.isPinned : !!b.isPinned?.[profileId];
-        if (pinA && !pinB) return -1;
-        if (!pinA && pinB) return 1;
-        const msA = getMs(a);
-        const msB = getMs(b);
-        if (msB !== msA) return msB - msA;
-        return String(b.id || '').localeCompare(String(a.id || ''));
-      });
-      
-      // Filter by profileId, verify deletedFor and clearedAt to prevent ghost resurrection
-      const currentProfileChats = chats.filter(chat => {
-        const belongsToUser = !chat.profileIds || chat.profileIds.includes(profileId) || chat.participants?.includes(userUid);
-        if (!belongsToUser) return false;
-
-        const deletedForMs = extractTimestampMs((chat as any).deletedFor?.[profileId]);
-        const activityMs = getMs(chat);
-        // If conversation was deleted by this user and no subsequent message has arrived, hide it
-        if (deletedForMs > 0 && activityMs <= deletedForMs) {
-          return false;
-        }
-
-        const clearedAtMs = extractTimestampMs((chat as any).clearedAt?.[profileId]);
-        if (clearedAtMs > 0 && activityMs <= clearedAtMs) {
-          // Clear message preview so old deleted snippet does not resurrect
-          (chat as any).lastMessage = null;
-          (chat as any).latestMessagePreview = '';
-        }
-
-        return true;
-      });
-
-      // 2. Persist to Cache (Async) & Pre-warm Recent Chat Rooms
-      try {
-        if (typeof window !== 'undefined' && currentProfileChats.length > 0) {
-          try {
-            const trimmed = currentProfileChats.slice(0, 40);
-            localStorage.setItem(`aeirmist_chats_${userUid}`, JSON.stringify(trimmed));
-            localStorage.setItem('aeirmist_cached_inbox_chats', JSON.stringify(trimmed));
-          } catch (e) {}
-        }
-
-        currentProfileChats.forEach(chat => {
-          aeirmistCache.saveConversation(chat).catch(() => {});
+    // 1b. Load from primary PostgreSQL backend API
+    api.chat.getConversations().then((res: any) => {
+      const convs = (res as any)?.conversations || (Array.isArray(res) ? res : []);
+      if (convs && convs.length > 0) {
+        const mappedChats: Chat[] = convs.map((c: any) => {
+          const other = c.participants?.find((p: any) => p.userId !== profileId && p.userId !== userUid) || c.participants?.[0];
+          return {
+            id: c.id,
+            name: c.title || other?.displayName || other?.username || 'Chat',
+            photo: other?.avatarKey ? `${(import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media')}/${other.avatarKey}` : getAvatarUrl(null, other?.userId),
+            lastMessage: {
+              text: c.lastMessagePreview || '',
+              senderId: '',
+              timestamp: c.lastMessageAt,
+            },
+            latestMessagePreview: c.lastMessagePreview || '',
+            time: c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+            unread: (c.unreadCount || 0) > 0,
+            online: false,
+            isPinned: c.isPinned || false,
+            isMuted: c.isMuted || false,
+            participants: c.participants?.map((p: any) => p.userId) || [userUid],
+            profileIds: c.participants?.map((p: any) => p.userId) || [profileId],
+            otherParticipantId: other?.userId,
+            status: 'active',
+            updatedAt: c.updatedAt,
+          } as unknown as Chat;
         });
+        callback(mappedChats);
+      }
+    }).catch(err => {
+      logger.warn('[MessagingService] Primary PostgreSQL getConversations note:', err);
+    });
 
-        // Pre-warm top 5 recent conversation messages in memory so opening them is instantaneous (0ms delay)
-        currentProfileChats.slice(0, 5).forEach(c => {
-          if (c.id && !this.messageMemoryCache.has(c.id)) {
-            if (typeof window !== 'undefined' && window.localStorage) {
+    let unsubscribe = () => {};
+    if (db) {
+      try {
+        const q = query(
+          collection(db, 'conversations'),
+          where('participants', 'array-contains', userUid),
+          limit(100)
+        );
+
+        unsubscribe = onSnapshot(q, (snapshot) => {
+          logger.info(`[MessagingService] Inbox snapshot: ${snapshot.size} total active frequencies.`);
+          const chats = snapshot.docs.map(doc => {
+            const data = doc.data({ serverTimestamps: 'estimate' });
+            const hasPending = doc.metadata.hasPendingWrites;
+            return { 
+              ...data, 
+              id: doc.id,
+              hasPendingWrites: hasPending
+            } as unknown as Chat;
+          });
+
+          const getMs = (chat: any) => {
+            if (!chat) return 0;
+            const t0 = extractTimestampMs(chat.latestMessageAt);
+            if (t0 > 0) return t0;
+            const t1 = extractTimestampMs(chat.lastMessage?.timestamp || chat.lastMessage?.createdAt);
+            const t2 = extractTimestampMs(chat.updatedAt);
+            const fallbackMs = Math.max(t1, t2);
+            if (fallbackMs > 0) return fallbackMs;
+            const t3 = extractTimestampMs(chat.createdAt);
+            if (t3 > 0) return t3;
+            if (chat.hasPendingWrites || chat.isOptimistic) return Date.now();
+            return 0;
+          };
+
+          // Sort client-side by pin priority, then latest activity descending, with deterministic tie-breaker
+          chats.sort((a, b) => {
+            const pinA = typeof a.isPinned === 'boolean' ? a.isPinned : !!a.isPinned?.[profileId];
+            const pinB = typeof b.isPinned === 'boolean' ? b.isPinned : !!b.isPinned?.[profileId];
+            if (pinA && !pinB) return -1;
+            if (!pinA && pinB) return 1;
+            const msA = getMs(a);
+            const msB = getMs(b);
+            if (msB !== msA) return msB - msA;
+            return String(b.id || '').localeCompare(String(a.id || ''));
+          });
+          
+          // Filter by profileId, verify deletedFor and clearedAt to prevent ghost resurrection
+          const currentProfileChats = chats.filter(chat => {
+            const belongsToUser = !chat.profileIds || chat.profileIds.includes(profileId) || chat.participants?.includes(userUid);
+            if (!belongsToUser) return false;
+
+            const deletedForMs = extractTimestampMs((chat as any).deletedFor?.[profileId]);
+            const activityMs = getMs(chat);
+            // If conversation was deleted by this user and no subsequent message has arrived, hide it
+            if (deletedForMs > 0 && activityMs <= deletedForMs) {
+              return false;
+            }
+
+            const clearedAtMs = extractTimestampMs((chat as any).clearedAt?.[profileId]);
+            if (clearedAtMs > 0 && activityMs <= clearedAtMs) {
+              // Clear message preview so old deleted snippet does not resurrect
+              (chat as any).lastMessage = null;
+              (chat as any).latestMessagePreview = '';
+            }
+
+            return true;
+          });
+
+          // 2. Persist to Cache (Async) & Pre-warm Recent Chat Rooms
+          try {
+            if (typeof window !== 'undefined' && currentProfileChats.length > 0) {
               try {
-                const stored = localStorage.getItem(`aeirmist_msgs_${c.id}`);
-                if (stored) {
-                  const parsed = JSON.parse(stored);
-                  if (Array.isArray(parsed) && parsed.length > 0) {
-                    this.messageMemoryCache.set(c.id, parsed);
-                  }
-                }
+                const trimmed = currentProfileChats.slice(0, 40);
+                localStorage.setItem(`aeirmist_chats_${userUid}`, JSON.stringify(trimmed));
+                localStorage.setItem('aeirmist_cached_inbox_chats', JSON.stringify(trimmed));
               } catch (e) {}
             }
-            aeirmistCache.getMessages(c.id).then(msgs => {
-              if (msgs && msgs.length > 0 && !this.messageMemoryCache.has(c.id)) {
-                const formatted = msgs.map(m => ({
-                  ...m,
-                  conversationId: c.id,
-                  timestamp: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  timestampMs: m.timestamp
-                })).sort((a, b) => a.timestampMs - b.timestampMs);
-                this.messageMemoryCache.set(c.id, formatted as any);
-              }
-            }).catch(() => {});
-          }
-        });
-      } catch (e) {}
 
-      callback(currentProfileChats);
-    }, (error) => {
-      logger.error(`[MessagingService] Inbox sync failure:`, error);
-      handleFirestoreError(error, OperationType.LIST, 'conversations_sync');
-    });
+            currentProfileChats.forEach(chat => {
+              aeirmistCache.saveConversation(chat).catch(() => {});
+            });
+
+            // Pre-warm top 5 recent conversation messages in memory so opening them is instantaneous (0ms delay)
+            currentProfileChats.slice(0, 5).forEach(c => {
+              if (c.id && !this.messageMemoryCache.has(c.id)) {
+                if (typeof window !== 'undefined' && window.localStorage) {
+                  try {
+                    const stored = localStorage.getItem(`aeirmist_msgs_${c.id}`);
+                    if (stored) {
+                      const parsed = JSON.parse(stored);
+                      if (Array.isArray(parsed) && parsed.length > 0) {
+                        this.messageMemoryCache.set(c.id, parsed);
+                      }
+                    }
+                  } catch (e) {}
+                }
+                aeirmistCache.getMessages(c.id).then(msgs => {
+                  if (msgs && msgs.length > 0 && !this.messageMemoryCache.has(c.id)) {
+                    const formatted = msgs.map(m => ({
+                      ...m,
+                      conversationId: c.id,
+                      timestamp: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                      timestampMs: m.timestamp
+                    })).sort((a, b) => a.timestampMs - b.timestampMs);
+                    this.messageMemoryCache.set(c.id, formatted as any);
+                  }
+                }).catch(() => {});
+              }
+            });
+          } catch (e) {}
+
+          callback(currentProfileChats);
+        }, (error) => {
+          logger.warn(`[MessagingService] Non-blocking inbox sync note:`, error);
+        });
+      } catch (fbErr) {
+        logger.warn('[MessagingService] Firestore inbox subscription skipped:', fbErr);
+      }
+    }
 
     this.listeners.set(key, unsubscribe);
     return unsubscribe;

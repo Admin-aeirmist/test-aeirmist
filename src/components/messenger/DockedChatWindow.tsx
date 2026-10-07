@@ -127,7 +127,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
 
   // Subscribe to real-time messages for this conversation
   useEffect(() => {
-    if (!db || !chatId) return;
+    if (!chatId) return;
 
     try {
       const unsub = messagingService.subscribeToMessages(
@@ -160,7 +160,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const textToSend = inputText.trim();
-    if (!textToSend || !db || !user || !profile || isSending) return;
+    if (!textToSend || !user || !profile || isSending) return;
 
     setIsSending(true);
     setInputText('');
@@ -190,7 +190,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
 
   // Quick Thumbs Up (Facebook style)
   const handleQuickLike = async () => {
-    if (!db || !user || !profile || isSending) return;
+    if (!user || !profile || isSending) return;
     setIsSending(true);
     try {
       await messagingService.sendMessage(
@@ -216,7 +216,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   // Send photo attachment
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !db || !user || !profile || !uploadMedia) return;
+    if (!file || !user || !profile || !uploadMedia) return;
 
     setIsUploading(true);
     try {

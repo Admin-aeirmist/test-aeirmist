@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { ChatDAL } from '../dal/chat.dal';
+import { UserDAL } from '../dal/user.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { io } from '../index';
 
@@ -18,14 +19,35 @@ const SendMessageSchema = z.object({
 });
 
 const DirectChatSchema = z.object({
-  participantId: z.string().uuid(),
+  participantId: z.string().min(1),
 });
 
 const GroupChatSchema = z.object({
   title: z.string().min(1).max(100),
-  memberIds: z.array(z.string().uuid()),
+  memberIds: z.array(z.string().min(1)),
   avatarKey: z.string().optional(),
 });
+
+async function resolveUserId(rawId: string): Promise<string> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+  if (isUuid) return rawId;
+  const user = await UserDAL.findByEmailOrUsername(rawId) || await UserDAL.findByFirebaseUid(rawId);
+  return user?.id || rawId;
+}
+
+async function resolveConversationId(rawConvId: string, currentUserId: string): Promise<string> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawConvId);
+  if (isUuid) return rawConvId;
+
+  // Handles new_<targetId> or <userA>_<userB>
+  let target = rawConvId.startsWith('new_') ? rawConvId.replace('new_', '') : rawConvId;
+  if (target.includes('_')) {
+    const parts = target.split('_');
+    target = parts.find((p) => p !== currentUserId) || parts[0];
+  }
+  const resolvedTargetId = await resolveUserId(target);
+  return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
+}
 
 // List Conversations
 router.get('/conversations', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
@@ -42,7 +64,8 @@ router.get('/conversations', authenticateToken, async (req: AuthenticatedRequest
 router.post('/conversations/direct', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { participantId } = DirectChatSchema.parse(req.body);
-    const convId = await ChatDAL.findOrCreateDirectConversation(req.user!.userId, participantId);
+    const resolvedTargetId = await resolveUserId(participantId);
+    const convId = await ChatDAL.findOrCreateDirectConversation(req.user!.userId, resolvedTargetId);
     res.json({ conversationId: convId });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
@@ -57,7 +80,8 @@ router.post('/conversations/direct', authenticateToken, async (req: Authenticate
 router.post('/conversations/group', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { title, memberIds, avatarKey } = GroupChatSchema.parse(req.body);
-    const conv = await ChatDAL.createGroupConversation(req.user!.userId, title, memberIds, avatarKey);
+    const resolvedMemberIds = await Promise.all(memberIds.map(resolveUserId));
+    const conv = await ChatDAL.createGroupConversation(req.user!.userId, title, resolvedMemberIds, avatarKey);
     res.status(201).json({ conversation: conv });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
@@ -71,17 +95,17 @@ router.post('/conversations/group', authenticateToken, async (req: Authenticated
 // Get Messages
 router.get('/conversations/:id/messages', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const convId = req.params.id;
+    const convId = await resolveConversationId(req.params.id, req.user!.userId);
     const isMember = await ChatDAL.isParticipant(convId, req.user!.userId);
     if (!isMember) {
       return res.status(403).json({ error: 'Access denied to this conversation' });
     }
 
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 100);
     const beforeDate = req.query.before ? new Date(req.query.before as string) : undefined;
 
     const messages = await ChatDAL.getMessages(convId, limit, beforeDate);
-    res.json({ messages });
+    res.json({ messages, conversationId: convId });
   } catch (err) {
     console.error('[Get Messages Error]', err);
     res.status(500).json({ error: 'Failed to fetch messages' });
@@ -91,7 +115,7 @@ router.get('/conversations/:id/messages', authenticateToken, async (req: Authent
 // Send Message
 router.post('/conversations/:id/messages', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const convId = req.params.id;
+    const convId = await resolveConversationId(req.params.id, req.user!.userId);
     const isMember = await ChatDAL.isParticipant(convId, req.user!.userId);
     if (!isMember) {
       return res.status(403).json({ error: 'Access denied to this conversation' });
@@ -114,7 +138,15 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
     // Real-time broadcast to room via WebSockets
     io.to(`conv:${convId}`).emit('new_message', { conversationId: convId, message });
 
-    res.status(201).json({ message });
+    // Also push to participant user rooms
+    const members = await ChatDAL.getConversationMembers(convId);
+    for (const m of members) {
+      if (m.userId !== req.user!.userId) {
+        io.to(`user:${m.userId}`).emit('new_message', { conversationId: convId, message });
+      }
+    }
+
+    res.status(201).json({ message, conversationId: convId });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: err.errors });
@@ -127,10 +159,10 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
 // Mark Seen
 router.post('/conversations/:id/seen', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const convId = req.params.id;
+    const convId = await resolveConversationId(req.params.id, req.user!.userId);
     await ChatDAL.markSeen(convId, req.user!.userId);
     io.to(`conv:${convId}`).emit('seen_update', { conversationId: convId, userId: req.user!.userId });
-    res.json({ success: true });
+    res.json({ success: true, conversationId: convId });
   } catch (err) {
     console.error('[Mark Seen Error]', err);
     res.status(500).json({ error: 'Failed to mark conversation seen' });

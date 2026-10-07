@@ -132,6 +132,13 @@ export const api = {
   notifications: {
     get: (limit = 30) =>
       request<{ notifications: any[]; unreadCount: number }>(`/api/v1/notifications?limit=${limit}`),
+    getAll: (limit = 30) =>
+      request<{ notifications: any[]; unreadCount: number }>(`/api/v1/notifications?limit=${limit}`),
+    create: (data: { recipientId: string; type?: string; title?: string; body?: string; actionUrl?: string; metadata?: any }) =>
+      request<{ notification: any }>('/api/v1/notifications', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     markRead: (id: string) =>
       request<{ success: boolean }>(`/api/v1/notifications/${id}/read`, {
         method: 'POST',

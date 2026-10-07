@@ -223,4 +223,11 @@ export class ChatDAL {
         )
       );
   }
+
+  static async getConversationMembers(conversationId: string) {
+    return db
+      .select({ userId: conversationMembers.userId })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.conversationId, conversationId));
+  }
 }

@@ -507,32 +507,22 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     }
   };
 
-  // Like commentary node in Firestore subcollection
+  // Like commentary node in PostgreSQL / local state
   const handleLikeComment = async (commentId: string, currentLikedBy: string[] = []) => {
-    if (!profile || !db) return;
-    try {
-      const commentDocRef = doc(db, 'posts', post.id, 'comments', commentId);
-      const isAlreadyLiked = currentLikedBy.includes(profile.id);
-      let newLikedBy = [...currentLikedBy];
-      if (isAlreadyLiked) {
-        newLikedBy = newLikedBy.filter(id => id !== profile.id);
-      } else {
-        newLikedBy.push(profile.id);
-        
-        // Send like notification to comment author (unless self)
-        const commentDoc = liveComments.find(c => c.id === commentId);
-        if (commentDoc && commentDoc.authorId !== profile.id && createNotification) {
-          await createNotification(
-            commentDoc.authorId,
-            'comment_like',
-            `${profile.displayName || profile.username} liked your comment.`,
-            { postId: post.id, commentId }
-          );
-        }
-      }
-      await updateDoc(commentDocRef, { likedBy: newLikedBy });
-    } catch (err) {
-      logger.error("Like comment failed:", err);
+    if (!profile) return;
+    const isAlreadyLiked = currentLikedBy.includes(profile.id);
+    const newLikedBy = isAlreadyLiked
+      ? currentLikedBy.filter(id => id !== profile.id)
+      : [...currentLikedBy, profile.id];
+
+    // Optimistic local update
+    setLiveComments(prev => prev.map(c => c.id === commentId ? { ...c, likedBy: newLikedBy } : c));
+
+    if (db) {
+      try {
+        const commentDocRef = doc(db, 'posts', post.id, 'comments', commentId);
+        await updateDoc(commentDocRef, { likedBy: newLikedBy });
+      } catch (err) {}
     }
   };
 
@@ -563,7 +553,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   // Submit nested inline replies
   const handleInlineReplySubmit = async (e?: React.FormEvent, bypassModCheck = false) => {
     if (e) e.preventDefault();
-    if (!db || !profile || !replyText.trim() || !replyingTo || submittingComment) return;
+    if (!profile || !replyText.trim() || !replyingTo || submittingComment) return;
     const txt = replyText.trim();
     setReplyText('');
     const replyTarget = replyingTo;
@@ -571,33 +561,48 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     setSubmittingComment(true);
     
     try {
-      const commentsRef = collection(db, 'posts', post.id, 'comments');
       const activeParentId = replyTarget.parentId || replyTarget.id;
-      
-      const newCommentData = {
+
+      // 1. Primary: Save directly to our PostgreSQL Backend
+      let createdReply = null;
+      try {
+        const res = await api.posts.addComment(post.id, txt, activeParentId);
+        createdReply = res?.comment;
+        logger.info('[PremiumPostCard] Reply saved to PostgreSQL backend');
+      } catch (err) {
+        logger.error('[PremiumPostCard] Backend addComment reply error:', err);
+      }
+
+      // Optimistic update
+      const newReplyNode = {
+        id: createdReply?.id || `reply_${Date.now()}`,
         authorId: profile.id,
         authorName: profile.displayName || profile.username,
         authorPhoto: profile.photoURL || '',
         isVerified: profile.isVerified || false,
         content: txt,
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
         likedBy: [],
-        parentId: activeParentId,       // Grouped by top-level commentary node
-        replyToId: replyTarget.id,      // Replied directly to this node's ID
-        replyToUsername: replyTarget.authorName // Username of target
+        parentId: activeParentId,
+        replyToId: replyTarget.id,
+        replyToUsername: replyTarget.authorName
       };
+      setLiveComments(prev => [...prev, newReplyNode]);
 
-      await addDoc(commentsRef, newCommentData);
-
-      // Primary backend API dual-write
-      api.posts.addComment(post.id, txt, activeParentId).catch((err) => {
-        logger.warn("[PremiumPostCard] API reply dual-write fallback:", err);
-      });
-
-      const postRef = doc(db, 'posts', post.id);
-      await updateDoc(postRef, {
-        commentsCount: increment(1)
-      });
+      // 2. Optional legacy dual-sync if Firestore is connected
+      if (db) {
+        try {
+          const commentsRef = collection(db, 'posts', post.id, 'comments');
+          await addDoc(commentsRef, {
+            ...newReplyNode,
+            createdAt: serverTimestamp()
+          });
+          const postRef = doc(db, 'posts', post.id);
+          await updateDoc(postRef, {
+            commentsCount: increment(1)
+          });
+        } catch (e) {}
+      }
 
       // Expand main thread automatically to view the active reply
       setExpandedComments(prev => ({ ...prev, [activeParentId]: true }));
@@ -734,27 +739,44 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     setCommentText('');
     setSubmittingComment(true);
     try {
-      const commentsRef = collection(db, 'posts', post.id, 'comments');
-      await addDoc(commentsRef, {
+      // 1. Primary: Save directly to our PostgreSQL Backend
+      let createdComment = null;
+      try {
+        const res = await api.posts.addComment(post.id, txt);
+        createdComment = res?.comment;
+        logger.info('[PremiumPostCard] Comment saved to PostgreSQL backend');
+      } catch (err) {
+        logger.error('[PremiumPostCard] Backend addComment error:', err);
+      }
+
+      // Optimistic update
+      const newCommentObj = {
+        id: createdComment?.id || `comment_${Date.now()}`,
         authorId: profile.id,
         authorName: profile.displayName || profile.username,
         authorPhoto: profile.photoURL || '',
         isVerified: profile.isVerified || false,
         content: txt,
         likedBy: [],
-        parentId: null, // Top-level commentary wave
-        createdAt: serverTimestamp()
-      });
+        parentId: null,
+        createdAt: new Date().toISOString()
+      };
+      setLiveComments(prev => [...prev, newCommentObj]);
 
-      // Primary backend API dual-write
-      api.posts.addComment(post.id, txt).catch((err) => {
-        logger.warn("[PremiumPostCard] API comment dual-write fallback:", err);
-      });
-
-      const postRef = doc(db, 'posts', post.id);
-      await updateDoc(postRef, {
-        commentsCount: increment(1)
-      });
+      // 2. Optional legacy dual-sync if Firestore connected
+      if (db) {
+        try {
+          const commentsRef = collection(db, 'posts', post.id, 'comments');
+          await addDoc(commentsRef, {
+            ...newCommentObj,
+            createdAt: serverTimestamp()
+          });
+          const postRef = doc(db, 'posts', post.id);
+          await updateDoc(postRef, {
+            commentsCount: increment(1)
+          });
+        } catch (fbErr) {}
+      }
 
       // Notify post author (unless self)
       if (postAuthorId && postAuthorId !== profile.id && createNotification) {
@@ -818,7 +840,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   }, [profile, post.likedBy, post.savedBy]);
 
   const handleLike = async () => {
-    if (!profile || !db) return;
+    if (!profile) return;
     triggerNativeHaptic('medium');
     const newLikedState = !isLiked;
     setIsLiked(newLikedState);
@@ -831,7 +853,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   };
 
   const handleBookmarkToggle = async () => {
-    if (!profile || !db) return;
+    if (!profile) return;
     triggerNativeHaptic('selection');
     const newBookmarkState = !isBookmarked;
     setIsBookmarked(newBookmarkState);

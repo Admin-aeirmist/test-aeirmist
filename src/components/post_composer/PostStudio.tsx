@@ -379,20 +379,29 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
         }
       }
 
-      // Publish to Universal Backend API (PostgreSQL 16)
+      // Primary: Save directly to our PostgreSQL Backend
+      let backendPost = null;
       try {
-        await api.posts.create({
+        const createRes = await api.posts.create({
           content: payload.content || caption || '',
           mediaKeys: uploadedUrls.map(u => u.replace(/^.*\/media\//, '')),
           mediaType: selectedType || 'image',
           tags: tags || [],
         });
-        logger.info('[PostStudio] Post synced to Universal Backend API');
+        backendPost = createRes?.post;
+        logger.info('[PostStudio] Post saved successfully to PostgreSQL backend');
       } catch (apiErr: any) {
-        logger.warn('[PostStudio] Backend post sync note:', apiErr?.message);
+        logger.error('[PostStudio] Backend post error:', apiErr);
       }
 
-      await addDoc(collection(db, 'posts'), payload);
+      // Optional legacy dual-sync if Firestore is connected
+      if (db) {
+        try {
+          await addDoc(collection(db, 'posts'), payload);
+        } catch (fbErr) {
+          logger.warn('[PostStudio] Firebase dual-sync skipped:', fbErr);
+        }
+      }
 
       setUploadProgress(100);
       setUploadStatus('Published successfully!');
