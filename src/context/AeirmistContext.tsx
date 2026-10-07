@@ -1063,15 +1063,42 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       };
 
+      const handleUserStatus = (data: { userId: string; status: 'online' | 'offline' }) => {
+        setOnlineUsers(prev => {
+          const next = new Set(prev);
+          if (data.status === 'online') {
+            next.add(data.userId);
+          } else {
+            next.delete(data.userId);
+          }
+          return next;
+        });
+      };
+
+      const handleOnlineUsersList = (data: { users: string[] }) => {
+        if (Array.isArray(data?.users)) {
+          setOnlineUsers(prev => {
+            const next = new Set(prev);
+            data.users.forEach(u => next.add(u));
+            return next;
+          });
+        }
+      };
+
       socket.on('new_notification', handleNewNotification);
       socket.on('incoming_call', handleIncomingCall);
+      socket.on('user_status', handleUserStatus);
+      socket.on('online_users_list', handleOnlineUsersList);
+      socket.emit('get_online_users');
 
       return () => {
         socket.off('new_notification', handleNewNotification);
         socket.off('incoming_call', handleIncomingCall);
+        socket.off('user_status', handleUserStatus);
+        socket.off('online_users_list', handleOnlineUsersList);
       };
     } catch (err) {
-      logger.warn('[Socket.IO] Notification/Call subscription error:', err);
+      logger.warn('[Socket.IO] Notification/Call/Presence subscription error:', err);
     }
   }, [user?.uid, profile?.id, profile?.displayName, profile?.username, profile?.photoURL, addToast]);
 

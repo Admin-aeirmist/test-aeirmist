@@ -120,10 +120,38 @@ try {
 io.on('connection', (socket) => {
   console.log(`🔌 [Socket.IO] Client connected: ${socket.id}`);
 
-  // User identification for personal notifications
-  socket.on('identify_user', (userId: string) => {
+  // User identification for personal notifications & Redis Presence
+  socket.on('identify_user', async (userId: string) => {
     socket.join(`user:${userId}`);
+    (socket as any).userId = userId;
     console.log(`👤 [Socket.IO] User ${userId} joined personal channel`);
+    try {
+      await redis.sadd('online_users', userId);
+      io.emit('user_status', { userId, status: 'online' });
+    } catch (err) {
+      console.warn('⚠️ [Redis] Presence update failed:', err);
+    }
+  });
+
+  // Fetch all online users from Redis
+  socket.on('get_online_users', async () => {
+    try {
+      const users = await redis.smembers('online_users');
+      socket.emit('online_users_list', { users });
+    } catch (err) {}
+  });
+
+  // Typing indicators
+  socket.on('typing_start', (data: { conversationId: string; userId: string; username?: string }) => {
+    if (data?.conversationId) {
+      socket.to(`conv:${data.conversationId}`).emit('user_typing', data);
+    }
+  });
+
+  socket.on('typing_stop', (data: { conversationId: string; userId: string }) => {
+    if (data?.conversationId) {
+      socket.to(`conv:${data.conversationId}`).emit('user_stop_typing', data);
+    }
   });
 
   // Room management for chats
@@ -168,8 +196,14 @@ io.on('connection', (socket) => {
     io.to(data.toSocketId).emit('call_ended');
   });
 
-  socket.on('disconnect', () => {
-    // handled cleanly
+  socket.on('disconnect', async () => {
+    const userId = (socket as any).userId;
+    if (userId) {
+      try {
+        await redis.srem('online_users', userId);
+        io.emit('user_status', { userId, status: 'offline', lastSeen: Date.now() });
+      } catch (err) {}
+    }
   });
 });
 

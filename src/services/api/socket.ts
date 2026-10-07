@@ -33,3 +33,13 @@ export function leaveChatRoom(roomId: string): void {
   const socket = getSocket();
   socket.emit('leave_room', roomId);
 }
+
+export function sendTypingStart(conversationId: string, userId: string, username?: string): void {
+  const socket = getSocket();
+  socket.emit('typing_start', { conversationId, userId, username });
+}
+
+export function sendTypingStop(conversationId: string, userId: string): void {
+  const socket = getSocket();
+  socket.emit('typing_stop', { conversationId, userId });
+}

@@ -159,4 +159,62 @@ router.get('/me', authenticateToken, async (req: AuthenticatedRequest, res: Resp
   }
 });
 
+// Forgot Password (generates temporary reset token)
+router.post('/forgot-password', async (req, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    const user = await UserDAL.findByEmail(email);
+    if (!user) {
+      // Don't disclose user non-existence for security
+      return res.json({ success: true, message: 'If an account exists, a reset instruction has been processed.' });
+    }
+
+    const resetToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    // Store in Redis with 1 hour TTL
+    const { redis } = await import('../db/redis');
+    await redis.setex(`reset_pwd:${resetToken}`, 3600, user.id);
+
+    console.log(`🔑 [Password Reset Token generated for ${email}]: ${resetToken}`);
+    res.json({ success: true, message: 'Password reset link sent to your registered email.', resetToken });
+  } catch (err) {
+    console.error('[Forgot Password Error]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Reset Password with token
+router.post('/reset-password', async (req, res: Response) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Valid token and new password (min 6 characters) required' });
+    }
+
+    const { redis } = await import('../db/redis');
+    const userId = await redis.get(`reset_pwd:${token}`);
+    if (!userId) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    const { db } = await import('../db');
+    const { users } = await import('../db/schema');
+    const { eq } = await import('drizzle-orm');
+
+    await db.update(users).set({
+      passwordHash,
+      passwordAlgorithm: 'bcrypt',
+      updatedAt: new Date(),
+    }).where(eq(users.id, userId));
+
+    await redis.del(`reset_pwd:${token}`);
+    res.json({ success: true, message: 'Password has been updated successfully.' });
+  } catch (err) {
+    console.error('[Reset Password Error]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;

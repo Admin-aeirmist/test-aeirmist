@@ -62,6 +62,16 @@ export const api = {
         body: JSON.stringify(data),
       }),
     me: () => request<{ user: any }>('/api/v1/auth/me'),
+    forgotPassword: (email: string) =>
+      request<{ success: boolean; message: string; resetToken?: string }>('/api/v1/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }),
+    resetPassword: (data: { token: string; newPassword: string }) =>
+      request<{ success: boolean; message: string }>('/api/v1/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Feed & Posts
@@ -161,6 +171,15 @@ export const api = {
         body: JSON.stringify(data),
       }),
     getById: (id: string) => request<{ item: any }>(`/api/v1/marketplace/items/${id}`),
+    updateStatus: (id: string, status: string) =>
+      request<{ item: any }>(`/api/v1/marketplace/items/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
+    deleteItem: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/marketplace/items/${id}`, {
+        method: 'DELETE',
+      }),
   },
 
   // Media
