@@ -1,0 +1,99 @@
+import { Router, Response } from 'express';
+import { z } from 'zod';
+import { MarketplaceDAL } from '../dal/marketplace.dal';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+
+const router = Router();
+
+const CreateItemSchema = z.object({
+  title: z.string().min(3).max(255),
+  description: z.string().min(5).max(5000),
+  price: z.string().regex(/^\d+(\.\d{1,2})?$/),
+  currency: z.string().default('BDT'),
+  category: z.string().min(1).max(64),
+  condition: z.enum(['new', 'like_new', 'used', 'refurbished']).default('used'),
+  mediaKeys: z.array(z.string()).optional(),
+  location: z.string().optional(),
+});
+
+// List items
+router.get('/items', async (req, res: Response) => {
+  try {
+    const category = req.query.category as string | undefined;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const items = await MarketplaceDAL.getItems(category, limit, offset);
+    res.json({ items });
+  } catch (err) {
+    console.error('[Marketplace List Error]', err);
+    res.status(500).json({ error: 'Failed to fetch marketplace items' });
+  }
+});
+
+// Create item
+router.post('/items', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const data = CreateItemSchema.parse(req.body);
+    const item = await MarketplaceDAL.createItem({
+      sellerId: req.user!.userId,
+      ...data,
+    });
+    res.status(201).json({ item });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: err.errors });
+    }
+    console.error('[Marketplace Create Error]', err);
+    res.status(500).json({ error: 'Failed to create marketplace item' });
+  }
+});
+
+// Get single item
+router.get('/items/:id', async (req, res: Response) => {
+  try {
+    const item = await MarketplaceDAL.getById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+    res.json({ item });
+  } catch (err) {
+    console.error('[Marketplace Item Error]', err);
+    res.status(500).json({ error: 'Failed to fetch item' });
+  }
+});
+
+// Update status
+router.patch('/items/:id/status', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { status } = req.body;
+    if (!['active', 'sold', 'hidden'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+    const item = await MarketplaceDAL.updateStatus(req.params.id, req.user!.userId, status);
+    if (!item) {
+      return res.status(404).json({ error: 'Item not found or unauthorized' });
+    }
+    res.json({ item });
+  } catch (err) {
+    console.error('[Marketplace Status Error]', err);
+    res.status(500).json({ error: 'Failed to update item status' });
+  }
+});
+
+// Delete item
+router.delete('/items/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const isAdmin = ['admin', 'super_admin', 'owner'].includes(req.user!.role);
+    const success = await MarketplaceDAL.deleteItem(req.params.id, req.user!.userId, isAdmin);
+    if (!success) {
+      return res.status(403).json({ error: 'Unauthorized or item not found' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Marketplace Delete Error]', err);
+    res.status(500).json({ error: 'Failed to delete item' });
+  }
+});
+
+export default router;

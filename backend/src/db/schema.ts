@@ -8,6 +8,7 @@ import {
   bigint,
   timestamp,
   jsonb,
+  numeric,
   primaryKey,
   index,
 } from 'drizzle-orm/pg-core';
@@ -279,6 +280,27 @@ export const auditLogs = pgTable('audit_logs', {
 }, (table) => [
   index('idx_audit_logs_actor').on(table.actorId),
   index('idx_audit_logs_created').on(table.createdAt),
+]);
+
+export const marketplaceItems = pgTable('marketplace_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  sellerId: uuid('seller_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: varchar('title', { length: 255 }).notNull(),
+  description: text('description').notNull(),
+  price: numeric('price', { precision: 12, scale: 2 }).notNull(),
+  currency: varchar('currency', { length: 8 }).default('BDT').notNull(),
+  category: varchar('category', { length: 64 }).notNull(),
+  condition: varchar('condition', { length: 32 }).default('used').notNull(),
+  mediaKeys: text('media_keys').array().default([]).notNull(),
+  location: varchar('location', { length: 128 }),
+  status: varchar('status', { length: 16 }).default('active').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+}, (table) => [
+  index('idx_marketplace_seller').on(table.sellerId),
+  index('idx_marketplace_category').on(table.category),
+  index('idx_marketplace_status').on(table.status),
 ]);
 
 // -------------------------------------------------------------
