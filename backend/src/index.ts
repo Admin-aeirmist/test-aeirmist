@@ -78,6 +78,19 @@ app.get('/api/v1/ping', (_req, res) => {
 });
 
 // -------------------------------------------------------------
+// Mount Universal API Routes
+// -------------------------------------------------------------
+import authRoutes from './routes/auth.routes';
+import postRoutes from './routes/post.routes';
+import chatRoutes from './routes/chat.routes';
+import mediaRoutes from './routes/media.routes';
+
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/posts', postRoutes);
+app.use('/api/v1/chat', chatRoutes);
+app.use('/api/v1/media', mediaRoutes);
+
+// -------------------------------------------------------------
 // Socket.IO Setup with Redis Pub/Sub
 // -------------------------------------------------------------
 export const io = new SocketIOServer(server, {
