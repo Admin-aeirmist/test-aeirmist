@@ -1,6 +1,7 @@
 import { eq, and, sql, desc } from 'drizzle-orm';
 import { db } from '../db';
-import { users, profiles, follows, blocks, loginSessions } from '../db/schema';
+import { users, profiles, follows, blocks, loginSessions, mediaAssets } from '../db/schema';
+import { storage } from '../storage';
 
 export class UserDAL {
   static async findByEmail(email: string) {
@@ -276,5 +277,24 @@ export class UserDAL {
       .where(eq(users.id, userId))
       .returning();
     return !!user;
+  }
+
+  static async purgeUser(userId: string) {
+    // 1. Delete all physical storage assets owned by the user
+    const assets = await db.select().from(mediaAssets).where(eq(mediaAssets.ownerId, userId));
+    for (const a of assets) {
+      try {
+        await storage.delete(a.key);
+      } catch (storageErr) {
+        console.warn(`[UserDAL.purgeUser] Storage delete warning for ${a.key}:`, storageErr);
+      }
+    }
+
+    // 2. Delete media asset DB rows
+    await db.delete(mediaAssets).where(eq(mediaAssets.ownerId, userId));
+
+    // 3. Delete from users table (cascades to all other PostgreSQL tables)
+    const [deleted] = await db.delete(users).where(eq(users.id, userId)).returning();
+    return !!deleted;
   }
 }

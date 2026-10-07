@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, isNull } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import { posts, postLikes, postBookmarks, profiles, users, pollVotes } from '../db/schema';
 
@@ -85,6 +85,20 @@ export class PostDAL {
   }
 
   static async getFeed(viewerId?: string, limit: number = 20, offset: number = 0) {
+    let visibilityCondition = eq(posts.visibility, 'public');
+
+    if (viewerId) {
+      // Viewer sees:
+      // - public posts
+      // - their own posts
+      // - followers-only posts from users they follow
+      visibilityCondition = sql`(${posts.visibility} = 'public' 
+        OR ${posts.userId} = ${viewerId} 
+        OR (${posts.visibility} = 'followers' AND ${posts.userId} IN (
+          SELECT following_id FROM follows WHERE follower_id = ${viewerId}
+        )))` as any;
+    }
+
     const rows = await db
       .select({
         post: posts,
@@ -100,14 +114,45 @@ export class PostDAL {
       .from(posts)
       .innerJoin(users, eq(posts.userId, users.id))
       .innerJoin(profiles, eq(users.id, profiles.userId))
-      .where(isNull(posts.deletedAt))
+      .where(and(isNull(posts.deletedAt), visibilityCondition))
       .orderBy(desc(posts.createdAt))
       .limit(limit)
       .offset(offset);
 
+    if (rows.length === 0) return [];
+
+    const likedSet = new Set<string>();
+    const bookmarkedSet = new Set<string>();
+    const votedMap = new Map<string, number>();
+
+    if (viewerId) {
+      const postIds = rows.map((r) => r.post.id);
+      const [likes, bookmarks, votes] = await Promise.all([
+        db
+          .select({ postId: postLikes.postId })
+          .from(postLikes)
+          .where(and(inArray(postLikes.postId, postIds), eq(postLikes.userId, viewerId))),
+        db
+          .select({ postId: postBookmarks.postId })
+          .from(postBookmarks)
+          .where(and(inArray(postBookmarks.postId, postIds), eq(postBookmarks.userId, viewerId))),
+        db
+          .select({ postId: pollVotes.postId, optionIndex: pollVotes.optionIndex })
+          .from(pollVotes)
+          .where(and(inArray(pollVotes.postId, postIds), eq(pollVotes.userId, viewerId))),
+      ]);
+
+      likes.forEach((l) => likedSet.add(l.postId));
+      bookmarks.forEach((b) => bookmarkedSet.add(b.postId));
+      votes.forEach((v) => votedMap.set(v.postId, v.optionIndex));
+    }
+
     return rows.map((r) => ({
       ...r.post,
       author: r.author,
+      isLiked: likedSet.has(r.post.id),
+      isBookmarked: bookmarkedSet.has(r.post.id),
+      userVotedOption: votedMap.get(r.post.id),
     }));
   }
 
@@ -218,6 +263,11 @@ export class PostDAL {
 
     if (!post || !post.pollData) return null;
 
+    const poll = { ...(post.pollData as any) };
+    if (!poll.options || !Array.isArray(poll.options) || optionIndex < 0 || optionIndex >= poll.options.length) {
+      return { invalidOption: true, error: 'Invalid optionIndex: out of range', pollData: post.pollData };
+    }
+
     const [existing] = await db
       .select()
       .from(pollVotes)
@@ -230,12 +280,9 @@ export class PostDAL {
 
     await db.insert(pollVotes).values({ postId, userId, optionIndex });
 
-    const poll = { ...(post.pollData as any) };
-    if (poll.options && poll.options[optionIndex]) {
-      poll.options[optionIndex].votes = (poll.options[optionIndex].votes || 0) + 1;
-      poll.totalVotes = (poll.totalVotes || 0) + 1;
-      await db.update(posts).set({ pollData: poll }).where(eq(posts.id, postId));
-    }
+    poll.options[optionIndex].votes = (poll.options[optionIndex].votes || 0) + 1;
+    poll.totalVotes = (poll.totalVotes || 0) + 1;
+    await db.update(posts).set({ pollData: poll }).where(eq(posts.id, postId));
 
     return { success: true, pollData: poll };
   }

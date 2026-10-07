@@ -1,5 +1,9 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
+import { eq } from 'drizzle-orm';
+import { db } from '../db';
+import { mediaAssets } from '../db/schema';
+import { redis } from '../db/redis';
 import { VideoDAL } from '../dal/video.dal';
 import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
 
@@ -58,6 +62,20 @@ router.get('/:id', optionalAuthToken, async (req: AuthenticatedRequest, res: Res
 router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreateVideoSchema.parse(req.body);
+
+    // Validate mediaKey ownership if provided
+    if (data.mediaKey) {
+      const [asset] = await db
+        .select()
+        .from(mediaAssets)
+        .where(eq(mediaAssets.key, data.mediaKey))
+        .limit(1);
+
+      if (asset && asset.ownerId && asset.ownerId !== req.user!.userId) {
+        return res.status(403).json({ error: 'Unauthorized: Media asset belongs to another user' });
+      }
+    }
+
     const video = await VideoDAL.create({
       userId: req.user!.userId,
       ...data,
@@ -75,8 +93,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
 // Like Video
 router.post('/:id/like', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const success = await VideoDAL.likeVideo(req.params.id, req.user!.userId);
-    res.json({ success, isLiked: true });
+    const result = await VideoDAL.likeVideo(req.params.id, req.user!.userId);
+    res.json(result);
   } catch (err) {
     console.error('[Video Like Error]', err);
     res.status(500).json({ error: 'Failed to like video' });
@@ -86,20 +104,30 @@ router.post('/:id/like', authenticateToken, async (req: AuthenticatedRequest, re
 // Unlike Video
 router.delete('/:id/like', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const success = await VideoDAL.unlikeVideo(req.params.id, req.user!.userId);
-    res.json({ success, isLiked: false });
+    const result = await VideoDAL.unlikeVideo(req.params.id, req.user!.userId);
+    res.json(result);
   } catch (err) {
     console.error('[Video Unlike Error]', err);
     res.status(500).json({ error: 'Failed to unlike video' });
   }
 });
 
-// Record View
-router.post('/:id/view', async (req, res: Response) => {
+// Record View with Redis Deduplication Rate-Limiting
+router.post('/:id/view', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    await VideoDAL.incrementViews(req.params.id);
-    res.json({ success: true });
+    const videoId = req.params.id;
+    const viewerKey = req.user?.userId || req.ip || (req.headers['x-forwarded-for'] as string) || 'anon';
+    const redisKey = `view:video:${videoId}:${viewerKey}`;
+
+    // Throttle to 1 view count increment per viewer per video per hour (3600s)
+    const isNewView = await redis.set(redisKey, '1', 'EX', 3600, 'NX');
+    if (isNewView) {
+      await VideoDAL.incrementViews(videoId);
+      return res.json({ success: true, recorded: true });
+    }
+    res.json({ success: true, recorded: false });
   } catch (err) {
+    console.error('[Video View Error]', err);
     res.status(500).json({ error: 'Failed to record view' });
   }
 });

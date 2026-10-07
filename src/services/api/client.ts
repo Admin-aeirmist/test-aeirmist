@@ -153,6 +153,10 @@ export const api = {
       request<{ success: boolean }>('/api/v1/users/deactivate', {
         method: 'POST',
       }),
+    deleteAccount: () =>
+      request<{ success: boolean; message: string }>('/api/v1/users/account', {
+        method: 'DELETE',
+      }),
     addPoints: (points: number) =>
       request<{ success: boolean; points?: number }>('/api/v1/users/points', {
         method: 'POST',
@@ -402,6 +406,29 @@ export const api = {
       request<{ success: boolean; status: string }>(`/api/v1/admin/users/${id}/ban`, {
         method: 'POST',
         body: JSON.stringify({ ban, reason }),
+      }),
+    suspendUser: (id: string, data: { duration?: string; reason?: string; notes?: string }) =>
+      request<{ success: boolean; status: string }>(`/api/v1/admin/users/${id}/suspend`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateUserStatus: (id: string, status: string) =>
+      request<{ success: boolean; status: string }>(`/api/v1/admin/users/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
+    verifyUser: (id: string, data: { verified?: boolean; plan?: string; badge?: string; durationDays?: number }) =>
+      request<{ success: boolean; profile: any }>(`/api/v1/admin/users/${id}/verify`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    deleteUser: (id: string) =>
+      request<{ success: boolean; message: string }>(`/api/v1/admin/users/${id}`, {
+        method: 'DELETE',
+      }),
+    purgeUser: (id: string) =>
+      request<{ success: boolean; message: string }>(`/api/v1/admin/users/${id}/purge`, {
+        method: 'POST',
       }),
     getAuditLogs: () => request<{ logs: any[] }>('/api/v1/admin/audit-logs'),
     getTickets: () => request<{ tickets: any[] }>('/api/v1/admin/tickets'),

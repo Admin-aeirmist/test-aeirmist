@@ -1,6 +1,7 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../db';
-import { videos, videoLikes, videoComments, users, profiles } from '../db/schema';
+import { videos, videoLikes, videoComments, users, profiles, mediaAssets } from '../db/schema';
+import { storage } from '../storage';
 
 export class VideoDAL {
   static async getFeed(limit: number = 20, offset: number = 0, viewerId?: string) {
@@ -117,15 +118,21 @@ export class VideoDAL {
       .where(and(eq(videoLikes.videoId, videoId), eq(videoLikes.userId, userId)))
       .limit(1);
 
-    if (existing) return false;
+    const [v] = await db.select({ likesCount: videos.likesCount }).from(videos).where(eq(videos.id, videoId)).limit(1);
+    const currentLikes = v?.likesCount || 0;
+
+    if (existing) {
+      return { success: true, isLiked: true, alreadyLiked: true, likesCount: currentLikes };
+    }
 
     await db.insert(videoLikes).values({ videoId, userId });
-    await db
+    const [updated] = await db
       .update(videos)
       .set({ likesCount: sql`${videos.likesCount} + 1` })
-      .where(eq(videos.id, videoId));
+      .where(eq(videos.id, videoId))
+      .returning({ likesCount: videos.likesCount });
 
-    return true;
+    return { success: true, isLiked: true, alreadyLiked: false, likesCount: updated?.likesCount ?? currentLikes + 1 };
   }
 
   static async unlikeVideo(videoId: string, userId: string) {
@@ -134,14 +141,20 @@ export class VideoDAL {
       .where(and(eq(videoLikes.videoId, videoId), eq(videoLikes.userId, userId)))
       .returning();
 
-    if (!removed) return false;
+    const [v] = await db.select({ likesCount: videos.likesCount }).from(videos).where(eq(videos.id, videoId)).limit(1);
+    const currentLikes = v?.likesCount || 0;
 
-    await db
+    if (!removed) {
+      return { success: true, isLiked: false, alreadyLiked: false, likesCount: currentLikes };
+    }
+
+    const [updated] = await db
       .update(videos)
       .set({ likesCount: sql`GREATEST(0, ${videos.likesCount} - 1)` })
-      .where(eq(videos.id, videoId));
+      .where(eq(videos.id, videoId))
+      .returning({ likesCount: videos.likesCount });
 
-    return true;
+    return { success: true, isLiked: false, alreadyLiked: false, likesCount: updated?.likesCount ?? Math.max(0, currentLikes - 1) };
   }
 
   static async incrementViews(videoId: string) {
@@ -201,13 +214,25 @@ export class VideoDAL {
 
   static async deleteVideo(videoId: string, userId: string, isAdmin: boolean = false) {
     const [video] = await db
-      .select({ id: videos.id, userId: videos.userId })
+      .select({ id: videos.id, userId: videos.userId, mediaKey: videos.mediaKey })
       .from(videos)
       .where(eq(videos.id, videoId))
       .limit(1);
 
     if (!video) return false;
     if (video.userId !== userId && !isAdmin) return false;
+
+    // Delete storage file and mediaAsset record if mediaKey is set
+    if (video.mediaKey) {
+      try {
+        await storage.delete(video.mediaKey);
+      } catch (err) {
+        console.warn(`[VideoDAL.deleteVideo] Storage deletion error for key ${video.mediaKey}:`, err);
+      }
+      try {
+        await db.delete(mediaAssets).where(eq(mediaAssets.key, video.mediaKey));
+      } catch (err) {}
+    }
 
     await db.delete(videos).where(eq(videos.id, videoId));
     return true;

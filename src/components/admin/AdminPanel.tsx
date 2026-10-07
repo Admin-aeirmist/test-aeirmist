@@ -512,14 +512,14 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
       const tick = ticketsRes.status === 'fulfilled' ? (ticketsRes.value?.tickets || []) : [];
       setStats({
         totalUsers: s?.totalUsers || 0,
-        suspended: 0,
-        banned: 0,
-        appeals: tick.filter((t: any) => t.status === 'pending' || t.status === 'open').length,
-        reportsToday: rep.length,
-        orders: s?.totalMarketplaceItems || 0,
+        suspended: s?.suspendedUsers || 0,
+        banned: s?.bannedUsers || 0,
+        appeals: s?.pendingTickets ?? tick.filter((t: any) => t.status === 'pending' || t.status === 'open').length,
+        reportsToday: s?.totalReports ?? rep.length,
+        orders: s?.totalMarketplaceOrders ?? s?.totalMarketplaceItems ?? 0,
         revenue: '—',
         subscribers: 0,
-        onlineNow: '—'
+        onlineNow: s?.activeUsers ? `${s.activeUsers} active` : 'Active'
       });
     });
     return () => {
@@ -983,24 +983,18 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
     try {
       if (deleteType === 'anonymize') {
         if (targetId) {
-          await api.admin.banUser(targetId, true, 'ANONYMIZED').catch(() => {});
+          await api.admin.updateUserStatus(targetId, 'DEACTIVATED').catch(() => {});
         }
         setUsers(prev => prev.map(u => u.id === targetId ? { ...u, displayName: 'Aeirmist User', status: 'ANONYMIZED' } : u));
         addToast({ title: 'User Anonymized', message: 'Personal data removed; posts remain.', type: 'success' });
       } else if (deleteType === 'soft') {
         if (targetId) {
-          await api.admin.banUser(targetId, true, 'DELETED').catch(() => {});
+          await api.admin.updateUserStatus(targetId, 'DELETED').catch(() => {});
         }
         setUsers(prev => prev.map(u => u.id === targetId ? { ...u, status: 'DELETED' } : u));
         addToast({ title: 'Soft Deleted', message: 'Account marked as deleted (recoverable).', type: 'success' });
       } else {
-        // FULL HARD DELETE - ERASE EVERYTHING BY HARD DELETE
-        
-        if (targetId) {
-          await api.admin.banUser(targetId, true, 'HARD_DELETED').catch(() => {});
-        }
-
-        // 4. Deep database wipe across posts, feed_posts, notes, comments, stories, etc.
+        // FULL HARD DELETE - ERASE EVERYTHING BY HARD DELETE VIA POSTGRESQL & STORAGE PURGE
         try {
           if (targetId) {
             await purgeUser(targetId, profileId);

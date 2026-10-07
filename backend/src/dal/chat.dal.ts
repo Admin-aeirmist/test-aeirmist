@@ -22,36 +22,45 @@ export class ChatDAL {
   static async findOrCreateDirectConversation(userA: string, userB: string) {
     if (userA === userB) throw new Error('Cannot start conversation with yourself');
 
-    // Find if direct conversation already exists between userA and userB
-    const common = await db.execute(sql`
-      SELECT cm1.conversation_id 
-      FROM conversation_members cm1
-      JOIN conversation_members cm2 ON cm1.conversation_id = cm2.conversation_id
-      JOIN conversations c ON c.id = cm1.conversation_id
-      WHERE cm1.user_id = ${userA} 
-        AND cm2.user_id = ${userB} 
-        AND c.type = 'direct'
-      LIMIT 1
-    `);
+    const firstUser = userA < userB ? userA : userB;
+    const secondUser = userA < userB ? userB : userA;
+    const lockKey = `direct_chat_${firstUser}_${secondUser}`;
 
-    if (common.rows && common.rows.length > 0) {
-      return (common.rows[0] as any).conversation_id as string;
-    }
+    return await db.transaction(async (tx) => {
+      // 1. Acquire transactional advisory lock for the sorted user pair to serialize concurrent creation
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
 
-    // Otherwise create new direct conversation
-    const [conv] = await db
-      .insert(conversations)
-      .values({
-        type: 'direct',
-      })
-      .returning();
+      // 2. Query inside transaction while lock is held
+      const common = await tx.execute(sql`
+        SELECT cm1.conversation_id 
+        FROM conversation_members cm1
+        JOIN conversation_members cm2 ON cm1.conversation_id = cm2.conversation_id
+        JOIN conversations c ON c.id = cm1.conversation_id
+        WHERE cm1.user_id = ${userA} 
+          AND cm2.user_id = ${userB} 
+          AND c.type = 'direct'
+        LIMIT 1
+      `);
 
-    await db.insert(conversationMembers).values([
-      { conversationId: conv.id, userId: userA, role: 'member' },
-      { conversationId: conv.id, userId: userB, role: 'member' },
-    ]);
+      if (common.rows && common.rows.length > 0) {
+        return (common.rows[0] as any).conversation_id as string;
+      }
 
-    return conv.id;
+      // 3. Create new direct conversation inside the locked transaction
+      const [conv] = await tx
+        .insert(conversations)
+        .values({
+          type: 'direct',
+        })
+        .returning();
+
+      await tx.insert(conversationMembers).values([
+        { conversationId: conv.id, userId: userA, role: 'member' },
+        { conversationId: conv.id, userId: userB, role: 'member' },
+      ]);
+
+      return conv.id;
+    });
   }
 
   static async createGroupConversation(creatorId: string, title: string, memberIds: string[], avatarKey?: string) {
@@ -247,5 +256,14 @@ export class ChatDAL {
       .where(and(eq(messages.id, messageId), eq(messages.senderId, userId)))
       .returning();
     return msg;
+  }
+
+  static async getMessageById(messageId: string) {
+    const [msg] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.id, messageId))
+      .limit(1);
+    return msg || null;
   }
 }

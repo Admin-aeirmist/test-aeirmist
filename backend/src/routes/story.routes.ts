@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { StoryDAL } from '../dal/story.dal';
-import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -20,9 +20,9 @@ const CreateHighlightSchema = z.object({
 });
 
 // Get Active Stories (also accessible via /feed)
-router.get(['/', '/feed'], async (_req, res: Response) => {
+router.get(['/', '/feed'], optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const list = await StoryDAL.getActiveStories();
+    const list = await StoryDAL.getActiveStories(req.user?.userId);
     res.json({ stories: list });
   } catch (err) {
     console.error('[Get Stories Error]', err);

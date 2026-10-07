@@ -137,4 +137,16 @@ router.post('/deactivate', authenticateToken, async (req: AuthenticatedRequest, 
   }
 });
 
+// Self Delete Account
+router.delete('/account', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const success = await UserDAL.purgeUser(req.user!.userId);
+    res.json({ success, message: 'Account deleted successfully' });
+  } catch (err) {
+    console.error('[Delete Account Error]', err);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 export default router;
+

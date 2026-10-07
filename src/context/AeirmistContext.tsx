@@ -4936,25 +4936,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const deleteAccount = async () => {
-    if (!db) return;
-    const currentUid = user?.uid || auth.currentUser?.uid;
+    const currentUid = user?.uid || (user as any)?.id || profile?.userId || profile?.id;
     if (!currentUid) return;
 
     try {
       logger.info(`[deleteAccount] Initiating account purge for UID: ${currentUid}`);
-      await purgeUser(currentUid);
+      await api.users.deleteAccount().catch(async () => {
+        await api.admin.purgeUser(currentUid).catch(() => {});
+      });
     } catch (e) {
       logger.error("[deleteAccount] Purge error:", e);
-    }
-
-    // Delete user from Firebase Authentication
-    if (auth.currentUser) {
-      try {
-        await deleteUser(auth.currentUser);
-        logger.info("[deleteAccount] Firebase Auth user deleted successfully.");
-      } catch (authErr: any) {
-        logger.warn("[deleteAccount] Firebase Auth deleteUser notice (may require recent login):", authErr);
-      }
     }
 
     // Clear local storage and state
@@ -4969,615 +4960,38 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const purgeUser = async (uid: string, explicitProfileId?: string) => {
-    if (!db || !uid) return;
+    if (!uid) return;
     try {
       logger.security("[Security] User Purged", { targetUid: uid, explicitProfileId });
-      logger.info(`[purgeUser] Comprehensive A-Z clean-up initiated for UID/ProfileID: ${uid}`);
+      logger.info(`[purgeUser] Hard delete purge initiated for UID/ProfileID: ${uid}`);
 
-      // 1. Gather ALL associated Profile IDs, UIDs, and Usernames
-      const profileIdsSet = new Set<string>();
-      const uidsSet = new Set<string>();
-      const usernamesSet = new Set<string>();
-
-      uidsSet.add(uid);
-      profileIdsSet.add(uid);
-      profileIdsSet.add(`profile_${uid}`);
-      if (uid.startsWith('profile_')) {
-        const rawUid = uid.replace('profile_', '');
-        uidsSet.add(rawUid);
-        profileIdsSet.add(rawUid);
-      }
-      if (explicitProfileId) {
-        profileIdsSet.add(explicitProfileId);
-        profileIdsSet.add(`profile_${explicitProfileId}`);
-        if (explicitProfileId.startsWith('profile_')) {
-          profileIdsSet.add(explicitProfileId.replace('profile_', ''));
-        }
-      }
-      if (profile?.id && (profile.uid === uid || profile.id === uid || profile.ownerUid === uid)) {
-        profileIdsSet.add(profile.id);
-        if (profile.uid) uidsSet.add(profile.uid);
-        if (profile.ownerUid) uidsSet.add(profile.ownerUid);
+      const targetId = explicitProfileId || uid;
+      await api.admin.purgeUser(targetId);
+      if (uid && targetId !== uid) {
+        await api.admin.purgeUser(uid).catch(() => {});
       }
 
-      // Check profile docs for all gathered profile IDs
-      for (const pId of Array.from(profileIdsSet)) {
-        try {
-          const pDoc = await getDoc(doc(db, 'profiles', pId));
-          if (pDoc.exists()) {
-            const d = pDoc.data();
-            if (d.ownerUid) uidsSet.add(d.ownerUid);
-            if (d.uid) uidsSet.add(d.uid);
-            if (d.username) usernamesSet.add(d.username.toLowerCase());
-            if (d.usernameNormalized) usernamesSet.add(d.usernameNormalized.toLowerCase());
-          }
-        } catch (e) {}
-      }
-
-      // Query profiles by ownerUid or uid for all gathered uids
-      for (const curUid of Array.from(uidsSet)) {
-        try {
-          const qOwner = query(collection(db, 'profiles'), where('ownerUid', '==', curUid));
-          const ownerSnap = await getDocs(qOwner);
-          ownerSnap.forEach(p => {
-            profileIdsSet.add(p.id);
-            const d = p.data();
-            if (d.ownerUid) uidsSet.add(d.ownerUid);
-            if (d.uid) uidsSet.add(d.uid);
-            if (d.username) usernamesSet.add(d.username.toLowerCase());
-            if (d.usernameNormalized) usernamesSet.add(d.usernameNormalized.toLowerCase());
-          });
-        } catch (e) {}
-
-        try {
-          const qUid = query(collection(db, 'profiles'), where('uid', '==', curUid));
-          const uidSnap = await getDocs(qUid);
-          uidSnap.forEach(p => {
-            profileIdsSet.add(p.id);
-            const d = p.data();
-            if (d.ownerUid) uidsSet.add(d.ownerUid);
-            if (d.uid) uidsSet.add(d.uid);
-            if (d.username) usernamesSet.add(d.username.toLowerCase());
-            if (d.usernameNormalized) usernamesSet.add(d.usernameNormalized.toLowerCase());
-          });
-        } catch (e) {}
-
-        // Check users collection doc
-        try {
-          const uDoc = await getDoc(doc(db, 'users', curUid));
-          if (uDoc.exists()) {
-            const uData = uDoc.data();
-            if (uData.profileId) profileIdsSet.add(uData.profileId);
-            if (uData.username) usernamesSet.add(uData.username.toLowerCase());
-            if (uData.usernameNormalized) usernamesSet.add(uData.usernameNormalized.toLowerCase());
-          }
-        } catch (e) {}
-      }
-
-      // Reverse-scan usernames collection for any username lock belonging to this user
-      try {
-        const allUsernamesSnap = await getDocs(collection(db, 'usernames'));
-        allUsernamesSnap.forEach(d => {
-          const lockData = d.data();
-          const lockOwner = lockData.ownerUid || lockData.uid;
-          if (lockOwner && (uidsSet.has(lockOwner) || profileIdsSet.has(lockOwner))) {
-            usernamesSet.add(d.id.toLowerCase());
-          }
-        });
-      } catch (e) {}
-
-      const allUids = Array.from(uidsSet);
-      const allProfileIds = Array.from(profileIdsSet);
-      const allUsernames = Array.from(usernamesSet);
-      const allTargetIdentifiers = Array.from(new Set([...allUids, ...allProfileIds]));
-
-      // 2. Collect doc IDs for batch deletion across all collections
-      const deleteDocsMap = new Map<string, Set<string>>();
-      const addDocsToDelete = (collName: string, snapDocs: any[]) => {
-        if (!deleteDocsMap.has(collName)) deleteDocsMap.set(collName, new Set());
-        const set = deleteDocsMap.get(collName)!;
-        snapDocs.forEach(d => set.add(d.id));
-      };
-
-      // NOTES: authorUid, authorId, userId, profileId, authorUsername, userName
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['authorUid', 'authorId', 'userId', 'profileId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'notes'), where(field, '==', targetId)));
-            addDocsToDelete('notes', snap.docs);
-          } catch (e) {}
-        }
-      }
-      for (const un of allUsernames) {
-        for (const field of ['authorUsername', 'userName']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'notes'), where(field, '==', un)));
-            addDocsToDelete('notes', snap.docs);
-          } catch (e) {}
-        }
-      }
-      // Scan all notes collection to catch any non-indexed or custom author fields
-      try {
-        const allNotesSnap = await getDocs(collection(db, 'notes'));
-        allNotesSnap.forEach(d => {
-          const nd = d.data();
-          const matchesId = allTargetIdentifiers.includes(nd.authorId) || allTargetIdentifiers.includes(nd.authorUid) || allTargetIdentifiers.includes(nd.userId) || allTargetIdentifiers.includes(nd.profileId);
-          const matchesName = allUsernames.includes(nd.userName?.toLowerCase?.()) || allUsernames.includes(nd.authorUsername?.toLowerCase?.());
-          if (matchesId || matchesName) {
-            addDocsToDelete('notes', [d]);
-          }
-        });
-      } catch (e) {}
-
-      // POSTS: userId, authorUid, authorId
-      for (const targetId of allTargetIdentifiers) {
-        for (const coll of ['posts', 'feed_posts']) {
-          for (const field of ['userId', 'authorUid', 'authorId']) {
-            try {
-              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
-              addDocsToDelete(coll, snap.docs);
-            } catch (e) {}
-          }
-        }
-      }
-
-      // STORIES: userId, authorUid, authorId
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'authorUid', 'authorId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'stories'), where(field, '==', targetId)));
-            addDocsToDelete('stories', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // FEED COMMENTS: userId, authorUid, authorId
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'authorUid', 'authorId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'feed_comments'), where(field, '==', targetId)));
-            addDocsToDelete('feed_comments', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // VIDEO COMMENTS: userId, authorUid, authorId
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'authorUid', 'authorId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'video_comments'), where(field, '==', targetId)));
-            addDocsToDelete('video_comments', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // VIDEOS / REELS: userId, authorUid, authorId, creatorId
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'authorUid', 'authorId', 'creatorId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'videos'), where(field, '==', targetId)));
-            addDocsToDelete('videos', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // NOTIFICATIONS: userId (incoming), fromUserId, fromUserUid, toUid, fromUid, targetProfileId, fromProfileId, metadata.senderId (outgoing)
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'fromUserId', 'fromUserUid', 'toUid', 'fromUid', 'targetProfileId', 'fromProfileId', 'metadata.senderId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'notifications'), where(field, '==', targetId)));
-            addDocsToDelete('notifications', snap.docs);
-          } catch (e) {}
-        }
-      }
-      for (const un of allUsernames) {
-        for (const field of ['user.username', 'metadata.senderUsername', 'fromUsername']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'notifications'), where(field, '==', un)));
-            addDocsToDelete('notifications', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // ACTIVITIES: userId, profileId
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'profileId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'activities'), where(field, '==', targetId)));
-            addDocsToDelete('activities', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // REPORTS & APPEALS
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['reporterUid', 'reporterId', 'reportedUid', 'reportedUserId', 'targetId', 'userId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'reports'), where(field, '==', targetId)));
-            addDocsToDelete('reports', snap.docs);
-          } catch (e) {}
-        }
-        for (const field of ['userId', 'profileId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'appeals'), where(field, '==', targetId)));
-            addDocsToDelete('appeals', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // FOLLOW REQUESTS
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['fromUid', 'toUid', 'fromProfileId', 'toProfileId', 'senderId', 'receiverId', 'targetId', 'requesterId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'follow_requests'), where(field, '==', targetId)));
-            addDocsToDelete('follow_requests', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // SAVED ITEMS & VAULT
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'profileId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'saved_items'), where(field, '==', targetId)));
-            addDocsToDelete('saved_items', snap.docs);
-          } catch (e) {}
-          try {
-            const snap = await getDocs(query(collection(db, 'vault_folders'), where(field, '==', targetId)));
-            addDocsToDelete('vault_folders', snap.docs);
-          } catch (e) {}
-          try {
-            const snap = await getDocs(query(collection(db, 'vault_media'), where(field, '==', targetId)));
-            addDocsToDelete('vault_media', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // VERIFICATION APPLICATIONS
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['userId', 'uid', 'targetUid', 'profileId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'verificationApplications'), where(field, '==', targetId)));
-            addDocsToDelete('verificationApplications', snap.docs);
-          } catch (e) {}
-        }
-      }
-
-      // MARKETPLACE ITEMS, PRODUCTS, SERVICES
-      for (const targetId of allTargetIdentifiers) {
-        for (const coll of ['marketplace_items', 'products', 'services']) {
-          for (const field of ['sellerId', 'userId', 'authorId']) {
-            try {
-              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
-              addDocsToDelete(coll, snap.docs);
-            } catch (e) {}
-          }
-        }
-      }
-
-      // NGL MESSAGES & HIGHLIGHTS & CALLS & LOGIN SESSIONS
-      for (const targetId of allTargetIdentifiers) {
-        for (const field of ['toUserId', 'fromUserId', 'targetProfileId', 'profileId', 'recipientId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'ngl_messages'), where(field, '==', targetId)));
-            addDocsToDelete('ngl_messages', snap.docs);
-          } catch (e) {}
-        }
-        for (const field of ['userId', 'profileId', 'authorId']) {
-          try {
-            const snap = await getDocs(query(collection(db, 'highlights'), where(field, '==', targetId)));
-            addDocsToDelete('highlights', snap.docs);
-          } catch (e) {}
-        }
-        for (const coll of ['calls', 'callHistory']) {
-          for (const field of ['callerId', 'receiverId']) {
-            try {
-              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
-              addDocsToDelete(coll, snap.docs);
-            } catch (e) {}
-          }
-        }
-        for (const coll of ['login_history', 'login_sessions']) {
-          for (const field of ['userId', 'uid']) {
-            try {
-              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
-              addDocsToDelete(coll, snap.docs);
-            } catch (e) {}
-          }
-        }
-      }
-
-      // CONVERSATIONS: remove from participants or delete if alone
-      for (const targetId of allTargetIdentifiers) {
-        try {
-          const qConvs = await getDocs(query(collection(db, 'conversations'), where('participants', 'array-contains', targetId)));
-          for (const cDoc of qConvs.docs) {
-            const cData = cDoc.data();
-            const remaining = (cData.participants || []).filter((p: string) => !allTargetIdentifiers.includes(p));
-            if (remaining.length === 0) {
-              addDocsToDelete('conversations', [cDoc]);
-            } else {
-              try {
-                await updateDoc(doc(db, 'conversations', cDoc.id), {
-                  participants: arrayRemove(targetId)
-                });
-              } catch (e) {}
-            }
-          }
-        } catch (e) {}
-      }
-
-      // 3. Clean up following/followers references and counts in OTHER users' profiles
-      for (const targetId of allTargetIdentifiers) {
-        try {
-          const qFollowing = await getDocs(query(collection(db, 'profiles'), where('social.following', 'array-contains', targetId)));
-          for (const fDoc of qFollowing.docs) {
-            try {
-              await updateDoc(doc(db, 'profiles', fDoc.id), {
-                'social.following': arrayRemove(targetId),
-                followingCount: increment(-1)
-              });
-            } catch (err) {}
-          }
-        } catch (e) {}
-
-        try {
-          const qFollowers = await getDocs(query(collection(db, 'profiles'), where('social.followers', 'array-contains', targetId)));
-          for (const fDoc of qFollowers.docs) {
-            try {
-              await updateDoc(doc(db, 'profiles', fDoc.id), {
-                'social.followers': arrayRemove(targetId),
-                followersCount: increment(-1)
-              });
-            } catch (err) {}
-          }
-        } catch (e) {}
-
-        try {
-          const qPending = await getDocs(query(collection(db, 'profiles'), where('social.pendingFollowing', 'array-contains', targetId)));
-          for (const pDoc of qPending.docs) {
-            try {
-              await updateDoc(doc(db, 'profiles', pDoc.id), {
-                'social.pendingFollowing': arrayRemove(targetId)
-              });
-            } catch (err) {}
-          }
-        } catch (e) {}
-
-        for (const listField of ['social.closeFriends', 'closeFriends', 'social.blocked', 'blockedUsers', 'social.restricted', 'restrictedUsers']) {
-          try {
-            const qList = await getDocs(query(collection(db, 'profiles'), where(listField, 'array-contains', targetId)));
-            for (const docSnap of qList.docs) {
-              try {
-                await updateDoc(doc(db, 'profiles', docSnap.id), {
-                  [listField]: arrayRemove(targetId)
-                });
-              } catch (e) {}
-            }
-          } catch (e) {}
-        }
-      }
-
-      // 4. Batch commit all gathered deletions with individual fallback
-      let batch = writeBatch(db);
-      let opCount = 0;
-
-      const commitBatchIfNeeded = async () => {
-        if (opCount >= 300) {
-          try {
-            await batch.commit();
-          } catch (batchErr) {
-            logger.warn("[purgeUser] Intermediate batch commit failed, continuing:", batchErr);
-          }
-          batch = writeBatch(db);
-          opCount = 0;
-        }
-      };
-
-      for (const [collName, docIdsSet] of deleteDocsMap.entries()) {
-        if (!collName) continue;
-        for (const docId of Array.from(docIdsSet)) {
-          if (!docId) continue;
-          try {
-            batch.delete(doc(db, collName, docId));
-            opCount++;
-            await commitBatchIfNeeded();
-          } catch (e) {}
-        }
-      }
-
-      // Delete Profiles
-      for (const pid of allProfileIds) {
-        if (!pid) continue;
-        try {
-          batch.delete(doc(db, 'profiles', pid));
-          opCount++;
-          await commitBatchIfNeeded();
-        } catch (e) {}
-      }
-
-      // Delete Usernames Locks (freeing up the handle completely)
-      for (const un of allUsernames) {
-        if (!un) continue;
-        try {
-          batch.delete(doc(db, 'usernames', un.toLowerCase()));
-          opCount++;
-          await commitBatchIfNeeded();
-        } catch (e) {}
-      }
-
-      // Delete User Docs
-      for (const u of allUids) {
-        if (!u) continue;
-        try {
-          batch.delete(doc(db, 'users', u));
-          opCount++;
-          await commitBatchIfNeeded();
-          batch.delete(doc(db, 'users', `user_${u}`));
-          opCount++;
-          await commitBatchIfNeeded();
-        } catch (e) {}
-      }
-
-      // Delete Admins Docs
-      for (const u of allTargetIdentifiers) {
-        if (!u) continue;
-        try {
-          batch.delete(doc(db, 'admins', u));
-          opCount++;
-          await commitBatchIfNeeded();
-        } catch (e) {}
-      }
-
-      if (opCount > 0) {
-        try {
-          await batch.commit();
-        } catch (finalBatchErr) {
-          logger.warn("[purgeUser] Final batch commit failed, falling back to direct individual deletes:", finalBatchErr);
-          // Fallback: Delete critical documents directly one by one
-          for (const [collName, docIdsSet] of deleteDocsMap.entries()) {
-            if (!collName) continue;
-            for (const docId of Array.from(docIdsSet)) {
-              if (docId) await deleteDoc(doc(db, collName, docId)).catch(() => {});
-            }
-          }
-        }
-      }
-
-      // 5. Guaranteed direct cleanup for primary identity documents
-      for (const pid of allProfileIds) {
-        if (pid) await deleteDoc(doc(db, 'profiles', pid)).catch(() => {});
-      }
-      for (const un of allUsernames) {
-        if (un) await deleteDoc(doc(db, 'usernames', un.toLowerCase())).catch(() => {});
-      }
-      for (const u of allUids) {
-        if (u) {
-          await deleteDoc(doc(db, 'users', u)).catch(() => {});
-          await deleteDoc(doc(db, 'users', `user_${u}`)).catch(() => {});
-        }
-      }
-
-      logger.security("[Security] User Purged", { targetUid: uid, explicitProfileId });
-      logger.info(`[purgeUser] Successfully wiped all Firestore data from A-Z for user ${uid}.`);
+      logger.info(`[purgeUser] Successfully wiped user ${uid} via PostgreSQL and storage purge pipeline.`);
     } catch (error) {
       logger.error("[purgeUser] failed:", error);
-      // Do not throw so caller can still execute cleanup and notify admin
+      throw error;
     }
   };
 
-  const toggleUserBan = async (uid: string, banStatus: boolean) => {
-    if (!db || !uid) return;
+  const toggleUserBan = async (uid: string, banStatus: boolean, reason?: string) => {
+    if (!uid) return;
     try {
-      const banUids = new Set<string>([uid]);
-      const banProfileIds = new Set<string>([uid, `profile_${uid}`]);
-      const banUsernames = new Set<string>();
+      await api.admin.banUser(uid, banStatus, reason);
 
-      const profilesRef = collection(db, 'profiles');
-      const qOwner = query(profilesRef, where('ownerUid', '==', uid));
-      const snapOwner = await getDocs(qOwner);
-      snapOwner.forEach(p => {
-        banProfileIds.add(p.id);
-        const d = p.data();
-        if (d.uid) banUids.add(d.uid);
-        if (d.ownerUid) banUids.add(d.ownerUid);
-        if (d.username) banUsernames.add(d.username.toLowerCase());
-        if (d.usernameNormalized) banUsernames.add(d.usernameNormalized.toLowerCase());
+      setProfile(prev => {
+        if (!prev) return prev;
+        if (prev.id === uid || prev.uid === uid || (prev as any).userId === uid) {
+          return { ...prev, isBanned: banStatus, status: banStatus ? 'BANNED' : 'ACTIVE' };
+        }
+        return prev;
       });
-
-      const qUid = query(profilesRef, where('uid', '==', uid));
-      const snapUid = await getDocs(qUid);
-      snapUid.forEach(p => {
-        banProfileIds.add(p.id);
-        const d = p.data();
-        if (d.uid) banUids.add(d.uid);
-        if (d.ownerUid) banUids.add(d.ownerUid);
-        if (d.username) banUsernames.add(d.username.toLowerCase());
-        if (d.usernameNormalized) banUsernames.add(d.usernameNormalized.toLowerCase());
-      });
-
-      const directRef = doc(db, 'profiles', uid);
-      const directSnap = await getDoc(directRef);
-      if (directSnap.exists()) {
-        const d = directSnap.data();
-        if (d.uid) banUids.add(d.uid);
-        if (d.ownerUid) banUids.add(d.ownerUid);
-        if (d.username) banUsernames.add(d.username.toLowerCase());
-        if (d.usernameNormalized) banUsernames.add(d.usernameNormalized.toLowerCase());
-      }
-
-      // Update ban status on profiles
-      for (const pId of Array.from(banProfileIds)) {
-        await setDoc(doc(db, 'profiles', pId), { 
-          isBanned: banStatus,
-          status: banStatus ? 'BANNED' : 'ACTIVE',
-          bannedAt: banStatus ? serverTimestamp() : null
-        }, { merge: true }).catch(() => {});
-      }
-
-      // Update users collection
-      for (const uId of Array.from(banUids)) {
-        await setDoc(doc(db, 'users', uId), { 
-          isBanned: banStatus,
-          status: banStatus ? 'BANNED' : 'ACTIVE',
-          bannedAt: banStatus ? serverTimestamp() : null
-        }, { merge: true }).catch(() => {});
-      }
-
-      // If banning (Meta-style disable/removal): INSTANTLY WIPE ALL ACTIVE NOTES & OUTGOING NOTIFICATIONS
-      if (banStatus) {
-        const allBanTargets = Array.from(new Set([...banUids, ...banProfileIds]));
-        const allBanUnames = Array.from(banUsernames);
-
-        // 1. Delete active notes authored by this banned user
-        for (const tId of allBanTargets) {
-          for (const field of ['authorUid', 'authorId', 'userId', 'profileId']) {
-            try {
-              const snapNotes = await getDocs(query(collection(db, 'notes'), where(field, '==', tId)));
-              for (const nd of snapNotes.docs) {
-                await deleteDoc(doc(db, 'notes', nd.id)).catch(() => {});
-              }
-            } catch (e) {}
-          }
-        }
-        for (const un of allBanUnames) {
-          try {
-            const snapNotes = await getDocs(query(collection(db, 'notes'), where('userName', '==', un)));
-            for (const nd of snapNotes.docs) {
-              await deleteDoc(doc(db, 'notes', nd.id)).catch(() => {});
-            }
-          } catch (e) {}
-        }
-
-        // 2. Delete all outgoing notifications sent by this banned user to anyone else
-        for (const tId of allBanTargets) {
-          for (const field of ['fromUserId', 'fromUserUid', 'fromUid', 'fromProfileId']) {
-            try {
-              const snapNotifs = await getDocs(query(collection(db, 'notifications'), where(field, '==', tId)));
-              for (const nd of snapNotifs.docs) {
-                await deleteDoc(doc(db, 'notifications', nd.id)).catch(() => {});
-              }
-            } catch (e) {}
-          }
-        }
-        for (const un of allBanUnames) {
-          try {
-            const snapNotifs1 = await getDocs(query(collection(db, 'notifications'), where('user.username', '==', un)));
-            for (const nd of snapNotifs1.docs) {
-              await deleteDoc(doc(db, 'notifications', nd.id)).catch(() => {});
-            }
-          } catch (e) {}
-          try {
-            const snapNotifs2 = await getDocs(query(collection(db, 'notifications'), where('metadata.senderUsername', '==', un)));
-            for (const nd of snapNotifs2.docs) {
-              await deleteDoc(doc(db, 'notifications', nd.id)).catch(() => {});
-            }
-          } catch (e) {}
-        }
-      }
 
       logger.security("User Ban Toggled", { action: "toggle_ban", uid, banStatus });
-      
       addToast({ 
         title: banStatus ? 'Account Restricted' : 'Access Restored', 
         message: `Account access has been ${banStatus ? 'suspended and content disabled' : 're-enabled'}.`, 
@@ -5585,6 +4999,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
     } catch (e) {
       logger.error("Ban toggle failed:", e);
+      addToast({ title: 'Action Failed', message: 'Failed to update user ban status.', type: 'warning' });
       throw e;
     }
   };
@@ -5596,218 +5011,38 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     durationDays: number = 30,
     targetUid?: string
   ) => {
-    if (!db) return;
     try {
-      const cleanProfileId = profileId.startsWith('profile_') ? profileId : profileId;
-      const profileRef = doc(db, 'profiles', cleanProfileId);
-      const profileSnap = await getDoc(profileRef).catch(() => null);
-      const pData = profileSnap?.exists() ? profileSnap.data() : null;
+      const targetId = targetUid || profileId;
+      await api.admin.verifyUser(targetId, {
+        verified: verifiedStatus,
+        plan,
+        durationDays,
+      });
 
-      const resolvedUid = targetUid || pData?.ownerUid || pData?.uid || (profileId.startsWith('profile_') ? profileId.replace('profile_', '') : profileId);
-
-      const planNameMap: Record<string, string> = {
-        essential: 'Essential ($3.69/mo)',
-        creator: 'Creator ($9.69/mo)',
-        business: 'Business ($12.69/mo)'
-      };
-
-      if (verifiedStatus) {
-        const nowMs = Date.now();
-        const durationMs = durationDays * 24 * 60 * 60 * 1000;
-        const expiresAt = new Date(nowMs + durationMs);
-        const deadlineStr = expiresAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-        const verificationPayload = {
-          isVerified: true,
-          verified: true,
-          verificationPlan: plan,
-          verifiedAt: serverTimestamp(),
-          verificationApprovedAt: serverTimestamp(),
-          verificationExpiresAt: expiresAt,
-          monthlyDeadline: expiresAt,
-          subscriptionStatus: 'active',
-          autoRenewal: true,
-          verificationDurationDays: durationDays
-        };
-
-        // 1. Gather all profile document references to update
-        const profileRefsToUpdate = new Map<string, any>();
-        profileRefsToUpdate.set(cleanProfileId, doc(db, 'profiles', cleanProfileId));
-        if (resolvedUid) {
-          profileRefsToUpdate.set(resolvedUid, doc(db, 'profiles', resolvedUid));
-          profileRefsToUpdate.set(`profile_${resolvedUid}`, doc(db, 'profiles', `profile_${resolvedUid}`));
-          try {
-            const qOwner = query(collection(db, 'profiles'), where('ownerUid', '==', resolvedUid));
-            const snapOwner = await getDocs(qOwner);
-            snapOwner.forEach(d => profileRefsToUpdate.set(d.id, d.ref));
-
-            const qUid = query(collection(db, 'profiles'), where('uid', '==', resolvedUid));
-            const snapUid = await getDocs(qUid);
-            snapUid.forEach(d => profileRefsToUpdate.set(d.id, d.ref));
-          } catch (e) {}
+      setProfile(prev => {
+        if (!prev) return prev;
+        if (prev.id === profileId || prev.uid === targetId || (prev as any).userId === targetId) {
+          return {
+            ...prev,
+            isVerified: verifiedStatus,
+            verified: verifiedStatus,
+            creatorTier: verifiedStatus ? plan.toUpperCase() : undefined,
+          };
         }
+        return prev;
+      });
 
-        // Apply verification payload to all matched profile docs with setDoc merge
-        for (const ref of profileRefsToUpdate.values()) {
-          await setDoc(ref, verificationPayload, { merge: true }).catch(() => {});
-        }
-
-        // 2. Update User doc if available
-        if (resolvedUid) {
-          await setDoc(doc(db, 'users', resolvedUid), verificationPayload, { merge: true }).catch(() => {});
-
-          // 3. Update any verification application doc
-          await setDoc(doc(db, 'verificationApplications', resolvedUid), {
-            status: 'approved',
-            approvedPlan: plan,
-            plan,
-            approvedAt: serverTimestamp(),
-            reviewedAt: serverTimestamp(),
-            expiresAt,
-            monthlyDeadline: expiresAt,
-            autoRenewal: true
-          }, { merge: true }).catch(() => {});
-        }
-        if (cleanProfileId && cleanProfileId !== resolvedUid) {
-          await setDoc(doc(db, 'verificationApplications', cleanProfileId), {
-            status: 'approved',
-            approvedPlan: plan,
-            plan,
-            approvedAt: serverTimestamp(),
-            reviewedAt: serverTimestamp(),
-            expiresAt,
-            monthlyDeadline: expiresAt,
-            autoRenewal: true
-          }, { merge: true }).catch(() => {});
-        }
-
-        // 4. Update local profile state if it matches the verified user
-        setProfile(prev => {
-          if (!prev) return prev;
-          if (prev.id === cleanProfileId || prev.uid === resolvedUid || prev.ownerUid === resolvedUid || (resolvedUid && prev.id === `profile_${resolvedUid}`)) {
-            return {
-              ...prev,
-              isVerified: true,
-              verified: true,
-              verificationPlan: plan,
-              verificationExpiresAt: expiresAt
-            };
-          }
-          return prev;
-        });
-
-        if (profile?.id === cleanProfileId || user?.uid === resolvedUid || profile?.ownerUid === resolvedUid) {
-          setShowVerificationCelebration(true);
-        }
-
-        // 5. Send Meta-style celebration notification to user
-        const targetRecipientIds = Array.from(new Set([resolvedUid, cleanProfileId, ...profileRefsToUpdate.keys()].filter(Boolean))) as string[];
-        for (const rId of targetRecipientIds) {
-          await addDoc(collection(db, 'notifications'), {
-            userId: rId,
-            fromUserId: 'aeirmist_system',
-            fromUserUid: 'aeirmist_system',
-            user: {
-              name: 'Aeirmist',
-              avatar: '/favicon.png',
-              username: 'aeirmist',
-              isVerified: true
-            },
-            type: 'verification',
-            message: `Congratulations! Your account is now Aeirmist ${plan.charAt(0).toUpperCase() + plan.slice(1)} Verified under the ${planNameMap[plan] || plan} Plan. Your badge is active until ${deadlineStr}.`,
-            metadata: {
-              plan,
-              verifiedAt: nowMs,
-              expiresAt: expiresAt.getTime(),
-              monthlyDeadline: expiresAt.getTime(),
-              status: 'active',
-              deadlineStr,
-              senderName: 'Aeirmist',
-              senderUsername: 'aeirmist',
-              senderPhoto: '/favicon.png'
-            },
-            read: false,
-            createdAt: serverTimestamp()
-          }).catch(err => logger.warn("Failed to send verification notification:", err));
-        }
-
-        addToast({ 
-          title: 'Account Verified', 
-          message: `Verified under ${plan.toUpperCase()} plan (Active for ${durationDays} days).`, 
-          type: 'success' 
-        });
-      } else {
-        // Revoke verification
-        const revokePayload = {
-          isVerified: false,
-          verified: false,
-          subscriptionStatus: 'revoked',
-          autoRenewal: false
-        };
-
-        const profileRefsToUpdate = new Map<string, any>();
-        profileRefsToUpdate.set(cleanProfileId, doc(db, 'profiles', cleanProfileId));
-        if (resolvedUid) {
-          profileRefsToUpdate.set(resolvedUid, doc(db, 'profiles', resolvedUid));
-          profileRefsToUpdate.set(`profile_${resolvedUid}`, doc(db, 'profiles', `profile_${resolvedUid}`));
-        }
-
-        for (const ref of profileRefsToUpdate.values()) {
-          await setDoc(ref, revokePayload, { merge: true }).catch(() => {});
-        }
-
-        if (resolvedUid) {
-          await setDoc(doc(db, 'users', resolvedUid), revokePayload, { merge: true }).catch(() => {});
-          await setDoc(doc(db, 'verificationApplications', resolvedUid), {
-            status: 'revoked',
-            revokedAt: serverTimestamp()
-          }, { merge: true }).catch(() => {});
-        }
-
-        setProfile(prev => {
-          if (!prev) return prev;
-          if (prev.id === cleanProfileId || prev.uid === resolvedUid || prev.ownerUid === resolvedUid) {
-            return {
-              ...prev,
-              isVerified: false,
-              verified: false,
-              verificationPlan: undefined
-            };
-          }
-          return prev;
-        });
-
-        const targetRecipientIds = Array.from(new Set([resolvedUid, cleanProfileId].filter(Boolean))) as string[];
-        for (const rId of targetRecipientIds) {
-          await addDoc(collection(db, 'notifications'), {
-            userId: rId,
-            fromUserId: 'aeirmist_system',
-            fromUserUid: 'aeirmist_system',
-            user: {
-              name: 'Aeirmist Official',
-              avatar: '/favicon.png',
-              username: 'aeirmist',
-              isVerified: true
-            },
-            type: 'verification',
-            message: `Your Aeirmist Verification badge and plan subscription have been revoked.`,
-            metadata: { 
-              status: 'revoked',
-              senderName: 'Aeirmist Official',
-              senderUsername: 'aeirmist',
-              senderPhoto: '/favicon.png'
-            },
-            read: false,
-            createdAt: serverTimestamp()
-          }).catch(() => {});
-        }
-
-        addToast({ 
-          title: 'Badge Removed', 
-          message: `Verification badge has been removed for this account.`, 
-          type: 'info' 
-        });
+      if (verifiedStatus && (profile?.id === profileId || profile?.uid === targetId || (profile as any)?.userId === targetId)) {
+        setShowVerificationCelebration(true);
       }
+
+      addToast({ 
+        title: verifiedStatus ? 'Account Verified' : 'Badge Removed', 
+        message: verifiedStatus 
+          ? `Verified under ${plan.toUpperCase()} plan (Active for ${durationDays} days).` 
+          : 'Verification badge has been removed.', 
+        type: verifiedStatus ? 'success' : 'info' 
+      });
     } catch (e) {
       logger.error("Verification toggle failed:", e);
       addToast({ title: 'Verification Error', message: 'Failed to update verification status.', type: 'warning' });
@@ -5816,55 +5051,18 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateUserStatus = async (uid: string, status: AccountStatus, targetProfileId?: string) => {
-    if (!db) return;
     try {
-      const isRestricted = ['SUSPENDED', 'BANNED', 'DEACTIVATED', 'DELETED', 'UNDER_REVIEW'].includes(status);
-      const cleanUid = uid.startsWith('profile_') ? uid.replace(/^profile_/, '') : uid;
-      const profilesRef = collection(db, 'profiles');
-      
-      const [snapOwner, snapUid] = await Promise.all([
-        getDocs(query(profilesRef, where('ownerUid', '==', cleanUid))).catch(() => null),
-        getDocs(query(profilesRef, where('uid', '==', cleanUid))).catch(() => null)
-      ]);
-      
-      const batch = writeBatch(db);
-      const touchedIds = new Set<string>();
+      const targetId = targetProfileId || uid;
+      await api.admin.updateUserStatus(targetId, status);
 
-      if (snapOwner) {
-        snapOwner.forEach(p => {
-          batch.update(doc(db, 'profiles', p.id), { status, isBanned: isRestricted });
-          touchedIds.add(p.id);
-        });
-      }
-      if (snapUid) {
-        snapUid.forEach(p => {
-          if (!touchedIds.has(p.id)) {
-            batch.update(doc(db, 'profiles', p.id), { status, isBanned: isRestricted });
-            touchedIds.add(p.id);
-          }
-        });
-      }
-
-      for (const candidateId of [uid, cleanUid, `profile_${cleanUid}`, targetProfileId]) {
-        if (candidateId && !touchedIds.has(candidateId)) {
-          const directRef = doc(db, 'profiles', candidateId);
-          const directSnap = await getDoc(directRef).catch(() => null);
-          if (directSnap && directSnap.exists()) {
-            batch.update(directRef, { status, isBanned: isRestricted });
-            touchedIds.add(candidateId);
-          }
+      setProfile(prev => {
+        if (!prev) return prev;
+        if (prev.id === targetId || prev.uid === targetId || (prev as any).userId === targetId) {
+          const isRestricted = ['SUSPENDED', 'BANNED', 'DEACTIVATED', 'DELETED', 'UNDER_REVIEW'].includes(status);
+          return { ...prev, status, isBanned: isRestricted };
         }
-      }
-
-      await batch.commit(); 
-      logger.security("User Ban Toggled", { action: "toggle_ban" });
-
-      try {
-        await updateDoc(doc(db, 'users', cleanUid), { 
-          status,
-          isBanned: isRestricted
-        });
-      } catch (e) {}
+        return prev;
+      });
 
       addToast({
         title: 'Status Updated',
@@ -5879,59 +5077,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const suspendUser = async (uid: string, duration: string, reason: string, notes?: string) => {
-    if (!db) return;
     try {
-      let expiresAt: number | null = Date.now();
-      if (duration === '24 Hours') expiresAt += 24 * 60 * 60 * 1000;
-      else if (duration === '3 Days') expiresAt += 3 * 24 * 60 * 60 * 1000;
-      else if (duration === '7 Days') expiresAt += 7 * 24 * 60 * 60 * 1000;
-      else if (duration === '14 Days') expiresAt += 14 * 24 * 60 * 60 * 1000;
-      else if (duration === '30 Days') expiresAt += 30 * 24 * 60 * 60 * 1000;
-      else if (duration === 'Permanent Suspension' || duration === 'Permanent') expiresAt = null;
-      else expiresAt += 7 * 24 * 60 * 60 * 1000;
+      await api.admin.suspendUser(uid, { duration, reason, notes });
 
-      const referenceId = `AEIRMIST-SUSP-${uid.slice(0, 8).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const suspensionInfo: SuspensionInfo = {
-        reason,
-        duration,
-        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-        notes: notes || '',
-        referenceId,
-        timestamp: new Date().toISOString()
-      };
-
-      const profilesRef = collection(db, 'profiles');
-      const q = query(profilesRef, where('ownerUid', '==', uid));
-      const snap = await getDocs(q);
-
-      const batch = writeBatch(db);
-      snap.forEach(p => {
-        batch.update(doc(db, 'profiles', p.id), {
-          status: 'SUSPENDED',
-          isBanned: true,
-          suspensionInfo
-        });
+      setProfile(prev => {
+        if (!prev) return prev;
+        if (prev.id === uid || prev.uid === uid || (prev as any).userId === uid) {
+          return { ...prev, status: 'SUSPENDED', isBanned: true };
+        }
+        return prev;
       });
-
-      const directRef = doc(db, 'profiles', uid);
-      const directSnap = await getDoc(directRef);
-      if (directSnap.exists()) {
-        batch.update(directRef, {
-          status: 'SUSPENDED',
-          isBanned: true,
-          suspensionInfo
-        });
-      }
-
-      await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-
-      try {
-        await updateDoc(doc(db, 'users', uid), {
-          status: 'SUSPENDED',
-          isBanned: true,
-          suspensionInfo
-        });
-      } catch (e) {}
 
       addToast({
         title: 'Account Suspended',

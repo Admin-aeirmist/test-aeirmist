@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { stories, storyHighlights, users, profiles } from '../db/schema';
-import { eq, gt, desc, and } from 'drizzle-orm';
+import { eq, gt, desc, and, sql } from 'drizzle-orm';
 
 export interface CreateStoryDTO {
   userId: string;
@@ -29,8 +29,18 @@ export class StoryDAL {
     return story;
   }
 
-  static async getActiveStories() {
+  static async getActiveStories(viewerId?: string) {
     const now = new Date();
+
+    let audienceCondition = eq(stories.audience, 'public');
+    if (viewerId) {
+      audienceCondition = sql`(${stories.audience} = 'public' 
+        OR ${stories.userId} = ${viewerId} 
+        OR ((${stories.audience} = 'followers' OR ${stories.audience} = 'closeFriends' OR ${stories.audience} = 'close_friends') AND ${stories.userId} IN (
+          SELECT following_id FROM follows WHERE follower_id = ${viewerId}
+        )))` as any;
+    }
+
     const rows = await db
       .select({
         id: stories.id,
@@ -54,7 +64,7 @@ export class StoryDAL {
       .from(stories)
       .innerJoin(users, eq(stories.userId, users.id))
       .innerJoin(profiles, eq(users.id, profiles.userId))
-      .where(gt(stories.expiresAt, now))
+      .where(and(gt(stories.expiresAt, now), audienceCondition))
       .orderBy(desc(stories.createdAt));
 
     return rows;

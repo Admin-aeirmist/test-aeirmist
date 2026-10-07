@@ -13,4 +13,5 @@ backend/node_modules/
 pgsql/
 pgsql-data/
 *.zip
+dump.rdb
 

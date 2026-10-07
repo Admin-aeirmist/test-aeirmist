@@ -1,5 +1,8 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
+import { eq } from 'drizzle-orm';
+import { db } from '../db';
+import { mediaAssets } from '../db/schema';
 import { ChatDAL } from '../dal/chat.dal';
 import { UserDAL } from '../dal/user.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
@@ -124,6 +127,34 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
     }
 
     const data = SendMessageSchema.parse(req.body);
+
+    // Validate mediaKey ownership if mediaKey is provided
+    if (data.mediaKey) {
+      const [asset] = await db
+        .select()
+        .from(mediaAssets)
+        .where(eq(mediaAssets.key, data.mediaKey))
+        .limit(1);
+
+      if (asset && asset.ownerId && asset.ownerId !== req.user!.userId) {
+        return res.status(403).json({ error: 'Unauthorized: Media asset belongs to another user' });
+      }
+    }
+
+    // Validate replyToId message existence and boundary
+    if (data.replyToId) {
+      const parentMsg = await ChatDAL.getMessageById(data.replyToId);
+      if (!parentMsg) {
+        return res.status(400).json({ error: 'Referenced reply message does not exist' });
+      }
+      if (parentMsg.conversationId !== convId) {
+        return res.status(400).json({ error: 'Referenced reply message does not belong to this conversation' });
+      }
+      if (parentMsg.deletedAt) {
+        return res.status(400).json({ error: 'Cannot reply to a deleted message' });
+      }
+    }
+
     const message = await ChatDAL.sendMessage({
       conversationId: convId,
       senderId: req.user!.userId,

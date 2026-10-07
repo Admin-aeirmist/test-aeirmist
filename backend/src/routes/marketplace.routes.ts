@@ -30,10 +30,10 @@ const CreateStoreSchema = z.object({
 
 const CreateOrderSchema = z.object({
   storeId: z.string().optional(),
-  items: z.array(z.any()).min(1),
-  totalAmount: z.string(),
+  items: z.array(z.any()).min(1).max(50),
+  totalAmount: z.string().optional(),
   currency: z.string().default('BDT'),
-  shippingAddress: z.any(),
+  shippingAddress: z.any().optional(),
   paymentMethod: z.string().default('cod'),
 });
 
@@ -189,10 +189,73 @@ router.get('/my-store', authenticateToken, async (req: AuthenticatedRequest, res
 router.post('/orders', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreateOrderSchema.parse(req.body);
+    const buyerId = req.user!.userId;
+
+    let serverCalculatedTotal = 0;
+    const verifiedItems: any[] = [];
+
+    for (const rawItem of data.items) {
+      const itemId = rawItem.itemId || rawItem.id;
+      if (!itemId || typeof itemId !== 'string') {
+        return res.status(400).json({ error: 'Invalid item ID in order' });
+      }
+
+      const dbItem = await MarketplaceDAL.getById(itemId);
+      if (!dbItem) {
+        return res.status(404).json({ error: `Item ${itemId} not found or no longer available` });
+      }
+
+      if (dbItem.status !== 'active') {
+        return res.status(400).json({ 
+          error: `Item "${dbItem.title}" cannot be purchased because its status is "${dbItem.status}"` 
+        });
+      }
+
+      if (dbItem.sellerId === buyerId) {
+        return res.status(400).json({ 
+          error: `You cannot purchase your own item ("${dbItem.title}")` 
+        });
+      }
+
+      const qty = Math.max(1, Math.min(100, parseInt(rawItem.quantity || '1', 10) || 1));
+      const unitPrice = parseFloat(dbItem.price) || 0;
+      serverCalculatedTotal += unitPrice * qty;
+
+      verifiedItems.push({
+        itemId: dbItem.id,
+        title: dbItem.title,
+        price: dbItem.price,
+        unitPrice: unitPrice,
+        quantity: qty,
+        sellerId: dbItem.sellerId,
+        mediaKeys: dbItem.mediaKeys,
+      });
+    }
+
+    const finalTotalAmount = serverCalculatedTotal.toFixed(2);
+
+    // If client provided a totalAmount, prevent undercutting the server-verified total
+    if (data.totalAmount) {
+      const clientTotal = parseFloat(data.totalAmount);
+      if (!isNaN(clientTotal) && clientTotal < serverCalculatedTotal * 0.95) {
+        return res.status(400).json({
+          error: 'Security alert: Submitted order total is lower than verified item prices',
+          calculatedTotal: finalTotalAmount,
+          submittedTotal: data.totalAmount,
+        });
+      }
+    }
+
     const order = await MarketplaceDAL.createOrder({
-      buyerId: req.user!.userId,
-      ...data,
+      buyerId,
+      storeId: data.storeId,
+      items: verifiedItems,
+      totalAmount: finalTotalAmount,
+      currency: data.currency || 'BDT',
+      shippingAddress: data.shippingAddress || {},
+      paymentMethod: data.paymentMethod || 'cod',
     });
+
     res.status(201).json({ order });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
