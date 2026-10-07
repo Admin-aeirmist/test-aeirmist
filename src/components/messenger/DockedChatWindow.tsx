@@ -49,7 +49,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   onClose,
   onMaximize
 }) => {
-  const { user, profile, startCall, uploadMedia, onlineUsers, addToast } = useAeirmist();
+  const { user, profile, startCall, uploadMedia, onlineUsers, addToast, db } = useAeirmist();
   const { settings } = useAppearance();
 
   const [messages, setMessages] = useState<Message[]>([]);

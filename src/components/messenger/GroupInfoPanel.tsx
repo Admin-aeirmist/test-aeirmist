@@ -25,7 +25,7 @@ interface GroupInfoPanelProps {
 }
 
 export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, onInitiateCall, onOpenWallpaper, chats = [] }) => {
-  const { profile, user, addToast, allProfiles, suggestedUsers, onlineUsers } = useAeirmist();
+  const { profile, user, addToast, allProfiles, suggestedUsers, onlineUsers, db } = useAeirmist();
   
   const [isEditingName, setIsEditingName] = useState(false);
   const [groupNameInput, setGroupNameInput] = useState(chat.groupName || chat.name || '');

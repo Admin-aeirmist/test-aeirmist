@@ -767,7 +767,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   };
 
   const handleDeletePost = async () => {
-    if (!profile || !db) return;
+    if (!profile) return;
     const isOwner = postAuthorId === profile.id;
     if (!isOwner) {
       if (addToast) {
@@ -1931,7 +1931,6 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
           isOpen={isMessengerShareOpen}
           onClose={() => setIsMessengerShareOpen(false)}
           onShare={handleShareToMessenger}
-          db={db}
           profile={profile}
         />
 

@@ -136,6 +136,9 @@ import {
   handleFirestoreError as libHandleFirestoreError,
   OperationType
 } from '../lib/firebase';
+export const auth: any = _auth;
+export const db: any = _db;
+export const storage: any = _storage;
 import { usePermissions } from '../hooks/usePermissions';
 import { BLANK_DP, getAvatarUrl } from '../lib/avatar';
 import { aeirmistCache } from '../services/CacheService';

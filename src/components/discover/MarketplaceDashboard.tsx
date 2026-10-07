@@ -378,7 +378,7 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
   // Submit Product Form (Create / Edit)
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !activeStore?.id) return;
+    if (!activeStore?.id) return;
     if (!prodName.trim() || !prodPrice) {
       addToast({ title: 'Required fields', message: 'Product title and price are required.', type: 'warning' });
       return;

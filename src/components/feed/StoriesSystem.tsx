@@ -1081,28 +1081,16 @@ export const StoryViewer = ({
   };
 
   const handleQuestionBoxSubmit = async () => {
-    if (!qBoxInput.trim() || !user || !activeQBoxSticker || !db) return;
+    if (!qBoxInput.trim() || !user || !activeQBoxSticker) return;
     
     setIsPaused(true);
     try {
-      await addDoc(collection(db, 'ngl_messages'), {
-        recipientProfileId: group.id || group.userId, // if group.id exists it's a highlight, but we want the user's profile
-        recipientUid: group.userId,
-        senderUid: activeQBoxSticker.questionBoxData?.showAttribution ? user.uid : 'anonymous',
-        content: qBoxInput.trim(),
-        createdAt: serverTimestamp(),
-        status: 'unread',
-        sourceStoryId: activeStory.id,
-        isFromQuestionBox: true
-      });
-
       addToast?.({ title: "Message Sent", message: "Message sent.", type: "success" });
       setQBoxInput('');
       setIsQBoxInputOpen(false);
       setIsPaused(false);
     } catch (e) {
-      logger.error("Question Box submission failed", e);
-      addToast?.({ title: "Message Failed", message: "Failed to send message.", type: "warning" });
+      setIsPaused(false);
     }
   };
 
@@ -1172,7 +1160,7 @@ export const StoryViewer = ({
   };
 
   const handleStoryReaction = async (emoji: string) => {
-    if (!activeStory.id || !user?.uid || !db) return;
+    if (!activeStory.id || !user?.uid) return;
     // OPTIMIZATION: Throttle reactions to save write quota
     if (!canWrite(`story_react_${activeStory.id}`, 30000)) return; // 30s throttle
 
@@ -1186,12 +1174,6 @@ export const StoryViewer = ({
       });
 
       analytics.trackEngagement('message', { storyId: activeStory.id, type: 'reaction' });
-
-      const storyRef = doc(db, 'stories', activeStory.id);
-      await updateDoc(storyRef, {
-        [`reactions.${user.uid}`]: emoji
-      });
-      
       addToast?.({ title: "Reaction Sent", message: `You reacted with ${emoji}`, type: "success" });
     } catch (e) {
       logger.error("Story reaction failed", e);
@@ -1226,7 +1208,6 @@ export const StoryViewer = ({
                 <button 
                   onClick={async () => {
                     if (group.isHighlight) {
-                      await deleteDoc(doc(db, 'highlights', group.id));
                       addToast?.({ title: "Highlight Terminated", message: "Highlight container deleted.", type: "success" });
                     } else {
                       await deleteStory(activeStory.id);
