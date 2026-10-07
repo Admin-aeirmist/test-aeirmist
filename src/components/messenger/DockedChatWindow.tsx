@@ -495,7 +495,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
               >
                 {!isMe && (
                   <img
-                    src={getAvatarUrl(m.senderAvatar || chatPhoto)}
+                    src={getAvatarUrl((m as any).senderAvatar || chatPhoto)}
                     alt=""
                     className="w-6 h-6 rounded-lg object-cover shrink-0 mb-0.5 border border-white/10"
                     onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}

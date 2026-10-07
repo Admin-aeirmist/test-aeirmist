@@ -2431,6 +2431,7 @@ const ChatWindow = ({
     togglePinMessage, 
     clearChat, 
     toggleFollow, 
+    toggleBlockUser, 
     startCall,
     addToast,
     setFloatingChatHead

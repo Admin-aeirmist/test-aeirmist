@@ -381,7 +381,7 @@ const NGLCard = ({ msg, onRead, onArchive, onDelete, onReply }: { msg: NGLMessag
           </div>
           <div>
              <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Anonymous Signal</p>
-             <p className="text-[8px] font-mono text-white/20">{new Date(msg.createdAt?.toDate?.() || Date.now()).toLocaleString()}</p>
+             <p className="text-[8px] font-mono text-white/20">{new Date(msg.createdAt || Date.now()).toLocaleString()}</p>
           </div>
         </div>
         <div className="flex gap-2">

@@ -82,7 +82,7 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     const fetchRemote = async () => {
       setIsFetchingRemote(true);
       try {
-        const res = await api.users.searchUsers('');
+        const res = await api.users.search('');
         if (isMounted && res?.users) {
           setFirestoreProfiles(res.users);
         }

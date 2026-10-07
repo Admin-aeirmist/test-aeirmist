@@ -81,9 +81,26 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
   }
 });
 
+// Feed Alias
+router.get('/feed', async (req, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const feed = await PostDAL.getFeed(undefined, limit, offset);
+    res.json({ posts: feed });
+  } catch (err) {
+    console.error('[Feed Error]', err);
+    res.status(500).json({ error: 'Failed to fetch feed' });
+  }
+});
+
 // Get Single Post
 router.get('/:id', async (req, res: Response) => {
   try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id);
+    if (!isUuid) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
     const post = await PostDAL.getById(req.params.id);
     if (!post) {
       return res.status(404).json({ error: 'Post not found' });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Eye, EyeOff, Loader2, AlertCircle, Check, ArrowLeft, QrCode,
+  Eye, EyeOff, Loader2, AlertCircle, Check, CheckCircle2, ArrowLeft, QrCode,
   Sparkles, ShieldCheck, Mail, User, Lock, Layers, ArrowRight, ShieldAlert,
   HelpCircle, WifiOff, Settings
 } from 'lucide-react';

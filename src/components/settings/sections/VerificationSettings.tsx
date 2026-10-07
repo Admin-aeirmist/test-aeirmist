@@ -119,7 +119,7 @@ export const VerificationSettings = () => {
         currency: 'USD',
         paymentStatus: 'paid',
         paymentProvider: method,
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
         status: 'pending',
         identity: identityData
       };

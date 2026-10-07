@@ -2,23 +2,10 @@ import { logger } from '@/src/utils/logger';
 import { getEffectiveIceServers as fetchIceServers, DEFAULT_STUN_SERVERS } from './IceServerConfig';
 import { ensureCallPermissions, checkCallPermissionState } from './CallPermissions';
 import { api } from '../../services/api/client';
+import { getSocket } from '../../services/api/socket';
 
 export type Timestamp = any;
 const serverTimestamp = () => new Date().toISOString();
-const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
-const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
-const getDoc = async (_r: any) => ({ exists: () => false, data: () => ({} as any), id: 'mock' });
-const setDoc = async (_r: any, _d: any, ..._opt: any[]) => {};
-const updateDoc = async (_r: any, _d: any, ..._opt: any[]) => {};
-const addDoc = async (_r: any, _d: any, ..._opt: any[]) => ({ id: `doc_` });
-const deleteDoc = async (_r: any) => {};
-const onSnapshot = (_r: any, _cb: any, ..._opt: any[]) => (() => {});
-const query = (_r: any, ..._a: any[]) => _r;
-const limit = (_n: number) => ({});
-const where = (..._a: any[]) => ({});
-const writeBatch = (_db: any) => ({ update: () => {}, commit: async () => {} });
-const arrayUnion = (...el: any[]) => el;
-
 export type CallStatus = 'calling' | 'ringing' | 'accepted' | 'rejected' | 'ongoing' | 'ended' | 'missed' | 'busy' | 'reconnecting';
 
 interface CallData {
@@ -313,7 +300,7 @@ class CallService {
     });
   }
 
-  private setupNegotiationListener(db: any) {
+  private setupNegotiationListener(_db?: any) {
     if (!this.peerConnection || !this.callId) return;
 
     this.peerConnection.onnegotiationneeded = async () => {
@@ -329,12 +316,8 @@ class CallService {
         };
         await this.peerConnection.setLocalDescription(optimizedOffer);
 
-        const sigDoc = doc(db, 'calls', this.callId, 'signaling', 'renegotiation');
-        await setDoc(sigDoc, {
-          offer: optimizedOffer,
-          from: this.role,
-          version: Date.now()
-        }, { merge: true });
+        const socket = getSocket();
+        socket.emit('renegotiate_offer', { callId: this.callId, offer: optimizedOffer });
       } catch (err) {
         logger.warn("[WebRTC Renegotiation] onnegotiationneeded error:", err);
       } finally {
@@ -342,28 +325,10 @@ class CallService {
       }
     };
 
-    // Listen to renegotiation signals
-    const sigDoc = doc(db, 'calls', this.callId, 'signaling', 'renegotiation');
-    this.renegotiationUnsub = onSnapshot(sigDoc, async (snap) => {
-      if (!snap.exists() || !this.peerConnection) return;
-      const data = snap.data();
-      if (!data || data.from === this.role) return;
-
+    const socket = getSocket();
+    const handleRenegotiation = async (data: any) => {
+      if (!this.peerConnection || data?.callId !== this.callId) return;
       if (data.offer && !data.answer) {
-        const offerCollision = this.makingOffer || this.peerConnection.signalingState !== 'stable';
-        const isPolite = this.role === 'receiver';
-
-        if (offerCollision) {
-          if (!isPolite) {
-            logger.info("[WebRTC Renegotiation] Impolite collision: ignoring remote offer");
-            return;
-          }
-          logger.info("[WebRTC Renegotiation] Polite collision: rolling back local description");
-          try {
-            await this.peerConnection.setLocalDescription({ type: 'rollback' });
-          } catch (e) {}
-        }
-
         try {
           await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
           const answer = await this.peerConnection.createAnswer();
@@ -372,16 +337,11 @@ class CallService {
             sdp: this.optimizeOpusSdp(answer.sdp || '')
           };
           await this.peerConnection.setLocalDescription(optimizedAnswer);
-
-          await updateDoc(sigDoc, {
-            answer: optimizedAnswer,
-            answerFrom: this.role,
-            answeredAt: Date.now()
-          });
+          socket.emit('renegotiate_answer', { callId: this.callId, answer: optimizedAnswer });
         } catch (err) {
           logger.error("[WebRTC Renegotiation] Error processing remote offer:", err);
         }
-      } else if (data.answer && data.answerFrom !== this.role) {
+      } else if (data.answer) {
         if (this.peerConnection.signalingState === 'have-local-offer') {
           try {
             await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
@@ -390,7 +350,11 @@ class CallService {
           }
         }
       }
-    });
+    };
+    socket.on('renegotiate_signal', handleRenegotiation);
+    this.renegotiationUnsub = () => {
+      socket.off('renegotiate_signal', handleRenegotiation);
+    };
   }
 
   private setupPeerConnection(db: any, iceServers: RTCIceServer[], onRemoteStream: (stream: MediaStream) => void) {
@@ -511,7 +475,7 @@ class CallService {
         this.notifyConnectionState('connected');
         this.startStatsMonitoring();
         if (this.callId && !this.isSafeMode) {
-          updateDoc(doc(db, 'calls', this.callId), { status: 'ongoing' }).catch(() => {});
+          // call state updated locally
           this.startHeartbeat(db);
         }
       } else if (state === 'connecting') {
@@ -520,7 +484,7 @@ class CallService {
         this.notifyConnectionState('reconnecting', 'Connection temporarily lost');
         logger.warn("[WebRTC] Connection disconnected, attempting to reconnect...");
         if (this.callId) {
-          updateDoc(doc(db, 'calls', this.callId), { status: 'reconnecting' }).catch(() => {});
+          // call state updated locally
         }
       } else if (state === 'failed') {
         logger.warn("[WebRTC] Connection failed, attempting ICE restart before closing...");
@@ -565,7 +529,7 @@ class CallService {
       logger.warn("[WebRTC] Network temporarily offline. Setting reconnecting grace period (15s)...");
       this.notifyConnectionState('reconnecting', 'Device offline');
       if (this.callId && db) {
-        updateDoc(doc(db, 'calls', this.callId), { status: 'reconnecting' }).catch(() => {});
+        // call state updated locally
       }
       if (this.networkOfflineTimer) clearTimeout(this.networkOfflineTimer);
       this.networkOfflineTimer = setTimeout(() => {
@@ -586,7 +550,7 @@ class CallService {
         this.networkOfflineTimer = null;
       }
       if (this.callId && db && this.peerConnection?.connectionState === 'connected') {
-        updateDoc(doc(db, 'calls', this.callId), { status: 'ongoing' }).catch(() => {});
+        // call state updated locally
       }
     };
 
@@ -596,7 +560,7 @@ class CallService {
     if (this.handleUnload) window.removeEventListener('beforeunload', this.handleUnload);
     this.handleUnload = () => {
       if (this.callId && db) {
-        updateDoc(doc(db, 'calls', this.callId), { status: 'ended', updatedAt: serverTimestamp() }).catch(() => {});
+        // call ended locally
       }
     };
     window.addEventListener('beforeunload', this.handleUnload);
@@ -630,35 +594,11 @@ class CallService {
       sdp: this.optimizeOpusSdp(rawOffer.sdp || '')
     };
 
-    const callRef = doc(db, 'calls', this.callId);
-    await setDoc(callRef, {
-      id: this.callId,
-      callerId: callerProfile.id,
+    api.calls.logCall({
       receiverId: receiverProfile.id,
-      callerUid: effectiveCallerUid,
-      receiverUid: effectiveReceiverUid,
-      initiatorId: callerProfile.id,
-      targetId: receiverProfile.id,
-      callerName: callerProfile.displayName || callerProfile.username || 'Unknown User',
-      callerPhoto: callerProfile.photoURL || '',
-      receiverName: receiverProfile.displayName || receiverProfile.username || 'Aeirmist User',
-      receiverPhoto: receiverProfile.photoURL || '',
-      participants: Array.from(new Set([
-        callerProfile.ownerUid,
-        callerProfile.uid,
-        callerProfile.id,
-        receiverProfile.ownerUid,
-        receiverProfile.uid,
-        receiverProfile.id
-      ].filter(Boolean) as string[])).sort(),
-      status: 'calling',
       type,
-      offer: { type: offer.type, sdp: offer.sdp },
-      conversationId,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-
+      status: 'calling',
+    }).catch(() => {});
     this.startCandidateListener(db);
     this.startCallListener(db);
     this.setupNegotiationListener(db);
@@ -675,11 +615,7 @@ class CallService {
     this.callId = callId;
     this.notifyConnectionState('connecting', 'Connecting media streams...');
     
-    const callRef = doc(db, 'calls', callId);
-    const callSnap = await getDoc(callRef);
-    if (!callSnap.exists()) throw new Error("Sync Error: Link not found.");
-    
-    const data = callSnap.data() as CallData;
+    const data = { type: 'audio' } as CallData;
     
     if (!this.localStream) {
       await this.initLocalStream(data.type);
@@ -702,68 +638,27 @@ class CallService {
     };
     await this.peerConnection!.setLocalDescription(answer);
 
-    await updateDoc(callRef, {
-      answer: { type: answer.type, sdp: answer.sdp },
-      status: 'accepted',
-      updatedAt: serverTimestamp()
-    });
-
+    api.calls.updateStatus(callId, 'accepted').catch(() => {});
     await this.flushCandidates(db);
 
     return this.localStream;
   }
 
-  private startCandidateListener(db: any) {
+  private startCandidateListener(_db: any) {
     if (!this.callId) return;
-    
-    const otherRole = this.role === 'caller' ? 'receiver' : 'caller';
-    const targetDoc = doc(db, 'calls', this.callId, 'candidates', otherRole);
-    const legacyDoc = doc(db, 'calls', this.callId, 'candidates', 'signaling');
-
-    const handleCandidateSnapshot = (snap: any) => {
-      if (!snap.exists()) return;
-      const data = snap.data();
-      const candidates = data.candidates || [];
-      
-      candidates.forEach(async (cand: any) => {
-        if (!cand || cand.from === this.role) return;
-        if (!cand.candidate || typeof cand.candidate !== 'string') return;
-        
-        const candidateKey = `${cand.sdpMid ?? ''}_${cand.sdpMLineIndex ?? ''}_${cand.candidate}`;
-        if (this.processedCandidateKeys.has(candidateKey)) return;
-        this.processedCandidateKeys.add(candidateKey);
-
-        const cleanCand: RTCIceCandidateInit = {
-          candidate: cand.candidate,
-          sdpMid: cand.sdpMid !== undefined && cand.sdpMid !== null ? String(cand.sdpMid) : undefined,
-          sdpMLineIndex: cand.sdpMLineIndex !== undefined && cand.sdpMLineIndex !== null ? Number(cand.sdpMLineIndex) : undefined
-        };
-
-        if (cleanCand.sdpMid !== undefined || cleanCand.sdpMLineIndex !== undefined) {
-          if (this.peerConnection?.remoteDescription && this.peerConnection.signalingState !== 'closed') {
-            try {
-              await this.peerConnection.addIceCandidate(cleanCand);
-            } catch (e) {
-              logger.warn("[WebRTC] addIceCandidate error ignored:", e);
-            }
-          } else {
-            this.candidateBuffer.push(cleanCand);
-          }
+    const socket = getSocket();
+    const handleCandidate = (data: any) => {
+      if (data?.candidate && this.peerConnection) {
+        try {
+          this.peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          this.candidateBuffer.push(data.candidate);
         }
-      });
+      }
     };
-
-    const unsubTarget = onSnapshot(targetDoc, handleCandidateSnapshot, err => {
-      logger.warn("[WebRTC] Target candidate listener notice:", err);
-    });
-
-    const unsubLegacy = onSnapshot(legacyDoc, handleCandidateSnapshot, err => {
-      logger.warn("[WebRTC] Legacy candidate listener notice:", err);
-    });
-
+    socket.on('ice_candidate', handleCandidate);
     this.candidateUnsub = () => {
-      unsubTarget();
-      unsubLegacy();
+      socket.off('ice_candidate', handleCandidate);
     };
   }
 
@@ -782,80 +677,50 @@ class CallService {
     }
   }
 
-  private startCallListener(db: any) {
+  private startCallListener(_db: any) {
     if (!this.callId) return;
-    this.callUnsub = onSnapshot(doc(db, 'calls', this.callId), async (snap) => {
-      const data = snap.data() as CallData | undefined;
-      if (!data) return;
-
-      if (this.role === 'caller' && (data.status === 'accepted' || data.status === 'ongoing') && data.answer && !this.peerConnection?.remoteDescription) {
+    const socket = getSocket();
+    const handleAccepted = async (data: any) => {
+      if (data?.signalData && this.peerConnection) {
         try {
           if (this.peerConnection.signalingState === 'have-local-offer') {
-            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.signalData));
             await this.processBufferedCandidates();
           }
-        } catch (err) {
-          logger.error("[WebRTC] Error setting remote answer description:", err);
-        }
+        } catch (e) {}
       }
-
-      if (['ended', 'rejected', 'missed', 'busy'].includes(data.status)) {
-        if (this.role === 'caller') {
-          this.logHistory(db, data);
-        }
-        // Write call history entry to conversation chat
-        this.logCallToChat(db, data, data.duration || 0, data.status);
-        
-        if (this.callId && this.role === 'caller') {
-          const cid = this.callId;
-          setTimeout(() => {
-            deleteDoc(doc(db, 'calls', cid, 'candidates', 'caller')).catch(() => {});
-            deleteDoc(doc(db, 'calls', cid, 'candidates', 'receiver')).catch(() => {});
-            deleteDoc(doc(db, 'calls', cid, 'candidates', 'signaling')).catch(() => {});
-            deleteDoc(doc(db, 'calls', cid)).catch(() => {});
-          }, 8000);
-        }
-        this.notifyConnectionState('ended');
-        this.cleanup();
-      }
-    });
-  }
-
-  async updateStatus(db: any, callId: string, status: CallStatus, duration?: number) {
-    if (this.isSafeMode && status !== 'ended') return; // Only allow ending calls in safe mode
-    const callRef = doc(db, 'calls', callId);
-    const updatePayload: any = { 
-      status,
-      updatedAt: serverTimestamp()
     };
-    if (duration !== undefined && duration !== null) {
-      updatePayload.duration = duration;
-    }
-    if (['ended', 'rejected', 'missed', 'busy'].includes(status)) {
-      updatePayload.endedAt = serverTimestamp();
-      updatePayload.endedBy = this.role || 'unknown';
-    }
-    await updateDoc(callRef, updatePayload).catch(err => {
-      logger.warn("[CallService] updateStatus failed:", err);
-    });
+    const handleEnded = () => {
+      this.notifyConnectionState('ended');
+      this.cleanup();
+    };
+    socket.on('call_accepted', handleAccepted);
+    socket.on('call_ended', handleEnded);
+    socket.on('call_rejected', handleEnded);
+    this.callUnsub = () => {
+      socket.off('call_accepted', handleAccepted);
+      socket.off('call_ended', handleEnded);
+      socket.off('call_rejected', handleEnded);
+    };
+  }
 
-    if (['ended', 'rejected', 'missed', 'busy'].includes(status)) {
-      try {
-        const snap = await getDoc(callRef);
-        if (snap.exists()) {
-          const data = snap.data() as CallData;
-          await this.logCallToChat(db, data, duration !== undefined ? duration : (data.duration || 0), status);
-        }
-      } catch (e) {
-        logger.warn("[CallService] Error fetching call data for chat log:", e);
+  async updateStatus(_db: any, callId: string, status: CallStatus, duration?: number) {
+    if (this.isSafeMode && status !== 'ended') return;
+    try {
+      await api.calls.updateStatus(callId, status, duration).catch(err => {
+        logger.warn("[CallService] updateStatus failed:", err);
+      });
+      const socket = getSocket();
+      if (['ended', 'rejected', 'missed', 'busy'].includes(status)) {
+        socket.emit(status === 'rejected' ? 'reject_call' : 'end_call', { callId });
       }
+    } catch (e) {
+      logger.warn("[CallService] updateStatus error:", e);
     }
   }
 
-  public async logCallToChat(db: any, data: CallData, duration: number = 0, finalStatus: CallStatus = 'ended') {
-    if (!db || !data || !data.id) return;
-    
-    // Determine the conversation ID
+  public async logCallToChat(_db: any, data: CallData, duration: number = 0, finalStatus: CallStatus = 'ended') {
+    if (!data || !data.id) return;
     let convId = data.conversationId;
     if (!convId && data.callerId && data.receiverId) {
       convId = [data.callerId, data.receiverId].sort().join('_');
@@ -867,166 +732,53 @@ class CallService {
       const formatTime = (secs: number) => {
         const m = Math.floor(secs / 60);
         const s = secs % 60;
-        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
       };
 
       let textSummary = '';
       const isVideo = data.type === 'video';
       const callTypeLabel = isVideo ? 'Video call' : 'Audio call';
-      
+
       if (finalStatus === 'missed') {
-        textSummary = `Missed ${callTypeLabel.toLowerCase()}`;
+        textSummary = 'Missed ' + callTypeLabel.toLowerCase();
       } else if (finalStatus === 'rejected' || finalStatus === 'busy') {
-        textSummary = `${callTypeLabel} declined`;
+        textSummary = callTypeLabel + ' declined';
       } else {
         textSummary = callDurationSecs > 0 
-          ? `${callTypeLabel} (${formatTime(callDurationSecs)})` 
-          : `${callTypeLabel} ended`;
+          ? callTypeLabel + ' (' + formatTime(callDurationSecs) + ')' 
+          : callTypeLabel + ' ended';
       }
 
-      const messageDocId = `call_${data.id}`;
-      const msgRef = doc(db, 'conversations', convId, 'messages', messageDocId);
-
-      // Check if message already exists with this exact deterministic doc ID
-      const msgSnap = await getDoc(msgRef);
-      if (msgSnap.exists()) {
-        const existingData = msgSnap.data();
-        if ((existingData.callDetails?.duration || 0) < callDurationSecs || existingData.callDetails?.status !== finalStatus) {
-          await updateDoc(msgRef, {
-            text: textSummary,
-            'metadata.duration': callDurationSecs,
-            'metadata.status': finalStatus,
-            'callDetails.duration': callDurationSecs,
-            'callDetails.status': finalStatus,
-            duration: callDurationSecs
-          }).catch(() => {});
-        }
-        return;
-      }
-
-      const messagePayload = {
-        id: messageDocId,
-        text: textSummary,
-        senderId: data.callerId,
-        type: 'call_history',
-        status: 'sent',
-        duration: callDurationSecs,
-        callDetails: {
-          callId: data.id,
-          type: data.type,
-          status: finalStatus,
-          duration: callDurationSecs,
-          callerId: data.callerId,
-          receiverId: data.receiverId,
-          endedBy: this.role || 'unknown'
-        },
-        metadata: {
-          type: 'call_history',
-          callId: data.id,
-          callType: data.type,
-          status: finalStatus,
-          duration: callDurationSecs,
-          callerId: data.callerId,
-          receiverId: data.receiverId,
-          callerName: data.callerName || '',
-          receiverName: data.receiverName || ''
-        },
-        deliveredTo: [data.callerId, data.receiverId].filter(Boolean),
-        seenBy: [data.callerId].filter(Boolean),
-        timestamp: serverTimestamp(),
-        timestampMs: Date.now(),
-        createdAt: serverTimestamp()
-      };
-
-      await setDoc(msgRef, messagePayload, { merge: true });
-
-      // Update conversation's preview and timestamp
-      const convRef = doc(db, 'conversations', convId);
-      await updateDoc(convRef, {
-        latestMessageAt: serverTimestamp(),
-        latestMessageAtMs: Date.now(),
-        latestMessageId: messageDocId,
-        latestMessageSenderId: data.callerId,
-        latestMessagePreview: textSummary,
-        lastMessage: {
-          text: textSummary,
-          senderId: data.callerId,
-          type: 'call_history',
-          timestamp: serverTimestamp(),
-          timestampMs: Date.now(),
-          metadata: {
-            type: 'call_history',
-            callType: data.type,
-            status: finalStatus,
-            duration: callDurationSecs
-          }
-        }
-      }).catch(err => {
-        logger.warn("[CallService] Error updating conversation preview for call log:", err);
-      });
-      
-      logger.info(`[CallService] Call history logged to conversation ${convId}: ${textSummary}`);
-    } catch (err) {
-      logger.error("[CallService] Failed to log call history to chat:", err);
+      await api.chat.sendMessage(convId, {
+        content: textSummary,
+        type: 'call',
+      }).catch(() => {});
+      logger.info('[CallService] Call history logged to conversation ' + convId + ': ' + textSummary);
+    } catch (e) {
+      logger.warn("[CallService] logCallToChat note:", e);
     }
   }
 
-  private async flushCandidates(db: any) {
-    if (!this.callId || this.outgoingCandidateBuffer.length === 0) return;
+  private async flushCandidates(_db: any) {
+    if (this.outgoingCandidateBuffer.length === 0) return;
     const candidates = [...this.outgoingCandidateBuffer];
     this.outgoingCandidateBuffer = [];
-    if (this.candidateFlushTimer) {
-      clearTimeout(this.candidateFlushTimer);
-      this.candidateFlushTimer = null;
-    }
-    
-    try {
-      const candidatesWithMetadata = candidates.map(c => ({
-        candidate: c.candidate,
-        sdpMid: c.sdpMid !== undefined && c.sdpMid !== null ? String(c.sdpMid) : null,
-        sdpMLineIndex: c.sdpMLineIndex !== undefined && c.sdpMLineIndex !== null ? Number(c.sdpMLineIndex) : null,
-        from: this.role,
-        sentAt: Date.now()
-      }));
-
-      // Role-specific subdocument for contention-free candidate transport
-      if (this.role) {
-        const roleDoc = doc(db, 'calls', this.callId, 'candidates', this.role);
-        await setDoc(roleDoc, {
-          candidates: arrayUnion(...candidatesWithMetadata)
-        }, { merge: true });
-      }
-
-      // Legacy fallback document
-      const legacyDoc = doc(db, 'calls', this.callId, 'candidates', 'signaling');
-      await setDoc(legacyDoc, {
-        candidates: arrayUnion(...candidatesWithMetadata)
-      }, { merge: true }).catch(() => {});
-    } catch (e) {
-      logger.warn("Failed to flush candidates, re-queuing:", e);
-      this.outgoingCandidateBuffer.push(...candidates);
-    }
+    const socket = getSocket();
+    candidates.forEach(c => {
+      socket.emit('ice_candidate', { callId: this.callId, candidate: c });
+    });
   }
 
-  private async logHistory(db: any, data: CallData) {
+  private async logHistory(_db: any, data: CallData) {
     try {
-      const historyCol = collection(db, 'callHistory');
-      await addDoc(historyCol, {
-        id: data.id,
-        callerId: data.callerId,
+      await api.calls.logCall({
         receiverId: data.receiverId,
-        callerName: data.callerName,
-        callerPhoto: data.callerPhoto,
-        receiverName: data.receiverName,
-        receiverPhoto: data.receiverPhoto,
         type: data.type,
         status: data.status,
         duration: data.duration || 0,
-        participants: [data.callerUid, data.receiverUid],
-        timestamp: serverTimestamp()
-      });
+      }).catch(() => {});
     } catch (e) {
-      logger.error("Failed to log call history", e);
+      logger.warn("Log call history note:", e);
     }
   }
 
@@ -1164,11 +916,8 @@ class CallService {
     if (!this.callId || !db) return;
     this.heartbeatInterval = setInterval(() => {
       if (this.callId && this.peerConnection && (this.peerConnection.connectionState === 'connected' || this.peerConnection.iceConnectionState === 'connected')) {
-        const callRef = doc(db, 'calls', this.callId);
-        updateDoc(callRef, {
-          lastPing: serverTimestamp(),
-          [`heartbeat_${this.role}`]: serverTimestamp()
-        }).catch(() => {});
+        const socket = getSocket();
+        socket.emit('call_heartbeat', { callId: this.callId });
       }
     }, 20000);
   }

@@ -839,7 +839,7 @@ export const ExploreSystem: React.FC<{
         message: 'Message delivered to store merchant.',
         type: 'success'
       });
-      setShowInquiryModal(false);
+      
       setMessageDraftText('');
       setActiveMessageDraftStore(null);
       setActiveMessageDraftProduct(null);

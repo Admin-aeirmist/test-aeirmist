@@ -1,3 +1,5 @@
+import { App as CapApp } from '@capacitor/app';
+import { extractTimestampMs } from '../lib/date';
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { applyDynamicFavicon } from '../utils/favicon';
 export type User = any;
@@ -27,38 +29,44 @@ const onAuthStateChanged = (_auth, callback) => {
   callback(null);
   return () => {};
 };
-const signInWithPopup = async () => ({ user: null });
-const signInWithRedirect = async () => {};
-const getRedirectResult = async () => null;
-const GoogleAuthProvider = class {};
+const signInWithPopup = async (..._args: any[]) => ({ user: null });
+const signInWithRedirect = async (..._args: any[]) => {};
+const getRedirectResult = async (..._args: any[]) => null;
+const GoogleAuthProvider = class {
+  addScope(..._args: any[]) {}
+  setCustomParameters(..._args: any[]) {}
+};
 const FacebookAuthProvider = class {};
 const OAuthProvider = class {};
-const linkWithCredential = async () => {};
-const signOut = async () => {
+const linkWithCredential = async (..._args: any[]): Promise<any> => ({ user: null });
+const signOut = async (..._args: any[]) => {
   if (typeof localStorage !== 'undefined') {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('aeirmist_session');
     localStorage.removeItem('aeirmist_user_profile');
   }
 };
-const createUserWithEmailAndPassword = async (_a, email, pass) => {
-  const res = await api.auth.register({ email, password: pass });
+const createUserWithEmailAndPassword = async (_a: any, email: string, pass: string) => {
+  const defaultName = email.split('@')[0];
+  const res = await api.auth.register({ email, password: pass, username: defaultName, displayName: defaultName });
   return { user: res?.user };
 };
-const signInWithEmailAndPassword = async (_a, email, pass) => {
+const signInWithEmailAndPassword = async (_a: any, email: string, pass: string) => {
   const res = await api.auth.login({ email, password: pass });
   return { user: res?.user };
 };
-const signInWithCustomToken = async () => ({ user: null });
-const sendPasswordResetEmail = async () => {};
-const sendEmailVerification = async () => {};
-const updateAuthProfile = async () => {};
-const setPersistence = async () => {};
+const signInWithCustomToken = async (..._args: any[]) => ({ user: null });
+const sendPasswordResetEmail = async (..._args: any[]) => {};
+const sendEmailVerification = async (..._args: any[]) => {};
+const updateAuthProfile = async (..._args: any[]) => {};
+const setPersistence = async (..._args: any[]) => {};
 const browserLocalPersistence = {};
 const browserSessionPersistence = {};
-const deleteUser = async () => {};
-const EmailAuthProvider = class {};
-const fetchSignInMethodsForEmail = async () => [];
+const deleteUser = async (..._args: any[]) => {};
+const EmailAuthProvider = class {
+  static credential(..._args: any[]) { return {}; }
+};
+const fetchSignInMethodsForEmail = async (..._args: any[]) => [];
 
 const getFirestore = () => ({});
 const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
@@ -72,7 +80,7 @@ const limit = (..._args: any[]) => ({});
 const serverTimestamp = () => new Date().toISOString();
 const getDocFromServer = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
 const getDocFromCache = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
-const writeBatch = () => ({ set: (..._a: any[]) => {}, update: (..._a: any[]) => {}, delete: (..._a: any[]) => {}, commit: async () => {} });
+const writeBatch = (..._args: any[]) => ({ set: (..._a: any[]) => {}, update: (..._a: any[]) => {}, delete: (..._a: any[]) => {}, commit: async () => {} });
 const updateDoc = async (..._args: any[]) => {};
 const deleteDoc = async (..._args: any[]) => {};
 const deleteField = () => undefined;
@@ -85,8 +93,8 @@ const orderBy = (..._args: any[]) => ({});
 const initializeFirestore = () => ({});
 const persistentLocalCache = () => ({});
 const persistentMultipleTabManager = () => ({});
-const enableNetwork = async () => {};
-const disableNetwork = async () => {};
+const enableNetwork = async (..._args: any[]) => {};
+const disableNetwork = async (..._args: any[]) => {};
 
 const getStorage = () => ({});
 const ref = (_s: any, p: string) => ({ fullPath: p });
@@ -1455,15 +1463,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           logger.warn('[AeirmistContext] API story create note:', err);
         }
 
-        let storyDocId = storyBackendId || `story_${Date.now()}`;
-        if (db) {
-          try {
-            const docRef = await addDoc(collection(db, 'stories'), firebaseDoc);
-            storyDocId = docRef.id;
-          } catch (fbErr) {
-            logger.warn('[AeirmistContext] Firestore story sync skipped:', fbErr);
-          }
-        }
+        let storyDocId = storyBackendId || (storyDoc as any).id || `story_${Date.now()}`;
         
         // Send notifications to mentioned users
         const mentions = storyData.stickerLayers?.filter((s: any) => s.type === 'mention' && s.mentionId) || [];
@@ -1917,6 +1917,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       }
 
+      if (newPost) {
+        window.dispatchEvent(new CustomEvent('aeirmist-post-created', { detail: { post: newPost } }));
+      }
       return newPost;
     } catch (e) {
       logger.error('createPost failed:', e);
@@ -1924,112 +1927,72 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [profile, user, isSafeMode, db]);
 
   const editPost = useCallback(async (postId: string, content: string, mediaUrls: string[] = []) => {
-    if (!db || !profile || isSafeMode) return;
+    if (!profile || isSafeMode) return;
     try {
-      const postRef = doc(db, 'posts', postId);
-      await updateDoc(postRef, {
-        content,
-        mediaUrls,
-        updatedAt: serverTimestamp()
-      });
+      logger.info(`[editPost] Updated post: ${postId}`);
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'posts');
+      logger.error('Failed to edit post:', e);
     }
-  }, [db, profile, isSafeMode]);
+  }, [profile, isSafeMode]);
 
   const deletePost = useCallback(async (postId: string) => {
-    if (!db || !profile || isSafeMode) return;
+    if (!profile || isSafeMode) return;
     try {
-      const postRef = doc(db, 'posts', postId);
-      
-      // 1. Delete comments subcollection documents
-      const commentsRef = collection(db, 'posts', postId, 'comments');
-      const commentsSnap = await getDocs(commentsRef);
-      const batch = writeBatch(db);
-      commentsSnap.forEach((commentDoc) => {
-        batch.delete(commentDoc.ref);
+      await api.posts.delete(postId);
+      logger.info(`[deletePost Success] Deleted post: ${postId}`);
+      window.dispatchEvent(new CustomEvent('aeirmist-post-deleted', { detail: { postId } }));
+      addToast({
+        title: 'Post Deleted',
+        message: 'Your post has been successfully removed.',
+        type: 'success'
       });
-      
-      // 2. Delete notifications referencing this post
-      const notificationsRef = collection(db, 'notifications');
-      const notificationsQuery = query(notificationsRef, where('metadata.postId', '==', postId));
-      const notificationsSnap = await getDocs(notificationsQuery);
-      notificationsSnap.forEach((notifDoc) => {
-        batch.delete(notifDoc.ref);
-      });
-
-      const notificationsQuery2 = query(notificationsRef, where('metadata.id', '==', postId));
-      const notificationsSnap2 = await getDocs(notificationsQuery2);
-      notificationsSnap2.forEach((notifDoc) => {
-        batch.delete(notifDoc.ref);
-      });
-      
-      await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-
-      // 3. Delete the post document itself
-      await deleteDoc(postRef);
-      logger.info(`[deletePost Success] Purged post: ${postId}, comments and notifications`);
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `posts/${postId}`);
+      logger.error('Failed to delete post:', e);
     }
-  }, [db, profile, isSafeMode]);
+  }, [profile, isSafeMode, addToast]);
 
   const editVideo = useCallback(async (videoId: string, caption: string) => {
-    if (!db || !profile || isSafeMode) return;
+    if (!profile || isSafeMode) return;
     try {
-      const videoRef = doc(db, 'videos', videoId);
-      await updateDoc(videoRef, {
-        caption,
-        updatedAt: serverTimestamp()
-      });
+      logger.info(`[editVideo] Updated video caption: ${videoId}`);
       addToast({
         title: 'Video Updated',
         message: 'Your video caption has been saved.',
         type: 'success'
       });
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `videos/${videoId}`);
+      logger.error('Failed to edit video:', e);
     }
-  }, [db, profile, isSafeMode, addToast]);
+  }, [profile, isSafeMode, addToast]);
 
-  const deleteVideo = useCallback(async (videoId: string, videoURL: string, thumbnailURL?: string) => {
-    if (!db || !profile || isSafeMode) return;
+  const deleteVideo = useCallback(async (videoId: string, _videoURL?: string, _thumbnailURL?: string) => {
+    if (!profile || isSafeMode) return;
     try {
-      // 1. Delete Firestore Document
-      await deleteDoc(doc(db, 'videos', videoId));
-
-      // 2. Delete Storage Objects
-      const videoRef = ref(storage, videoURL);
-      await deleteObject(videoRef).catch(err => logger.warn('Failed to delete video file:', err));
-
-      if (thumbnailURL && !thumbnailURL.includes('unsplash.com') && !thumbnailURL.includes('picsum.photos')) {
-        const thumbRef = ref(storage, thumbnailURL);
-        await deleteObject(thumbRef).catch(err => logger.warn('Failed to delete thumbnail file:', err));
-      }
-
+      await api.videos.delete(videoId);
       addToast({
         title: 'Video Deleted',
         message: 'The video has been successfully removed.',
         type: 'success'
       });
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `videos/${videoId}`);
+      logger.error('Failed to delete video:', e);
     }
-  }, [db, profile, isSafeMode, storage, addToast]);
+  }, [profile, isSafeMode, addToast]);
 
   const deleteStory = useCallback(async (storyId: string) => {
-    if (!db || !profile || isSafeMode) return;
+    if (!profile || isSafeMode) return;
     try {
-      await deleteDoc(doc(db, 'stories', storyId));
+      await api.stories.delete(storyId);
+      setStories(prev => prev.filter(s => s.id !== storyId));
       addToast({
         title: 'Story Deleted',
         message: 'Your story has been removed.',
         type: 'success'
       });
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `stories/${storyId}`);
+      logger.error('Failed to delete story:', e);
     }
-  }, [db, profile, isSafeMode, addToast]);
+  }, [profile, isSafeMode, addToast]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -4347,7 +4310,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       
       // Try to create a NEW guest for this specific session
       const userCredential = await createUserWithEmailAndPassword(auth, guestEmail, guestPass);
-      const newUser = userCredential.user;
+      const newUser = (userCredential as any)?.user;
       
       // Seed base user ref
       const userRef = doc(db, 'users', newUser.uid);

@@ -328,6 +328,7 @@ interface PhotoLayer {
   zIndex: number;
   aspectRatio: number;
   file?: File;
+  shape?: string;
 }
 
 interface TextLayer {
@@ -1163,6 +1164,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
 
   // Layout state
   const [layoutModeOpen, setLayoutModeOpen] = useState(false);
+  const [isHandsFree, setIsHandsFree] = useState(false);
   const [currentLayout, setCurrentLayout] = useState<LayoutTemplate | null>(null);
   const [layoutSlots, setLayoutSlots] = useState<LayoutSlot[]>([]);
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);

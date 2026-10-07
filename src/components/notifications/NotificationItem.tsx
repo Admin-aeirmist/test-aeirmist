@@ -479,7 +479,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                       Official
                     </span>
                   ) : (notification.user?.isVerified || notification.user?.verified || notification.fromUser?.isVerified) ? (
-                    <ShieldCheck size={13} className="text-aeirmist-cyan shrink-0" title="Aeirmist Verified" />
+                    <span title="Aeirmist Verified" className="inline-flex"><ShieldCheck size={13} className="text-aeirmist-cyan shrink-0" /></span>
                   ) : null}
                 </strong>
                 <span className="text-[#D8DADF]">{actionText}</span>

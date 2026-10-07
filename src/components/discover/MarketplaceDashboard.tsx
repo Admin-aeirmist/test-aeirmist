@@ -424,7 +424,7 @@ export const MarketplaceDashboard: React.FC<DashboardProps> = ({
           price: String(prodPrice),
           category: prodCategory || 'general',
           condition: 'new',
-          mediaKeys: prodImages,
+          mediaKeys: prodMediaItems?.map((m: any) => m.url || m) || [],
         }).catch(err => {
           logger.warn('[MarketplaceDashboard] API createItem notice:', err);
         });

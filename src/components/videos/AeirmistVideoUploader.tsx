@@ -415,7 +415,7 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
           description,
           videoUrl: finalVideoUrl,
           thumbnailUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
-          duration: Math.round(duration || 0),
+          duration: 0,
           category,
           tags: hashtags ? hashtags.split(',').map(t => t.trim()).filter(Boolean) : [],
         });

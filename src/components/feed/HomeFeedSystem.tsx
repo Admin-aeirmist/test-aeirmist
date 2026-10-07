@@ -1,3 +1,4 @@
+import { useAeirmist } from '../../context/AeirmistContext';
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppearance } from '../../context/AppearanceContext';

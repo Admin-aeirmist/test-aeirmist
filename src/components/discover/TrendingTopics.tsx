@@ -1,3 +1,4 @@
+import { useAeirmist } from '../../context/AeirmistContext';
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { TrendingUp, Hash, ArrowUpRight, Zap, Target, Loader2 } from 'lucide-react';

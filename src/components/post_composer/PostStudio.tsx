@@ -384,7 +384,7 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
           content: payload.content || caption || '',
           mediaKeys: uploadedUrls.map(u => u.replace(/^.*\/media\//, '')),
           mediaType: selectedType || 'image',
-          tags: tags || [],
+          tags: taggedPeople.map((p: any) => p.username || p.id).filter(Boolean) || [],
         });
         backendPost = createRes?.post;
         logger.info('[PostStudio] Post saved successfully to PostgreSQL backend');

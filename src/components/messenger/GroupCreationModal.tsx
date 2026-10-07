@@ -55,7 +55,7 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
         const fetchRemoteUsers = async () => {
             setIsFetchingUsers(true);
             try {
-                const res = await api.users.searchUsers('');
+                const res = await api.users.search('');
                 if (isMounted && res?.users) {
                     setFirestoreProfiles(res.users);
                 }

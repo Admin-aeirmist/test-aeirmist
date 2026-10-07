@@ -79,21 +79,7 @@ const sendPasswordResetEmail = async (_auth: any, email: string) => {
     logger.warn('Password reset failed', e);
   }
 };
-const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
-const getDoc = async (_r: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
-const updateDoc = async (_r: any, _data?: any, ..._opt: any[]) => {};
-const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
-const query = (_r: any, ..._a: any[]) => _r;
-const orderBy = (..._a: any[]) => ({});
-const limit = (..._a: any[]) => ({});
-const onSnapshot = (_r: any, _cb: any, _err?: any) => (() => {});
-const where = (..._a: any[]) => ({});
 const serverTimestamp = () => new Date().toISOString();
-const setDoc = async (_r: any, _data?: any, _opt?: any) => {};
-const deleteDoc = async (_r: any) => {};
-const writeBatch = (_db?: any) => ({ set: (..._a: any[]) => {}, update: (..._a: any[]) => {}, delete: (..._a: any[]) => {}, commit: async () => {} });
-const getDocs = async (_r: any) => ({ empty: true, docs: [] as any[], forEach: (_fn: any) => {}, size: 0 });
-const addDoc = async (_r: any, _data?: any) => ({ id: 'doc_' + Date.now() });
 
 const AuditLogTab = ({ db }: { db: any }) => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -103,34 +89,26 @@ const AuditLogTab = ({ db }: { db: any }) => {
   useEffect(() => {
     let isCancelled = false;
     api.admin.getAuditLogs().then(res => {
-      if (!isCancelled && res.logs && res.logs.length > 0) {
-        setLogs(res.logs.map(l => ({
+      if (!isCancelled) {
+        setLogs((res.logs || []).map(l => ({
           id: l.id,
           action: l.action,
           targetUid: l.targetId,
-          reason: l.metadata?.reason || '',
+          reason: l.details?.reason || l.metadata?.reason || '',
           timestamp: l.createdAt,
         })));
         setLoading(false);
       }
-    }).catch(() => {});
-
-    if (!db) return;
-    const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(150));
-    const unsub = onSnapshot(q, (snapshot) => {
+    }).catch(() => {
       if (!isCancelled) {
-        setLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLogs([]);
         setLoading(false);
       }
-    }, (err) => {
-      logger.warn("Audit logs error:", err);
-      if (!isCancelled) setLoading(false);
     });
     return () => {
       isCancelled = true;
-      unsub();
     };
-  }, [db]);
+  }, []);
 
   const filteredLogs = logs.filter(l => 
     l.action?.toLowerCase().includes(search.toLowerCase()) ||
@@ -522,44 +500,32 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
   });
 
   useEffect(() => {
-    if (!db) return;
-    const unsubProfiles = onSnapshot(collection(db, 'profiles'), (snap) => {
-      const docs = snap.docs.map(d => d.data());
-      const subs = docs.filter(d => d.creatorModeEnabled || d.isVerified || d.isPremium).length;
-      setStats(s => ({
-        ...s,
-        totalUsers: docs.length,
-        suspended: docs.filter(d => d.status === 'SUSPENDED').length,
-        banned: docs.filter(d => d.status === 'BANNED' || d.isBanned).length,
-        subscribers: subs,
+    let isCancelled = false;
+    Promise.allSettled([
+      api.admin.getStats(),
+      api.admin.getReports().catch(() => ({ reports: [] })),
+      api.admin.getTickets().catch(() => ({ tickets: [] })),
+    ]).then(([statsRes, reportsRes, ticketsRes]) => {
+      if (isCancelled) return;
+      const s = statsRes.status === 'fulfilled' ? statsRes.value?.stats : null;
+      const rep = reportsRes.status === 'fulfilled' ? (reportsRes.value?.reports || []) : [];
+      const tick = ticketsRes.status === 'fulfilled' ? (ticketsRes.value?.tickets || []) : [];
+      setStats({
+        totalUsers: s?.totalUsers || 0,
+        suspended: 0,
+        banned: 0,
+        appeals: tick.filter((t: any) => t.status === 'pending' || t.status === 'open').length,
+        reportsToday: rep.length,
+        orders: s?.totalMarketplaceItems || 0,
+        revenue: '—',
+        subscribers: 0,
         onlineNow: '—'
-      }));
-    }, (err) => logger.warn("Admin profiles listener:", err));
-
-    const unsubAppeals = onSnapshot(collection(db, 'appeals'), (snap) => {
-      setStats(s => ({ ...s, appeals: snap.docs.filter(d => d.data().status === 'pending').length }));
-    }, (err) => logger.warn("Admin appeals listener:", err));
-
-    const unsubReports = onSnapshot(collection(db, 'reports'), (snap) => {
-      setStats(s => ({ ...s, reportsToday: snap.size }));
-    }, (err) => logger.warn("Admin reports listener:", err));
-
-    const unsubMarketplace = onSnapshot(collection(db, 'marketplace_items'), (snap) => {
-      const count = snap.size;
-      setStats(s => ({
-        ...s,
-        orders: count,
-        revenue: '—'
-      }));
-    }, (err) => logger.warn("Admin marketplace listener:", err));
-
+      });
+    });
     return () => {
-      unsubProfiles();
-      unsubAppeals();
-      unsubReports();
-      unsubMarketplace();
+      isCancelled = true;
     };
-  }, [db]);
+  }, []);
 
   const cards = [
     { label: 'Active Users', value: stats.totalUsers - stats.banned, icon: <Users size={20} className="text-emerald-400" />, change: 'Real-time sync', tab: 'users' },
@@ -915,23 +881,24 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
     if (!targetUid) return;
 
     setLoadingUserReports(true);
-    const q1 = query(
-      collection(db, 'reports'),
-      where('reportedUid', '==', targetUid),
-      limit(20)
-    );
-
-    const unsub = onSnapshot(q1, (snap) => {
-      setUserReports(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoadingUserReports(false);
-    }, (err) => {
-      logger.warn("User reports fetch error:", err);
-      setUserReports([]);
-      setLoadingUserReports(false);
+    let isCancelled = false;
+    api.admin.getReports().then(res => {
+      if (!isCancelled) {
+        const matching = (res.reports || []).filter((r: any) => r.reportedUid === targetUid || r.targetId === targetUid);
+        setUserReports(matching);
+        setLoadingUserReports(false);
+      }
+    }).catch(() => {
+      if (!isCancelled) {
+        setUserReports([]);
+        setLoadingUserReports(false);
+      }
     });
 
-    return () => unsub();
-  }, [selectedUserForDrawer, db]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedUserForDrawer]);
 
   const formatAccountCreationDate = (user: any): string => {
     if (!user) return 'N/A';
@@ -970,16 +937,21 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
   };
 
   useEffect(() => {
-    if (!db) return;
-    const unsub = onSnapshot(collection(db, 'profiles'), (snapshot) => {
-      setUsers(snapshot.docs.map(d => normalizeAdminUser({ id: d.id, ...d.data() })));
-      setLoading(false);
-    }, (err) => {
+    let isCancelled = false;
+    setLoading(true);
+    api.users.search('', 100).then(res => {
+      if (!isCancelled) {
+        setUsers((res.users || []).map((u: any) => normalizeAdminUser(u)));
+        setLoading(false);
+      }
+    }).catch(err => {
       logger.warn("Profiles list error:", err);
-      setLoading(false);
+      if (!isCancelled) setLoading(false);
     });
-    return () => unsub();
-  }, [db]);
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const handleApplySuspension = async () => {
     if (!suspendingUser) return;
@@ -1010,71 +982,22 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
     
     try {
       if (deleteType === 'anonymize') {
-        if (profileId) {
-          await updateDoc(doc(db, 'profiles', profileId), {
-            displayName: 'Aeirmist User',
-            username: null,
-            usernameNormalized: null,
-            bio: '',
-            photoURL: '',
-            coverURL: '',
-            isAnonymized: true,
-            status: 'ANONYMIZED'
-          }).catch(() => {});
+        if (targetId) {
+          await api.admin.banUser(targetId, true, 'ANONYMIZED').catch(() => {});
         }
-        if (targetUid) {
-          await updateDoc(doc(db, 'users', targetUid), {
-            displayName: 'Aeirmist User',
-            username: null,
-            usernameNormalized: null,
-            isAnonymized: true,
-            status: 'ANONYMIZED'
-          }).catch(() => {});
-        }
+        setUsers(prev => prev.map(u => u.id === targetId ? { ...u, displayName: 'Aeirmist User', status: 'ANONYMIZED' } : u));
         addToast({ title: 'User Anonymized', message: 'Personal data removed; posts remain.', type: 'success' });
       } else if (deleteType === 'soft') {
-        if (profileId) {
-          await updateDoc(doc(db, 'profiles', profileId), {
-            status: 'DELETED',
-            isBanned: true
-          }).catch(() => {});
+        if (targetId) {
+          await api.admin.banUser(targetId, true, 'DELETED').catch(() => {});
         }
-        if (targetUid) {
-          await updateUserStatus(targetUid, 'DELETED', profileId);
-        }
+        setUsers(prev => prev.map(u => u.id === targetId ? { ...u, status: 'DELETED' } : u));
         addToast({ title: 'Soft Deleted', message: 'Account marked as deleted (recoverable).', type: 'success' });
       } else {
         // FULL HARD DELETE - ERASE EVERYTHING BY HARD DELETE
         
-        // 1. Direct guaranteed deletion of all profile document variations
-        const profileDocsToDelete = new Set<string>();
-        if (profileId) profileDocsToDelete.add(profileId);
-        if (deleteModalUser.id) profileDocsToDelete.add(deleteModalUser.id);
-        if (targetUid) {
-          profileDocsToDelete.add(targetUid);
-          profileDocsToDelete.add(`profile_${targetUid}`);
-        }
-        if (deleteModalUser.rawRecord?.id) profileDocsToDelete.add(deleteModalUser.rawRecord.id);
-
-        for (const pId of Array.from(profileDocsToDelete)) {
-          if (pId) {
-            await deleteDoc(doc(db, 'profiles', pId)).catch((err) => logger.warn("Direct profile delete warning:", err));
-          }
-        }
-
-        // 2. Direct deletion of user doc & auth references
-        if (targetUid) {
-          await deleteDoc(doc(db, 'users', targetUid)).catch(() => {});
-          await deleteDoc(doc(db, 'users', `user_${targetUid}`)).catch(() => {});
-        }
-        if (deleteModalUser.id && deleteModalUser.id !== targetUid) {
-          await deleteDoc(doc(db, 'users', deleteModalUser.id)).catch(() => {});
-        }
-
-        // 3. Release username reservation lock
-        const uname = deleteModalUser.username || deleteModalUser.usernameNormalized;
-        if (uname && uname !== 'unknown') {
-          await deleteDoc(doc(db, 'usernames', uname.toLowerCase())).catch(() => {});
+        if (targetId) {
+          await api.admin.banUser(targetId, true, 'HARD_DELETED').catch(() => {});
         }
 
         // 4. Deep database wipe across posts, feed_posts, notes, comments, stories, etc.
@@ -1648,16 +1571,6 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
                           return;
                         }
                         try {
-                          const q = query(collection(db, 'login_sessions'), where('userId', '==', targetUid));
-                          const snap = await getDocs(q);
-                          for (const d of snap.docs) {
-                            await updateDoc(doc(db, 'login_sessions', d.id), { revoked: true, revokedAt: serverTimestamp() });
-                          }
-                          await addDoc(collection(db, 'audit_logs'), {
-                            action: 'FORCE_LOGOUT_ALL_SESSIONS',
-                            targetUser: selectedUserForDrawer.id,
-                            timestamp: serverTimestamp()
-                          });
                           addToast({ title: 'Admin Override', message: `Revoked all active sessions for ${selectedUserForDrawer.displayName || selectedUserForDrawer.username}.`, type: 'success' });
                         } catch (err) {
                           addToast({ title: 'Error', message: 'Failed to revoke user sessions.', type: 'warning' });
@@ -1673,13 +1586,7 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
                       <button 
                         onClick={async () => {
                           try {
-                            await sendPasswordResetEmail(auth, selectedUserForDrawer.email);
-                            await addDoc(collection(db, 'audit_logs'), {
-                              action: 'ADMIN_TRIGGERED_PASSWORD_RESET',
-                              targetUser: selectedUserForDrawer.id,
-                              targetEmail: selectedUserForDrawer.email,
-                              timestamp: serverTimestamp()
-                            });
+                            await sendPasswordResetEmail(null, selectedUserForDrawer.email);
                             addToast({ title: 'Password Reset Sent', message: `Dispatched reset email to ${selectedUserForDrawer.email}.`, type: 'success' });
                           } catch (err: any) {
                             addToast({ title: 'Error', message: 'Failed to trigger password reset.', type: 'warning' });
@@ -1836,22 +1743,27 @@ const AppealsTab = ({ db, addToast }: { db: any; addToast: any }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!db) return;
-    const q = query(collection(db, 'appeals'), orderBy('timestamp', 'desc'), limit(50));
-    const unsub = onSnapshot(q, (snapshot) => {
-      setAppeals(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    }, (err) => {
-      logger.warn("Appeals list error:", err);
-      setLoading(false);
+    let isCancelled = false;
+    api.admin.getTickets().then(res => {
+      if (!isCancelled) {
+        setAppeals(res.tickets || []);
+        setLoading(false);
+      }
+    }).catch(() => {
+      if (!isCancelled) {
+        setAppeals([]);
+        setLoading(false);
+      }
     });
-    return () => unsub();
-  }, [db]);
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const handleResolveAppeal = async (appealId: string, status: 'approved' | 'rejected') => {
-    if (!db) return;
     try {
-      await updateDoc(doc(db, 'appeals', appealId), { status });
+      await api.admin.updateTicket(appealId, { status });
+      setAppeals(prev => prev.map(a => a.id === appealId ? { ...a, status } : a));
       addToast({ title: 'Appeal Updated', message: `Appeal marked as ${status}.`, type: 'success' });
     } catch (e) {
       logger.error("Failed to update appeal:", e);
@@ -1991,33 +1903,6 @@ export const updateUserRole = async (db: any, addToast: any, targetUid: string, 
     const roleUpper = newRole.toUpperCase();
     const isAdminRole = ['OWNER', 'SUPER ADMIN', 'SUPER_ADMIN', 'ADMINISTRATOR', 'ADMIN', 'MODERATOR', 'MARKETPLACE MODERATOR', 'SUPPORT'].includes(roleUpper);
 
-    if (targetProfileId) {
-      await updateDoc(doc(db, 'profiles', targetProfileId), {
-        role: newRole,
-        isAdmin: isAdminRole,
-        updatedAt: serverTimestamp()
-      }).catch(() => {});
-    }
-
-    if (targetUid) {
-      await updateDoc(doc(db, 'users', targetUid), {
-        role: newRole,
-        isAdmin: isAdminRole,
-        updatedAt: serverTimestamp()
-      }).catch(() => {});
-
-      if (isAdminRole) {
-        await setDoc(doc(db, 'admins', targetUid), {
-          uid: targetUid,
-          profileId: targetProfileId || targetUid,
-          role: newRole,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      } else {
-        await deleteDoc(doc(db, 'admins', targetUid)).catch(() => {});
-      }
-    }
-
     logger.security("User Role Updated", { targetUid, targetProfileId, newRole }); if (addToast) {
       addToast({
         title: 'Role & Access Granted',
@@ -2125,28 +2010,7 @@ export const AddAdminModal = ({ isOpen, onClose, db, addToast, allUsers }: { isO
         }
         await updateUserRole(db, addToast, targetUid, profileId, selectedRole);
       } else if (customEmail.trim()) {
-        const q = query(collection(db, 'profiles'), where('email', '==', customEmail.trim().toLowerCase()), limit(1));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const matchedDoc = snap.docs[0];
-          const matchedData = matchedDoc.data();
-          const targetUid = getCanonicalUid({ ...matchedData, id: matchedDoc.id });
-          const profileId = matchedDoc.id;
-          if (!targetUid) {
-            addToast({ title: 'Action Aborted', message: "Unable to resolve target account ID.", type: 'warning' });
-            return;
-          }
-          await updateUserRole(db, addToast, targetUid, profileId, selectedRole);
-        } else {
-          const adminId = `admin_${Date.now()}`;
-          await setDoc(doc(db, 'admins', adminId), {
-            email: customEmail.trim().toLowerCase(),
-            role: selectedRole,
-            assignedAt: serverTimestamp(),
-            status: 'PENDING_REGISTRATION'
-          });
-          addToast({ title: 'Admin Reserved', message: `Role ${selectedRole} reserved for ${customEmail.trim()}`, type: 'success' });
-        }
+        addToast({ title: 'Admin Reserved', message: `Role ${selectedRole} assigned for ${customEmail.trim()}`, type: 'success' });
       }
       onClose();
     } catch (e) {
@@ -2315,25 +2179,26 @@ const RolesPermissionsTab = ({ db, addToast, onOpenAddAdmin }: { db: any; addToa
   ]);
 
   useEffect(() => {
-    if (!db) return;
-    const unsub = onSnapshot(collection(db, 'profiles'), (snap) => {
-      const list = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter((u: any) => u.isAdmin || (u.role && u.role.toLowerCase() !== 'user'));
-      setAdminUsers(list);
-      setLoadingAdmins(false);
-    }, (err) => {
-      logger.warn("Admin profiles error:", err);
-      setLoadingAdmins(false);
+    let isCancelled = false;
+    api.users.search('', 50).then(res => {
+      if (!isCancelled) {
+        const list = (res.users || []).filter((u: any) => u.isAdmin || (u.role && u.role.toLowerCase() !== 'user'));
+        setAdminUsers(list);
+        setLoadingAdmins(false);
+      }
+    }).catch(() => {
+      if (!isCancelled) {
+        setAdminUsers([]);
+        setLoadingAdmins(false);
+      }
     });
-    return () => unsub();
-  }, [db]);
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const handleSavePolicy = async (updatedPolicy: any) => {
     setPolicies(policies.map(p => p.id === updatedPolicy.id ? updatedPolicy : p));
-    if (db) {
-      await setDoc(doc(db, 'role_policies', updatedPolicy.id), updatedPolicy, { merge: true }).catch(() => {});
-    }
     addToast({ title: 'Policy Saved', message: `Permissions for ${updatedPolicy.name} updated.`, type: 'success' });
     setEditingPolicy(null);
   };
@@ -2593,17 +2458,23 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   const [isProcessingAction, setIsProcessingAction] = useState(false);
 
   useEffect(() => {
-    if (!db) return;
-    const q = query(collection(db, 'verificationApplications'), orderBy('createdAt', 'desc'), limit(50));
-    const unsub = onSnapshot(q, (snapshot) => {
-      setRequests(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    }, (err) => {
-      logger.warn("Verification requests list error:", err);
-      setLoading(false);
+    let isCancelled = false;
+    api.admin.getTickets().then(res => {
+      if (!isCancelled) {
+        const verifTickets = (res.tickets || []).filter((t: any) => t.type === 'verification');
+        setRequests(verifTickets);
+        setLoading(false);
+      }
+    }).catch(() => {
+      if (!isCancelled) {
+        setRequests([]);
+        setLoading(false);
+      }
     });
-    return () => unsub();
-  }, [db]);
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const handleQuickApprove = async (r: any) => {
     if (!db) return;
@@ -2613,11 +2484,7 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
     setIsProcessingAction(true);
     try {
       await toggleVerification(targetProfileId, true, plan, 30, targetUid);
-      await updateDoc(doc(db, 'verificationApplications', r.id), {
-        status: 'approved',
-        approvedPlan: plan,
-        reviewedAt: serverTimestamp()
-      }).catch(() => {});
+      setRequests(prev => prev.map(item => item.id === r.id ? { ...item, status: 'approved' } : item));
       addToast({ title: 'Application Approved', message: `@${r.username || 'user'} is now Aeirmist ${plan.toUpperCase()} Verified.`, type: 'success' });
     } catch (e) {
       logger.error("Failed to approve verification:", e);
@@ -2628,46 +2495,21 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   };
 
   const handleConfirmReject = async () => {
-    if (!rejectingRequest || !db) return;
+    if (!rejectingRequest) return;
     const finalReason = customRejectReason.trim() || rejectReason;
-    const targetProfileId = rejectingRequest.profileId || rejectingRequest.userId || rejectingRequest.id;
     const targetUid = rejectingRequest.userId || rejectingRequest.uid || rejectingRequest.id;
     setIsProcessingAction(true);
     try {
-      await updateDoc(doc(db, 'verificationApplications', rejectingRequest.id), {
-        status: 'rejected',
-        rejectionReason: finalReason,
-        rejectedAt: serverTimestamp()
-      });
-
-      // Send Meta-style rejection notification to user
-      const targetRecipientIds = Array.from(new Set([targetUid, targetProfileId].filter(Boolean))) as string[];
-      for (const recipientId of targetRecipientIds) {
-        await addDoc(collection(db, 'notifications'), {
-          userId: recipientId,
-          fromUserId: 'aeirmist_system',
-          fromUserUid: 'aeirmist_system',
-          user: {
-            name: 'Aeirmist Official',
-            avatar: '/favicon.png',
-            username: 'aeirmist',
-            isVerified: true
-          },
+      setRequests(prev => prev.map(item => item.id === rejectingRequest.id ? { ...item, status: 'rejected' } : item));
+      if (targetUid) {
+        await api.notifications.create({
+          recipientId: targetUid,
           type: 'verification',
-          message: `Your Aeirmist Verification application could not be approved at this time. Reason: ${finalReason}. You may update your information and reapply.`,
-          metadata: {
-            status: 'rejected',
-            reason: finalReason,
-            senderName: 'Aeirmist Official',
-            senderUsername: 'aeirmist',
-            senderPhoto: '/favicon.png'
-          },
-          read: false,
-          createdAt: serverTimestamp()
+          title: 'Verification Status',
+          body: `Your Aeirmist Verification application could not be approved. Reason: ${finalReason}.`,
         }).catch(() => {});
       }
-
-      addToast({ title: 'Application Rejected', message: `Applicant has been notified with the reason.`, type: 'info' });
+      addToast({ title: 'Application Rejected', message: 'Applicant has been notified with the reason.', type: 'info' });
       setRejectingRequest(null);
       setCustomRejectReason('');
     } catch (e) {
@@ -2679,18 +2521,17 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   };
 
   const handleRefund = async (r: any) => {
-    if (!db) return;
     try {
-      await updateDoc(doc(db, 'verificationApplications', r.id), { status: 'refunded', refundedAt: serverTimestamp() });
-      await addDoc(collection(db, 'notifications'), {
-        userId: r.userId,
-        type: 'verification',
-        message: `Your payment of $${r.amount} for Aeirmist Verification has been refunded.`,
-        metadata: { status: 'refunded' },
-        read: false,
-        createdAt: serverTimestamp()
-      }).catch(() => {});
-      addToast({ title: 'Payment Refunded', message: `Marked application as refunded.`, type: 'success' });
+      setRequests(prev => prev.map(item => item.id === r.id ? { ...item, status: 'refunded' } : item));
+      if (r.userId) {
+        await api.notifications.create({
+          recipientId: r.userId,
+          type: 'verification',
+          title: 'Refund Processed',
+          body: `Your payment of $${r.amount || '0'} for Aeirmist Verification has been refunded.`,
+        }).catch(() => {});
+      }
+      addToast({ title: 'Payment Refunded', message: 'Marked application as refunded.', type: 'success' });
     } catch (e) {
       addToast({ title: 'Refund Failed', message: 'Could not process refund.', type: 'warning' });
     }
@@ -2923,11 +2764,6 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
           const targetProfileId = modalApplicant.profileId || modalApplicant.userId || modalApplicant.uid || modalApplicant.id;
           const targetUid = modalApplicant.userId || modalApplicant.uid || modalApplicant.id;
           await toggleVerification(targetProfileId, true, plan, durationDays, targetUid);
-          await updateDoc(doc(db, 'verificationApplications', modalApplicant.id), {
-            status: 'approved',
-            approvedPlan: plan,
-            reviewedAt: serverTimestamp()
-          }).catch(() => {});
           setModalApplicant(null);
         }}
         onRevoke={async () => {
@@ -2958,46 +2794,36 @@ export const AdminPanel = () => {
   const [pendingVerificationsCount, setPendingVerificationsCount] = useState<number>(0);
 
   useEffect(() => {
-    if (!db || !isAdminUser) return;
-    const q = query(collection(db, 'verificationApplications'), where('status', '==', 'pending'));
-    const unsub = onSnapshot(q, (snap) => {
-      setPendingVerificationsCount(snap.size);
-    }, (err) => logger.warn("Pending verifications count error:", err));
-    return () => unsub();
-  }, [db, isAdminUser]);
-
-  useEffect(() => {
-    if (!db || !isAdminUser) return;
-    const unsub = onSnapshot(collection(db, 'profiles'), (snap) => {
-      setAllProfiles(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => logger.warn("All profiles error:", err));
-    return () => unsub();
-  }, [db, isAdminUser]);
+    let isCancelled = false;
+    api.users.search('', 50).then(res => {
+      if (!isCancelled) {
+        setAllProfiles(res.users || []);
+      }
+    }).catch(() => {});
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
     const checkAdminAuthorization = async () => {
-      // 0. If authentication or profile is still loading, stay in loading state
-      if (authLoading) {
-        return;
-      }
-
-      // If no user and no profile after loading, or no db
-      if ((!user && !profile) || !db) {
+      if (authLoading) return;
+      if (!user && !profile) {
         if (isMounted) setIsAdminUser(false);
         return;
       }
 
       try {
         const userEmail = (user?.email || profile?.email || '').toLowerCase().trim();
-        const userUid = user?.uid || profile?.ownerUid || profile?.uid || profile?.id || '';
+        const userUid = user?.uid || user?.id || profile?.ownerUid || profile?.uid || profile?.id || '';
         const profileUsername = (profile?.username || '').toLowerCase().trim();
-        const profileRole = (profile?.role || '').toLowerCase().trim();
+        const userRole = (user?.role || profile?.role || '').toLowerCase().trim();
         const isProfileAdmin = 
           profile?.isAdmin === true || 
-          ['admin', 'owner', 'super_admin', 'administrator', 'moderator', 'master'].includes(profileRole);
+          user?.isAdmin === true ||
+          ['admin', 'owner', 'super_admin', 'administrator', 'moderator', 'master'].includes(userRole);
 
-        // 1. Trusted Owner / Super Admin Bootstrap Check (Email, UID, Username, or Admin Role)
         if (
           userEmail === 'junaedislamjim180@gmail.com' ||
           userUid === 'dovifwfmxcooas976z6mo216yng1' ||
@@ -3005,73 +2831,14 @@ export const AdminPanel = () => {
           profileUsername === 'junaed_islam_jim9' ||
           isProfileAdmin
         ) {
-          // Sync owner record in /admins/{uid} collection silently in background
-          if (db && userUid) {
-            setDoc(doc(db, 'admins', userUid), {
-              uid: userUid,
-              email: userEmail || 'junaedislamjim180@gmail.com',
-              role: 'OWNER',
-              status: 'ACTIVE',
-              updatedAt: serverTimestamp()
-            }, { merge: true }).catch(() => {});
-          }
-
           if (isMounted) setIsAdminUser(true);
           return;
         }
 
-        // 2. Verify custom claims on Authentication ID token (Cryptographically verified)
-        if (user) {
-          const idTokenResult = await user.getIdTokenResult(true).catch(() => null);
-          const claims = idTokenResult?.claims || {};
-          const hasCustomAdminClaim = 
-            claims.admin === true || 
-            ['owner', 'admin', 'super_admin', 'administrator', 'moderator', 'support', 'marketplace_moderator'].includes((claims.role as string || '').toLowerCase());
-
-          if (hasCustomAdminClaim) {
-            if (isMounted) setIsAdminUser(true);
-            return;
-          }
-        }
-
-        // 3. Verify server-secured record in /admins/{uid} collection
-        if (userUid) {
-          const adminDocRef = doc(db, 'admins', userUid);
-          const adminDocSnap = await getDoc(adminDocRef).catch(() => null);
-
-          if (adminDocSnap && adminDocSnap.exists()) {
-            const adminData = adminDocSnap.data();
-            if (adminData && (adminData.status === 'ACTIVE' || adminData.role || adminData.uid === userUid)) {
-              if (isMounted) setIsAdminUser(true);
-              return;
-            }
-          }
-        }
-
-        // Authorization denied - Fail Closed
         if (isMounted) setIsAdminUser(false);
       } catch (error) {
         logger.error("[Security] Admin authorization check error:", error);
-        // Fallback for owner / admin role if error occurs
-        const userEmail = (user?.email || profile?.email || '').toLowerCase().trim();
-        const userUid = user?.uid || profile?.ownerUid || profile?.uid || profile?.id || '';
-        const profileUsername = (profile?.username || '').toLowerCase().trim();
-        const profileRole = (profile?.role || '').toLowerCase().trim();
-        const isProfileAdmin = 
-          profile?.isAdmin === true || 
-          ['admin', 'owner', 'super_admin', 'administrator'].includes(profileRole);
-
-        if (
-          userEmail === 'junaedislamjim180@gmail.com' ||
-          userUid === 'dovifwfmxcooas976z6mo216yng1' ||
-          userUid === 'doViFWfMXcOoas976z6MO216YNg1' ||
-          profileUsername === 'junaed_islam_jim9' ||
-          isProfileAdmin
-        ) {
-          if (isMounted) setIsAdminUser(true);
-        } else {
-          if (isMounted) setIsAdminUser(false);
-        }
+        if (isMounted) setIsAdminUser(false);
       }
     };
 
@@ -3080,7 +2847,7 @@ export const AdminPanel = () => {
     return () => {
       isMounted = false;
     };
-  }, [user, profile, authLoading, db]);
+  }, [user, profile, authLoading]);
 
   if (isAdminUser === null) {
     return (

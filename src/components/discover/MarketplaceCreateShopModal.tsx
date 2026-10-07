@@ -220,10 +220,10 @@ export const MarketplaceCreateShopModal: React.FC<CreateShopModalProps> = ({
     try {
       const res = await api.marketplace.createStore({
         name,
-        handle: finalHandle,
+        handle: generatedUsername,
         description,
         logoUrl: logo,
-        bannerUrl: banner,
+        bannerUrl: cover,
         category,
         location: division ? `${division}, Bangladesh` : 'Bangladesh',
         phone,

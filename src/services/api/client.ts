@@ -56,11 +56,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    login: (data: { email: string; password: string }) =>
-      request<{ token: string; user: any }>('/api/v1/auth/login', {
+    login: (dataOrEmail: { email?: string; identifier?: string; password?: string } | string, maybePass?: string) => {
+      const payload = typeof dataOrEmail === 'string'
+        ? { email: dataOrEmail, identifier: dataOrEmail, password: maybePass || '' }
+        : { email: dataOrEmail.email || dataOrEmail.identifier, identifier: dataOrEmail.identifier || dataOrEmail.email, password: dataOrEmail.password || '' };
+      return request<{ token: string; user: any }>('/api/v1/auth/login', {
         method: 'POST',
-        body: JSON.stringify(data),
-      }),
+        body: JSON.stringify(payload),
+      });
+    },
     me: () => request<{ user: any }>('/api/v1/auth/me'),
     forgotPassword: (email: string) =>
       request<{ success: boolean; message: string; resetToken?: string }>('/api/v1/auth/forgot-password', {
@@ -72,11 +76,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    changePassword: (data: { currentPassword?: string; newPassword: string }) =>
-      request<{ success: boolean; message: string }>('/api/v1/auth/change-password', {
+    changePassword: (dataOrCurrent: { currentPassword?: string; newPassword?: string } | string, maybeNew?: string) => {
+      const payload = typeof dataOrCurrent === 'string'
+        ? { currentPassword: dataOrCurrent, newPassword: maybeNew || '' }
+        : dataOrCurrent;
+      return request<{ success: boolean; message: string }>('/api/v1/auth/change-password', {
         method: 'POST',
-        body: JSON.stringify(data),
-      }),
+        body: JSON.stringify(payload),
+      });
+    },
     changeEmail: (data: { currentPassword?: string; newEmail: string }) =>
       request<{ success: boolean; message: string }>('/api/v1/auth/change-email', {
         method: 'POST',

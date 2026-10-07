@@ -525,7 +525,7 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
                         return (
                           <div 
                             key={story.id}
-                            onClick={() => toggleStory(story.id)}
+                            onClick={() => toggleSelection(story.id)}
                             className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer border transition-all group select-none ${
                               isSelected ? 'border-[#0095F6] ring-2 ring-[#0095F6]' : 'border-white/10 hover:border-white/30'
                             }`}

@@ -27,7 +27,7 @@ import {
 import { NotificationItem } from './NotificationItem';
 import type { Notification } from '../../types/notifications';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
 import { api } from '../../services/api/client';
 
