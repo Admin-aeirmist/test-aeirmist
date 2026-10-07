@@ -2688,24 +2688,18 @@ const ChatWindow = ({
 
   // Intersection Observer for Seen Status
   useEffect(() => {
-    if (!db || !chat.id || !user || chat.id.startsWith('new_') || chat.status === 'request') return;
+    if (!chat.id || !profile?.id || chat.id.startsWith('new_') || chat.status === 'request') return;
 
     // Check if there are any unread messages from the other user
     const hasUnread = messages.some(m => {
       if (m.senderId === profile.id) return false;
-      const lastReadTs = chat.lastRead?.[profile.id];
-      const lastReadMs = lastReadTs?.toMillis ? lastReadTs.toMillis() : (lastReadTs || 0);
-      return m.timestampMs > lastReadMs;
+      return !m.isSeen;
     });
     
     if (hasUnread) {
-      // Debounce: wait 2 seconds before marking as read to batch updates during rapid chat
-      const timer = setTimeout(() => {
-        updateSeenStatus(chat.id);
-      }, 2000);
-      return () => clearTimeout(timer);
+      updateSeenStatus(chat.id);
     }
-  }, [messages, chat.id, user?.uid, chat.lastRead]);
+  }, [messages, chat.id, profile?.id, updateSeenStatus]);
 
   // Message Listener
   useEffect(() => {
@@ -3023,6 +3017,7 @@ const ChatWindow = ({
       });
       
       messageOutboxService.markDelivered(chat.id, optimisticId);
+      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
 
       setFailedMessages(prev => {
         const next = new Set(prev);
@@ -3121,6 +3116,22 @@ const ChatWindow = ({
       
       // Mark delivered in outbox
       messageOutboxService.markDelivered(chat.id, optimisticId);
+
+      // Remove optimistic pending message immediately
+      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
+
+      // Instantly inject into messages as sent if not already added by socket
+      setMessages(prev => {
+        if (prev.some(m => m.id === newId || m.id === optimisticId || (m.metadata?.optimisticId && m.metadata.optimisticId === optimisticId))) return prev;
+        const confirmedMsg: Message = {
+          ...optimisticMsg,
+          id: newId || optimisticId,
+          isOptimistic: false,
+          status: 'sent',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        } as any;
+        return [...prev, confirmedMsg];
+      });
 
       setFailedMessages(prev => {
         const next = new Set(prev);
@@ -3330,6 +3341,7 @@ const ChatWindow = ({
 
       setReplyingTo(null);
       messageOutboxService.markDelivered(chat.id, optimisticId);
+      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
       setFailedMessages(prev => {
         const next = new Set(prev);
         next.delete(optimisticId);

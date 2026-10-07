@@ -138,14 +138,16 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
     });
 
     // Real-time broadcast to room via WebSockets
-    io.to(`conv:${convId}`).emit('new_message', { conversationId: convId, message });
+    const broadcastPayload = { conversationId: convId, rawConversationId: req.params.id, message };
+    io.to(`conv:${convId}`).emit('new_message', broadcastPayload);
+    if (req.params.id && req.params.id !== convId) {
+      io.to(`conv:${req.params.id}`).emit('new_message', broadcastPayload);
+    }
 
-    // Also push to participant user rooms
+    // Also push to participant user rooms so inboxes and open chats update in real time
     const members = await ChatDAL.getConversationMembers(convId);
     for (const m of members) {
-      if (m.userId !== req.user!.userId) {
-        io.to(`user:${m.userId}`).emit('new_message', { conversationId: convId, message });
-      }
+      io.to(`user:${m.userId}`).emit('new_message', broadcastPayload);
     }
 
     res.status(201).json({ message, conversationId: convId });
@@ -163,7 +165,25 @@ router.post('/conversations/:id/seen', authenticateToken, async (req: Authentica
   try {
     const convId = await resolveConversationId(req.params.id, req.user!.userId);
     await ChatDAL.markSeen(convId, req.user!.userId);
-    io.to(`conv:${convId}`).emit('seen_update', { conversationId: convId, userId: req.user!.userId });
+
+    const seenPayload = {
+      conversationId: convId,
+      rawConversationId: req.params.id,
+      userId: req.user!.userId,
+      seenAt: new Date().toISOString()
+    };
+
+    io.to(`conv:${convId}`).emit('seen_update', seenPayload);
+    if (req.params.id && req.params.id !== convId) {
+      io.to(`conv:${req.params.id}`).emit('seen_update', seenPayload);
+    }
+
+    // Broadcast to all conversation members' user channels
+    const members = await ChatDAL.getConversationMembers(convId);
+    for (const m of members) {
+      io.to(`user:${m.userId}`).emit('seen_update', seenPayload);
+    }
+
     res.json({ success: true, conversationId: convId });
   } catch (err) {
     console.error('[Mark Seen Error]', err);

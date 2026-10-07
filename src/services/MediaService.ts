@@ -1,6 +1,5 @@
 import { aeirmistCache } from './CacheService';
 import { logger } from '@/src/utils/logger';
-import { cloudinaryService } from './cloudinaryService';
 import { api } from './api/client';
 
 
@@ -274,25 +273,7 @@ class MediaService {
         return uploadRes.url;
       }
     } catch (apiErr: any) {
-      logger.warn("[MediaService] Backend storage upload notice (falling back):", apiErr.message);
-    }
-
-    // Try Cloudinary CDN Upload First if configured
-    if (cloudinaryService.isConfigured()) {
-      try {
-        const folderName = path.split('/')[0] || 'aeirmist';
-        const cdnUrl = await cloudinaryService.upload(uploadFile, {
-          folder: `aeirmist/${folderName}`,
-          onProgress: (p, status) => onProgress(Math.min(95, Math.floor(15 + p * 0.8)), status)
-        });
-        if (cdnUrl) {
-          aeirmistCache.saveMedia(cdnUrl, uploadFile, uploadFile.type).catch(e => logger.warn("Cache save failed", e));
-          aeirmistCache.removePendingUpload(task.id).catch(e => logger.warn("Cache remove failed", e));
-          return cdnUrl;
-        }
-      } catch (cErr) {
-        logger.warn("[MediaService] Cloudinary upload failed/timed out, falling back to local fallback:", cErr);
-      }
+      logger.warn("[MediaService] Server storage upload notice (falling back):", apiErr.message);
     }
 
     // Priority 3: Fallback data URL for images
@@ -305,11 +286,7 @@ class MediaService {
     }
 
     aeirmistCache.removePendingUpload(task.id).catch(() => {});
-    throw new Error(
-      cloudinaryService.isConfigured() 
-        ? "Video upload failed. Please check your network connection or verify Cloudinary quota."
-        : "Cloudinary CDN storage is not configured. Please enter your Cloud Name & Upload Preset in the uploader."
-    );
+    throw new Error("Media upload to Aeirmist server failed. Please check your server connection and try again.");
   }
 
   async getCachedMediaURL(url: string, type: string): Promise<string> {

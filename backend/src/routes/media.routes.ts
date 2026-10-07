@@ -5,7 +5,7 @@ import path from 'path';
 import { storage } from '../storage';
 import { db } from '../db';
 import { mediaAssets } from '../db/schema';
-import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
 import { env } from '../config/env';
 
 const router = Router();
@@ -18,7 +18,7 @@ const upload = multer({
   },
 });
 
-router.post('/upload', authenticateToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/upload', optionalAuthToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const file = req.file;
     if (!file) {
@@ -42,7 +42,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       .insert(mediaAssets)
       .values({
         key,
-        ownerId: req.user!.userId,
+        ownerId: req.user?.userId || null,
         originalName: file.originalname,
         mimeType: file.mimetype,
         sizeBytes: file.size,

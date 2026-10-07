@@ -1095,6 +1095,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       const socket = getSocket();
       socket.emit('identify_user', user.uid);
+      if (profile?.id && profile.id !== user.uid) {
+        socket.emit('identify_user', profile.id);
+      }
+      if (profile?.userId && profile.userId !== user.uid && profile.userId !== profile.id) {
+        socket.emit('identify_user', profile.userId);
+      }
 
       const handleNewNotification = (data: any) => {
         setUnreadNotificationsCount(prev => prev + 1);
@@ -1536,6 +1542,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           content: text,
           type: type || 'text',
           mediaKey: mediaUrl ? mediaUrl.replace(/^.*\/media\//, '') : undefined,
+          metadata: {
+            ...metadata,
+            optimisticId: metadata?.optimisticId
+          }
         });
         backendMsgId = res?.message?.id;
         logger.info('[AeirmistContext] Message sent to PostgreSQL backend:', backendMsgId);
@@ -1842,15 +1852,18 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateSeenStatus = useCallback(async (conversationId: string) => {
-    if (!db || !profile || isOffline || !conversationId) return;
+    if (!profile || isOffline || !conversationId) return;
     
     // Respect Read Receipts setting
     if (profile.messagingSettings?.readReceipts === false) return;
 
-    if (!canWrite(`read_${conversationId}`, 2000)) return;
+    if (!canWrite(`read_${conversationId}`, 500)) return;
 
     try {
-      await messagingService.markAsRead(db, conversationId, profile.id);
+      await api.chat.markSeen(conversationId).catch(() => {});
+      if (db) {
+        await messagingService.markAsRead(db, conversationId, profile.id).catch(() => {});
+      }
     } catch (e) {
       logger.warn("[AeirmistContext] Seen status update delayed", e);
     }

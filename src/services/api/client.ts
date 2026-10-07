@@ -183,8 +183,20 @@ export const api = {
       request<{ messages: any[] }>(
         `/api/v1/chat/conversations/${conversationId}/messages?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`
       ),
-    sendMessage: (conversationId: string, data: { content?: string; type?: string; mediaKey?: string }) =>
-      request<{ message: any }>(`/api/v1/chat/conversations/${conversationId}/messages`, {
+    sendMessage: (
+      conversationId: string,
+      data: {
+        content?: string;
+        type?: string;
+        mediaKey?: string;
+        fileName?: string;
+        fileSize?: number;
+        duration?: number;
+        replyToId?: string;
+        metadata?: any;
+      }
+    ) =>
+      request<{ message: any; conversationId: string }>(`/api/v1/chat/conversations/${conversationId}/messages`, {
         method: 'POST',
         body: JSON.stringify(data),
       }),

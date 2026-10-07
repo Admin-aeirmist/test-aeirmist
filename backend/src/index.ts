@@ -10,6 +10,7 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import { env } from './config/env';
 import { checkDatabaseHealth, pool } from './db';
 import { redis, checkRedisHealth } from './db/redis';
+import { UserDAL } from './dal/user.dal';
 
 const app = express();
 const server = http.createServer(app);
@@ -136,9 +137,27 @@ io.on('connection', (socket) => {
 
   // User identification for personal notifications & Redis Presence
   socket.on('identify_user', async (userId: string) => {
+    if (!userId) return;
     socket.join(`user:${userId}`);
     (socket as any).userId = userId;
     console.log(`👤 [Socket.IO] User ${userId} joined personal channel`);
+
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+      if (!isUuid) {
+        const u = await UserDAL.findByFirebaseUid(userId) || await UserDAL.findByEmailOrUsername(userId);
+        if (u?.id) {
+          socket.join(`user:${u.id}`);
+          console.log(`👤 [Socket.IO] User ${userId} linked to user:${u.id}`);
+        }
+      } else {
+        const u = await UserDAL.findById(userId);
+        if (u?.firebaseUid) {
+          socket.join(`user:${u.firebaseUid}`);
+        }
+      }
+    } catch (err) {}
+
     try {
       await redis.sadd('online_users', userId);
       io.emit('user_status', { userId, status: 'online' });

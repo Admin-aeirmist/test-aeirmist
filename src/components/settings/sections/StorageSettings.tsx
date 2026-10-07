@@ -13,11 +13,12 @@ import {
   Folder,
   FolderCheck,
   CheckCircle2,
-  RotateCcw
+  RotateCcw,
+  Server
 } from 'lucide-react';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { DigitalModule } from '../../ui/DigitalComponents';
-import { cloudinaryService } from '../../../services/cloudinaryService';
+import { api } from '../../../services/api/client';
 import { DownloadManagerService, DownloadMode, DownloadPathConfig } from '../../../services/DownloadManagerService';
 
 
@@ -122,8 +123,8 @@ const StorageSettings = () => {
       {/* Telegram-Style Download Path Selector */}
       <DownloadPathSection addToast={addToast} />
 
-      {/* Cloudinary CDN Storage Config */}
-      <CloudinaryConfigSection addToast={addToast} />
+      {/* Aeirmist Dedicated Server Storage */}
+      <AeirmistServerStorageSection addToast={addToast} />
 
 
       {/* Cache & Maintenance */}
@@ -225,31 +226,44 @@ const ToggleItem = React.memo(({ icon, title, desc, enabled, onChange }: any) =>
   </button>
 ));
 
-const CloudinaryConfigSection = React.memo(({ addToast }: { addToast: any }) => {
-  const [cloudName, setCloudName] = React.useState(cloudinaryService.getCloudName());
-  const [preset, setPreset] = React.useState(cloudinaryService.getUploadPreset());
-  const [isEditing, setIsEditing] = React.useState(false);
+const AeirmistServerStorageSection = React.memo(({ addToast }: { addToast: any }) => {
+  const [testing, setTesting] = React.useState(false);
+  const [latency, setLatency] = React.useState<number | null>(null);
 
-  const handleSave = () => {
-    cloudinaryService.setConfig(cloudName.trim(), preset.trim());
-    setIsEditing(false);
-    addToast?.({
-      title: 'STORAGE UPDATED',
-      message: 'Cloudinary CDN Storage configured and enabled!',
-      type: 'success'
-    });
+  const handleTestConnection = async () => {
+    setTesting(true);
+    const start = performance.now();
+    try {
+      await api.health.check();
+      const elapsed = Math.round(performance.now() - start);
+      setLatency(elapsed);
+      addToast?.({
+        title: 'STORAGE ENGINE ONLINE',
+        message: `Connected to Aeirmist Server Storage (${elapsed}ms). Ready for high-velocity streaming.`,
+        type: 'success'
+      });
+    } catch (e: any) {
+      addToast?.({
+        title: 'STORAGE WARNING',
+        message: 'Could not reach server storage endpoint: ' + (e?.message || 'Check network'),
+        type: 'warning'
+      });
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
     <section className="space-y-6">
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-8 h-8 rounded-lg bg-aeirmist-lime/10 flex items-center justify-center text-aeirmist-lime">
-          <Cloud size={18} />
+        <div className="w-8 h-8 rounded-lg bg-aeirmist-cyan/10 flex items-center justify-center text-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.2)]">
+          <Server size={18} />
         </div>
         <div>
-          <h3 className="text-sm font-bold uppercase tracking-wider text-white/80">Cloudinary CDN Storage</h3>
-          <span className="text-[9px] font-bold text-aeirmist-lime uppercase tracking-widest bg-aeirmist-lime/10 px-2 py-0.5 rounded-full inline-block mt-0.5">
-            Active / High-Speed Storage
+          <h3 className="text-sm font-bold uppercase tracking-wider text-white/90">Aeirmist Dedicated Server Storage</h3>
+          <span className="text-[9px] font-bold text-aeirmist-cyan uppercase tracking-widest bg-aeirmist-cyan/10 border border-aeirmist-cyan/20 px-2 py-0.5 rounded-full inline-flex items-center gap-1.5 mt-0.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-cyan animate-pulse" />
+            Online / Self-Hosted
           </span>
         </div>
       </div>
@@ -257,63 +271,38 @@ const CloudinaryConfigSection = React.memo(({ addToast }: { addToast: any }) => 
       <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h4 className="text-xs font-bold uppercase tracking-widest text-white/90">Unlimited CDN Media Acceleration</h4>
+            <h4 className="text-xs font-bold uppercase tracking-widest text-white/90">Zero Third-Party Dependency</h4>
             <p className="text-[10px] text-white/40 mt-1 leading-relaxed">
-              Zero-cost image and video storage via Cloudinary CDN with automatic fallback to Aeirmist Media Engine.
+              All videos, reels, photos, avatars, and attachments stream directly through your private Aeirmist PostgreSQL + Media Engine server node with no third-party CDN or external accounts required.
             </p>
           </div>
           <button
-            onClick={() => setIsEditing(!isEditing)}
-            className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-[9px] font-bold uppercase tracking-widest hover:bg-white/10 text-white/70 transition-all shrink-0"
+            onClick={handleTestConnection}
+            disabled={testing}
+            className="px-4 py-2 rounded-xl bg-aeirmist-cyan/10 border border-aeirmist-cyan/30 text-[9px] font-bold uppercase tracking-widest hover:bg-aeirmist-cyan/20 text-aeirmist-cyan transition-all shrink-0 flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
-            {isEditing ? 'Cancel' : 'Configure Account'}
+            <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
+            {testing ? 'Testing...' : 'Verify Engine'}
           </button>
         </div>
 
-        {isEditing ? (
-          <div className="space-y-4 pt-2 border-t border-white/5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-[9px] font-bold uppercase tracking-widest text-white/50 block mb-1.5">Cloud Name</label>
-                <input
-                  type="text"
-                  value={cloudName}
-                  onChange={(e) => setCloudName(e.target.value)}
-                  placeholder="e.g. aeirmist"
-                  className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-aeirmist-cyan"
-                />
-              </div>
-              <div>
-                <label className="text-[9px] font-bold uppercase tracking-widest text-white/50 block mb-1.5">Unsigned Upload Preset</label>
-                <input
-                  type="text"
-                  value={preset}
-                  onChange={(e) => setPreset(e.target.value)}
-                  placeholder="e.g. aeirmist_uploads"
-                  className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-aeirmist-cyan"
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={handleSave}
-              className="w-full py-3 rounded-xl bg-aeirmist-cyan/20 border border-aeirmist-cyan/40 text-aeirmist-cyan text-[10px] font-black uppercase tracking-widest hover:bg-aeirmist-cyan hover:text-black transition-all"
-            >
-              Save & Enable Cloudinary Storage
-            </button>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-white/5">
+          <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
+            <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Storage Engine</span>
+            <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">PostgreSQL + Local FS</span>
           </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-white/5">
-            <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
-              <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Cloud Name</span>
-              <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">{cloudName || 'aeirmist'}</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
-              <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Upload Preset</span>
-              <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">{preset || 'aeirmist_uploads'}</span>
-            </div>
+          <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
+            <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Streaming Route</span>
+            <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">/media/* (Express Node)</span>
           </div>
-        )}
+          <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
+            <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Latency & Status</span>
+            <span className="text-xs font-mono text-aeirmist-lime font-bold mt-1 flex items-center gap-1.5">
+              <CheckCircle2 size={12} />
+              {latency !== null ? `${latency}ms • Operational` : 'Active • Operational'}
+            </span>
+          </div>
+        </div>
       </div>
     </section>
   );

@@ -238,9 +238,9 @@ class MessagingService {
           mediaUrl: m.mediaKey ? `${(import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media')}/${m.mediaKey}` : undefined,
           timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestampMs: new Date(m.createdAt).getTime(),
-          status: m.isRead ? 'read' : m.isDelivered ? 'delivered' : 'sent',
+          status: (m.isSeen || m.isRead) ? 'read' : m.isDelivered ? 'delivered' : 'sent',
           isDelivered: !!m.isDelivered,
-          isSeen: !!m.isRead,
+          isSeen: !!(m.isSeen || m.isRead),
         })).sort((a: any, b: any) => a.timestampMs - b.timestampMs);
         this.setCachedMessages(conversationId, formatted);
         callback(formatted);
@@ -253,7 +253,10 @@ class MessagingService {
     joinChatRoom(`conv:${conversationId}`);
     const socket = getSocket();
     const handleNewSocketMsg = (data: any) => {
-      if (data?.conversationId === conversationId && data?.message) {
+      const matchConv = data?.conversationId === conversationId || 
+                        data?.rawConversationId === conversationId ||
+                        data?.message?.conversationId === conversationId;
+      if (matchConv && data?.message) {
         const m = data.message;
         const msgObj: Message = {
           id: m.id,
@@ -264,21 +267,50 @@ class MessagingService {
           mediaUrl: m.mediaKey ? `${(import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media')}/${m.mediaKey}` : undefined,
           timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestampMs: new Date(m.createdAt).getTime(),
-          status: 'delivered',
+          status: (m.isSeen || m.isRead) ? 'read' : (m.isDelivered ? 'delivered' : 'sent'),
           isDelivered: true,
-          isSeen: false,
+          isSeen: !!(m.isSeen || m.isRead),
+          metadata: m.metadata || {},
         } as any;
         if (!isCancelled) {
           const prev = this.getCachedMessages(conversationId) || [];
-          const exists = prev.some(x => x.id === msgObj.id || (x.metadata?.optimisticId && x.metadata?.optimisticId === m.metadata?.optimisticId));
-          const updated = exists ? prev.map(x => (x.id === msgObj.id ? msgObj : x)) : [...prev, msgObj];
+          const optId = m.metadata?.optimisticId;
+          const exists = prev.some(x => x.id === msgObj.id || (optId && (x.id === optId || x.metadata?.optimisticId === optId)));
+          const updated = exists 
+            ? prev.map(x => (x.id === msgObj.id || (optId && (x.id === optId || x.metadata?.optimisticId === optId)) ? msgObj : x)) 
+            : [...prev, msgObj];
           updated.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+          this.setCachedMessages(conversationId, updated);
+          callback(updated);
+
+          // If incoming message from other user and chat is currently open, immediately mark seen
+          if (m.senderId !== currentProfileId) {
+            api.chat.markSeen(conversationId).catch(() => {});
+          }
+        }
+      }
+    };
+    socket.on('new_message', handleNewSocketMsg);
+
+    const handleSeenUpdate = (data: any) => {
+      const matchConv = data?.conversationId === conversationId || 
+                        data?.rawConversationId === conversationId;
+      if (matchConv) {
+        if (!isCancelled) {
+          const prev = this.getCachedMessages(conversationId) || [];
+          const updated = prev.map(m => {
+            // If the message was sent by current user, or sent by someone other than the person who read it, mark it seen!
+            if (m.senderId === currentProfileId || m.senderId !== data?.userId) {
+              return { ...m, isSeen: true, status: 'read' as any };
+            }
+            return m;
+          });
           this.setCachedMessages(conversationId, updated);
           callback(updated);
         }
       }
     };
-    socket.on('new_message', handleNewSocketMsg);
+    socket.on('seen_update', handleSeenUpdate);
 
     const otherParticipantId = chatData.otherParticipantId ||
                              chatData.profileIds?.find((id: string) => id !== currentProfileId) || 
@@ -324,6 +356,7 @@ class MessagingService {
       }
       leaveChatRoom(`conv:${conversationId}`);
       socket.off('new_message', handleNewSocketMsg);
+      socket.off('seen_update', handleSeenUpdate);
       unsubscribe();
     };
 
@@ -392,40 +425,51 @@ class MessagingService {
     }
 
     // 1b. Load from primary PostgreSQL backend API
-    api.chat.getConversations().then((res: any) => {
-      const convs = (res as any)?.conversations || (Array.isArray(res) ? res : []);
-      if (convs) {
-        const mappedChats: Chat[] = convs.map((c: any) => {
-          const other = c.participants?.find((p: any) => p.userId !== profileId && p.userId !== userUid) || c.participants?.[0];
-          return {
-            id: c.id,
-            name: c.title || other?.displayName || other?.username || 'Chat',
-            photo: other?.avatarKey ? `${(import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media')}/${other.avatarKey}` : getAvatarUrl(null, other?.userId),
-            lastMessage: {
-              text: c.lastMessagePreview || '',
-              senderId: '',
-              timestamp: c.lastMessageAt,
-            },
-            latestMessagePreview: c.lastMessagePreview || '',
-            time: c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-            unread: (c.unreadCount || 0) > 0,
-            online: false,
-            isPinned: c.isPinned || false,
-            isMuted: c.isMuted || false,
-            participants: c.participants?.map((p: any) => p.userId) || [userUid],
-            profileIds: c.participants?.map((p: any) => p.userId) || [profileId],
-            otherParticipantId: other?.userId,
-            status: 'active',
-            updatedAt: c.updatedAt,
-          } as unknown as Chat;
-        });
-        callback(mappedChats);
-      }
-    }).catch(err => {
-      logger.warn('[MessagingService] Primary PostgreSQL getConversations note:', err);
-    });
+    const loadInbox = () => {
+      api.chat.getConversations().then((res: any) => {
+        const convs = (res as any)?.conversations || (Array.isArray(res) ? res : []);
+        if (convs) {
+          const mappedChats: Chat[] = convs.map((c: any) => {
+            const other = c.participants?.find((p: any) => p.userId !== profileId && p.userId !== userUid) || c.participants?.[0];
+            return {
+              id: c.id,
+              name: c.title || other?.displayName || other?.username || 'Chat',
+              photo: other?.avatarKey ? `${(import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media')}/${other.avatarKey}` : getAvatarUrl(null, other?.userId),
+              lastMessage: {
+                text: c.lastMessagePreview || '',
+                senderId: '',
+                timestamp: c.lastMessageAt,
+              },
+              latestMessagePreview: c.lastMessagePreview || '',
+              time: c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+              unread: (c.unreadCount || 0) > 0,
+              online: false,
+              isPinned: c.isPinned || false,
+              isMuted: c.isMuted || false,
+              participants: c.participants?.map((p: any) => p.userId) || [userUid],
+              profileIds: c.participants?.map((p: any) => p.userId) || [profileId],
+              otherParticipantId: other?.userId,
+              status: 'active',
+              updatedAt: c.updatedAt,
+            } as unknown as Chat;
+          });
+          callback(mappedChats);
+        }
+      }).catch(err => {
+        logger.warn('[MessagingService] Primary PostgreSQL getConversations note:', err);
+      });
+    };
 
-    let unsubscribe = () => {};
+    loadInbox();
+
+    const inboxSocket = getSocket();
+    inboxSocket.on('new_message', loadInbox);
+    inboxSocket.on('seen_update', loadInbox);
+
+    const unsubscribe = () => {
+      inboxSocket.off('new_message', loadInbox);
+      inboxSocket.off('seen_update', loadInbox);
+    };
 
     this.listeners.set(key, unsubscribe);
     return unsubscribe;
