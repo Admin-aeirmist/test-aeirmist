@@ -1150,6 +1150,14 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
               <span className="text-cyan-300 underline decoration-cyan-300/30 cursor-pointer">Cookies Policy</span>.
             </p>
 
+            {/* In-view Error alert so users always see validation feedback */}
+            {error && (
+              <div className="p-3 bg-red-500/15 border border-red-500/40 rounded-2xl flex items-center gap-2.5 text-xs text-red-200 font-medium">
+                <AlertCircle size={16} className="shrink-0 text-red-400" />
+                <span>{error}</span>
+              </div>
+            )}
+
             {/* Large primary button: Continue */}
             <button
               type="submit"

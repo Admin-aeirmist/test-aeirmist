@@ -3,7 +3,22 @@
  * Reads endpoint dynamically from VITE_API_URL (Zero Hardcoding!)
  */
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+function resolveApiBase(): string {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocal && window.location.protocol === 'https:') {
+      // Running on HTTPS remote domain (Cloudflare Pages / custom domain)
+      // Use relative API path to prevent browser Mixed Content blocking
+      return '';
+    }
+  }
+  return 'http://localhost:4000';
+}
+
+const API_BASE = resolveApiBase();
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
