@@ -598,182 +598,188 @@ let edgePosts: any[] = [
   }
 ];
 
-// Edge Reports Store
-let edgeReports: any[] = [
-  {
-    id: "rep_1",
-    reporterId: "usr_elena_design",
-    targetId: "usr_spambot_3000",
-    targetType: "user",
-    category: "Spam & Automated Abuse",
-    reason: "Mass posting spam comments on community artworks",
-    status: "PENDING",
-    priority: "HIGH",
-    reportedUid: "usr_spambot_3000",
-    reporterEmail: "elena.rostova@aeirmist.social",
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString()
-  },
-  {
-    id: "rep_2",
-    reporterId: "usr_marcus_dev",
-    targetId: "usr_cryptoscam_ad",
-    targetType: "user",
-    category: "Phishing / Security Violation",
-    reason: "Distributing malicious phishing URLs disguised as marketplace coupons",
-    status: "RESOLVED",
-    priority: "URGENT",
-    reportedUid: "usr_cryptoscam_ad",
-    reporterEmail: "marcus.dev@aeirmist.social",
-    resolution: "Account permanently banned and URLs blacklisted on edge firewall",
-    createdAt: new Date(Date.now() - 3600000 * 8).toISOString()
-  },
-  {
-    id: "rep_3",
-    reporterId: "usr_kai_music",
-    targetId: "post_sample_unauthorized",
-    targetType: "post",
-    category: "Copyright / DMCA",
-    reason: "Unauthorized re-upload of proprietary audio stem package",
-    status: "IN_REVIEW",
-    priority: "MEDIUM",
-    reportedUid: "usr_david_m",
-    reporterEmail: "kai.music@aeirmist.social",
-    createdAt: new Date(Date.now() - 3600000 * 14).toISOString()
-  },
-  {
-    id: "rep_4",
-    reporterId: "usr_aisha_ai",
-    targetId: "post_harassment_flag",
-    targetType: "post",
-    category: "Harassment & Toxic Speech",
-    reason: "Targeted aggressive comments in public live discussion",
-    status: "PENDING",
-    priority: "HIGH",
-    reportedUid: "usr_spambot_3000",
-    reporterEmail: "aisha.ai@aeirmist.social",
-    createdAt: new Date(Date.now() - 3600000 * 22).toISOString()
+// Edge Reports & Tickets Stores
+let edgeReports: any[] = [];
+let edgeTickets: any[] = [];
+
+function seedStores() {
+  if (edgeReports.length === 0 || edgeReports[0]?.createdAt?.includes("1969") || edgeReports[0]?.createdAt?.includes("1970")) {
+    edgeReports = [
+      {
+        id: "rep_1",
+        reporterId: "usr_elena_design",
+        targetId: "usr_spambot_3000",
+        targetType: "user",
+        category: "Spam & Automated Abuse",
+        reason: "Mass posting spam comments on community artworks",
+        status: "PENDING",
+        priority: "HIGH",
+        reportedUid: "usr_spambot_3000",
+        reporterEmail: "elena.rostova@aeirmist.social",
+        createdAt: "2026-10-08T11:45:00.000Z"
+      },
+      {
+        id: "rep_2",
+        reporterId: "usr_marcus_dev",
+        targetId: "usr_cryptoscam_ad",
+        targetType: "user",
+        category: "Phishing / Security Violation",
+        reason: "Distributing malicious phishing URLs disguised as marketplace coupons",
+        status: "RESOLVED",
+        priority: "URGENT",
+        reportedUid: "usr_cryptoscam_ad",
+        reporterEmail: "marcus.dev@aeirmist.social",
+        resolution: "Account permanently banned and URLs blacklisted on edge firewall",
+        createdAt: "2026-10-08T07:30:00.000Z"
+      },
+      {
+        id: "rep_3",
+        reporterId: "usr_kai_music",
+        targetId: "post_sample_unauthorized",
+        targetType: "post",
+        category: "Copyright / DMCA",
+        reason: "Unauthorized re-upload of proprietary audio stem package",
+        status: "IN_REVIEW",
+        priority: "MEDIUM",
+        reportedUid: "usr_david_m",
+        reporterEmail: "kai.music@aeirmist.social",
+        createdAt: "2026-10-07T21:15:00.000Z"
+      },
+      {
+        id: "rep_4",
+        reporterId: "usr_aisha_ai",
+        targetId: "post_harassment_flag",
+        targetType: "post",
+        category: "Harassment & Toxic Speech",
+        reason: "Targeted aggressive comments in public live discussion",
+        status: "PENDING",
+        priority: "HIGH",
+        reportedUid: "usr_spambot_3000",
+        reporterEmail: "aisha.ai@aeirmist.social",
+        createdAt: "2026-10-07T14:20:00.000Z"
+      }
+    ];
+
+    edgeTickets = [
+      // Verification Applications
+      {
+        id: "tick_verif_1",
+        applicationId: "VR-2026-891",
+        userId: "usr_elena_design",
+        username: "elena_design",
+        type: "verification",
+        plan: "creator",
+        status: "pending",
+        amount: 14.99,
+        currency: "USD",
+        paymentProvider: "Stripe",
+        paymentStatus: "Paid",
+        identity: {
+          fullName: "Elena Rostova",
+          country: "Canada",
+          website: "https://elena.design",
+          idDocument: "Government Passport (Verified Hash)"
+        },
+        priority: "HIGH",
+        createdAt: "2026-10-08T10:10:00.000Z"
+      },
+      {
+        id: "tick_verif_2",
+        applicationId: "VR-2026-754",
+        userId: "usr_marcus_dev",
+        username: "marcus_dev",
+        type: "verification",
+        plan: "business",
+        status: "approved",
+        amount: 49.99,
+        currency: "USD",
+        paymentProvider: "Stripe",
+        paymentStatus: "Paid",
+        identity: {
+          fullName: "Marcus Sterling",
+          country: "United Kingdom",
+          website: "https://sterling-labs.dev",
+          idDocument: "National ID (Verified Hash)"
+        },
+        priority: "HIGH",
+        createdAt: "2026-10-07T12:00:00.000Z"
+      },
+      {
+        id: "tick_verif_3",
+        applicationId: "VR-2026-620",
+        userId: "usr_aisha_ai",
+        username: "aisha_ai",
+        type: "verification",
+        plan: "essential",
+        status: "pending",
+        amount: 4.99,
+        currency: "USD",
+        paymentProvider: "Apple Pay",
+        paymentStatus: "Paid",
+        identity: {
+          fullName: "Aisha Patel",
+          country: "United States",
+          website: "https://aisharesearch.io",
+          idDocument: "Driver's License (Verified Hash)"
+        },
+        priority: "MEDIUM",
+        createdAt: "2026-10-08T03:45:00.000Z"
+      },
+
+      // Account Appeals
+      {
+        id: "tick_appeal_1",
+        userId: "usr_spambot_3000",
+        username: "spambot_3000",
+        type: "appeal",
+        reason: "My account was flagged automatically during automated API stress testing. I am requesting human review.",
+        status: "pending",
+        priority: "HIGH",
+        createdAt: "2026-10-08T09:30:00.000Z"
+      },
+      {
+        id: "tick_appeal_2",
+        userId: "usr_david_m",
+        username: "david_m",
+        type: "appeal",
+        reason: "My account credentials were leaked on another site and unauthorized activity occurred. I have reset 2FA.",
+        status: "approved",
+        priority: "MEDIUM",
+        createdAt: "2026-10-06T15:20:00.000Z"
+      },
+
+      // Support Inbox Inquiries
+      {
+        id: "tick_sup_1",
+        userId: "usr_kai_music",
+        userName: "Kai Takahashi",
+        reporterEmail: "kai.music@aeirmist.social",
+        type: "Billing / Payouts",
+        category: "Marketplace Payouts",
+        subject: "Monthly Stripe Payout Schedule for Audio Packs",
+        message: "Could you confirm whether the monthly creator payout executes on the 1st or 15th for verified synth sound packs?",
+        description: "Could you confirm whether the monthly creator payout executes on the 1st or 15th for verified synth sound packs?",
+        status: "Pending",
+        priority: "urgent",
+        createdAt: "2026-10-08T11:00:00.000Z"
+      },
+      {
+        id: "tick_sup_2",
+        userId: "usr_marcus_dev",
+        userName: "Marcus Sterling",
+        reporterEmail: "marcus.dev@aeirmist.social",
+        type: "Technical Support",
+        category: "WebRTC Audio Latency",
+        subject: "WebRTC Global Relay Latency Verification",
+        message: "Group voice room latency in Western Europe PoP is under 15ms. In South Asia edge it ranges 45ms. Is direct mesh or TURN active?",
+        description: "Group voice room latency in Western Europe PoP is under 15ms. In South Asia edge it ranges 45ms. Is direct mesh or TURN active?",
+        status: "In Review",
+        priority: "high",
+        createdAt: "2026-10-08T05:15:00.000Z"
+      }
+    ];
   }
-];
-
-// Edge Tickets Store
-let edgeTickets: any[] = [
-  // Verification Applications
-  {
-    id: "tick_verif_1",
-    applicationId: "VR-2026-891",
-    userId: "usr_elena_design",
-    username: "elena_design",
-    type: "verification",
-    plan: "creator",
-    status: "pending",
-    amount: 14.99,
-    currency: "USD",
-    paymentProvider: "Stripe",
-    paymentStatus: "Paid",
-    identity: {
-      fullName: "Elena Rostova",
-      country: "Canada",
-      website: "https://elena.design",
-      idDocument: "Government Passport (Verified Hash)"
-    },
-    priority: "HIGH",
-    createdAt: new Date(Date.now() - 3600000 * 5).toISOString()
-  },
-  {
-    id: "tick_verif_2",
-    applicationId: "VR-2026-754",
-    userId: "usr_marcus_dev",
-    username: "marcus_dev",
-    type: "verification",
-    plan: "business",
-    status: "approved",
-    amount: 49.99,
-    currency: "USD",
-    paymentProvider: "Stripe",
-    paymentStatus: "Paid",
-    identity: {
-      fullName: "Marcus Sterling",
-      country: "United Kingdom",
-      website: "https://sterling-labs.dev",
-      idDocument: "National ID (Verified Hash)"
-    },
-    priority: "HIGH",
-    createdAt: new Date(Date.now() - 3600000 * 28).toISOString()
-  },
-  {
-    id: "tick_verif_3",
-    applicationId: "VR-2026-620",
-    userId: "usr_aisha_ai",
-    username: "aisha_ai",
-    type: "verification",
-    plan: "essential",
-    status: "pending",
-    amount: 4.99,
-    currency: "USD",
-    paymentProvider: "Apple Pay",
-    paymentStatus: "Paid",
-    identity: {
-      fullName: "Aisha Patel",
-      country: "United States",
-      website: "https://aisharesearch.io",
-      idDocument: "Driver's License (Verified Hash)"
-    },
-    priority: "MEDIUM",
-    createdAt: new Date(Date.now() - 3600000 * 12).toISOString()
-  },
-
-  // Account Appeals
-  {
-    id: "tick_appeal_1",
-    userId: "usr_spambot_3000",
-    username: "spambot_3000",
-    type: "appeal",
-    reason: "My account was flagged automatically during automated API stress testing. I am requesting human review.",
-    status: "pending",
-    priority: "HIGH",
-    createdAt: new Date(Date.now() - 3600000 * 4).toISOString()
-  },
-  {
-    id: "tick_appeal_2",
-    userId: "usr_david_m",
-    username: "david_m",
-    type: "appeal",
-    reason: "My account credentials were leaked on another site and unauthorized activity occurred. I have reset 2FA.",
-    status: "approved",
-    priority: "MEDIUM",
-    createdAt: new Date(Date.now() - 3600000 * 36).toISOString()
-  },
-
-  // Support Inbox Inquiries
-  {
-    id: "tick_sup_1",
-    userId: "usr_kai_music",
-    userName: "Kai Takahashi",
-    reporterEmail: "kai.music@aeirmist.social",
-    type: "Billing / Payouts",
-    category: "Marketplace Payouts",
-    subject: "Monthly Stripe Payout Schedule for Audio Packs",
-    message: "Could you confirm whether the monthly creator payout executes on the 1st or 15th for verified synth sound packs?",
-    description: "Could you confirm whether the monthly creator payout executes on the 1st or 15th for verified synth sound packs?",
-    status: "Pending",
-    priority: "urgent",
-    createdAt: new Date(Date.now() - 3600000 * 3).toISOString()
-  },
-  {
-    id: "tick_sup_2",
-    userId: "usr_marcus_dev",
-    userName: "Marcus Sterling",
-    reporterEmail: "marcus.dev@aeirmist.social",
-    type: "Technical Support",
-    category: "WebRTC Audio Latency",
-    subject: "WebRTC Global Relay Latency Verification",
-    message: "Group voice room latency in Western Europe PoP is under 15ms. In South Asia edge it ranges 45ms. Is direct mesh or TURN active?",
-    description: "Group voice room latency in Western Europe PoP is under 15ms. In South Asia edge it ranges 45ms. Is direct mesh or TURN active?",
-    status: "In Review",
-    priority: "high",
-    createdAt: new Date(Date.now() - 3600000 * 9).toISOString()
-  }
-];
+}
 
 export const onRequestOptions = async () => {
   return new Response(null, {
@@ -784,6 +790,7 @@ export const onRequestOptions = async () => {
 
 export const onRequest = async (context: { request: Request; env: Env; params: { route?: string[] } }) => {
   seedUsers();
+  seedStores();
   const { request } = context;
   const url = new URL(request.url);
   const path = url.pathname;
