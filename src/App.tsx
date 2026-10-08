@@ -1266,9 +1266,10 @@ function AppContent() {
 
   // Show unified Welcome screen ONLY on Home Feed during app opening or Home Feed reload!
   const hasCachedSessionEarly = typeof window !== 'undefined' && Boolean(
-    localStorage.getItem('aeirmist_session') || 
-    localStorage.getItem('aeirmist_user_profile') || 
-    localStorage.getItem('aeirmist_cached_profile')
+    (localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token')) &&
+    (localStorage.getItem('aeirmist_session') || 
+     localStorage.getItem('aeirmist_user_profile') || 
+     localStorage.getItem('aeirmist_cached_profile'))
   );
 
   if (isFeedRoute && (loading || (hasCachedSessionEarly && showSplash && !needsUsername) || (user && showSplash && !needsUsername))) {
@@ -1523,9 +1524,10 @@ function AppContent() {
 
   // Prevent AuthSystem flashing for logged-in users while verifying or profile is hydrating
   const hasCachedAuth = typeof window !== 'undefined' && Boolean(
-    localStorage.getItem('aeirmist_session') || 
-    localStorage.getItem('aeirmist_user_profile') || 
-    localStorage.getItem('aeirmist_cached_profile')
+    (localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token')) &&
+    (localStorage.getItem('aeirmist_session') || 
+     localStorage.getItem('aeirmist_user_profile') || 
+     localStorage.getItem('aeirmist_cached_profile'))
   );
 
   if (loading && hasCachedAuth && !hasAuthActionCode) {

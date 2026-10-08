@@ -11,19 +11,23 @@ const getAuth = (_app) => ({
 });
 const onAuthStateChanged = (_auth, callback) => {
   if (typeof localStorage !== 'undefined') {
-    const cached = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_session');
-    if (cached) {
-      try {
-        const u = JSON.parse(cached);
-        callback({
-          uid: u.id || u.uid || 'usr_self',
-          id: u.id || u.uid || 'usr_self',
-          email: u.email || 'user@aeirmist.local',
-          displayName: u.displayName || u.username || 'User',
-          photoURL: u.avatarUrl || u.photoURL || null,
-        });
-        return () => {};
-      } catch (e) {}
+    const token = localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
+    // ONLY restore cached session if a valid auth token is present in storage!
+    if (token) {
+      const cached = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile');
+      if (cached) {
+        try {
+          const u = JSON.parse(cached);
+          callback({
+            uid: u.id || u.uid || 'usr_self',
+            id: u.id || u.uid || 'usr_self',
+            email: u.email || 'user@aeirmist.local',
+            displayName: u.displayName || u.username || 'User',
+            photoURL: u.avatarUrl || u.photoURL || null,
+          });
+          return () => {};
+        } catch (e) {}
+      }
     }
   }
   callback(null);
@@ -42,8 +46,16 @@ const linkWithCredential = async (..._args: any[]): Promise<any> => ({ user: nul
 const signOut = async (..._args: any[]) => {
   if (typeof localStorage !== 'undefined') {
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('aeirmist_auth_token');
     localStorage.removeItem('aeirmist_session');
     localStorage.removeItem('aeirmist_user_profile');
+    localStorage.removeItem('aeirmist_cached_profile');
+    localStorage.removeItem('aeirmist_cached_id_name');
+    localStorage.removeItem('aeirmist_cached_display_name');
+    localStorage.removeItem('aeirmist_username');
+    localStorage.removeItem('aeirmist_saved_username');
+    localStorage.removeItem('aeirmist_user_handle');
+    localStorage.removeItem('aeirmist_active_profile_id');
   }
 };
 const createUserWithEmailAndPassword = async (_a: any, email: string, pass: string) => {
@@ -2704,6 +2716,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       }).catch(err => {
         logger.warn("[Auth] Token verification failed / expired:", err?.message);
+        if (err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
+          setAuthToken(null);
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('aeirmist_auth_token');
+            localStorage.removeItem('aeirmist_session');
+            localStorage.removeItem('aeirmist_user_profile');
+            localStorage.removeItem('aeirmist_cached_profile');
+          }
+        }
       });
     }
 
@@ -4026,17 +4048,14 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const s = localSession ? JSON.parse(localSession) : {};
         const p = localProfile ? JSON.parse(localProfile) : {};
         const isEmailMatch = (s.email && s.email.toLowerCase() === input.toLowerCase()) ||
-                             (p.email && p.email.toLowerCase() === input.toLowerCase()) ||
-                             input.toLowerCase() === 'admin.aeirmist@gmail.com' ||
-                             input.toLowerCase() === 'junaedislamjim180@gmail.com';
+                             (p.email && p.email.toLowerCase() === input.toLowerCase());
         const isUserMatch = (s.username && s.username.toLowerCase() === input.toLowerCase()) ||
-                            (p.username && p.username.toLowerCase() === input.toLowerCase()) ||
-                            input.toLowerCase() === 'admin';
+                            (p.username && p.username.toLowerCase() === input.toLowerCase());
         if (isEmailMatch || isUserMatch) {
           const isMainAdmin = input.toLowerCase() === 'admin.aeirmist@gmail.com' ||
                               input.toLowerCase() === 'junaedislamjim180@gmail.com' ||
                               input.toLowerCase() === 'admin' ||
-                              s.isAdmin || p.isAdmin;
+                              Boolean(s.isAdmin || p.isAdmin);
           const uid = s.uid || p.uid || `usr_${Date.now()}`;
           const resolvedUsername = s.username || p.username || (input.includes('@') ? input.split('@')[0] : input);
           const resolvedDisplayName = s.displayName || p.displayName || (isMainAdmin ? 'Admin Aeirmist' : resolvedUsername);
@@ -4936,13 +4955,25 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (e) {
       logger.warn("SignOut auth warning:", e);
     }
+    try {
+      await api.auth.logout().catch(() => {});
+    } catch (e) {}
     setProfile(null);
     setUser(null);
     setActiveProfileId(null);
     setAllProfiles([]);
     try {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('aeirmist_auth_token');
       localStorage.removeItem('aeirmist_active_profile_id');
       localStorage.removeItem('aeirmist_session');
+      localStorage.removeItem('aeirmist_user_profile');
+      localStorage.removeItem('aeirmist_cached_profile');
+      localStorage.removeItem('aeirmist_cached_id_name');
+      localStorage.removeItem('aeirmist_cached_display_name');
+      localStorage.removeItem('aeirmist_username');
+      localStorage.removeItem('aeirmist_saved_username');
+      localStorage.removeItem('aeirmist_user_handle');
       if (typeof window !== 'undefined') {
         window.history.replaceState({ activeTab: 'feed', _appNav: true }, '', '/');
         window.dispatchEvent(new CustomEvent('aeirmist-reset-to-feed'));

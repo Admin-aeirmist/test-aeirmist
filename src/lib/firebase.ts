@@ -14,7 +14,12 @@ class MockAuth {
   private hydrateUser() {
     if (typeof localStorage === 'undefined') return;
     try {
-      const cached = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_session');
+      const token = localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
+      if (!token) {
+        this.currentUser = null;
+        return;
+      }
+      const cached = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile');
       if (cached) {
         const parsed = JSON.parse(cached);
         this.currentUser = {
@@ -42,8 +47,16 @@ class MockAuth {
     this.currentUser = null;
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('auth_token');
+      localStorage.removeItem('aeirmist_auth_token');
       localStorage.removeItem('aeirmist_session');
       localStorage.removeItem('aeirmist_user_profile');
+      localStorage.removeItem('aeirmist_cached_profile');
+      localStorage.removeItem('aeirmist_cached_id_name');
+      localStorage.removeItem('aeirmist_cached_display_name');
+      localStorage.removeItem('aeirmist_username');
+      localStorage.removeItem('aeirmist_saved_username');
+      localStorage.removeItem('aeirmist_user_handle');
+      localStorage.removeItem('aeirmist_active_profile_id');
     }
     this.listeners.forEach((cb) => cb(null));
   }

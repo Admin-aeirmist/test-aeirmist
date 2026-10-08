@@ -604,35 +604,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
     try {
       const emailToUse = emailValidation.normalizedEmail || identifier.trim().toLowerCase();
-      let userCredential = null;
-      try {
-        const backendRes = await api.auth.register({
-          email: emailToUse,
-          password,
-          username,
-          displayName: fullName,
-        });
-        if (backendRes?.token) {
-          localStorage.setItem('auth_token', backendRes.token);
-          setAuthToken(backendRes.token);
-          userCredential = {
-            uid: backendRes.user?.id,
-            user: {
-              uid: backendRes.user?.id,
-              id: backendRes.user?.id,
-              email: backendRes.user?.email,
-              displayName: backendRes.user?.displayName,
-            }
-          };
-        }
-      } catch (apiErr: any) {
-        logger.warn("[AuthSystem] API register notice:", apiErr.message);
-      }
-
-      if (!userCredential) {
-        userCredential = await completeSignup(emailToUse, password, username, fullName, null, null);
-      }
-      const userUid = (userCredential as any)?.uid || (userCredential as any)?.user?.uid;
+      const userCredential = await completeSignup(emailToUse, password, username, fullName, null, null);
+      const userUid = (userCredential as any)?.uid || (userCredential as any)?.user?.uid || (userCredential as any)?.id;
       if (userUid) {
         logger.security("Login Success", { uid: userUid }); 
         await trackLoginSession(userUid, acquiredLoc);
@@ -644,7 +617,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       setIsSuccess(true);
       setSignupStep(3);
       if (navigator.vibrate) navigator.vibrate([30, 50, 80]);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 800));
+      onClose?.();
     } catch (err: any) {
       setError(getContextualError(err.message || err.code));
       setSignupStep(1); // Drop back to Step 1 to let them resolve errors

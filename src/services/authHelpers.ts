@@ -120,7 +120,20 @@ export function initAuthStateObserver(callback?: (user: User | null) => void) {
 // ==========================================
 export async function signOutUser(): Promise<boolean> {
   localStorage.removeItem('auth_token');
+  localStorage.removeItem('aeirmist_auth_token');
+  localStorage.removeItem('aeirmist_session');
+  localStorage.removeItem('aeirmist_user_profile');
+  localStorage.removeItem('aeirmist_cached_profile');
+  localStorage.removeItem('aeirmist_cached_id_name');
+  localStorage.removeItem('aeirmist_cached_display_name');
+  localStorage.removeItem('aeirmist_username');
+  localStorage.removeItem('aeirmist_saved_username');
+  localStorage.removeItem('aeirmist_user_handle');
+  localStorage.removeItem('aeirmist_active_profile_id');
   setAuthToken(null);
+  try {
+    await api.auth.logout().catch(() => {});
+  } catch (_) {}
   return true;
 }
 
