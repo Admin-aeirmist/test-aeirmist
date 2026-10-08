@@ -210,29 +210,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     }
 
     try {
-      let userCredential = null;
-      try {
-        const backendRes = await api.auth.login({ email: selectedAccount.username, password });
-        if (backendRes?.token) {
-          localStorage.setItem('auth_token', backendRes.token);
-          setAuthToken(backendRes.token);
-          userCredential = {
-            user: {
-              uid: backendRes.user?.id,
-              id: backendRes.user?.id,
-              email: backendRes.user?.email,
-              displayName: backendRes.user?.displayName,
-            }
-          };
-        }
-      } catch (apiErr: any) {
-        logger.warn('[AuthSystem] API login notice:', apiErr.message);
-      }
-
-      if (!userCredential) {
-        userCredential = await loginWithEmail(selectedAccount.username, password, true);
-      }
-      const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
+      const userCredential = await loginWithEmail(selectedAccount.username, password, true);
+      const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid || (userCredential as any)?.user?.id;
       
       if (userUid) {
         try {
@@ -251,7 +230,9 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       resetRouteToHomeFeed();
       setIsSuccess(true);
       if (navigator.vibrate) navigator.vibrate([30, 50]);
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      setTimeout(() => {
+        onClose?.();
+      }, 700);
     } catch (err: any) {
       logger.security("Login Failure", { method: 'saved_account', error: err.code || 'UNKNOWN_ERROR' });
       setError(getContextualError(err.message || err.code));
@@ -304,7 +285,9 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
         resetRouteToHomeFeed();
         setIsSuccess(true);
         if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
-        await new Promise(resolve => setTimeout(resolve, 1200));
+        setTimeout(() => {
+          onClose?.();
+        }, 700);
       } else {
         setTwoFactorError("Invalid or expired backup code.");
       }
@@ -552,29 +535,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     }
 
     try {
-      let userCredential = null;
-      try {
-        const backendRes = await api.auth.login({ email: identifier, password });
-        if (backendRes?.token) {
-          localStorage.setItem('auth_token', backendRes.token);
-          setAuthToken(backendRes.token);
-          userCredential = {
-            user: {
-              uid: backendRes.user?.id,
-              id: backendRes.user?.id,
-              email: backendRes.user?.email,
-              displayName: backendRes.user?.displayName,
-            }
-          };
-        }
-      } catch (apiErr: any) {
-        logger.warn('[AuthSystem] API login notice:', apiErr.message);
-      }
-
-      if (!userCredential) {
-        userCredential = await loginWithEmail(identifier, password, true);
-      }
-      const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
+      const userCredential = await loginWithEmail(identifier, password, true);
+      const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid || (userCredential as any)?.user?.id;
       
       if (userUid) {
         try {
@@ -606,6 +568,9 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       resetRouteToHomeFeed();
       setIsSuccess(true);
       if (navigator.vibrate) navigator.vibrate([30, 50]);
+      setTimeout(() => {
+        onClose?.();
+      }, 700);
     } catch (err: any) {
       setError(getContextualError(err.message || err.code));
       setShakeActive(true);
@@ -1311,10 +1276,12 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
                   <SignupWizard
                     onGoToLogin={() => setView('login')}
                     onComplete={() => {
+                      resetRouteToHomeFeed();
                       setIsSuccess(true);
                       setTimeout(() => {
+                        onClose?.();
                         window.location.reload();
-                      }, 400);
+                      }, 500);
                     }}
                   />
                 )}

@@ -354,6 +354,27 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
                       <span>Settings</span>
                     </button>
 
+                    {(user?.email?.toLowerCase() === 'admin.aeirmist@gmail.com' ||
+                       profile?.email?.toLowerCase() === 'admin.aeirmist@gmail.com' ||
+                       user?.isAdmin === true ||
+                       profile?.isAdmin === true ||
+                       ['admin', 'owner', 'super_admin', 'administrator', 'moderator'].includes((profile?.role || user?.role || '').toLowerCase())) && (
+                      <button
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          onTabChange('admin' as any);
+                        }}
+                        className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left ${
+                          settings.themeMode === 'light'
+                            ? 'text-cyan-700 hover:text-cyan-900 hover:bg-cyan-50'
+                            : 'text-aeirmist-cyan hover:bg-aeirmist-cyan/10'
+                        }`}
+                      >
+                        <ShieldCheck size={17} className="text-aeirmist-cyan" />
+                        <span className="font-bold">Control Panel</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
                         setIsMoreMenuOpen(false);

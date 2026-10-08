@@ -296,22 +296,27 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
       } catch (err: any) {
         if (isCancelled) return;
         logger.error('[Feed] API timeline sync error:', err);
+        try {
+          const rawLocal = localStorage.getItem('aeirmist_home_feed_cache');
+          if (rawLocal) {
+            const parsed = JSON.parse(rawLocal);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setPosts(parsed);
+              setError(null);
+              setLoading(false);
+              setIsRefreshing(false);
+              return;
+            }
+          }
+        } catch (_) {}
         LocalSqlService.getFeedPosts(30).then(cached => {
           if (cached && cached.length > 0) {
-            setPosts(prev => prev.length === 0 ? cached.map(c => c.raw || c) : prev);
+            setPosts(cached.map(c => c.raw || c));
+            setError(null);
           }
         }).catch(() => {});
         setLoading(false);
         setIsRefreshing(false);
-        setPosts(prev => {
-          if (prev.length === 0) {
-            setError({
-              message: 'Sync Interrupted',
-              details: err?.message || 'The Feed could not be established.'
-            });
-          }
-          return prev;
-        });
       }
     };
 

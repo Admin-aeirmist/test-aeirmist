@@ -460,8 +460,8 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
 
       const formattedDOB = `${birthYear}-${birthMonth}-${birthDay}`;
 
-      // Call REAL completeSignup or registerUsername if user already logged in
-      if (user) {
+      // Complete full registration with exact entered credentials (SQL + session + state)
+      if (!password && user) {
         await registerUsername(username, {
           displayName: fullName,
           personalEmail: emailToUse,

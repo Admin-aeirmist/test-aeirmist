@@ -249,9 +249,46 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       return { notifications: [], unreadCount: 0 } as any;
     }
 
-    // Health Check Fallback
-    if (path === '/health') {
-      return { status: 'healthy', services: { postgres: 'connected', redis: 'connected', edge: 'online' } } as any;
+    // User Search Fallback
+    if (path.startsWith('/api/v1/users/search') || path.startsWith('/api/v1/users/suggestions')) {
+      return {
+        users: [
+          {
+            id: 'usr_admin_aeirmist',
+            uid: 'usr_admin_aeirmist',
+            email: 'admin.aeirmist@gmail.com',
+            username: 'admin_aeirmist',
+            displayName: 'Admin Aeirmist',
+            role: 'admin',
+            isAdmin: true,
+            isVerified: true,
+            points: 1000,
+            status: 'ACTIVE'
+          },
+          {
+            id: 'system_aeirmist',
+            uid: 'system_aeirmist',
+            email: 'official@aeirmist.social',
+            username: 'aeirmist',
+            displayName: 'Aeirmist Official',
+            role: 'admin',
+            isAdmin: true,
+            isVerified: true,
+            points: 5000,
+            status: 'ACTIVE'
+          }
+        ]
+      } as any;
+    }
+
+    // Reports Fallback
+    if (path === '/api/v1/admin/reports') {
+      return { reports: [] } as any;
+    }
+
+    // Tickets Fallback
+    if (path === '/api/v1/admin/tickets') {
+      return { tickets: [] } as any;
     }
 
     throw err;
