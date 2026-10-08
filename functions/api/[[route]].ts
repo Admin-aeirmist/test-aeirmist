@@ -139,9 +139,297 @@ const defaultSystemUser = {
   }
 };
 
+const defaultElenaUser = {
+  id: "usr_elena_design",
+  uid: "usr_elena_design",
+  email: "elena.rostova@aeirmist.social",
+  username: "elena_design",
+  displayName: "Elena Rostova",
+  role: "creator",
+  isAdmin: false,
+  isVerified: true,
+  profile: {
+    id: "profile_usr_elena_design",
+    uid: "usr_elena_design",
+    ownerUid: "usr_elena_design",
+    username: "elena_design",
+    usernameNormalized: "elena_design",
+    displayName: "Elena Rostova",
+    fullName: "Elena Rostova",
+    name: "Elena Rostova",
+    email: "elena.rostova@aeirmist.social",
+    personalEmail: "elena.rostova@aeirmist.social",
+    photoURL: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+    avatarKey: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+    role: "creator",
+    isAdmin: false,
+    isVerified: true,
+    verificationPlan: "creator",
+    aeirmistLevel: 420,
+    points: 850,
+    followersCount: 1420,
+    followingCount: 310,
+    bio: "Digital 3D Artist & Cyberpunk Worldbuilder. Aeirmist Creator.",
+    status: "ACTIVE",
+    onboardingCompleted: true,
+    onboardingStep: 5,
+    createdAt: new Date(Date.now() - 86400000 * 45).toISOString(),
+    updatedAt: new Date().toISOString(),
+    social: { followers: [], following: [] }
+  }
+};
+
+const defaultMarcusUser = {
+  id: "usr_marcus_dev",
+  uid: "usr_marcus_dev",
+  email: "marcus.dev@aeirmist.social",
+  username: "marcus_dev",
+  displayName: "Marcus Sterling",
+  role: "developer",
+  isAdmin: false,
+  isVerified: true,
+  profile: {
+    id: "profile_usr_marcus_dev",
+    uid: "usr_marcus_dev",
+    ownerUid: "usr_marcus_dev",
+    username: "marcus_dev",
+    usernameNormalized: "marcus_dev",
+    displayName: "Marcus Sterling",
+    fullName: "Marcus Sterling",
+    name: "Marcus Sterling",
+    email: "marcus.dev@aeirmist.social",
+    personalEmail: "marcus.dev@aeirmist.social",
+    photoURL: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
+    avatarKey: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
+    role: "developer",
+    isAdmin: false,
+    isVerified: true,
+    verificationPlan: "business",
+    aeirmistLevel: 560,
+    points: 1200,
+    followersCount: 2150,
+    followingCount: 412,
+    bio: "Lead Systems Architect & Distributed Systems Engineer.",
+    status: "ACTIVE",
+    onboardingCompleted: true,
+    onboardingStep: 5,
+    createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
+    updatedAt: new Date().toISOString(),
+    social: { followers: [], following: [] }
+  }
+};
+
+const defaultAishaUser = {
+  id: "usr_aisha_ai",
+  uid: "usr_aisha_ai",
+  email: "aisha.ai@aeirmist.social",
+  username: "aisha_ai",
+  displayName: "Aisha Patel",
+  role: "user",
+  isAdmin: false,
+  isVerified: true,
+  profile: {
+    id: "profile_usr_aisha_ai",
+    uid: "usr_aisha_ai",
+    ownerUid: "usr_aisha_ai",
+    username: "aisha_ai",
+    usernameNormalized: "aisha_ai",
+    displayName: "Aisha Patel",
+    fullName: "Aisha Patel",
+    name: "Aisha Patel",
+    email: "aisha.ai@aeirmist.social",
+    personalEmail: "aisha.ai@aeirmist.social",
+    photoURL: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150",
+    avatarKey: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150",
+    role: "user",
+    isAdmin: false,
+    isVerified: true,
+    verificationPlan: "essential",
+    aeirmistLevel: 310,
+    points: 640,
+    followersCount: 890,
+    followingCount: 210,
+    bio: "AI Ethics & Synthetic Cognition Researcher at NeuroNexus.",
+    status: "ACTIVE",
+    onboardingCompleted: true,
+    onboardingStep: 5,
+    createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
+    updatedAt: new Date().toISOString(),
+    social: { followers: [], following: [] }
+  }
+};
+
+const defaultKaiUser = {
+  id: "usr_kai_music",
+  uid: "usr_kai_music",
+  email: "kai.music@aeirmist.social",
+  username: "kai_music",
+  displayName: "Kai Takahashi",
+  role: "creator",
+  isAdmin: false,
+  isVerified: true,
+  profile: {
+    id: "profile_usr_kai_music",
+    uid: "usr_kai_music",
+    ownerUid: "usr_kai_music",
+    username: "kai_music",
+    usernameNormalized: "kai_music",
+    displayName: "Kai Takahashi",
+    fullName: "Kai Takahashi",
+    name: "Kai Takahashi",
+    email: "kai.music@aeirmist.social",
+    personalEmail: "kai.music@aeirmist.social",
+    photoURL: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150",
+    avatarKey: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150",
+    role: "creator",
+    isAdmin: false,
+    isVerified: true,
+    verificationPlan: "creator",
+    aeirmistLevel: 280,
+    points: 530,
+    followersCount: 1680,
+    followingCount: 195,
+    bio: "Modular Synth Producer & Cyber-Audio Designer.",
+    status: "ACTIVE",
+    onboardingCompleted: true,
+    onboardingStep: 5,
+    createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
+    updatedAt: new Date().toISOString(),
+    social: { followers: [], following: [] }
+  }
+};
+
+const defaultDavidUser = {
+  id: "usr_david_m",
+  uid: "usr_david_m",
+  email: "david.m@aeirmist.social",
+  username: "david_m",
+  displayName: "David Miller",
+  role: "user",
+  isAdmin: false,
+  isVerified: false,
+  profile: {
+    id: "profile_usr_david_m",
+    uid: "usr_david_m",
+    ownerUid: "usr_david_m",
+    username: "david_m",
+    usernameNormalized: "david_m",
+    displayName: "David Miller",
+    fullName: "David Miller",
+    name: "David Miller",
+    email: "david.m@aeirmist.social",
+    personalEmail: "david.m@aeirmist.social",
+    photoURL: "",
+    avatarKey: "",
+    role: "user",
+    isAdmin: false,
+    isVerified: false,
+    aeirmistLevel: 95,
+    points: 110,
+    followersCount: 45,
+    followingCount: 68,
+    bio: "Passionate street photographer & hardware tinkerer.",
+    status: "ACTIVE",
+    onboardingCompleted: true,
+    onboardingStep: 5,
+    createdAt: new Date(Date.now() - 86400000 * 15).toISOString(),
+    updatedAt: new Date().toISOString(),
+    social: { followers: [], following: [] }
+  }
+};
+
+const defaultSpambotUser = {
+  id: "usr_spambot_3000",
+  uid: "usr_spambot_3000",
+  email: "bot3000@spamdomain.xyz",
+  username: "spambot_3000",
+  displayName: "Automated Promo",
+  role: "user",
+  isAdmin: false,
+  isVerified: false,
+  profile: {
+    id: "profile_usr_spambot_3000",
+    uid: "usr_spambot_3000",
+    ownerUid: "usr_spambot_3000",
+    username: "spambot_3000",
+    usernameNormalized: "spambot_3000",
+    displayName: "Automated Promo",
+    fullName: "Automated Promo",
+    name: "Automated Promo",
+    email: "bot3000@spamdomain.xyz",
+    personalEmail: "bot3000@spamdomain.xyz",
+    photoURL: "",
+    avatarKey: "",
+    role: "user",
+    isAdmin: false,
+    isVerified: false,
+    aeirmistLevel: 10,
+    points: 0,
+    followersCount: 2,
+    followingCount: 890,
+    bio: "Free gift cards click profile link 100% genuine",
+    status: "SUSPENDED",
+    onboardingCompleted: true,
+    onboardingStep: 5,
+    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+    updatedAt: new Date().toISOString(),
+    social: { followers: [], following: [] }
+  }
+};
+
+const defaultCryptoScamUser = {
+  id: "usr_cryptoscam_ad",
+  uid: "usr_cryptoscam_ad",
+  email: "promo@scamcrypto.online",
+  username: "cryptoscam_ad",
+  displayName: "Crypto Doubler Official",
+  role: "user",
+  isAdmin: false,
+  isVerified: false,
+  profile: {
+    id: "profile_usr_cryptoscam_ad",
+    uid: "usr_cryptoscam_ad",
+    ownerUid: "usr_cryptoscam_ad",
+    username: "cryptoscam_ad",
+    usernameNormalized: "cryptoscam_ad",
+    displayName: "Crypto Doubler Official",
+    fullName: "Crypto Doubler Official",
+    name: "Crypto Doubler Official",
+    email: "promo@scamcrypto.online",
+    personalEmail: "promo@scamcrypto.online",
+    photoURL: "",
+    avatarKey: "",
+    role: "user",
+    isAdmin: false,
+    isVerified: false,
+    aeirmistLevel: 5,
+    points: 0,
+    followersCount: 0,
+    followingCount: 1200,
+    bio: "Send 1 ETH get 2 ETH back immediately!",
+    status: "BANNED",
+    onboardingCompleted: true,
+    onboardingStep: 5,
+    createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
+    updatedAt: new Date().toISOString(),
+    social: { followers: [], following: [] }
+  }
+};
+
 function seedUsers() {
   if (usersMap.size === 0) {
-    [defaultAdminUser, defaultJunaedUser, defaultSystemUser].forEach(u => {
+    [
+      defaultAdminUser,
+      defaultJunaedUser,
+      defaultSystemUser,
+      defaultElenaUser,
+      defaultMarcusUser,
+      defaultAishaUser,
+      defaultKaiUser,
+      defaultDavidUser,
+      defaultSpambotUser,
+      defaultCryptoScamUser
+    ].forEach(u => {
       usersMap.set(u.id, u);
       usersMap.set(u.email.toLowerCase(), u);
       usersMap.set(u.username.toLowerCase(), u);
@@ -307,6 +595,183 @@ let edgePosts: any[] = [
     likedBy: [],
     savedBy: [],
     createdAt: new Date(Date.now() - 3600000).toISOString()
+  }
+];
+
+// Edge Reports Store
+let edgeReports: any[] = [
+  {
+    id: "rep_1",
+    reporterId: "usr_elena_design",
+    targetId: "usr_spambot_3000",
+    targetType: "user",
+    category: "Spam & Automated Abuse",
+    reason: "Mass posting spam comments on community artworks",
+    status: "PENDING",
+    priority: "HIGH",
+    reportedUid: "usr_spambot_3000",
+    reporterEmail: "elena.rostova@aeirmist.social",
+    createdAt: new Date(Date.now() - 3600000 * 2).toISOString()
+  },
+  {
+    id: "rep_2",
+    reporterId: "usr_marcus_dev",
+    targetId: "usr_cryptoscam_ad",
+    targetType: "user",
+    category: "Phishing / Security Violation",
+    reason: "Distributing malicious phishing URLs disguised as marketplace coupons",
+    status: "RESOLVED",
+    priority: "URGENT",
+    reportedUid: "usr_cryptoscam_ad",
+    reporterEmail: "marcus.dev@aeirmist.social",
+    resolution: "Account permanently banned and URLs blacklisted on edge firewall",
+    createdAt: new Date(Date.now() - 3600000 * 8).toISOString()
+  },
+  {
+    id: "rep_3",
+    reporterId: "usr_kai_music",
+    targetId: "post_sample_unauthorized",
+    targetType: "post",
+    category: "Copyright / DMCA",
+    reason: "Unauthorized re-upload of proprietary audio stem package",
+    status: "IN_REVIEW",
+    priority: "MEDIUM",
+    reportedUid: "usr_david_m",
+    reporterEmail: "kai.music@aeirmist.social",
+    createdAt: new Date(Date.now() - 3600000 * 14).toISOString()
+  },
+  {
+    id: "rep_4",
+    reporterId: "usr_aisha_ai",
+    targetId: "post_harassment_flag",
+    targetType: "post",
+    category: "Harassment & Toxic Speech",
+    reason: "Targeted aggressive comments in public live discussion",
+    status: "PENDING",
+    priority: "HIGH",
+    reportedUid: "usr_spambot_3000",
+    reporterEmail: "aisha.ai@aeirmist.social",
+    createdAt: new Date(Date.now() - 3600000 * 22).toISOString()
+  }
+];
+
+// Edge Tickets Store
+let edgeTickets: any[] = [
+  // Verification Applications
+  {
+    id: "tick_verif_1",
+    applicationId: "VR-2026-891",
+    userId: "usr_elena_design",
+    username: "elena_design",
+    type: "verification",
+    plan: "creator",
+    status: "pending",
+    amount: 14.99,
+    currency: "USD",
+    paymentProvider: "Stripe",
+    paymentStatus: "Paid",
+    identity: {
+      fullName: "Elena Rostova",
+      country: "Canada",
+      website: "https://elena.design",
+      idDocument: "Government Passport (Verified Hash)"
+    },
+    priority: "HIGH",
+    createdAt: new Date(Date.now() - 3600000 * 5).toISOString()
+  },
+  {
+    id: "tick_verif_2",
+    applicationId: "VR-2026-754",
+    userId: "usr_marcus_dev",
+    username: "marcus_dev",
+    type: "verification",
+    plan: "business",
+    status: "approved",
+    amount: 49.99,
+    currency: "USD",
+    paymentProvider: "Stripe",
+    paymentStatus: "Paid",
+    identity: {
+      fullName: "Marcus Sterling",
+      country: "United Kingdom",
+      website: "https://sterling-labs.dev",
+      idDocument: "National ID (Verified Hash)"
+    },
+    priority: "HIGH",
+    createdAt: new Date(Date.now() - 3600000 * 28).toISOString()
+  },
+  {
+    id: "tick_verif_3",
+    applicationId: "VR-2026-620",
+    userId: "usr_aisha_ai",
+    username: "aisha_ai",
+    type: "verification",
+    plan: "essential",
+    status: "pending",
+    amount: 4.99,
+    currency: "USD",
+    paymentProvider: "Apple Pay",
+    paymentStatus: "Paid",
+    identity: {
+      fullName: "Aisha Patel",
+      country: "United States",
+      website: "https://aisharesearch.io",
+      idDocument: "Driver's License (Verified Hash)"
+    },
+    priority: "MEDIUM",
+    createdAt: new Date(Date.now() - 3600000 * 12).toISOString()
+  },
+
+  // Account Appeals
+  {
+    id: "tick_appeal_1",
+    userId: "usr_spambot_3000",
+    username: "spambot_3000",
+    type: "appeal",
+    reason: "My account was flagged automatically during automated API stress testing. I am requesting human review.",
+    status: "pending",
+    priority: "HIGH",
+    createdAt: new Date(Date.now() - 3600000 * 4).toISOString()
+  },
+  {
+    id: "tick_appeal_2",
+    userId: "usr_david_m",
+    username: "david_m",
+    type: "appeal",
+    reason: "My account credentials were leaked on another site and unauthorized activity occurred. I have reset 2FA.",
+    status: "approved",
+    priority: "MEDIUM",
+    createdAt: new Date(Date.now() - 3600000 * 36).toISOString()
+  },
+
+  // Support Inbox Inquiries
+  {
+    id: "tick_sup_1",
+    userId: "usr_kai_music",
+    userName: "Kai Takahashi",
+    reporterEmail: "kai.music@aeirmist.social",
+    type: "Billing / Payouts",
+    category: "Marketplace Payouts",
+    subject: "Monthly Stripe Payout Schedule for Audio Packs",
+    message: "Could you confirm whether the monthly creator payout executes on the 1st or 15th for verified synth sound packs?",
+    description: "Could you confirm whether the monthly creator payout executes on the 1st or 15th for verified synth sound packs?",
+    status: "Pending",
+    priority: "urgent",
+    createdAt: new Date(Date.now() - 3600000 * 3).toISOString()
+  },
+  {
+    id: "tick_sup_2",
+    userId: "usr_marcus_dev",
+    userName: "Marcus Sterling",
+    reporterEmail: "marcus.dev@aeirmist.social",
+    type: "Technical Support",
+    category: "WebRTC Audio Latency",
+    subject: "WebRTC Global Relay Latency Verification",
+    message: "Group voice room latency in Western Europe PoP is under 15ms. In South Asia edge it ranges 45ms. Is direct mesh or TURN active?",
+    description: "Group voice room latency in Western Europe PoP is under 15ms. In South Asia edge it ranges 45ms. Is direct mesh or TURN active?",
+    status: "In Review",
+    priority: "high",
+    createdAt: new Date(Date.now() - 3600000 * 9).toISOString()
   }
 ];
 
@@ -629,16 +1094,49 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
 
   // Admin: Stats
   if (path === "/api/v1/admin/stats" && method === "GET") {
+    const suspended = Array.from(usersMap.values()).filter(u => u?.profile?.status === 'SUSPENDED').length;
+    const banned = Array.from(usersMap.values()).filter(u => u?.profile?.status === 'BANNED').length;
+    const pendingAppeals = edgeTickets.filter(t => t.type === 'appeal' && (t.status === 'pending' || t.status === 'open')).length;
+    const pendingTickets = edgeTickets.filter(t => t.status === 'pending' || t.status === 'open' || t.status === 'Pending').length;
+    const totalReports = edgeReports.length;
+
     return new Response(JSON.stringify({
       stats: {
-        totalUsers: 1420 + usersMap.size,
-        activeUsers: 890 + usersMap.size,
+        totalUsers: 1480 + usersMap.size,
+        activeUsers: 942 + usersMap.size,
+        suspendedUsers: suspended || 6,
+        bannedUsers: banned || 3,
+        pendingTickets: pendingTickets,
+        pendingAppeals: pendingAppeals,
+        totalReports: totalReports,
+        revenue: "$34,820.00",
+        subscribers: 142,
+        serverHealth: "99.99% HEALTHY",
+        uptime: "99.99%",
+        edgeLatency: "18ms",
         totalPosts: 3560 + edgePosts.length,
         totalVideos: 420,
         totalTransactions: 154,
-        marketplaceOrders: 86,
-        serverHealth: "OPTIMAL",
-        uptime: "99.98%"
+        totalMarketplaceOrders: 128,
+        totalMarketplaceItems: 86,
+        dailyActiveSeries: [
+          { day: "Mon", count: 880, date: "Oct 02" },
+          { day: "Tue", count: 915, date: "Oct 03" },
+          { day: "Wed", count: 940, date: "Oct 04" },
+          { day: "Thu", count: 910, date: "Oct 05" },
+          { day: "Fri", count: 975, date: "Oct 06" },
+          { day: "Sat", count: 1040, date: "Oct 07" },
+          { day: "Sun", count: 942, date: "Oct 08" }
+        ],
+        reportsTrendSeries: [
+          { day: "Mon", flagged: 4, resolved: 4 },
+          { day: "Tue", flagged: 6, resolved: 5 },
+          { day: "Wed", flagged: 3, resolved: 3 },
+          { day: "Thu", flagged: 7, resolved: 6 },
+          { day: "Fri", flagged: 5, resolved: 5 },
+          { day: "Sat", flagged: 8, resolved: 7 },
+          { day: "Sun", flagged: 4, resolved: 4 }
+        ]
       }
     }), { status: 200, headers: CORS_HEADERS });
   }
@@ -662,6 +1160,14 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
           targetType: "AUTH",
           details: "Edge security bridge token authorization active",
           timestamp: new Date(Date.now() - 120000).toISOString()
+        },
+        {
+          id: "log_3",
+          action: "SECURITY_SCAN",
+          adminEmail: "admin.aeirmist@gmail.com",
+          targetType: "SECURITY",
+          details: "WAF DDoS protection rules verified active across all Edge PoPs",
+          timestamp: new Date(Date.now() - 360000).toISOString()
         }
       ]
     }), { status: 200, headers: CORS_HEADERS });
@@ -670,22 +1176,24 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   // Admin: Reports
   if (path === "/api/v1/admin/reports" && method === "GET") {
     return new Response(JSON.stringify({
-      reports: [
-        {
-          id: "rep_1",
-          reporterId: "usr_admin_aeirmist",
-          targetId: "post_sample_flagged",
-          reason: "Spam verification check",
-          status: "RESOLVED",
-          createdAt: new Date().toISOString()
-        }
-      ]
+      reports: edgeReports,
+      total: edgeReports.length
     }), { status: 200, headers: CORS_HEADERS });
   }
 
   // Admin: Update Report
   if (path.startsWith("/api/v1/admin/reports/") && method === "PATCH") {
     const repId = path.replace("/api/v1/admin/reports/", "");
+    try {
+      const body = await request.json() as any;
+      const existing = edgeReports.find(r => r.id === repId);
+      if (existing) {
+        if (body.status) existing.status = body.status;
+        if (body.resolution) existing.resolution = body.resolution;
+        existing.updatedAt = new Date().toISOString();
+        return new Response(JSON.stringify({ success: true, report: existing }), { status: 200, headers: CORS_HEADERS });
+      }
+    } catch {}
     return new Response(JSON.stringify({
       success: true,
       report: { id: repId, status: "RESOLVED", updatedAt: new Date().toISOString() }
@@ -695,23 +1203,24 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   // Admin: Tickets
   if (path === "/api/v1/admin/tickets" && method === "GET") {
     return new Response(JSON.stringify({
-      tickets: [
-        {
-          id: "tick_1",
-          userId: "usr_admin_aeirmist",
-          subject: "Platform verification & edge bridge operational",
-          type: "verification",
-          status: "RESOLVED",
-          priority: "HIGH",
-          createdAt: new Date().toISOString()
-        }
-      ]
+      tickets: edgeTickets,
+      total: edgeTickets.length
     }), { status: 200, headers: CORS_HEADERS });
   }
 
   // Admin: Update Ticket
   if (path.startsWith("/api/v1/admin/tickets/") && method === "PATCH") {
     const tickId = path.replace("/api/v1/admin/tickets/", "");
+    try {
+      const body = await request.json() as any;
+      const existing = edgeTickets.find(t => t.id === tickId);
+      if (existing) {
+        if (body.status) existing.status = body.status;
+        if (body.reply) existing.reply = body.reply;
+        existing.updatedAt = new Date().toISOString();
+        return new Response(JSON.stringify({ success: true, ticket: existing }), { status: 200, headers: CORS_HEADERS });
+      }
+    } catch {}
     return new Response(JSON.stringify({
       success: true,
       ticket: { id: tickId, status: "RESOLVED", updatedAt: new Date().toISOString() }
@@ -724,25 +1233,67 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     const targetUserId = segs[0];
     const action = segs[1];
 
+    let targetUser = usersMap.get(targetUserId) || usersMap.get(targetUserId.toLowerCase());
+
     if (action === "ban") {
-      return new Response(JSON.stringify({ success: true, status: "BANNED" }), { status: 200, headers: CORS_HEADERS });
+      let isBan = true;
+      try {
+        const body = await request.json() as any;
+        if (body && typeof body.ban === 'boolean') isBan = body.ban;
+      } catch {}
+      if (targetUser && targetUser.profile) {
+        targetUser.profile.status = isBan ? "BANNED" : "ACTIVE";
+      }
+      return new Response(JSON.stringify({ success: true, status: isBan ? "BANNED" : "ACTIVE" }), { status: 200, headers: CORS_HEADERS });
     }
+
     if (action === "suspend") {
+      if (targetUser && targetUser.profile) {
+        targetUser.profile.status = "SUSPENDED";
+      }
       return new Response(JSON.stringify({ success: true, status: "SUSPENDED" }), { status: 200, headers: CORS_HEADERS });
     }
+
     if (action === "status") {
-      return new Response(JSON.stringify({ success: true, status: "ACTIVE" }), { status: 200, headers: CORS_HEADERS });
+      let newStatus = "ACTIVE";
+      try {
+        const body = await request.json() as any;
+        if (body?.status) newStatus = body.status;
+      } catch {}
+      if (targetUser && targetUser.profile) {
+        targetUser.profile.status = newStatus;
+      }
+      return new Response(JSON.stringify({ success: true, status: newStatus }), { status: 200, headers: CORS_HEADERS });
     }
+
     if (action === "verify") {
+      let plan = "creator";
+      try {
+        const body = await request.json() as any;
+        if (body?.plan) plan = body.plan;
+      } catch {}
+      if (targetUser) {
+        targetUser.isVerified = true;
+        if (targetUser.profile) {
+          targetUser.profile.isVerified = true;
+          targetUser.profile.verificationPlan = plan;
+        }
+      }
       return new Response(JSON.stringify({
         success: true,
-        profile: { id: targetUserId, isVerified: true, verifiedBadge: true }
+        profile: targetUser?.profile || { id: targetUserId, isVerified: true, verifiedBadge: true, verificationPlan: plan }
       }), { status: 200, headers: CORS_HEADERS });
     }
+
     if (action === "purge") {
+      usersMap.delete(targetUserId);
       return new Response(JSON.stringify({ success: true, message: "User purged successfully" }), { status: 200, headers: CORS_HEADERS });
     }
+
     if (method === "DELETE") {
+      if (targetUser && targetUser.profile) {
+        targetUser.profile.status = "DELETED";
+      }
       return new Response(JSON.stringify({ success: true, message: "User deleted successfully" }), { status: 200, headers: CORS_HEADERS });
     }
   }
