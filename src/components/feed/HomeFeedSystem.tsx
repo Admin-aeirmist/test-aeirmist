@@ -303,9 +303,14 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
         }).catch(() => {});
         setLoading(false);
         setIsRefreshing(false);
-        setError({
-          message: 'Sync Interrupted',
-          details: err?.message || 'The Feed could not be established.'
+        setPosts(prev => {
+          if (prev.length === 0) {
+            setError({
+              message: 'Sync Interrupted',
+              details: err?.message || 'The Feed could not be established.'
+            });
+          }
+          return prev;
         });
       }
     };

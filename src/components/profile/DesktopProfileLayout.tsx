@@ -417,14 +417,14 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
             <div>
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3">
                 <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-white truncate max-w-sm">
-                  {displayUser?.displayName || "Junaed Islam"}
+                  {displayUser?.displayName || displayUser?.fullName || displayUser?.name || "Aeirmist User"}
                 </h1>
                 {isVerified && (
                   <ShieldCheck size={20} className="text-aeirmist-cyan shrink-0" />
                 )}
               </div>
               <p className="text-[11px] font-mono font-bold text-aeirmist-cyan tracking-widest mt-1">
-                @{displayUser?.username || "junaed"}
+                @{displayUser?.username || displayUser?.handle || (displayUser?.email ? displayUser.email.split('@')[0] : "user")}
               </p>
 
               {/* Relationship Status Badge */}

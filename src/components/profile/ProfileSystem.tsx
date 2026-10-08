@@ -1919,7 +1919,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               </div>
               
               <p className="text-[10px] font-mono font-bold text-aeirmist-cyan tracking-widest leading-none pl-0.5 pb-0.5">
-                @{displayUser?.username || "junaed"}
+                @{displayUser?.username || displayUser?.handle || (displayUser?.email ? displayUser.email.split('@')[0] : "user")}
               </p>
 
               {/* Relationship Status Badge */}

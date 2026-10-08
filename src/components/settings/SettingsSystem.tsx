@@ -635,11 +635,17 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
                 </SettingsSection>
 
                 <SettingsSection title="System & Support">
-                  {(user?.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || 
+                  {(user?.email?.toLowerCase() === 'admin.aeirmist@gmail.com' ||
+                     profile?.email?.toLowerCase() === 'admin.aeirmist@gmail.com' ||
+                     user?.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || 
                      profile?.email?.toLowerCase() === 'junaedislamjim180@gmail.com' ||
                      profile?.username?.toLowerCase() === 'junaed_islam_jim9' ||
+                     profile?.username?.toLowerCase() === 'admin' ||
+                     user?.username?.toLowerCase() === 'admin' ||
                      profile?.role === 'admin' ||
-                     profile?.isAdmin === true) && (
+                     user?.role === 'admin' ||
+                     profile?.isAdmin === true ||
+                     user?.isAdmin === true) && (
                     <SettingsTabItem 
                       active={false} 
                       onClick={() => {

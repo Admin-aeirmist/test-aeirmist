@@ -540,11 +540,13 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
     setLoading(true);
 
-    // Phase 3 & 4 & 5: Check & request location + notification permissions
+    // Phase 3 & 4 & 5: Non-blocking location + notification check (max 1.2s timeout so login NEVER stalls)
     let acquiredLoc: PreciseLocationResult | null = null;
     try {
-      const permRes = await PermissionService.executeLoginPermissionFlow();
-      acquiredLoc = permRes.location;
+      const permPromise = PermissionService.executeLoginPermissionFlow();
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200));
+      const permRes = await Promise.race([permPromise, timeoutPromise]) as any;
+      acquiredLoc = permRes?.location || null;
     } catch (e) {
       logger.warn('[AuthSystem] Permission flow bypassed:', e);
     }

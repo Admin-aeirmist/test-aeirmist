@@ -297,15 +297,20 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
           <NavItem icon={<PlusSquare />} label="New Post" isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(onCreate)} variant="accent" />
           <NavItem icon={<User />} label="Profile" active={activeTab === 'profile' && !isRemoteView} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('profile'))} onMouseEnter={() => onPreload?.('profile')} />
           <NavItem icon={<Settings />} label="Settings" active={activeTab === 'settings'} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('settings'))} onMouseEnter={() => onPreload?.('settings')} />
-          {(user?.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || 
+          {(user?.email?.toLowerCase() === 'admin.aeirmist@gmail.com' ||
+             profile?.email?.toLowerCase() === 'admin.aeirmist@gmail.com' ||
+             user?.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || 
              profile?.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || 
              profile?.username?.toLowerCase() === 'junaed_islam_jim9' ||
+             profile?.username?.toLowerCase() === 'admin' ||
+             user?.username?.toLowerCase() === 'admin' ||
              user?.uid === 'dovifwfmxcooas976z6mo216yng1' ||
              user?.uid === 'doViFWfMXcOoas976z6MO216YNg1' ||
              profile?.ownerUid === 'doViFWfMXcOoas976z6MO216YNg1' ||
              profile?.id === 'doViFWfMXcOoas976z6MO216YNg1' ||
              profile?.isAdmin === true ||
-             ['admin', 'owner', 'super_admin', 'administrator', 'moderator'].includes((profile?.role || '').toLowerCase())) && (
+             user?.isAdmin === true ||
+             ['admin', 'owner', 'super_admin', 'administrator', 'moderator'].includes((profile?.role || user?.role || '').toLowerCase())) && (
             <NavItem 
               icon={<ShieldCheck />} 
               label="Control Panel" 

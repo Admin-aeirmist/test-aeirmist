@@ -2829,10 +2829,13 @@ export const AdminPanel = () => {
           ['admin', 'owner', 'super_admin', 'administrator', 'moderator', 'master'].includes(userRole);
 
         if (
+          userEmail === 'admin.aeirmist@gmail.com' ||
           userEmail === 'junaedislamjim180@gmail.com' ||
           userUid === 'dovifwfmxcooas976z6mo216yng1' ||
           userUid === 'doViFWfMXcOoas976z6MO216YNg1' ||
           profileUsername === 'junaed_islam_jim9' ||
+          profileUsername === 'admin' ||
+          profileUsername === 'admin_aeirmist' ||
           isProfileAdmin
         ) {
           if (isMounted) setIsAdminUser(true);

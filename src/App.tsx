@@ -1255,6 +1255,10 @@ function AppContent() {
       const profileUid = profile?.ownerUid || profile?.uid || profile?.id || '';
       const profileUsername = (profile?.username || '').toLowerCase().trim();
 
+      if (userEmail === 'admin.aeirmist@gmail.com' || profileEmail === 'admin.aeirmist@gmail.com') {
+        return profile?.displayName || profile?.fullName || 'Admin Aeirmist';
+      }
+
       if (
         userEmail === 'junaedislamjim180@gmail.com' ||
         userUid === 'dovifwfmxcooas976z6mo216yng1' ||
