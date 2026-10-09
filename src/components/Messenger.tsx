@@ -217,11 +217,13 @@ export const LiveParticipantName = ({ participantId, fallbackName, className = "
     typeof fallbackName === 'string' && 
     fallbackName.trim() !== '' && 
     fallbackName.toLowerCase() !== 'aeirmist user' && 
+    fallbackName.toLowerCase() !== 'aeirmist member' && 
+    fallbackName.toLowerCase() !== 'chat' && 
     fallbackName.toLowerCase() !== 'unknown'
   );
   const profileName = isDeleted 
     ? 'Aeirmist User' 
-    : (profileData?.displayName || profileData?.username || (isFallbackValid ? fallbackName : '') || 'Aeirmist User');
+    : (profileData?.displayName || profileData?.username || (isFallbackValid ? fallbackName : '') || 'Chat');
 
   useEffect(() => {
     if (!db || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
@@ -1011,11 +1013,16 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     setChats(prevChats => {
       let found = false;
       const updated = prevChats.map(c => {
-        if (c.id === chatId || c.id === canonicalId) {
+        const isPartnerMatch = currentChatObj && !c.isGroup && !currentChatObj.isGroup && (
+          (currentChatObj.otherParticipantId && c.otherParticipantId && currentChatObj.otherParticipantId === c.otherParticipantId) ||
+          (currentChatObj.otherParticipantUid && c.otherParticipantUid && currentChatObj.otherParticipantUid === c.otherParticipantUid) ||
+          (currentChatObj.otherProfile?.firebaseUid && c.otherProfile?.firebaseUid && currentChatObj.otherProfile.firebaseUid === c.otherProfile.firebaseUid)
+        );
+        if (c.id === chatId || c.id === canonicalId || isPartnerMatch) {
           found = true;
           return {
             ...c,
-            id: canonicalId,
+            id: c.id,
             lastMessage: text.startsWith('You: ') ? text : `You: ${text}`,
             latestMessagePreview: text,
             updatedAtMs: now,

@@ -231,7 +231,111 @@ class MessagingService {
 
       const messageId = metadata.optimisticId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      // 3. Primary Device SQL DAL / Cloudflare Edge Persistence (PostgreSQL Backend)
+      // 3. Dual-Write Mirror to Firestore (cross-platform real-time sync with mobile APK & existing sessions)
+      if (db && profile?.id && user?.uid) {
+        try {
+          const convRef = doc(db, 'conversations', finalConvId);
+          const convSnap = await getDoc(convRef);
+          const exists = convSnap.exists();
+          const batch = writeBatch(db);
+
+          const isSelfChat = targetProfileId === profile.id;
+          const isSelfUid = targetOwnerUid === user.uid;
+          const profileIds = isSelfChat ? [profile.id] : [profile.id, targetProfileId].filter(Boolean).sort();
+          const participants = isSelfUid ? [user.uid] : [user.uid, targetOwnerUid].filter(Boolean).sort();
+
+          const messageData: any = {
+            senderId: profile.id,
+            senderUid: user.uid,
+            text,
+            type,
+            attachmentUrl: mediaUrl || null,
+            mediaUrl: mediaUrl || null,
+            metadata: {
+              ...metadata,
+              optimisticId: metadata.optimisticId || null,
+              isOffline: metadata.isOffline || false
+            },
+            createdAt: serverTimestamp(),
+            deliveredTo: [profile.id],
+            seenBy: [profile.id],
+            status: 'sent',
+            timestamp: serverTimestamp(),
+            timestampMs: Date.now()
+          };
+          if (metadata.mood) {
+            messageData.mood = metadata.mood;
+          }
+
+          if (!exists) {
+            batch.set(convRef, cleanUndefined({
+              participants,
+              profileIds,
+              participantDetails: {
+                [profile.id]: {
+                  displayName: profile.displayName || profile.username,
+                  photoURL: profile.photoURL || null,
+                  username: profile.username || '',
+                  uid: user.uid
+                },
+                [targetProfileId!]: metadata.targetProfile || {
+                  displayName: 'Aeirmist User',
+                  photoURL: getAvatarUrl(null, targetProfileId) || null,
+                  username: targetProfileId,
+                  uid: targetOwnerUid || targetProfileId
+                }
+              },
+              latestMessageAt: serverTimestamp(),
+              latestMessageAtMs: Date.now(),
+              latestMessageId: messageId,
+              latestMessageSenderId: profile.id,
+              latestMessagePreview: text,
+              lastMessage: {
+                text,
+                senderId: profile.id,
+                timestamp: serverTimestamp(),
+                timestampMs: Date.now(),
+                type,
+                mediaUrl: mediaUrl || null,
+                mood: metadata.mood || null,
+                messageId: messageId
+              },
+              unreadCount: {
+                [targetProfileId!]: 1,
+                [profile.id]: 0
+              },
+              lastRead: { [profile.id]: serverTimestamp() },
+              lastDelivered: { [profile.id]: serverTimestamp() },
+              status: 'active',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              updatedAtMs: Date.now()
+            }));
+          } else {
+            const cData = convSnap.data();
+            const receiverId = targetProfileId || metadata.recipientId || (cData?.profileIds?.find((id: string) => id !== profile.id)) || null;
+            const receiverUid = targetOwnerUid || metadata.receiverUid || (cData?.participants?.find((uid: string) => uid !== user.uid)) || null;
+            this.updateExistingConversation(batch, db, finalConvId, profile.id, receiverId, receiverUid, text, type, mediaUrl, {
+              ...metadata,
+              convData: cData,
+              senderName: metadata.senderName || profile.displayName || profile.username,
+              senderPhoto: metadata.senderPhoto || profile.photoURL || '',
+              shouldNotify: true,
+              senderUid: user.uid,
+              messageId
+            });
+          }
+
+          const msgRef = doc(db, 'conversations', finalConvId, 'messages', messageId);
+          batch.set(msgRef, cleanUndefined(messageData));
+          await batch.commit();
+          logger.info("[MessagingService] Dual-write to Firestore committed successfully for", finalConvId);
+        } catch (fErr: any) {
+          logger.warn("[MessagingService] Non-blocking Firestore dual-write notice:", fErr?.message || fErr);
+        }
+      }
+
+      // 4. Primary Device SQL DAL / Cloudflare Edge Persistence (PostgreSQL Backend)
       let resolvedConvId = finalConvId;
       try {
         const apiRes = await api.chat.sendMessage(finalConvId, {
@@ -258,7 +362,6 @@ class MessagingService {
         }
       } catch (apiErr: any) {
         logger.warn("[MessagingService] Device API send warning:", apiErr);
-        throw apiErr;
       }
 
       // 4. Update instant memory cache so sender sees bubble immediately
@@ -671,9 +774,26 @@ class MessagingService {
         ? c.participants.find((p: any) => !isMeParticipant(p))
         : null;
 
-      const otherParticipantId = other?.profileId || other?.userId || c.otherParticipantId || null;
-      const otherParticipantUid = other?.userId || other?.firebaseUid || c.otherParticipantUid || null;
-      const resolvedName = c.title || c.name || other?.displayName || other?.username || c.groupName || 'Chat';
+      // Extract the true partner's Firebase UID and clean profile ID
+      const otherFirebaseUid = other?.firebaseUid || 
+        (c.otherParticipantUid && !c.otherParticipantUid.includes('-') ? c.otherParticipantUid : null) ||
+        (typeof c.otherParticipantId === 'string' && c.otherParticipantId.startsWith('profile_') ? c.otherParticipantId.replace(/^profile_/, '') : null);
+
+      // Point otherParticipantId to profile_${firebaseUid} whenever available so Firestore profile hooks find it
+      const otherParticipantId = otherFirebaseUid
+        ? `profile_${otherFirebaseUid}`
+        : (c.otherParticipantId || other?.profileId || other?.userId || null);
+
+      const otherParticipantUid = otherFirebaseUid || other?.userId || c.otherParticipantUid || null;
+
+      // Resolve friendly name: Never display generic placeholder 'Aeirmist Member' or 'Aeirmist User' if a username or display name exists
+      let resolvedName = c.title || c.name || other?.displayName || other?.username || c.groupName || 'Chat';
+      if (resolvedName === 'Aeirmist Member' || resolvedName === 'Aeirmist User') {
+        if (other?.username && other.username !== 'unknown') {
+          resolvedName = other.username;
+        }
+      }
+
       const resolvedPhoto = c.avatarKey ? `/media/${c.avatarKey}` : (other?.avatarKey ? `/media/${other.avatarKey}` : c.photo || (other?.photoURL || null));
 
       return {
@@ -684,10 +804,10 @@ class MessagingService {
         otherParticipantId,
         otherParticipantUid,
         otherProfile: other ? {
-          id: other.profileId,
+          id: otherParticipantId,
           userId: other.userId,
-          firebaseUid: other.firebaseUid,
-          displayName: other.displayName,
+          firebaseUid: otherFirebaseUid || other.firebaseUid,
+          displayName: resolvedName,
           username: other.username,
           avatarKey: other.avatarKey,
           isVerified: other.isVerified,
@@ -696,7 +816,7 @@ class MessagingService {
         latestMessagePreview: c.lastMessagePreview || c.lastMessage?.text || '',
         unreadCount: typeof c.unreadCount === 'object' ? c.unreadCount : { [profileId]: c.unreadCount || 0 },
         participants: c.participants ? (Array.isArray(c.participants) && typeof c.participants[0] === 'object' ? c.participants.map((p: any) => p.userId) : c.participants) : [userUid],
-        profileIds: c.profileIds || (other?.profileId ? [profileId, other.profileId] : [profileId])
+        profileIds: c.profileIds || (otherParticipantId ? [profileId, otherParticipantId] : [profileId])
       } as Chat;
     };
 
@@ -711,9 +831,11 @@ class MessagingService {
         // In 1v1 direct chats, check if another entry for the same partner already exists
         const isDirect = !c.isGroup && c.type !== 'group';
         const partnerKey = isDirect ? (
-          c.otherParticipantId?.replace(/^profile_/, '').split('_')[0] ||
-          c.otherParticipantUid?.replace(/^profile_/, '').split('_')[0] ||
-          (c.profileIds ? c.profileIds.filter((p: string) => p !== profileId).sort().join('_') : null)
+          (c.otherProfile?.firebaseUid ? c.otherProfile.firebaseUid.toLowerCase() : null) ||
+          (c.otherParticipantUid && !c.otherParticipantUid.includes('-') ? c.otherParticipantUid.replace(/^profile_/, '').split('_')[0].toLowerCase() : null) ||
+          (c.otherParticipantId && c.otherParticipantId.startsWith('profile_') ? c.otherParticipantId.replace(/^profile_/, '').split('_')[0].toLowerCase() : null) ||
+          (c.otherProfile?.username ? c.otherProfile.username.toLowerCase() : null) ||
+          (c.profileIds ? c.profileIds.filter((p: string) => p !== profileId).sort().join('_').toLowerCase() : null)
         ) : null;
 
         if (partnerKey) {
@@ -723,11 +845,53 @@ class MessagingService {
             if (existing) {
               const msExisting = extractTimestampMs(existing.latestMessageAt || existing.lastMessageAt);
               const msCurrent = extractTimestampMs(c.latestMessageAt || c.lastMessageAt);
-              if (msCurrent >= msExisting) {
-                listMap.delete(existingId);
-                listMap.set(c.id, { ...existing, ...c });
-                directPartnerMap.set(partnerKey, c.id);
-              }
+              
+              const latestPreview = msCurrent >= msExisting
+                ? (c.latestMessagePreview || existing.latestMessagePreview)
+                : (existing.latestMessagePreview || c.latestMessagePreview);
+              const latestAt = msCurrent >= msExisting
+                ? (c.latestMessageAt || existing.latestMessageAt)
+                : (existing.latestMessageAt || c.latestMessageAt);
+
+              const nameCandidates = [
+                existing.otherProfile?.displayName,
+                c.otherProfile?.displayName,
+                existing.name,
+                c.name,
+                existing.otherProfile?.username,
+                c.otherProfile?.username
+              ];
+              const bestName = nameCandidates.find(n => 
+                n && typeof n === 'string' && 
+                n.toLowerCase() !== 'aeirmist user' && 
+                n.toLowerCase() !== 'aeirmist member' && 
+                n.toLowerCase() !== 'chat'
+              ) || existing.name || c.name;
+
+              const bestPhoto = existing.photo || c.photo || null;
+
+              // Retain composite chat ID or existing ID so open chat windows don't desync
+              const preferredId = existingId.includes('_') ? existingId : (c.id.includes('_') ? c.id : existingId);
+
+              const merged: Chat = {
+                ...existing,
+                ...c,
+                id: preferredId,
+                name: bestName,
+                photo: bestPhoto,
+                latestMessagePreview: latestPreview,
+                latestMessageAt: latestAt,
+                otherParticipantId: existing.otherParticipantId?.startsWith('profile_')
+                  ? existing.otherParticipantId
+                  : (c.otherParticipantId?.startsWith('profile_') ? c.otherParticipantId : existing.otherParticipantId),
+                otherParticipantUid: existing.otherParticipantUid || c.otherParticipantUid,
+                otherProfile: { ...(existing.otherProfile || {}), ...(c.otherProfile || {}) }
+              };
+
+              listMap.delete(existingId);
+              listMap.delete(c.id);
+              listMap.set(preferredId, merged);
+              directPartnerMap.set(partnerKey, preferredId);
               continue;
             }
           } else {

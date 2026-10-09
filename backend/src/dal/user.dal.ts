@@ -114,7 +114,7 @@ export class UserDAL {
       await this.createProfile({
         userId: newUser.id,
         username: finalUsername,
-        displayName: 'Aeirmist Member',
+        displayName: finalUsername || 'Aeirmist Member',
       });
       return newUser.id;
     } catch (createErr) {
