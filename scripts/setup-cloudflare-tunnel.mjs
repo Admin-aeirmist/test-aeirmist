@@ -65,11 +65,11 @@ async function run() {
         ingress: [
           {
             hostname: 'aeirmist.com',
-            service: 'http://localhost:4000'
+            service: 'http://127.0.0.1:4000'
           },
           {
             hostname: 'www.aeirmist.com',
-            service: 'http://localhost:4000'
+            service: 'http://127.0.0.1:4000'
           },
           {
             service: 'http_status:404'
