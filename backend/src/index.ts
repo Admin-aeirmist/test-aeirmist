@@ -138,6 +138,7 @@ try {
 
 import { resolveUserFromCredentials } from './middleware/auth';
 import { ChatDAL } from './dal/chat.dal';
+import { resolveConversationId } from './routes/chat.routes';
 
 // Socket.IO Authentication Middleware (Strict JWT Validation)
 io.use(async (socket, next) => {
@@ -233,24 +234,31 @@ io.on('connection', async (socket) => {
     const cleanId = roomId.startsWith('conv:') ? roomId.replace(/^conv:/, '') : roomId;
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
 
-    if (isUuid) {
-      const isMember = await ChatDAL.isParticipant(cleanId, authedUserId);
-      if (!isMember) {
-        console.warn(`🔒 [Socket.IO] Access denied: User ${authedUserId} attempted to join unauthorized room ${cleanId}`);
-        if (typeof ack === 'function') ack({ success: false, error: 'Access denied: Not a participant' });
+    let canonicalConvId = cleanId;
+    if (!isUuid) {
+      try {
+        canonicalConvId = await resolveConversationId(cleanId, authedUserId);
+      } catch (err: any) {
+        console.warn(`🔒 [Socket.IO] Access denied: Could not resolve room ${roomId} for user ${authedUserId}: ${err?.message}`);
+        if (typeof ack === 'function') ack({ success: false, error: 'Access denied: Invalid room ID' });
         return;
       }
-    } else {
-      console.warn(`🔒 [Socket.IO] Access denied: Non-UUID room join rejected: ${roomId}`);
-      if (typeof ack === 'function') ack({ success: false, error: 'Access denied: Invalid room ID' });
+    }
+
+    const isMember = await ChatDAL.isParticipant(canonicalConvId, authedUserId);
+    if (!isMember) {
+      console.warn(`🔒 [Socket.IO] Access denied: User ${authedUserId} attempted to join unauthorized room ${canonicalConvId}`);
+      if (typeof ack === 'function') ack({ success: false, error: 'Access denied: Not a participant' });
       return;
     }
 
-    socket.join(roomId);
-    if (!roomId.startsWith('conv:')) {
-      socket.join(`conv:${roomId}`);
+    socket.join(canonicalConvId);
+    socket.join(`conv:${canonicalConvId}`);
+    if (cleanId !== canonicalConvId) {
+      socket.join(cleanId);
+      socket.join(`conv:${cleanId}`);
     }
-    if (typeof ack === 'function') ack({ success: true, room: roomId });
+    if (typeof ack === 'function') ack({ success: true, room: canonicalConvId });
   });
 
   socket.on('leave_room', (roomId: string) => {

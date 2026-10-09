@@ -3064,29 +3064,21 @@ const ChatWindow = ({
     
     try {
       const isNew = chat.id.startsWith('new_');
-      const targetProfileId = isNew ? chat.id.replace('new_', '') : null;
-
-      let otherUid = chat.otherParticipantUid || chat.participants?.find((uid: string) => uid !== user.uid);
-      if (!otherUid && targetProfileId && targetProfileId.startsWith('profile_')) {
-        const parts = targetProfileId.split('_');
-        if (parts.length >= 2) {
-          otherUid = parts[1];
-        }
-      }
+      const targetCanonicalId = isNew ? chat.id.replace('new_', '') : null;
+      const otherUid = chat.otherParticipantUid || chat.otherProfile?.userId || chat.participants?.find((uid: string) => uid !== user.uid) || targetCanonicalId;
+      const otherProfileId = chat.otherParticipantId || chat.otherProfile?.id || targetCanonicalId;
 
       const targetProfile = isNew ? {
         displayName: chat.name,
         photoURL: chat.photo,
-        username: targetProfileId,
+        username: chat.otherProfile?.username || targetCanonicalId,
         uid: otherUid
       } : null;
-
-      const otherProfileId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile.id);
       
       const newId = await sendMessage(chat.id, `Sent a ${type}`, type === 'voice' ? 'voice' : 'media', mediaUrl, { 
         mediaType: type,
         optimisticId: optimisticId,
-        recipientId: targetProfileId || otherProfileId,
+        recipientId: otherProfileId,
         targetProfile,
         senderUid: user.uid,
         receiverUid: otherUid,
@@ -3164,7 +3156,7 @@ const ChatWindow = ({
 
       const newId = await sendMessage(chat.id, text, 'text', undefined, { 
         targetProfile,
-        recipientId: targetProfileId || otherProfileId,
+        recipientId: otherProfileId,
         senderUid: user.uid,
         receiverUid: otherUid,
         senderName: profile.displayName || profile.username,
@@ -3374,7 +3366,7 @@ const ChatWindow = ({
 
       const newId = await sendMessage(chat.id, text || `Sent a ${type}`, type, mediaUrl, {
         ...metadata,
-        recipientId: targetProfileId || otherProfileId,
+        recipientId: otherProfileId,
         senderUid: user.uid,
         receiverUid: otherUid,
         senderName: profile.displayName || profile.username,

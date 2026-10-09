@@ -30,14 +30,17 @@ function resolveApiBase(): string {
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   const token = localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
-  if (token && token !== 'null' && token !== 'undefined') return token;
+  if (token && token !== 'null' && token !== 'undefined' && token.trim() !== '') {
+    return token.trim();
+  }
   try {
     const s = localStorage.getItem('aeirmist_session');
     if (s) {
       const parsed = JSON.parse(s);
-      if (parsed.token && parsed.token !== 'null' && parsed.token !== 'undefined') return parsed.token;
-      if (parsed.uid) return parsed.uid;
-      if (parsed.id) return parsed.id;
+      const sessionToken = parsed.token || parsed.accessToken || parsed.jwt;
+      if (sessionToken && sessionToken !== 'null' && sessionToken !== 'undefined' && typeof sessionToken === 'string' && sessionToken.trim() !== '') {
+        return sessionToken.trim();
+      }
     }
   } catch {}
   return null;
@@ -45,12 +48,29 @@ export function getAuthToken(): string | null {
 
 export function setAuthToken(token: string | null): void {
   if (typeof window === 'undefined') return;
-  if (token) {
-    localStorage.setItem('aeirmist_auth_token', token);
-    localStorage.setItem('auth_token', token);
+  if (token && typeof token === 'string' && token.trim() !== '') {
+    const cleanToken = token.trim();
+    localStorage.setItem('aeirmist_auth_token', cleanToken);
+    localStorage.setItem('auth_token', cleanToken);
+    try {
+      const s = localStorage.getItem('aeirmist_session');
+      if (s) {
+        const parsed = JSON.parse(s);
+        parsed.token = cleanToken;
+        localStorage.setItem('aeirmist_session', JSON.stringify(parsed));
+      }
+    } catch {}
   } else {
     localStorage.removeItem('aeirmist_auth_token');
     localStorage.removeItem('auth_token');
+    try {
+      const s = localStorage.getItem('aeirmist_session');
+      if (s) {
+        const parsed = JSON.parse(s);
+        delete parsed.token;
+        localStorage.setItem('aeirmist_session', JSON.stringify(parsed));
+      }
+    } catch {}
   }
 }
 
@@ -364,6 +384,11 @@ export const api = {
       request<{ token: string; user: any; profile?: any }>('/api/v1/auth/register', {
         method: 'POST',
         body: JSON.stringify(data),
+      }).then(res => {
+        if (res && res.token) {
+          setAuthToken(res.token);
+        }
+        return res;
       }),
     login: (
       dataOrEmail: {
@@ -391,8 +416,22 @@ export const api = {
       return request<{ token: string; user: any; profile?: any }>('/api/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify(payload),
+      }).then(res => {
+        if (res && res.token) {
+          setAuthToken(res.token);
+        }
+        return res;
       });
     },
+    refresh: () =>
+      request<{ token: string; user?: any }>('/api/v1/auth/refresh', {
+        method: 'POST',
+      }).then(res => {
+        if (res && res.token) {
+          setAuthToken(res.token);
+        }
+        return res;
+      }),
     me: () => request<{ user: any; profile?: any }>('/api/v1/auth/me'),
     logout: () => request<{ success: boolean; message?: string }>('/api/v1/auth/logout', { method: 'POST' }),
     forgotPassword: (email: string) =>

@@ -194,6 +194,30 @@ router.get('/me', authenticateToken, async (req: AuthenticatedRequest, res: Resp
   }
 });
 
+// Refresh / Exchange session for canonical JWT
+router.post('/refresh', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const token = generateAccessToken({
+      userId: req.user!.userId,
+      email: req.user!.email,
+      role: req.user!.role,
+    });
+    const profile = await UserDAL.getProfileByUserId(req.user!.userId);
+    res.json({
+      token,
+      user: {
+        id: req.user!.userId,
+        email: req.user!.email,
+        role: req.user!.role,
+        profile,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Refresh Error]', err);
+    res.status(500).json({ error: 'Failed to refresh token' });
+  }
+});
+
 // Forgot Password (generates temporary reset token)
 router.post('/forgot-password', passwordResetRateLimiter, async (req, res: Response) => {
   try {

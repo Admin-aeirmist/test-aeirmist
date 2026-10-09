@@ -323,6 +323,43 @@ async function runRegressionSuite() {
   }
   console.log('   ✅ new_<targetId> accurately resolved to existing direct conversation ID');
 
+  // STEP 10: Test /api/v1/auth/refresh endpoint
+  console.log('\n🔄 Step 10: Testing server token refresh endpoint (/api/v1/auth/refresh)...');
+  const refreshResp = await request('/api/v1/auth/refresh', 'POST', null, tokenA);
+  if (refreshResp.status !== 200 || !refreshResp.body.token) {
+    throw new Error(`Token refresh failed: ${JSON.stringify(refreshResp)}`);
+  }
+  const refreshedToken = refreshResp.body.token;
+  const meRefreshed = await request('/api/v1/auth/me', 'GET', null, refreshedToken);
+  if (meRefreshed.status !== 200 || meRefreshed.body.user.id !== userA.id) {
+    throw new Error('Refreshed token failed verification via /api/v1/auth/me');
+  }
+  console.log('   ✅ Token refresh endpoint issued valid JWT authenticated by backend');
+
+  // STEP 11: Test legacy compound conversation ID resolution and room join
+  console.log('\n🏛️ Step 11: Testing legacy compound conversation ID resolution and room join...');
+  const compoundConvId = 'profile_doViFWfMXcOoas976z6MO216YNg1_profile_ewuqultyDVhfydjkXpYI3YCFRdi2';
+  const compoundMsgText = `LEGACY-COMPOUND-ID-TEST at ${Date.now()}`;
+  // User B (ewuqultyDVhfydjkXpYI3YCFRdi2) sends via compound ID
+  const compoundSendResp = await request(`/api/v1/chat/conversations/${compoundConvId}/messages`, 'POST', {
+    content: compoundMsgText,
+    type: 'text'
+  }, tokenB);
+
+  if (compoundSendResp.status !== 201) {
+    throw new Error(`Legacy compound ID send failed: ${JSON.stringify(compoundSendResp)}`);
+  }
+  console.log(`   ✅ Compound ID successfully resolved to canonical UUID: ${compoundSendResp.body.conversationId}`);
+
+  // Test Socket join_room with compound ID
+  const joinCompoundAck = await new Promise<any>((resolve) => {
+    socketB.emit('join_room', compoundConvId, (res: any) => resolve(res));
+  });
+  if (!joinCompoundAck?.success) {
+    throw new Error(`join_room failed for compound ID: ${JSON.stringify(joinCompoundAck)}`);
+  }
+  console.log('   ✅ Socket.IO join_room resolved and joined room for legacy compound ID');
+
   // Cleanup sockets
   socketA.disconnect();
   socketB.disconnect();

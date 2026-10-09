@@ -33,12 +33,12 @@ const GroupChatSchema = z.object({
   avatarKey: z.string().optional(),
 });
 
-async function resolveUserId(rawId: string): Promise<string> {
-  const resolved = await UserDAL.resolveToUserId(rawId);
-  return resolved || rawId;
+async function resolveUserId(rawId: string): Promise<string | null> {
+  if (!rawId || typeof rawId !== 'string') return null;
+  return UserDAL.resolveToUserId(rawId);
 }
 
-async function resolveConversationId(rawConvId: string, currentUserId: string): Promise<string> {
+export async function resolveConversationId(rawConvId: string, currentUserId: string): Promise<string> {
   if (!rawConvId || typeof rawConvId !== 'string') {
     throw new Error('Invalid conversation identifier');
   }
@@ -74,10 +74,40 @@ async function resolveConversationId(rawConvId: string, currentUserId: string): 
     return ChatDAL.findOrCreateDirectConversation(currentUserId, target);
   }
 
-  // Case 3: Compound pair (e.g., profile_A_profile_B or idA_idB or idA:idB)
-  const compoundMatch = normalizedConvId.match(/^([a-zA-Z0-9_]{10,64})[_:]([a-zA-Z0-9_]{10,64})$/);
-  if (compoundMatch) {
-    const [ , partA, partB ] = compoundMatch;
+  // Case 3A: profile_A_profile_B format (strictly two distinct profile_ identifiers)
+  const profilePairMatch = normalizedConvId.match(/^(profile_[a-zA-Z0-9]+)_(profile_[a-zA-Z0-9]+)$/);
+  if (profilePairMatch) {
+    const [ , partA, partB ] = profilePairMatch;
+    const userA = await resolveUserId(partA);
+    const userB = await resolveUserId(partB);
+    if (userA && userB && (userA === currentUserId || userB === currentUserId)) {
+      const target = userA === currentUserId ? userB : userA;
+      if (target !== currentUserId) {
+        return ChatDAL.findOrCreateDirectConversation(currentUserId, target);
+      }
+    }
+  }
+
+  // Case 3B: Non-profile alphanumeric pair (e.g. uidA_uidB without internal underscores)
+  const uidPairMatch = normalizedConvId.match(/^([a-zA-Z0-9]{20,40})_([a-zA-Z0-9]{20,40})$/);
+  if (uidPairMatch) {
+    const [ , partA, partB ] = uidPairMatch;
+    const userA = await resolveUserId(partA);
+    const userB = await resolveUserId(partB);
+    if (userA && userB && (userA === currentUserId || userB === currentUserId)) {
+      const target = userA === currentUserId ? userB : userA;
+      if (target !== currentUserId) {
+        return ChatDAL.findOrCreateDirectConversation(currentUserId, target);
+      }
+    }
+  }
+
+  // Case 3C: Mixed pair (profile_A_uidB or uidA_profile_B)
+  const mixedPairMatch1 = normalizedConvId.match(/^(profile_[a-zA-Z0-9]+)_([a-zA-Z0-9]{20,40})$/);
+  const mixedPairMatch2 = normalizedConvId.match(/^([a-zA-Z0-9]{20,40})_(profile_[a-zA-Z0-9]+)$/);
+  const mixedPairMatch = mixedPairMatch1 || mixedPairMatch2;
+  if (mixedPairMatch) {
+    const [ , partA, partB ] = mixedPairMatch;
     const userA = await resolveUserId(partA);
     const userB = await resolveUserId(partB);
     if (userA && userB && (userA === currentUserId || userB === currentUserId)) {
@@ -125,7 +155,7 @@ router.post('/conversations/direct', authenticateToken, async (req: Authenticate
 router.post('/conversations/group', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { title, memberIds, avatarKey } = GroupChatSchema.parse(req.body);
-    const resolvedMemberIds = await Promise.all(memberIds.map(resolveUserId));
+    const resolvedMemberIds = (await Promise.all(memberIds.map(resolveUserId))).filter((id: string | null): id is string => Boolean(id));
     const conv = await ChatDAL.createGroupConversation(req.user!.userId, title, resolvedMemberIds, avatarKey);
     res.status(201).json({ conversation: conv });
   } catch (err: any) {

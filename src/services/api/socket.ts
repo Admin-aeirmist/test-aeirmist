@@ -26,6 +26,7 @@ function resolveSocketBase(): string {
 
 let socketInstance: Socket | null = null;
 const identifiedUserIds = new Set<string>();
+let isRefreshingSocketToken = false;
 
 export function identifyUserSocket(userId: string): void {
   if (!userId) return;
@@ -61,25 +62,60 @@ export function getSocket(): Socket {
       transports: ['websocket', 'polling'],
       autoConnect: true,
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 8,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
       auth: { token },
     });
 
     socketInstance.on('connect', () => {
-      console.log('🔌 [Socket.IO] Connected to backend gateway:', socketInstance?.id);
+      console.log('🔌 [Socket.IO] Connected to backend gateway at', endpoint, '| socketId:', socketInstance?.id);
       identifiedUserIds.forEach((id) => {
         socketInstance?.emit('identify_user', id);
       });
     });
 
-    socketInstance.on('reconnect_attempt', () => {
-      if (socketInstance) {
-        socketInstance.auth = { token: getAuthToken() };
+    socketInstance.on('connect_error', async (err: any) => {
+      const errMsg = err?.message || String(err);
+      console.warn('🔌 [Socket.IO Diagnostics] Connection error to endpoint:', endpoint, '| reason:', errMsg);
+      
+      const isAuthErr = errMsg.toLowerCase().includes('auth') || 
+                        errMsg.toLowerCase().includes('credentials') || 
+                        errMsg.toLowerCase().includes('unauthorized') ||
+                        errMsg.toLowerCase().includes('token');
+
+      if (isAuthErr && !isRefreshingSocketToken) {
+        isRefreshingSocketToken = true;
+        console.warn('🔌 [Socket.IO Diagnostics] Auth failure detected. Requesting server token refresh...');
+        try {
+          const { api } = await import('./client');
+          const refreshRes = await api.auth.refresh();
+          if (refreshRes && refreshRes.token) {
+            console.log('🔌 [Socket.IO Diagnostics] Fresh JWT acquired. Updating socket credentials.');
+            updateSocketAuth(refreshRes.token);
+          }
+        } catch (refreshErr) {
+          console.warn('🔌 [Socket.IO Diagnostics] Automatic token refresh failed:', (refreshErr as any)?.message || 'Session expired');
+        } finally {
+          isRefreshingSocketToken = false;
+        }
       }
     });
 
+    socketInstance.on('reconnect_attempt', (attempt) => {
+      const currentToken = getAuthToken();
+      if (socketInstance) {
+        socketInstance.auth = { token: currentToken };
+      }
+      console.log(`🔌 [Socket.IO Diagnostics] Reconnecting (attempt ${attempt}) to ${endpoint}...`);
+    });
+
+    socketInstance.on('reconnect_failed', () => {
+      console.warn(`🔌 [Socket.IO Diagnostics] Reconnect failed to ${endpoint} after all attempts`);
+    });
+
     socketInstance.on('disconnect', (reason) => {
-      console.log('🔌 [Socket.IO] Disconnected:', reason);
+      console.log('🔌 [Socket.IO Diagnostics] Disconnected from endpoint:', endpoint, '| reason:', reason);
     });
   }
   return socketInstance;

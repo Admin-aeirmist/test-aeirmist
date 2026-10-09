@@ -65,7 +65,7 @@ import { consolidateAndSyncUserProfiles } from '../services/accountSyncService';
 import { LocalSqlService } from '../services/LocalSqlService';
 import { validateEmailDetailed, isValidEmail } from '../utils/emailValidator';
 import { sendTemplatePasswordResetEmail, sendTemplateEmailVerification } from '../services/authActionService';
-import { api, setAuthToken } from '../services/api/client';
+import { api, setAuthToken, getAuthToken } from '../services/api/client';
 import { identifyUserSocket } from '../services/api/socket';
 
 /**
@@ -2769,6 +2769,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, [auth, db]);
 
+  // Proactive token initialization: exchange cached session for valid server JWT
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const currentToken = getAuthToken();
+      const hasSession = Boolean(localStorage.getItem('aeirmist_session'));
+      if (!currentToken && hasSession) {
+        api.auth.refresh().catch((err) => {
+          logger.warn('[Auth Initialization] Initial session token refresh note:', err?.message || err);
+        });
+      }
+    }
+  }, []);
+
   // Handle Online/Offline Status automatically when profile changes
   useEffect(() => {
     if (profile?.id && !isSafeMode) {
@@ -3832,15 +3845,20 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setLoading(false);
 
       if (typeof window !== 'undefined') {
+        const effectiveToken = bRes?.token || getAuthToken() || null;
         const sessionPayload = {
           uid: finalUid,
           email: targetEmail,
           username: activeProfile.username || input,
           displayName: activeProfile.displayName,
-          activeProfileId: activeProfile.id
+          activeProfileId: activeProfile.id,
+          token: effectiveToken
         };
         localStorage.setItem('aeirmist_session', JSON.stringify(sessionPayload));
         localStorage.setItem('aeirmist_active_profile_id', activeProfile.id);
+        if (effectiveToken) {
+          setAuthToken(effectiveToken);
+        }
       }
 
       credentials = {
