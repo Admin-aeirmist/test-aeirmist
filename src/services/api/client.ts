@@ -30,13 +30,14 @@ function resolveApiBase(): string {
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   const token = localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
-  if (token) return token;
+  if (token && token !== 'null' && token !== 'undefined') return token;
   try {
     const s = localStorage.getItem('aeirmist_session');
     if (s) {
       const parsed = JSON.parse(s);
-      if (parsed.token) return parsed.token;
-      if (parsed.id || parsed.uid) return parsed.id || parsed.uid;
+      if (parsed.token && parsed.token !== 'null' && parsed.token !== 'undefined') return parsed.token;
+      if (parsed.uid) return parsed.uid;
+      if (parsed.id) return parsed.id;
     }
   } catch {}
   return null;
@@ -69,11 +70,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       const s = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
       if (s) {
         const parsed = JSON.parse(s);
-        const uid = parsed.id || parsed.uid || parsed.userId;
+        const uid = parsed.uid || parsed.id || parsed.userId || localStorage.getItem('aeirmist_user_id');
         if (uid && !headers.has('X-User-Id')) {
           headers.set('X-User-Id', uid);
         }
-        const pid = parsed.profileId || (parsed.profile ? parsed.profile.id : null);
+        const pid = parsed.profileId || parsed.activeProfileId || (parsed.profile ? parsed.profile.id : null) || localStorage.getItem('aeirmist_active_profile_id');
         if (pid && !headers.has('X-Profile-Id')) {
           headers.set('X-Profile-Id', pid);
         }

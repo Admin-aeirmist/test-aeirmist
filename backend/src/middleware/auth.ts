@@ -10,18 +10,31 @@ export interface AuthenticatedRequest extends Request {
   user?: TokenPayload & { isBanned?: boolean };
 }
 
+async function loadValidUser(candidate: string | null | undefined): Promise<TokenPayload | null> {
+  if (!candidate || typeof candidate !== 'string') return null;
+  const clean = candidate.trim();
+  if (!clean || clean === 'null' || clean === 'undefined') return null;
+
+  try {
+    const resolvedId = await UserDAL.resolveToUserId(clean);
+    if (resolvedId) {
+      const user = await UserDAL.findById(resolvedId);
+      if (user && !user.isBanned && user.status !== 'BANNED' && user.status !== 'DELETED') {
+        return { userId: user.id, role: user.role as any, email: user.email };
+      }
+    }
+  } catch {}
+  return null;
+}
+
 async function resolveUserFromCredentials(token: string | null, headerUid: string | null): Promise<TokenPayload | null> {
   // 1. Sandbox and local vault fallback tokens
   if (token && (token === 'sandbox_token' || token.startsWith('sandbox_') || token.startsWith('jwt_local_vault_'))) {
-    const candidate = headerUid || 'demo@aeirmist.com';
-    let user = await UserDAL.findByFirebaseUid(candidate) || await UserDAL.findByEmailOrUsername(candidate);
-    if (!user) user = await UserDAL.findByEmail('demo@aeirmist.com');
-    if (!user) {
-      const anyUser = await db.select().from(users).limit(1);
-      user = anyUser[0];
-    }
-    if (user && !user.isBanned && user.status !== 'BANNED' && user.status !== 'DELETED') {
-      return { userId: user.id, role: user.role as any, email: user.email };
+    const user = await loadValidUser(headerUid) || await loadValidUser('demo@aeirmist.com');
+    if (user) return user;
+    const anyUser = await db.select().from(users).limit(1);
+    if (anyUser[0] && !anyUser[0].isBanned && anyUser[0].status !== 'BANNED' && anyUser[0].status !== 'DELETED') {
+      return { userId: anyUser[0].id, role: anyUser[0].role as any, email: anyUser[0].email };
     }
   }
 
@@ -31,7 +44,6 @@ async function resolveUserFromCredentials(token: string | null, headerUid: strin
     let targetId = rawRest;
     let targetEmail = '';
 
-    // Check if it contains a base64 encoded payload after the last underscore
     const lastUnderscore = rawRest.lastIndexOf('_');
     if (lastUnderscore > 0) {
       const candidateB64 = rawRest.slice(lastUnderscore + 1);
@@ -45,29 +57,11 @@ async function resolveUserFromCredentials(token: string | null, headerUid: strin
       } catch {}
     }
 
-    let user = null;
-    if (targetId) {
-      user = await UserDAL.findById(targetId) ||
-             await UserDAL.findByFirebaseUid(targetId) ||
-             await UserDAL.findByEmailOrUsername(targetId);
-    }
-    if (!user && rawRest && rawRest !== targetId) {
-      user = await UserDAL.findById(rawRest) ||
-             await UserDAL.findByFirebaseUid(rawRest) ||
-             await UserDAL.findByEmailOrUsername(rawRest);
-    }
-    if (!user && targetEmail) {
-      user = await UserDAL.findByEmail(targetEmail);
-    }
-    if (!user && headerUid) {
-      user = await UserDAL.findById(headerUid) ||
-             await UserDAL.findByFirebaseUid(headerUid) ||
-             await UserDAL.findByEmailOrUsername(headerUid);
-    }
-
-    if (user && !user.isBanned && user.status !== 'BANNED' && user.status !== 'DELETED') {
-      return { userId: user.id, role: user.role as any, email: user.email };
-    }
+    const edgeUser = await loadValidUser(targetId) ||
+                     await loadValidUser(rawRest) ||
+                     await loadValidUser(targetEmail) ||
+                     await loadValidUser(headerUid);
+    if (edgeUser) return edgeUser;
   }
 
   // 3. Standard JWT verification (Backend secret)
@@ -92,38 +86,26 @@ async function resolveUserFromCredentials(token: string | null, headerUid: strin
       if (decoded && typeof decoded === 'object') {
         const uid = decoded.user_id || decoded.sub || decoded.uid || decoded.userId;
         const email = decoded.email;
-        let u = null;
         if (uid) {
-          u = await UserDAL.findByFirebaseUid(uid) || await UserDAL.findById(uid);
+          const user = await loadValidUser(uid);
+          if (user) return user;
         }
-        if (!u && email) {
-          u = await UserDAL.findByEmail(email);
-        }
-        if (u && !u.isBanned && u.status !== 'BANNED' && u.status !== 'DELETED') {
-          return { userId: u.id, role: u.role as any, email: u.email };
+        if (email) {
+          const user = await loadValidUser(email);
+          if (user) return user;
         }
       }
     } catch {}
 
-    // 5. Direct UUID or Firebase UID as token string
-    try {
-      const directUser = await UserDAL.findById(token) || await UserDAL.findByFirebaseUid(token) || await UserDAL.findByEmailOrUsername(token);
-      if (directUser && !directUser.isBanned && directUser.status !== 'BANNED' && directUser.status !== 'DELETED') {
-        return { userId: directUser.id, role: directUser.role as any, email: directUser.email };
-      }
-    } catch {}
+    // 5. Direct UUID, Firebase UID, or Profile ID as token string
+    const directUser = await loadValidUser(token);
+    if (directUser) return directUser;
   }
 
-  // 6. Fallback to custom Header credentials (x-user-id / x-profile-id)
+  // 6. Fallback to custom Header credentials (x-user-id / x-profile-id / x-firebase-uid)
   if (headerUid) {
-    try {
-      const headerUser = await UserDAL.findById(headerUid) ||
-                         await UserDAL.findByFirebaseUid(headerUid) ||
-                         await UserDAL.findByEmailOrUsername(headerUid);
-      if (headerUser && !headerUser.isBanned && headerUser.status !== 'BANNED' && headerUser.status !== 'DELETED') {
-        return { userId: headerUser.id, role: headerUser.role as any, email: headerUser.email };
-      }
-    } catch {}
+    const headerUser = await loadValidUser(headerUid);
+    if (headerUser) return headerUser;
   }
 
   return null;
@@ -131,15 +113,25 @@ async function resolveUserFromCredentials(token: string | null, headerUid: strin
 
 export async function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string) || null;
+  let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+  if (token === 'null' || token === 'undefined' || token === '') token = null;
 
-  if (!token && !headerUid) {
+  const headerUid = (req.headers['x-user-id'] as string) || 
+                    (req.headers['x-profile-id'] as string) || 
+                    (req.headers['x-firebase-uid'] as string) ||
+                    (req.headers['x-account-id'] as string) ||
+                    (req.query.userId as string) ||
+                    (req.query.profileId as string) ||
+                    null;
+  const queryToken = (req.query.token as string) || (req.query.auth as string) || null;
+  const candidateToken = token || (queryToken && queryToken !== 'null' && queryToken !== 'undefined' ? queryToken : null);
+
+  if (!candidateToken && !headerUid) {
     return res.status(401).json({ error: 'Authentication required: missing token' });
   }
 
   try {
-    const payload = await resolveUserFromCredentials(token, headerUid);
+    const payload = await resolveUserFromCredentials(candidateToken, headerUid);
     if (!payload) {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }

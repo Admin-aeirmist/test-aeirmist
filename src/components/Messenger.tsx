@@ -3159,6 +3159,9 @@ const ChatWindow = ({
         return next;
       });
 
+      // Instantly confirm optimistic bubble so spinner resolves to delivered checkmark
+      setOptimistic(prev => prev.map(m => m.id === optimisticId ? { ...m, isOptimistic: false, isDelivered: true, status: 'sent' } : m));
+
       if (chat.isTemporary && newId) {
         const realChat = {
           ...chat,
