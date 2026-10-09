@@ -27,7 +27,7 @@ async function loadValidUser(candidate: string | null | undefined): Promise<Toke
   return null;
 }
 
-async function resolveUserFromCredentials(token: string | null, headerUid: string | null): Promise<TokenPayload | null> {
+export async function resolveUserFromCredentials(token: string | null, headerUid: string | null): Promise<TokenPayload | null> {
   // 1. Sandbox and local vault fallback tokens
   if (token && (token === 'sandbox_token' || token.startsWith('sandbox_') || token.startsWith('jwt_local_vault_'))) {
     const user = await loadValidUser(headerUid) || await loadValidUser('demo@aeirmist.com');

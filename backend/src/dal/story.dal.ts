@@ -38,8 +38,14 @@ export class StoryDAL {
     if (viewerId) {
       audienceCondition = sql`(${stories.audience} = 'public' 
         OR ${stories.userId} = ${viewerId} 
-        OR ((${stories.audience} = 'followers' OR ${stories.audience} = 'closeFriends' OR ${stories.audience} = 'close_friends') AND ${stories.userId} IN (
+        OR (${stories.audience} = 'followers' AND ${stories.userId} IN (
           SELECT following_id FROM follows WHERE follower_id = ${viewerId}
+        ))
+        OR ((${stories.audience} = 'closeFriends' OR ${stories.audience} = 'close_friends') AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(COALESCE(${profiles.privacySettings}->'closeFriends', '[]'::jsonb)) AS cf
+          WHERE cf = ${viewerId}
+             OR cf IN (SELECT id::text FROM profiles WHERE user_id = ${viewerId})
+             OR cf IN (SELECT username FROM profiles WHERE user_id = ${viewerId})
         )))` as any;
     }
 

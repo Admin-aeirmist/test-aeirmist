@@ -49,6 +49,8 @@ function canAdminManageTarget(adminRole: string, targetRole: string, adminId: st
 
 async function resolveTargetUserId(id: string): Promise<string | null> {
   if (!id) return null;
+  const resolved = await UserDAL.resolveToUserId(id);
+  if (resolved) return resolved;
   const [byUser] = await db.select({ id: users.id }).from(users).where(eq(users.id, id)).limit(1);
   if (byUser) return byUser.id;
   const [byProfile] = await db.select({ userId: profiles.userId }).from(profiles).where(eq(profiles.id, id)).limit(1);

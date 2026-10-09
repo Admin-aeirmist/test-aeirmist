@@ -216,66 +216,16 @@ router.post('/orders', authenticateToken, async (req: AuthenticatedRequest, res:
     const data = CreateOrderSchema.parse(req.body);
     const buyerId = req.user!.userId;
 
-    let serverCalculatedTotal = 0;
-    const verifiedItems: any[] = [];
-
-    for (const rawItem of data.items) {
-      const itemId = rawItem.itemId || rawItem.id;
-      if (!itemId || typeof itemId !== 'string') {
-        return res.status(400).json({ error: 'Invalid item ID in order' });
-      }
-
-      const dbItem = await MarketplaceDAL.getById(itemId);
-      if (!dbItem) {
-        return res.status(404).json({ error: `Item ${itemId} not found or no longer available` });
-      }
-
-      if (dbItem.status !== 'active') {
-        return res.status(400).json({ 
-          error: `Item "${dbItem.title}" cannot be purchased because its status is "${dbItem.status}"` 
-        });
-      }
-
-      if (dbItem.sellerId === buyerId) {
-        return res.status(400).json({ 
-          error: `You cannot purchase your own item ("${dbItem.title}")` 
-        });
-      }
-
-      const qty = Math.max(1, Math.min(100, parseInt(rawItem.quantity || '1', 10) || 1));
-      const unitPrice = parseFloat(dbItem.price) || 0;
-      serverCalculatedTotal += unitPrice * qty;
-
-      verifiedItems.push({
-        itemId: dbItem.id,
-        title: dbItem.title,
-        price: dbItem.price,
-        unitPrice: unitPrice,
-        quantity: qty,
-        sellerId: dbItem.sellerId,
-        mediaKeys: dbItem.mediaKeys,
-      });
-    }
-
-    const finalTotalAmount = serverCalculatedTotal.toFixed(2);
-
-    // Strict price verification: reject any discrepancy between client and server calculated total
-    if (data.totalAmount) {
-      const clientTotal = parseFloat(data.totalAmount);
-      if (isNaN(clientTotal) || Math.abs(clientTotal - serverCalculatedTotal) > 0.05) {
-        return res.status(400).json({
-          error: 'Security alert: Submitted order total does not match verified server item prices',
-          calculatedTotal: finalTotalAmount,
-          submittedTotal: data.totalAmount,
-        });
-      }
-    }
+    const formattedItems = data.items.map((it: any) => ({
+      itemId: it.itemId || it.id,
+      quantity: it.quantity,
+    }));
 
     const order = await MarketplaceDAL.createOrder({
       buyerId,
       storeId: data.storeId,
-      items: verifiedItems,
-      totalAmount: finalTotalAmount,
+      items: formattedItems,
+      totalAmount: data.totalAmount,
       currency: data.currency || 'BDT',
       shippingAddress: data.shippingAddress || {},
       paymentMethod: data.paymentMethod || 'cod',
@@ -285,6 +235,17 @@ router.post('/orders', authenticateToken, async (req: AuthenticatedRequest, res:
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: err.errors });
+    }
+    const errMsg = err?.message || 'Failed to create order';
+    if (
+      errMsg.includes('not found') || 
+      errMsg.includes('cannot be purchased') || 
+      errMsg.includes('no longer available') || 
+      errMsg.includes('cannot purchase') || 
+      errMsg.includes('Security alert') || 
+      errMsg.includes('Invalid item')
+    ) {
+      return res.status(400).json({ error: errMsg });
     }
     console.error('[Order Create Error]', err);
     res.status(500).json({ error: 'Failed to create order' });

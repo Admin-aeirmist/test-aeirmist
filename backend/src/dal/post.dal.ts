@@ -1,6 +1,6 @@
 import { eq, and, desc, sql, isNull, inArray } from 'drizzle-orm';
 import { db } from '../db';
-import { posts, postLikes, postBookmarks, profiles, users, pollVotes } from '../db/schema';
+import { posts, postLikes, postBookmarks, profiles, users, pollVotes, follows } from '../db/schema';
 
 export class PostDAL {
   static async createPost(data: {
@@ -56,6 +56,19 @@ export class PostDAL {
       .limit(1);
 
     if (!row) return null;
+
+    // Enforce privacy for followers-only posts
+    if (row.post.visibility === 'followers') {
+      if (!viewerId) return null;
+      if (row.post.userId !== viewerId) {
+        const [follow] = await db
+          .select({ id: follows.id })
+          .from(follows)
+          .where(and(eq(follows.followerId, viewerId), eq(follows.followingId, row.post.userId)))
+          .limit(1);
+        if (!follow) return null;
+      }
+    }
 
     let isLiked = false;
     let isBookmarked = false;
@@ -156,7 +169,19 @@ export class PostDAL {
     }));
   }
 
-  static async getUserPosts(targetUserId: string, limit: number = 50, offset: number = 0) {
+  static async getUserPosts(targetUserId: string, viewerId?: string, limit: number = 50, offset: number = 0) {
+    let visibilityCondition = eq(posts.visibility, 'public');
+
+    if (viewerId) {
+      if (viewerId === targetUserId) {
+        visibilityCondition = sql`TRUE` as any;
+      } else {
+        visibilityCondition = sql`(${posts.visibility} = 'public' OR (${posts.visibility} = 'followers' AND EXISTS (
+          SELECT 1 FROM follows WHERE follower_id = ${viewerId} AND following_id = ${targetUserId}
+        )))` as any;
+      }
+    }
+
     const rows = await db
       .select({
         post: posts,
@@ -172,7 +197,7 @@ export class PostDAL {
       .from(posts)
       .innerJoin(users, eq(posts.userId, users.id))
       .innerJoin(profiles, eq(users.id, profiles.userId))
-      .where(and(eq(posts.userId, targetUserId), isNull(posts.deletedAt)))
+      .where(and(eq(posts.userId, targetUserId), isNull(posts.deletedAt), visibilityCondition))
       .orderBy(desc(posts.createdAt))
       .limit(limit)
       .offset(offset);

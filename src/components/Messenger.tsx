@@ -691,7 +691,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
   }, [initialRecipient, user, profile]);
 
   useEffect(() => {
-    if (!db || !user || !profile?.id) return;
+    if (!user || !profile?.id) return;
 
     const unsubscribe = messagingService.subscribeToChats(db, user.uid, profile.id, (fetchedChats) => {
       logger.info(`[Messenger] Inbox update: ${fetchedChats.length} frequencies detected.`);
@@ -2661,7 +2661,7 @@ const ChatWindow = ({
 
   // Intersection Observer for Seen Status
   useEffect(() => {
-    if (!db || !chat.id || !user || chat.id.startsWith('new_') || chat.status === 'request') return;
+    if (!chat.id || !user || chat.id.startsWith('new_') || chat.status === 'request') return;
 
     // Check if there are any unread messages from the other user
     const hasUnread = messages.some(m => {

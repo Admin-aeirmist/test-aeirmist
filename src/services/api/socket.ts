@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { getAuthToken } from './client';
 
 function resolveSocketBase(): string {
   if (typeof window !== 'undefined') {
@@ -34,14 +35,34 @@ export function identifyUserSocket(userId: string): void {
   }
 }
 
+export function updateSocketAuth(token?: string): void {
+  const authToken = token || getAuthToken();
+  if (socketInstance) {
+    socketInstance.auth = { token: authToken };
+    if (!socketInstance.connected) {
+      socketInstance.connect();
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'aeirmist_auth_token' || e.key === 'auth_token') {
+      updateSocketAuth();
+    }
+  });
+}
+
 export function getSocket(): Socket {
   if (!socketInstance) {
     const endpoint = resolveSocketBase();
+    const token = getAuthToken();
     socketInstance = io(endpoint, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 5,
+      auth: { token },
     });
 
     socketInstance.on('connect', () => {
@@ -49,6 +70,12 @@ export function getSocket(): Socket {
       identifiedUserIds.forEach((id) => {
         socketInstance?.emit('identify_user', id);
       });
+    });
+
+    socketInstance.on('reconnect_attempt', () => {
+      if (socketInstance) {
+        socketInstance.auth = { token: getAuthToken() };
+      }
     });
 
     socketInstance.on('disconnect', (reason) => {

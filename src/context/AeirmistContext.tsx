@@ -1625,7 +1625,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateSeenStatus = useCallback(async (conversationId: string) => {
-    if (!db || !profile || isOffline || !conversationId) return;
+    if (!profile || isOffline || !conversationId) return;
     
     // Respect Read Receipts setting
     if (profile.messagingSettings?.readReceipts === false) return;
@@ -1637,7 +1637,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (e) {
       logger.warn("[AeirmistContext] Seen status update delayed", e);
     }
-  }, [db, profile?.id, profile?.messagingSettings?.readReceipts, isOffline, canWrite]);
+  }, [profile?.id, profile?.messagingSettings?.readReceipts, isOffline, canWrite]);
 
   const markAsRead = useCallback(async (conversationId: string) => {
     return updateSeenStatus(conversationId);
@@ -4508,15 +4508,24 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const purgeUser = async (uid: string, explicitProfileId?: string) => {
-    if (!db || !uid) return;
+    if (!uid) return;
     try {
       logger.security("[Security] User Purged", { targetUid: uid, explicitProfileId });
-      logger.info(`[purgeUser] Comprehensive A-Z clean-up initiated for UID/ProfileID: ${uid}`);
+      logger.info(`[purgeUser] Comprehensive clean-up initiated for UID/ProfileID: ${uid}`);
 
-      // 1. Gather ALL associated Profile IDs, UIDs, and Usernames
-      const profileIdsSet = new Set<string>();
-      const uidsSet = new Set<string>();
-      const usernamesSet = new Set<string>();
+      // 1. Primary: Canonical PostgreSQL backend purge
+      try {
+        await api.admin.purgeUser(uid);
+      } catch (backendErr) {
+        logger.warn("[purgeUser] Backend purge error (continuing local cleanup):", backendErr);
+      }
+
+      // 2. Legacy Firestore cleanup (if db initialized)
+      if (db) {
+        // 1. Gather ALL associated Profile IDs, UIDs, and Usernames
+        const profileIdsSet = new Set<string>();
+        const uidsSet = new Set<string>();
+        const usernamesSet = new Set<string>();
 
       uidsSet.add(uid);
       profileIdsSet.add(uid);
@@ -4996,9 +5005,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           await deleteDoc(doc(db, 'users', `user_${u}`)).catch(() => {});
         }
       }
+      }
 
       logger.security("[Security] User Purged", { targetUid: uid, explicitProfileId });
-      logger.info(`[purgeUser] Successfully wiped all Firestore data from A-Z for user ${uid}.`);
+      logger.info(`[purgeUser] Successfully processed purge for user ${uid}.`);
     } catch (error) {
       logger.error("[purgeUser] failed:", error);
       // Do not throw so caller can still execute cleanup and notify admin
@@ -5006,11 +5016,20 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const toggleUserBan = async (uid: string, banStatus: boolean) => {
-    if (!db || !uid) return;
+    if (!uid) return;
     try {
-      const banUids = new Set<string>([uid]);
-      const banProfileIds = new Set<string>([uid, `profile_${uid}`]);
-      const banUsernames = new Set<string>();
+      // 1. Primary: PostgreSQL backend ban API
+      try {
+        await api.admin.banUser(uid, banStatus, banStatus ? 'Account suspended by administrator' : undefined);
+      } catch (backendErr) {
+        logger.warn("[toggleUserBan] Backend ban API error:", backendErr);
+      }
+
+      // 2. Legacy Firestore sync if db active
+      if (db) {
+        const banUids = new Set<string>([uid]);
+        const banProfileIds = new Set<string>([uid, `profile_${uid}`]);
+        const banUsernames = new Set<string>();
 
       const profilesRef = collection(db, 'profiles');
       const qOwner = query(profilesRef, where('ownerUid', '==', uid));
@@ -5114,6 +5133,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           } catch (e) {}
         }
       }
+      }
 
       logger.security("User Ban Toggled", { action: "toggle_ban", uid, banStatus });
       
@@ -5135,20 +5155,57 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     durationDays: number = 30,
     targetUid?: string
   ) => {
-    if (!db) return;
     try {
       const cleanProfileId = profileId.startsWith('profile_') ? profileId : profileId;
-      const profileRef = doc(db, 'profiles', cleanProfileId);
-      const profileSnap = await getDoc(profileRef).catch(() => null);
-      const pData = profileSnap?.exists() ? profileSnap.data() : null;
+      const targetId = targetUid || (cleanProfileId.startsWith('profile_') ? cleanProfileId.replace('profile_', '') : cleanProfileId);
 
-      const resolvedUid = targetUid || pData?.ownerUid || pData?.uid || (profileId.startsWith('profile_') ? profileId.replace('profile_', '') : profileId);
+      // 1. Primary: PostgreSQL backend verification API
+      try {
+        await api.admin.verifyUser(targetId, {
+          verified: verifiedStatus,
+          plan,
+          badge: verifiedStatus ? (plan === 'business' ? 'VERIFIED_BUSINESS' : 'VERIFIED_CREATOR') : undefined,
+          durationDays,
+        });
+      } catch (backendErr) {
+        logger.warn("[toggleVerification] Backend verify API error:", backendErr);
+      }
 
-      const planNameMap: Record<string, string> = {
-        essential: 'Essential ($3.69/mo)',
-        creator: 'Creator ($9.69/mo)',
-        business: 'Business ($12.69/mo)'
-      };
+      const nowMs = Date.now();
+      const durationMs = durationDays * 24 * 60 * 60 * 1000;
+      const expiresAt = new Date(nowMs + durationMs);
+
+      // Update local profile state immediately
+      setProfile(prev => {
+        if (!prev) return prev;
+        if (prev.id === cleanProfileId || prev.uid === targetId || prev.ownerUid === targetId || prev.id === `profile_${targetId}`) {
+          return {
+            ...prev,
+            isVerified: verifiedStatus,
+            verified: verifiedStatus,
+            verificationPlan: verifiedStatus ? plan : undefined,
+            verificationExpiresAt: verifiedStatus ? expiresAt : undefined
+          };
+        }
+        return prev;
+      });
+
+      if (profile?.id === cleanProfileId || user?.uid === targetId || profile?.ownerUid === targetId) {
+        if (verifiedStatus) setShowVerificationCelebration(true);
+      }
+
+      if (db) {
+        const profileRef = doc(db, 'profiles', cleanProfileId);
+        const profileSnap = await getDoc(profileRef).catch(() => null);
+        const pData = profileSnap?.exists() ? profileSnap.data() : null;
+
+        const resolvedUid = targetUid || pData?.ownerUid || pData?.uid || (profileId.startsWith('profile_') ? profileId.replace('profile_', '') : profileId);
+
+        const planNameMap: Record<string, string> = {
+          essential: 'Essential ($3.69/mo)',
+          creator: 'Creator ($9.69/mo)',
+          business: 'Business ($12.69/mo)'
+        };
 
       if (verifiedStatus) {
         const nowMs = Date.now();
@@ -5347,6 +5404,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           type: 'info' 
         });
       }
+      }
     } catch (e) {
       logger.error("Verification toggle failed:", e);
       addToast({ title: 'Verification Error', message: 'Failed to update verification status.', type: 'warning' });
@@ -5355,55 +5413,65 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateUserStatus = async (uid: string, status: AccountStatus, targetProfileId?: string) => {
-    if (!db) return;
+    if (!uid) return;
     try {
-      const isRestricted = ['SUSPENDED', 'BANNED', 'DEACTIVATED', 'DELETED', 'UNDER_REVIEW'].includes(status);
-      const cleanUid = uid.startsWith('profile_') ? uid.replace(/^profile_/, '') : uid;
-      const profilesRef = collection(db, 'profiles');
-      
-      const [snapOwner, snapUid] = await Promise.all([
-        getDocs(query(profilesRef, where('ownerUid', '==', cleanUid))).catch(() => null),
-        getDocs(query(profilesRef, where('uid', '==', cleanUid))).catch(() => null)
-      ]);
-      
-      const batch = writeBatch(db);
-      const touchedIds = new Set<string>();
-
-      if (snapOwner) {
-        snapOwner.forEach(p => {
-          batch.update(doc(db, 'profiles', p.id), { status, isBanned: isRestricted });
-          touchedIds.add(p.id);
-        });
+      // 1. Primary: PostgreSQL backend user status API
+      try {
+        await api.admin.updateUserStatus(uid, status);
+      } catch (backendErr) {
+        logger.warn("[updateUserStatus] Backend status error:", backendErr);
       }
-      if (snapUid) {
-        snapUid.forEach(p => {
-          if (!touchedIds.has(p.id)) {
+
+      // 2. Legacy Firestore sync if db active
+      if (db) {
+        const isRestricted = ['SUSPENDED', 'BANNED', 'DEACTIVATED', 'DELETED', 'UNDER_REVIEW'].includes(status);
+        const cleanUid = uid.startsWith('profile_') ? uid.replace(/^profile_/, '') : uid;
+        const profilesRef = collection(db, 'profiles');
+        
+        const [snapOwner, snapUid] = await Promise.all([
+          getDocs(query(profilesRef, where('ownerUid', '==', cleanUid))).catch(() => null),
+          getDocs(query(profilesRef, where('uid', '==', cleanUid))).catch(() => null)
+        ]);
+        
+        const batch = writeBatch(db);
+        const touchedIds = new Set<string>();
+
+        if (snapOwner) {
+          snapOwner.forEach(p => {
             batch.update(doc(db, 'profiles', p.id), { status, isBanned: isRestricted });
             touchedIds.add(p.id);
-          }
-        });
-      }
+          });
+        }
+        if (snapUid) {
+          snapUid.forEach(p => {
+            if (!touchedIds.has(p.id)) {
+              batch.update(doc(db, 'profiles', p.id), { status, isBanned: isRestricted });
+              touchedIds.add(p.id);
+            }
+          });
+        }
 
-      for (const candidateId of [uid, cleanUid, `profile_${cleanUid}`, targetProfileId]) {
-        if (candidateId && !touchedIds.has(candidateId)) {
-          const directRef = doc(db, 'profiles', candidateId);
-          const directSnap = await getDoc(directRef).catch(() => null);
-          if (directSnap && directSnap.exists()) {
-            batch.update(directRef, { status, isBanned: isRestricted });
-            touchedIds.add(candidateId);
+        for (const candidateId of [uid, cleanUid, `profile_${cleanUid}`, targetProfileId]) {
+          if (candidateId && !touchedIds.has(candidateId)) {
+            const directRef = doc(db, 'profiles', candidateId);
+            const directSnap = await getDoc(directRef).catch(() => null);
+            if (directSnap && directSnap.exists()) {
+              batch.update(directRef, { status, isBanned: isRestricted });
+              touchedIds.add(candidateId);
+            }
           }
         }
+
+        await batch.commit(); 
+        logger.security("User Ban Toggled", { action: "toggle_ban" });
+
+        try {
+          await updateDoc(doc(db, 'users', cleanUid), { 
+            status,
+            isBanned: isRestricted
+          });
+        } catch (e) {}
       }
-
-      await batch.commit(); 
-      logger.security("User Ban Toggled", { action: "toggle_ban" });
-
-      try {
-        await updateDoc(doc(db, 'users', cleanUid), { 
-          status,
-          isBanned: isRestricted
-        });
-      } catch (e) {}
 
       addToast({
         title: 'Status Updated',
@@ -5418,59 +5486,69 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const suspendUser = async (uid: string, duration: string, reason: string, notes?: string) => {
-    if (!db) return;
+    if (!uid) return;
     try {
-      let expiresAt: number | null = Date.now();
-      if (duration === '24 Hours') expiresAt += 24 * 60 * 60 * 1000;
-      else if (duration === '3 Days') expiresAt += 3 * 24 * 60 * 60 * 1000;
-      else if (duration === '7 Days') expiresAt += 7 * 24 * 60 * 60 * 1000;
-      else if (duration === '14 Days') expiresAt += 14 * 24 * 60 * 60 * 1000;
-      else if (duration === '30 Days') expiresAt += 30 * 24 * 60 * 60 * 1000;
-      else if (duration === 'Permanent Suspension' || duration === 'Permanent') expiresAt = null;
-      else expiresAt += 7 * 24 * 60 * 60 * 1000;
-
-      const referenceId = `AEIRMIST-SUSP-${uid.slice(0, 8).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const suspensionInfo: SuspensionInfo = {
-        reason,
-        duration,
-        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-        notes: notes || '',
-        referenceId,
-        timestamp: new Date().toISOString()
-      };
-
-      const profilesRef = collection(db, 'profiles');
-      const q = query(profilesRef, where('ownerUid', '==', uid));
-      const snap = await getDocs(q);
-
-      const batch = writeBatch(db);
-      snap.forEach(p => {
-        batch.update(doc(db, 'profiles', p.id), {
-          status: 'SUSPENDED',
-          isBanned: true,
-          suspensionInfo
-        });
-      });
-
-      const directRef = doc(db, 'profiles', uid);
-      const directSnap = await getDoc(directRef);
-      if (directSnap.exists()) {
-        batch.update(directRef, {
-          status: 'SUSPENDED',
-          isBanned: true,
-          suspensionInfo
-        });
+      // 1. Primary: PostgreSQL backend suspend API
+      try {
+        await api.admin.suspendUser(uid, { duration, reason, notes });
+      } catch (backendErr) {
+        logger.warn("[suspendUser] Backend suspend error:", backendErr);
       }
 
-      await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
+      // 2. Legacy Firestore sync if db active
+      if (db) {
+        let expiresAt: number | null = Date.now();
+        if (duration === '24 Hours') expiresAt += 24 * 60 * 60 * 1000;
+        else if (duration === '3 Days') expiresAt += 3 * 24 * 60 * 60 * 1000;
+        else if (duration === '7 Days') expiresAt += 7 * 24 * 60 * 60 * 1000;
+        else if (duration === '14 Days') expiresAt += 14 * 24 * 60 * 60 * 1000;
+        else if (duration === '30 Days') expiresAt += 30 * 24 * 60 * 60 * 1000;
+        else if (duration === 'Permanent Suspension' || duration === 'Permanent') expiresAt = null;
+        else expiresAt += 7 * 24 * 60 * 60 * 1000;
 
-      try {
-        await updateDoc(doc(db, 'users', uid), {
-          status: 'SUSPENDED',
-          isBanned: true,
-          suspensionInfo
+        const referenceId = `AEIRMIST-SUSP-${uid.slice(0, 8).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const suspensionInfo: SuspensionInfo = {
+          reason,
+          duration,
+          expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+          notes: notes || '',
+          referenceId,
+          timestamp: new Date().toISOString()
+        };
+
+        const profilesRef = collection(db, 'profiles');
+        const q = query(profilesRef, where('ownerUid', '==', uid));
+        const snap = await getDocs(q);
+
+        const batch = writeBatch(db);
+        snap.forEach(p => {
+          batch.update(doc(db, 'profiles', p.id), {
+            status: 'SUSPENDED',
+            isBanned: true,
+            suspensionInfo
+          });
         });
-      } catch (e) {}
+
+        const directRef = doc(db, 'profiles', uid);
+        const directSnap = await getDoc(directRef);
+        if (directSnap.exists()) {
+          batch.update(directRef, {
+            status: 'SUSPENDED',
+            isBanned: true,
+            suspensionInfo
+          });
+        }
+
+        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
+
+        try {
+          await updateDoc(doc(db, 'users', uid), {
+            status: 'SUSPENDED',
+            isBanned: true,
+            suspensionInfo
+          });
+        } catch (e) {}
+      }
 
       addToast({
         title: 'Account Suspended',

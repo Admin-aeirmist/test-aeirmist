@@ -188,10 +188,10 @@ export class ChatDAL {
     return rows.reverse().map((r) => ({
       ...r.message,
       sender: r.sender,
-      senderId: r.sender?.profileId || r.sender?.id || r.message.senderId,
-      senderUid: r.sender?.firebaseUid || r.sender?.id || r.message.senderId,
+      senderId: r.message.senderId, // Canonical PostgreSQL users.id UUID
+      senderUid: r.sender?.firebaseUid || r.message.senderId,
       senderProfileId: r.sender?.profileId,
-      senderDbId: r.sender?.id,
+      senderDbId: r.sender?.id || r.message.senderId,
     }));
   }
 
@@ -262,10 +262,10 @@ export class ChatDAL {
     return {
       ...msg,
       sender: senderUser || null,
-      senderId: senderUser?.profileId || senderUser?.id || msg.senderId,
-      senderUid: senderUser?.firebaseUid || senderUser?.id || msg.senderId,
+      senderId: data.senderId, // Canonical PostgreSQL users.id UUID
+      senderUid: senderUser?.firebaseUid || data.senderId,
       senderProfileId: senderUser?.profileId,
-      senderDbId: senderUser?.id,
+      senderDbId: senderUser?.id || data.senderId,
     };
   }
 

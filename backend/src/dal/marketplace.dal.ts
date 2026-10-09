@@ -204,26 +204,88 @@ export class MarketplaceDAL {
   static async createOrder(data: {
     buyerId: string;
     storeId?: string;
-    items: any[];
-    totalAmount: string;
+    items: Array<{ itemId: string; quantity?: number; [key: string]: any }>;
+    totalAmount?: string;
     currency?: string;
     shippingAddress?: any;
     paymentMethod?: string;
   }) {
-    const [order] = await db
-      .insert(marketplaceOrders)
-      .values({
-        buyerId: data.buyerId,
-        storeId: data.storeId,
-        items: data.items,
-        totalAmount: data.totalAmount,
-        currency: data.currency || 'BDT',
-        shippingAddress: data.shippingAddress || {},
-        paymentMethod: data.paymentMethod || 'cod',
-      })
-      .returning();
+    return await db.transaction(async (tx) => {
+      let serverCalculatedTotal = 0;
+      const verifiedItems: any[] = [];
 
-    return order;
+      for (const rawItem of data.items) {
+        const itemId = rawItem.itemId || rawItem.id;
+        if (!itemId || typeof itemId !== 'string') {
+          throw new Error('Invalid item ID in order');
+        }
+
+        // Lock row FOR UPDATE to prevent concurrency / race conditions
+        const lockRes = await tx.execute(sql`
+          SELECT * FROM marketplace_items 
+          WHERE id = ${itemId} 
+          FOR UPDATE
+        `);
+
+        if (!lockRes.rows || lockRes.rows.length === 0) {
+          throw new Error(`Item ${itemId} not found or no longer available`);
+        }
+
+        const lockedItem: any = lockRes.rows[0];
+
+        if (lockedItem.status !== 'active') {
+          throw new Error(`Item "${lockedItem.title}" cannot be purchased because its status is "${lockedItem.status}"`);
+        }
+
+        if (lockedItem.seller_id === data.buyerId) {
+          throw new Error(`You cannot purchase your own item ("${lockedItem.title}")`);
+        }
+
+        const qty = Math.max(1, Math.min(100, parseInt(String(rawItem.quantity || '1'), 10) || 1));
+        const unitPrice = parseFloat(lockedItem.price) || 0;
+        serverCalculatedTotal += unitPrice * qty;
+
+        // Mark item as sold within transaction
+        await tx.execute(sql`
+          UPDATE marketplace_items 
+          SET status = 'sold', updated_at = NOW() 
+          WHERE id = ${lockedItem.id}
+        `);
+
+        verifiedItems.push({
+          itemId: lockedItem.id,
+          title: lockedItem.title,
+          price: lockedItem.price,
+          unitPrice,
+          quantity: qty,
+          sellerId: lockedItem.seller_id,
+          mediaKeys: lockedItem.media_keys,
+        });
+      }
+
+      const finalTotal = serverCalculatedTotal.toFixed(2);
+      if (data.totalAmount) {
+        const clientTotal = parseFloat(data.totalAmount);
+        if (isNaN(clientTotal) || Math.abs(clientTotal - serverCalculatedTotal) > 0.05) {
+          throw new Error('Security alert: Submitted order total does not match verified server item prices');
+        }
+      }
+
+      const [order] = await tx
+        .insert(marketplaceOrders)
+        .values({
+          buyerId: data.buyerId,
+          storeId: data.storeId,
+          items: verifiedItems,
+          totalAmount: finalTotal,
+          currency: data.currency || 'BDT',
+          shippingAddress: data.shippingAddress || {},
+          paymentMethod: data.paymentMethod || 'cod',
+        })
+        .returning();
+
+      return order;
+    });
   }
 
   static async getUserOrders(buyerId: string) {

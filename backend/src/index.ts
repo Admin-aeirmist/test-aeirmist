@@ -136,45 +136,65 @@ try {
   console.warn('⚠️ [Socket.IO] Running with local memory adapter:', err.message);
 }
 
-io.on('connection', (socket) => {
-  console.log(`🔌 [Socket.IO] Client connected: ${socket.id}`);
+import { resolveUserFromCredentials } from './middleware/auth';
+import { ChatDAL } from './dal/chat.dal';
+
+// Socket.IO Authentication Middleware (JWT Validation)
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token || 
+                  (socket.handshake.headers['authorization']?.startsWith('Bearer ') ? socket.handshake.headers['authorization'].slice(7).trim() : null) ||
+                  (socket.handshake.query?.token as string);
+    const headerUid = (socket.handshake.headers['x-user-id'] as string) || 
+                      (socket.handshake.auth?.userId as string) || 
+                      (socket.handshake.query?.userId as string);
+
+    const resolved = await resolveUserFromCredentials(token || null, headerUid || null);
+    if (resolved && resolved.userId) {
+      (socket as any).userId = resolved.userId;
+      (socket as any).userRole = resolved.role;
+    }
+    next();
+  } catch (err) {
+    next();
+  }
+});
+
+io.on('connection', async (socket) => {
+  const authedUserId = (socket as any).userId;
+  console.log(`🔌 [Socket.IO] Client connected: ${socket.id}${authedUserId ? ` (authed: ${authedUserId})` : ''}`);
+
+  if (authedUserId) {
+    socket.join(`user:${authedUserId}`);
+    try {
+      const u = await UserDAL.findById(authedUserId);
+      if (u?.firebaseUid) socket.join(`user:${u.firebaseUid}`);
+      const p = await UserDAL.findProfileById(authedUserId);
+      if (p?.userId) socket.join(`user:${p.userId}`);
+      await redis.sadd('online_users', authedUserId);
+      io.emit('user_status', { userId: authedUserId, status: 'online' });
+    } catch {}
+  }
 
   // User identification for personal notifications & Redis Presence
   socket.on('identify_user', async (userId: string, ack?: (res: any) => void) => {
     if (!userId) return;
-    socket.join(`user:${userId}`);
-    (socket as any).userId = userId;
-    console.log(`👤 [Socket.IO] User ${userId} joined personal channel`);
+    const resolvedId = await UserDAL.resolveToUserId(userId) || userId;
+    socket.join(`user:${resolvedId}`);
+    (socket as any).userId = resolvedId;
+    console.log(`👤 [Socket.IO] User ${userId} joined personal channel (resolved: ${resolvedId})`);
 
     try {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-      if (!isUuid) {
-        const u = await UserDAL.findByFirebaseUid(userId) || await UserDAL.findByEmailOrUsername(userId);
-        if (u?.id) {
-          socket.join(`user:${u.id}`);
-          console.log(`👤 [Socket.IO] User ${userId} linked to user:${u.id}`);
-        }
-      } else {
-        const u = await UserDAL.findById(userId);
-        if (u?.firebaseUid) {
-          socket.join(`user:${u.firebaseUid}`);
-        }
-        const p = await UserDAL.findProfileById(userId);
-        if (p?.userId) {
-          socket.join(`user:${p.userId}`);
-        }
-      }
-    } catch (err) {}
-
-    try {
-      await redis.sadd('online_users', userId);
-      io.emit('user_status', { userId, status: 'online' });
+      const u = await UserDAL.findById(resolvedId);
+      if (u?.firebaseUid) socket.join(`user:${u.firebaseUid}`);
+      await redis.sadd('online_users', resolvedId);
+      io.emit('user_status', { userId: resolvedId, status: 'online' });
     } catch (err) {
       console.warn('⚠️ [Redis] Presence update failed:', err);
     }
 
-    socket.emit('user_identified', { userId });
-    if (typeof ack === 'function') ack({ success: true, userId });
+    socket.emit('user_identified', { userId: resolvedId });
+    if (typeof ack === 'function') ack({ success: true, userId: resolvedId });
   });
 
   // Fetch all online users from Redis
@@ -198,9 +218,21 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Room management for chats
-  socket.on('join_room', (roomId: string) => {
+  // Room management for chats (Authorized participants only)
+  socket.on('join_room', async (roomId: string) => {
     if (!roomId) return;
+    const cleanId = roomId.startsWith('conv:') ? roomId.replace(/^conv:/, '') : roomId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+    const currentUid = (socket as any).userId;
+
+    if (isUuid && currentUid) {
+      const isMember = await ChatDAL.isParticipant(cleanId, currentUid);
+      if (!isMember) {
+        console.warn(`🔒 [Socket.IO] Access denied: User ${currentUid} attempted to join unauthorized room ${cleanId}`);
+        return;
+      }
+    }
+
     socket.join(roomId);
     if (!roomId.startsWith('conv:')) {
       socket.join(`conv:${roomId}`);
@@ -215,9 +247,10 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Real-time chat message broadcast
+  // Real-time chat message broadcast (Strict room delivery, NO unrestricted global emit)
   socket.on('send_message', (data: any) => {
     if (data?.conversationId) {
+      const senderUserId = (socket as any).userId || data.senderId;
       const payload = {
         ...data,
         conversationId: data.conversationId,
@@ -227,7 +260,7 @@ io.on('connection', (socket) => {
           content: data.content || '',
           type: data.type || 'text',
           mediaUrl: data.mediaUrl,
-          senderId: (socket as any).userId,
+          senderId: senderUserId,
           createdAt: new Date().toISOString(),
         }
       };
@@ -238,7 +271,6 @@ io.on('connection', (socket) => {
       if (data.receiverUid) {
         io.to(`user:${data.receiverUid}`).emit('new_message', payload);
       }
-      io.emit('new_message', payload);
     }
   });
 

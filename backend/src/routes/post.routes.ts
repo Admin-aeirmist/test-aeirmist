@@ -45,12 +45,12 @@ router.get('/', optionalAuthToken, async (req: AuthenticatedRequest, res: Respon
 });
 
 // User Posts
-router.get('/user/:userId', async (req, res: Response) => {
+router.get('/user/:userId', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const targetUserId = await resolveUserId(req.params.userId);
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = parseInt(req.query.offset as string) || 0;
-    const list = await PostDAL.getUserPosts(targetUserId, limit, offset);
+    const list = await PostDAL.getUserPosts(targetUserId, req.user?.userId, limit, offset);
     res.json({ posts: list });
   } catch (err) {
     console.error('[User Posts Error]', err);

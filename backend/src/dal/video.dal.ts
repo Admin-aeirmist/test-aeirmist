@@ -2,6 +2,7 @@ import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { videos, videoLikes, videoComments, users, profiles, mediaAssets } from '../db/schema';
 import { storage } from '../storage';
+import { extractMediaKey } from '../utils/mediaValidator';
 
 export class VideoDAL {
   static async getFeed(limit: number = 20, offset: number = 0, viewerId?: string) {
@@ -214,7 +215,13 @@ export class VideoDAL {
 
   static async deleteVideo(videoId: string, userId: string, isAdmin: boolean = false) {
     const [video] = await db
-      .select({ id: videos.id, userId: videos.userId, mediaKey: videos.mediaKey })
+      .select({
+        id: videos.id,
+        userId: videos.userId,
+        mediaKey: videos.mediaKey,
+        videoUrl: videos.videoUrl,
+        thumbnailUrl: videos.thumbnailUrl,
+      })
       .from(videos)
       .where(eq(videos.id, videoId))
       .limit(1);
@@ -222,15 +229,22 @@ export class VideoDAL {
     if (!video) return false;
     if (video.userId !== userId && !isAdmin) return false;
 
-    // Delete storage file and mediaAsset record if mediaKey is set
-    if (video.mediaKey) {
+    // Delete storage files and mediaAsset records for mediaKey, videoUrl, and thumbnailUrl
+    const keysToDelete = new Set<string>();
+    if (video.mediaKey) keysToDelete.add(video.mediaKey);
+    const videoKey = extractMediaKey(video.videoUrl);
+    if (videoKey) keysToDelete.add(videoKey);
+    const thumbKey = extractMediaKey(video.thumbnailUrl);
+    if (thumbKey) keysToDelete.add(thumbKey);
+
+    for (const key of keysToDelete) {
       try {
-        await storage.delete(video.mediaKey);
+        await storage.delete(key);
       } catch (err) {
-        console.warn(`[VideoDAL.deleteVideo] Storage deletion error for key ${video.mediaKey}:`, err);
+        console.warn(`[VideoDAL.deleteVideo] Storage deletion error for key ${key}:`, err);
       }
       try {
-        await db.delete(mediaAssets).where(eq(mediaAssets.key, video.mediaKey));
+        await db.delete(mediaAssets).where(eq(mediaAssets.key, key));
       } catch (err) {}
     }
 

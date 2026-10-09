@@ -104,75 +104,33 @@ class MessagingService {
     this.isSafeMode = enabled;
   }
 
-  public async markAsRead(db: Firestore, conversationId: string, profileId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    await updateDoc(convRef, {
-      [`lastRead.${profileId}`]: serverTimestamp(),
-      [`unreadCount.${profileId}`]: 0
-    }).catch(err => logger.warn("Read confirmation rejected by core:", err));
-  }
-
-  public async deleteMessage(db: Firestore, conversationId: string, messageId: string, profileId: string, deleteType: 'me' | 'everyone' = 'everyone') {
-    const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
-    
-    if (deleteType === 'me') {
-      await updateDoc(msgRef, {
-        [`deletedFor.${profileId}`]: true
-      });
-    } else {
-      // Unsend: Delete for everyone
-      const batch = writeBatch(db);
-      batch.update(msgRef, {
-        text: 'Message Removed',
-        type: 'text',
-        mediaUrl: null,
-        attachmentUrl: null,
-        'metadata.removed': true,
-        'metadata.removedBy': profileId
-      });
-
-      // Update conversation if it's the last message
-      const convRef = doc(db, 'conversations', conversationId);
-      const convSnap = await getDoc(convRef);
-      if (convSnap.exists()) {
-        const convData = convSnap.data();
-        if (convData.lastMessage?.messageId === messageId || convData.latestMessageId === messageId || !convData.lastMessage?.messageId) {
-          batch.update(convRef, {
-            'lastMessage.text': 'Message Removed',
-            'lastMessage.type': 'text',
-            'lastMessage.mediaUrl': null,
-            'lastMessage.metadata.removed': true,
-            latestMessagePreview: 'Message Removed'
-          });
-        }
-      }
-      await batch.commit();
+  public async markAsRead(_db: any, conversationId: string, _profileId?: string) {
+    if (!conversationId) return;
+    try {
+      await api.chat.markSeen(conversationId);
+    } catch (err) {
+      logger.warn("[MessagingService] markAsRead error:", err);
     }
   }
 
-  public async editMessage(db: Firestore, conversationId: string, messageId: string, newText: string) {
-    const batch = writeBatch(db);
-    const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
-    
-    batch.update(msgRef, {
-      text: newText,
-      'metadata.edited': true,
-      'metadata.editedAt': serverTimestamp()
-    });
-
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (convSnap.exists()) {
-      const convData = convSnap.data();
-      if (convData.lastMessage?.messageId === messageId || convData.latestMessageId === messageId || !convData.lastMessage?.messageId) {
-        batch.update(convRef, {
-          'lastMessage.text': newText,
-          'lastMessage.metadata.edited': true,
-          latestMessagePreview: newText
-        });
-      }
+  public async deleteMessage(_db: any, _conversationId: string, messageId: string, _profileId?: string, _deleteType: 'me' | 'everyone' = 'everyone') {
+    if (!messageId) return;
+    try {
+      await api.chat.deleteMessage(messageId);
+    } catch (err) {
+      logger.error("[MessagingService] deleteMessage error:", err);
+      throw err;
     }
-    await batch.commit();
+  }
+
+  public async editMessage(_db: any, _conversationId: string, messageId: string, newText: string) {
+    if (!messageId || !newText) return;
+    try {
+      await api.chat.editMessage(messageId, newText);
+    } catch (err) {
+      logger.error("[MessagingService] editMessage error:", err);
+      throw err;
+    }
   }
 
   async sendMessage(
@@ -231,146 +189,33 @@ class MessagingService {
 
       const messageId = metadata.optimisticId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      // 3. Dual-Write Mirror to Firestore (cross-platform real-time sync with mobile APK & existing sessions)
-      if (db && profile?.id && user?.uid) {
-        try {
-          const convRef = doc(db, 'conversations', finalConvId);
-          const convSnap = await getDoc(convRef);
-          const exists = convSnap.exists();
-          const batch = writeBatch(db);
-
-          const isSelfChat = targetProfileId === profile.id;
-          const isSelfUid = targetOwnerUid === user.uid;
-          const profileIds = isSelfChat ? [profile.id] : [profile.id, targetProfileId].filter(Boolean).sort();
-          const participants = isSelfUid ? [user.uid] : [user.uid, targetOwnerUid].filter(Boolean).sort();
-
-          const messageData: any = {
-            senderId: profile.id,
-            senderUid: user.uid,
-            text,
-            type,
-            attachmentUrl: mediaUrl || null,
-            mediaUrl: mediaUrl || null,
-            metadata: {
-              ...metadata,
-              optimisticId: metadata.optimisticId || null,
-              isOffline: metadata.isOffline || false
-            },
-            createdAt: serverTimestamp(),
-            deliveredTo: [profile.id],
-            seenBy: [profile.id],
-            status: 'sent',
-            timestamp: serverTimestamp(),
-            timestampMs: Date.now()
-          };
-          if (metadata.mood) {
-            messageData.mood = metadata.mood;
-          }
-
-          if (!exists) {
-            batch.set(convRef, cleanUndefined({
-              participants,
-              profileIds,
-              participantDetails: {
-                [profile.id]: {
-                  displayName: profile.displayName || profile.username,
-                  photoURL: profile.photoURL || null,
-                  username: profile.username || '',
-                  uid: user.uid
-                },
-                [targetProfileId!]: metadata.targetProfile || {
-                  displayName: 'Aeirmist User',
-                  photoURL: getAvatarUrl(null, targetProfileId) || null,
-                  username: targetProfileId,
-                  uid: targetOwnerUid || targetProfileId
-                }
-              },
-              latestMessageAt: serverTimestamp(),
-              latestMessageAtMs: Date.now(),
-              latestMessageId: messageId,
-              latestMessageSenderId: profile.id,
-              latestMessagePreview: text,
-              lastMessage: {
-                text,
-                senderId: profile.id,
-                timestamp: serverTimestamp(),
-                timestampMs: Date.now(),
-                type,
-                mediaUrl: mediaUrl || null,
-                mood: metadata.mood || null,
-                messageId: messageId
-              },
-              unreadCount: {
-                [targetProfileId!]: 1,
-                [profile.id]: 0
-              },
-              lastRead: { [profile.id]: serverTimestamp() },
-              lastDelivered: { [profile.id]: serverTimestamp() },
-              status: 'active',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-              updatedAtMs: Date.now()
-            }));
-          } else {
-            const cData = convSnap.data();
-            const receiverId = targetProfileId || metadata.recipientId || (cData?.profileIds?.find((id: string) => id !== profile.id)) || null;
-            const receiverUid = targetOwnerUid || metadata.receiverUid || (cData?.participants?.find((uid: string) => uid !== user.uid)) || null;
-            this.updateExistingConversation(batch, db, finalConvId, profile.id, receiverId, receiverUid, text, type, mediaUrl, {
-              ...metadata,
-              convData: cData,
-              senderName: metadata.senderName || profile.displayName || profile.username,
-              senderPhoto: metadata.senderPhoto || profile.photoURL || '',
-              shouldNotify: true,
-              senderUid: user.uid,
-              messageId
-            });
-          }
-
-          const msgRef = doc(db, 'conversations', finalConvId, 'messages', messageId);
-          batch.set(msgRef, cleanUndefined(messageData));
-          await batch.commit();
-          logger.info("[MessagingService] Dual-write to Firestore committed successfully for", finalConvId);
-        } catch (fErr: any) {
-          logger.warn("[MessagingService] Non-blocking Firestore dual-write notice:", fErr?.message || fErr);
+      // 3. Primary Persistence: PostgreSQL Backend via REST API
+      const apiRes = await api.chat.sendMessage(finalConvId, {
+        content: text,
+        type,
+        mediaKey: metadata.mediaKey || (mediaUrl ? mediaUrl : undefined),
+        fileName: metadata.fileName,
+        fileSize: metadata.fileSize,
+        duration: metadata.duration,
+        replyToId: metadata.replyTo?.id || metadata.replyToId,
+        metadata: {
+          ...metadata,
+          optimisticId: metadata.optimisticId || null,
         }
-      }
+      });
 
-      // 4. Primary Device SQL DAL / Cloudflare Edge Persistence (PostgreSQL Backend)
-      let resolvedConvId = finalConvId;
-      try {
-        const apiRes = await api.chat.sendMessage(finalConvId, {
-          content: text,
-          type,
-          mediaKey: metadata.mediaKey || (mediaUrl ? mediaUrl : undefined),
-          fileName: metadata.fileName,
-          fileSize: metadata.fileSize,
-          duration: metadata.duration,
-          replyToId: metadata.replyTo?.id || metadata.replyToId,
-          metadata: {
-            ...metadata,
-            senderId: profile.id,
-            senderUid: user.uid,
-            senderName: profile.displayName || profile.username,
-            senderPhoto: profile.photoURL || '',
-            optimisticId: metadata.optimisticId || null,
-            targetProfileId,
-            finalConvId
-          }
-        });
-        if (apiRes?.conversationId) {
-          resolvedConvId = apiRes.conversationId;
-        }
-      } catch (apiErr: any) {
-        logger.warn("[MessagingService] Device API send warning:", apiErr);
-      }
+      const serverMsg = apiRes.message;
+      const resolvedConvId = apiRes.conversationId || finalConvId;
 
-      // 4. Update instant memory cache so sender sees bubble immediately
-      const existingMem = this.getCachedMessages(finalConvId) || [];
-      const localMsg: Message = {
-        id: messageId,
-        conversationId: finalConvId,
-        senderId: profile.id,
-        senderUid: user.uid,
+      // 4. Update instant memory cache so sender sees bubble immediately with canonical server data
+      const existingMem = this.getCachedMessages(resolvedConvId) || this.getCachedMessages(finalConvId) || [];
+      const canonicalLocalMsg: Message = {
+        id: serverMsg?.id || messageId,
+        conversationId: resolvedConvId,
+        senderId: serverMsg?.senderId || user.userId || user.id || user.uid,
+        senderUid: serverMsg?.senderUid || user.uid,
+        senderDbId: serverMsg?.senderDbId || user.userId || user.id,
+        senderProfileId: serverMsg?.senderProfileId || profile.id,
         text,
         content: text,
         type,
@@ -385,12 +230,19 @@ class MessagingService {
           optimisticId: metadata.optimisticId || null
         }
       } as Message;
-      const updatedMem = [...existingMem.filter(m => m.id !== messageId && (!metadata.optimisticId || m.metadata?.optimisticId !== metadata.optimisticId)), localMsg];
-      this.setCachedMessages(finalConvId, updatedMem);
 
-      return resolvedConvId || finalConvId;
+      const updatedMem = [
+        ...existingMem.filter(m => m.id !== canonicalLocalMsg.id && (!metadata.optimisticId || m.metadata?.optimisticId !== metadata.optimisticId)),
+        canonicalLocalMsg
+      ];
+      this.setCachedMessages(resolvedConvId, updatedMem);
+      if (resolvedConvId !== finalConvId) {
+        this.setCachedMessages(finalConvId, updatedMem);
+      }
+
+      return resolvedConvId;
     } catch (e: any) {
-      logger.error("[MessagingService] ATOMIC FAILURE:", e);
+      logger.error("[MessagingService] Send message failed:", e);
       throw e;
     }
   }
@@ -689,30 +541,35 @@ class MessagingService {
     };
     socket.on('new_message', handleSocketMessage);
 
-    // 5. Firestore onSnapshot (safe fallback listener)
-    let firestoreUnsubscribe: (() => void) | null = null;
-    if (db) {
-      try {
-        const q = query(
-          collection(db, 'conversations', conversationId, 'messages'),
-          orderBy('createdAt', 'desc'),
-          limit(limitCount)
-        );
-
-        firestoreUnsubscribe = onSnapshot(q, (snapshot) => {
-          if (isCancelled) return;
-          const rawMessages = snapshot.docs.map(doc => {
-            const data = doc.data({ serverTimestamps: 'estimate' });
-            return normalizeMsg({ ...data, id: doc.id });
-          });
-          mergeAndEmit(rawMessages);
-        }, (error) => {
-          logger.warn(`[MessagingService] Firestore snapshot soft warning (active on device SQL):`, error?.message || error);
+    const handleSeenUpdate = (payload: any) => {
+      if (isCancelled || !payload) return;
+      const targetConvId = String(payload.conversationId || payload.rawConversationId || '');
+      if (targetConvId === conversationId || targetConvId === chatData?.id) {
+        localCurrentMessages = localCurrentMessages.map(m => {
+          if (m.senderId !== payload.userId) {
+            return { ...m, isSeen: true };
+          }
+          return m;
         });
-      } catch (e) {
-        logger.warn("[MessagingService] Firestore listener init warning:", e);
+        callback(localCurrentMessages);
       }
-    }
+    };
+    socket.on('seen_update', handleSeenUpdate);
+
+    const handleMessageEdited = (payload: any) => {
+      if (isCancelled || !payload?.message) return;
+      const edited = normalizeMsg(payload.message);
+      localCurrentMessages = localCurrentMessages.map(m => m.id === edited.id ? { ...m, ...edited } : m);
+      callback(localCurrentMessages);
+    };
+    socket.on('message_edited', handleMessageEdited);
+
+    const handleMessageDeleted = (payload: any) => {
+      if (isCancelled || !payload?.messageId) return;
+      localCurrentMessages = localCurrentMessages.filter(m => m.id !== payload.messageId);
+      callback(localCurrentMessages);
+    };
+    socket.on('message_deleted', handleMessageDeleted);
 
     const cleanup = () => {
       isCancelled = true;
@@ -722,7 +579,9 @@ class MessagingService {
         leaveChatRoom(chatData.id);
       }
       socket.off('new_message', handleSocketMessage);
-      if (firestoreUnsubscribe) firestoreUnsubscribe();
+      socket.off('seen_update', handleSeenUpdate);
+      socket.off('message_edited', handleMessageEdited);
+      socket.off('message_deleted', handleMessageDeleted);
       if (this.listeners.get(key) === cleanup) {
         this.listeners.delete(key);
       }
@@ -982,34 +841,16 @@ class MessagingService {
     };
     socket.on('new_message', handleNewMessage);
 
-    // 4. Firestore onSnapshot (safe fallback listener)
-    let firestoreUnsubscribe: (() => void) | null = null;
-    if (db) {
-      try {
-        const q = query(
-          collection(db, 'conversations'),
-          where('participants', 'array-contains', userUid),
-          limit(100)
-        );
-
-        firestoreUnsubscribe = onSnapshot(q, (snapshot) => {
-          if (isCancelled) return;
-          const fsChats = snapshot.docs.map(doc => {
-            const data = doc.data({ serverTimestamps: 'estimate' });
-            return normalizeChat({ ...data, id: doc.id });
-          });
-          mergeAndEmitChats(fsChats);
-        }, (error) => {
-          logger.warn("[MessagingService] Firestore inbox sync soft warning (active on device SQL):", error?.message || error);
-        });
-      } catch (e) {}
-    }
+    const handleSeenUpdate = () => {
+      if (!isCancelled) fetchApiChats();
+    };
+    socket.on('seen_update', handleSeenUpdate);
 
     const cleanup = () => {
       isCancelled = true;
       clearInterval(pollInterval);
       socket.off('new_message', handleNewMessage);
-      if (firestoreUnsubscribe) firestoreUnsubscribe();
+      socket.off('seen_update', handleSeenUpdate);
       if (this.listeners.get(key) === cleanup) {
         this.listeners.delete(key);
       }

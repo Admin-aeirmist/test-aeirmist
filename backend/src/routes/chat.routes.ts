@@ -7,6 +7,7 @@ import { ChatDAL } from '../dal/chat.dal';
 import { UserDAL } from '../dal/user.dal';
 import { NotificationDAL } from '../dal/notification.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 
 const router = Router();
@@ -48,6 +49,9 @@ async function resolveConversationId(rawConvId: string, currentUserId: string): 
   if (normalizedConvId.startsWith('new_')) {
     const rawTarget = normalizedConvId.slice(4);
     const resolvedTargetId = await resolveUserId(rawTarget);
+    if (!resolvedTargetId || resolvedTargetId === currentUserId) {
+      throw new Error(`Cannot start direct conversation with yourself or invalid recipient: ${rawTarget}`);
+    }
     return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
   }
 
@@ -76,6 +80,9 @@ async function resolveConversationId(rawConvId: string, currentUserId: string): 
   }
 
   const resolvedTargetId = await resolveUserId(target);
+  if (!resolvedTargetId) {
+    throw new Error(`Invalid conversation identifier: ${rawConvId}`);
+  }
   return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
 }
 
@@ -155,14 +162,9 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
 
     // Validate mediaKey ownership if mediaKey is provided
     if (data.mediaKey) {
-      const [asset] = await db
-        .select()
-        .from(mediaAssets)
-        .where(eq(mediaAssets.key, data.mediaKey))
-        .limit(1);
-
-      if (asset && asset.ownerId && asset.ownerId !== req.user!.userId) {
-        return res.status(403).json({ error: 'Unauthorized: Media asset belongs to another user' });
+      const isAllowed = await assertMediaOwnership(data.mediaKey, req.user!.userId);
+      if (!isAllowed) {
+        return res.status(403).json({ error: 'Unauthorized or missing media asset' });
       }
     }
 
@@ -193,24 +195,20 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
       metadata: data.metadata,
     });
 
-    // Real-time broadcast to room via WebSockets
+    // Real-time broadcast ONLY to authorized conversation room and participants (NO global broadcast)
     const broadcastPayload = { conversationId: convId, rawConversationId: req.params.id, message };
     io.to(`conv:${convId}`).emit('new_message', broadcastPayload);
     if (req.params.id && req.params.id !== convId) {
       io.to(`conv:${req.params.id}`).emit('new_message', broadcastPayload);
     }
 
-    // Push to participant user rooms and conversation room so inboxes and open chats update in real time
+    // Push to participant user rooms so inboxes and open chats update in real time
     const members = await ChatDAL.getConversationMembers(convId);
     for (const m of members) {
       io.to(`user:${m.userId}`).emit('new_message', broadcastPayload);
-      io.to(`user:profile_${m.userId}`).emit('new_message', broadcastPayload);
       if (m.firebaseUid) io.to(`user:${m.firebaseUid}`).emit('new_message', broadcastPayload);
       if (m.profileId) io.to(`user:${m.profileId}`).emit('new_message', broadcastPayload);
     }
-
-    // Universal broadcast with conversationId matching in client
-    io.emit('new_message', broadcastPayload);
 
     // Asynchronously dispatch in-app notifications for message recipients
     (async () => {
@@ -265,12 +263,11 @@ router.post('/conversations/:id/seen', authenticateToken, async (req: Authentica
       io.to(`conv:${req.params.id}`).emit('seen_update', seenPayload);
     }
 
-    // Broadcast to all conversation members' user channels
+    // Broadcast only to conversation members' user channels (NO global broadcast)
     const members = await ChatDAL.getConversationMembers(convId);
     for (const m of members) {
       io.to(`user:${m.userId}`).emit('seen_update', seenPayload);
     }
-    io.emit('seen_update', seenPayload);
 
     res.json({ success: true, conversationId: convId });
   } catch (err) {
@@ -284,8 +281,13 @@ router.patch('/messages/:messageId', authenticateToken, async (req: Authenticate
     const { content } = z.object({ content: z.string().min(1) }).parse(req.body);
     const msg = await ChatDAL.editMessage(req.params.messageId, req.user!.userId, content);
     if (!msg) return res.status(404).json({ error: 'Message not found or unauthorized' });
-    io.to(`conv:${msg.conversationId}`).emit('message_edited', { message: msg });
-    io.emit('message_edited', { message: msg });
+
+    const editPayload = { message: msg, conversationId: msg.conversationId };
+    io.to(`conv:${msg.conversationId}`).emit('message_edited', editPayload);
+    const members = await ChatDAL.getConversationMembers(msg.conversationId);
+    for (const m of members) {
+      io.to(`user:${m.userId}`).emit('message_edited', editPayload);
+    }
     res.json({ message: msg });
   } catch (err) {
     console.error('[Edit Message Error]', err);
@@ -298,8 +300,13 @@ router.delete('/messages/:messageId', authenticateToken, async (req: Authenticat
   try {
     const msg = await ChatDAL.deleteMessage(req.params.messageId, req.user!.userId);
     if (!msg) return res.status(404).json({ error: 'Message not found or unauthorized' });
-    io.to(`conv:${msg.conversationId}`).emit('message_deleted', { messageId: req.params.messageId, conversationId: msg.conversationId });
-    io.emit('message_deleted', { messageId: req.params.messageId, conversationId: msg.conversationId });
+
+    const delPayload = { messageId: req.params.messageId, conversationId: msg.conversationId };
+    io.to(`conv:${msg.conversationId}`).emit('message_deleted', delPayload);
+    const members = await ChatDAL.getConversationMembers(msg.conversationId);
+    for (const m of members) {
+      io.to(`user:${m.userId}`).emit('message_deleted', delPayload);
+    }
     res.json({ success: true });
   } catch (err) {
     console.error('[Delete Message Error]', err);
