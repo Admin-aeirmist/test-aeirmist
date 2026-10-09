@@ -240,7 +240,26 @@ export class ChatDAL {
         )
       );
 
-    return msg;
+    const [senderUser] = await db
+      .select({
+        id: users.id,
+        firebaseUid: users.firebaseUid,
+        username: profiles.username,
+        displayName: profiles.displayName,
+        avatarKey: profiles.avatarKey,
+        isVerified: profiles.isVerified,
+      })
+      .from(users)
+      .leftJoin(profiles, eq(users.id, profiles.userId))
+      .where(eq(users.id, data.senderId))
+      .limit(1);
+
+    return {
+      ...msg,
+      sender: senderUser || null,
+      senderId: msg.senderId,
+      senderUid: senderUser?.firebaseUid || msg.senderId,
+    };
   }
 
   static async markSeen(conversationId: string, userId: string) {

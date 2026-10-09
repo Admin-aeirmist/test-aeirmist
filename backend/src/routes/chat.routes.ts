@@ -197,14 +197,12 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
       io.to(`conv:${req.params.id}`).emit('new_message', broadcastPayload);
     }
 
-    // Also push to participant user rooms so inboxes and open chats update in real time
+    // Push to participant user rooms and conversation room so inboxes and open chats update in real time
     const members = await ChatDAL.getConversationMembers(convId);
     for (const m of members) {
       io.to(`user:${m.userId}`).emit('new_message', broadcastPayload);
       io.to(`user:profile_${m.userId}`).emit('new_message', broadcastPayload);
     }
-    // Universal broadcast with conversationId matching in client
-    io.emit('new_message', broadcastPayload);
 
     // Asynchronously dispatch in-app notifications for message recipients
     (async () => {

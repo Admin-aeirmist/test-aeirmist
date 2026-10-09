@@ -2723,28 +2723,50 @@ const ChatWindow = ({
     const myProfileId = profile?.id;
     const myUid = user?.uid || user?.id;
     const myUsername = profile?.username;
+    const myUserId = profile?.userId || (profile as any)?.user_id || (user as any)?.userId || (user as any)?.dbId;
 
-    if (senderId && myProfileId && senderId === myProfileId) return true;
-    if (senderId && myUid && (senderId === myUid || senderId === `profile_${myUid}`)) return true;
-    if (senderUid && myUid && senderUid === myUid) return true;
-    if (senderUid && myProfileId && (senderUid === myProfileId || `profile_${senderUid}` === myProfileId)) return true;
-    if (myProfileId && senderId && myProfileId.replace(/^profile_/, '') === senderId.replace(/^profile_/, '')) return true;
-    if (senderId && myUsername && senderId.toLowerCase() === myUsername.toLowerCase()) return true;
+    const myIdentifiers = [
+      myProfileId,
+      myProfileId ? myProfileId.replace(/^profile_/, '') : null,
+      myUid,
+      myUid ? `profile_${myUid}` : null,
+      myUserId,
+      myUserId ? `profile_${myUserId}` : null,
+      myUsername
+    ].filter(Boolean) as string[];
 
-    // In 1v1 direct chat, if senderId is NOT otherParticipantId, it's definitely me!
-    if (!chat.isGroup && chat.type !== 'group' && otherParticipantId) {
-      const isOther = senderId === otherParticipantId || 
-                      senderId === otherParticipantId.replace(/^profile_/, '') || 
-                      `profile_${senderId}` === otherParticipantId ||
-                      (otherProfile?.id && (senderId === otherProfile.id || `profile_${senderId}` === otherProfile.id)) ||
-                      (otherProfile?.userId && senderId === otherProfile.userId) ||
-                      (otherProfile?.username && senderId?.toLowerCase() === otherProfile.username.toLowerCase());
-      if (!isOther) {
-        return true;
-      }
+    // 1. Direct positive check against current user's known identifiers
+    const isDirectMatch = myIdentifiers.some(id => 
+      (senderId && (senderId === id || senderId.toLowerCase() === id.toLowerCase())) ||
+      (senderUid && (senderUid === id || senderUid.toLowerCase() === id.toLowerCase()))
+    );
+    if (isDirectMatch) return true;
+
+    // 2. In 1v1 direct chat, check if the sender is the other person
+    if (!chat.isGroup && chat.type !== 'group') {
+      const otherIds = [
+        otherParticipantId,
+        otherParticipantId ? otherParticipantId.replace(/^profile_/, '') : null,
+        (chat as any)?.otherParticipantUid,
+        otherProfile?.id,
+        otherProfile?.userId,
+        (otherProfile as any)?.firebaseUid,
+        otherProfile?.username
+      ].filter(Boolean) as string[];
+
+      const matchesOther = otherIds.some(id => 
+        (senderId && (senderId === id || senderId.toLowerCase() === String(id).toLowerCase())) ||
+        (senderUid && (senderUid === id || senderUid.toLowerCase() === String(id).toLowerCase()))
+      );
+
+      if (matchesOther) return false;
+
+      // If other person is known and sender does not match them, it MUST be me!
+      if (otherIds.length > 0) return true;
     }
+
     return false;
-  }, [profile?.id, profile?.username, user?.uid, user?.id, chat.isGroup, chat.type, otherParticipantId]);
+  }, [profile?.id, profile?.username, (profile as any)?.userId, (profile as any)?.user_id, user?.uid, user?.id, (user as any)?.userId, (user as any)?.dbId, chat.isGroup, chat.type, otherParticipantId, otherProfile, (chat as any)?.otherParticipantUid]);
 
   // Derive processed messages with live read/delivered status and guaranteed stable chronological order
   const displayedMessages = useMemo(() => {

@@ -209,8 +209,7 @@ class MessagingService {
     const isNew = conversationId.startsWith('new_');
     
     try {
-      logger.info(`[MessagingService] Preparing batch for ${finalConvId}. Sender: ${profile.id}, User: ${user.uid}`);
-      const batch = db ? writeBatch(db) : null;
+      logger.info(`[MessagingService] Sending message to ${finalConvId}. Sender: ${profile.id}, User: ${user.uid}`);
       
       // 1. Initial resolution from inputs
       let targetProfileId = isNew ? conversationId.replace('new_', '') : (metadata.recipientId || null);
@@ -218,229 +217,21 @@ class MessagingService {
 
       if (!targetProfileId && finalConvId.includes('_')) {
         const parts = finalConvId.split('_');
-        targetProfileId = parts.find(p => p !== profile.id) || parts[0];
+        targetProfileId = parts.find(p => p !== profile.id && p !== user.uid) || null;
       }
 
-      // 2. Deterministic ID resolution for 1v1
+      // 2. Deterministic ID resolution for 1v1 legacy format
       if (isNew && targetProfileId) {
         finalConvId = [profile.id, targetProfileId].sort().join('_');
       }
 
-      let convSnap: any = null;
-      let exists = false;
-      if (db) {
-        try {
-          const convRef = doc(db, 'conversations', finalConvId);
-          convSnap = await getDoc(convRef);
-          exists = convSnap ? convSnap.exists() : false;
-        } catch {
-          exists = false;
-        }
+      if (!targetProfileId && metadata.targetProfile?.id) {
+        targetProfileId = metadata.targetProfile.id;
       }
 
-      // If conversation exists, extract profileIds and participants if needed
-      if (exists) {
-        const cData = convSnap.data();
-        if (!targetProfileId) {
-          targetProfileId = cData.profileIds?.find((id: string) => id !== profile.id) || profile.id;
-        }
-        if (!targetOwnerUid) {
-          targetOwnerUid = cData.participants?.find((u: string) => u !== user.uid) || user.uid;
-        }
-        if (cData.participantDetails && targetProfileId && cData.participantDetails[targetProfileId]) {
-          const details = cData.participantDetails[targetProfileId];
-          if (details.uid && !targetOwnerUid) {
-            targetOwnerUid = details.uid;
-          }
-          if (!metadata.targetProfile) {
-            metadata.targetProfile = details;
-          }
-        }
-      }
+      const messageId = metadata.optimisticId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      // 3. Robust parsing of finalConvId and profile fetching
-      if (!targetOwnerUid || !targetProfileId || targetOwnerUid === targetProfileId) {
-        if (targetProfileId && targetProfileId !== 'unknown_profile') {
-          try {
-            const profileDocRef = doc(db, 'profiles', targetProfileId);
-            const profileDocSnap = await getDoc(profileDocRef);
-            if (profileDocSnap.exists()) {
-              const pData = profileDocSnap.data();
-              if (pData.ownerUid || pData.uid) {
-                targetOwnerUid = pData.ownerUid || pData.uid;
-              }
-              if (!metadata.targetProfile) {
-                metadata.targetProfile = { id: profileDocSnap.id, ...pData };
-              }
-            }
-          } catch (e) {
-            logger.warn("[MessagingService] Could not fetch profile by ID:", e);
-          }
-        }
-
-        // If targetOwnerUid still missing, check if targetProfileId starts with profile_
-        if (targetProfileId && targetProfileId.startsWith('profile_') && (!targetOwnerUid || targetOwnerUid === targetProfileId)) {
-          const parts = targetProfileId.split('_');
-          if (parts.length >= 2) {
-            targetOwnerUid = parts[1];
-          }
-        }
-      }
-
-      // Absolute fallbacks
-      if (!targetProfileId) {
-        targetProfileId = profile.id;
-      }
-      if (!targetOwnerUid) {
-        targetOwnerUid = user.uid;
-      }
-
-      const isSelfChat = targetProfileId === profile.id;
-      const isSelfUid = targetOwnerUid === user.uid;
-      
-      const profileIds = isSelfChat ? [profile.id] : [profile.id, targetProfileId].filter(Boolean).sort();
-      const participants = isSelfUid ? [user.uid] : [user.uid, targetOwnerUid].filter(Boolean).sort();
-
-      logger.info(`[MessagingService] Target Profile ID: ${targetProfileId}, Owner UID: ${targetOwnerUid}, Final ID: ${finalConvId}`);
-
-      const messageId = doc(collection(db, 'conversations', finalConvId, 'messages')).id;
-
-      const messageData: any = {
-        senderId: profile.id,
-        senderUid: user.uid,
-        text,
-        type,
-        attachmentUrl: mediaUrl || null,
-        mediaUrl: mediaUrl || null,
-        metadata: {
-           ...metadata,
-           optimisticId: metadata.optimisticId || null,
-           isOffline: metadata.isOffline || false
-        },
-        createdAt: serverTimestamp(),
-        deliveredTo: [profile.id], 
-        seenBy: [profile.id],
-        status: 'sent', 
-        timestamp: serverTimestamp(),
-        timestampMs: Date.now()
-      };
-
-      if (metadata.mood) {
-        messageData.mood = metadata.mood;
-      }
-      
-      if (!exists) {
-        logger.info(`[MessagingService] Initialising new activity: ${finalConvId}`);
-        
-        // Social Graph & Account Privacy Check:
-        // 1. Self-chat is always 'active'
-        // 2. Private accounts route to 'request' unless sender is already connected
-        // 3. Public accounts route to 'active' for seamless instant chat
-        const targetProf = metadata.targetProfile;
-        const isTargetPrivate = Boolean(
-          targetProf?.isPrivate ||
-          targetProf?.isProfileLocked ||
-          targetProf?.privacySettings?.privateProfile
-        );
-
-        let initialStatus: 'active' | 'request' = 'active';
-        if (targetProfileId !== profile.id && isTargetPrivate) {
-          const targetFollowers: string[] = targetProf?.social?.followers || targetProf?.followers || [];
-          const isSenderConnected = targetFollowers.includes(profile.id) || 
-                                    (profile.following || []).includes(targetProfileId) || 
-                                    metadata.isFollower;
-          if (!isSenderConnected) {
-            initialStatus = 'request';
-          }
-        }
-
-        if (batch && db) {
-          const convRef = doc(db, 'conversations', finalConvId);
-          batch.set(convRef, cleanUndefined({
-            participants, 
-            profileIds,   
-            participantDetails: {
-              [profile.id]: { 
-                displayName: profile.displayName || profile.username, 
-                photoURL: profile.photoURL || null, 
-                username: profile.username || '', 
-                uid: user.uid 
-              },
-              [targetProfileId!]: metadata.targetProfile || { 
-                displayName: 'Aeirmist User', 
-                photoURL: getAvatarUrl(null, targetProfileId) || null, 
-                username: targetProfileId, 
-                uid: targetOwnerUid || targetProfileId
-              }
-            },
-            latestMessageAt: serverTimestamp(),
-            latestMessageAtMs: Date.now(),
-            latestMessageId: messageId,
-            latestMessageSenderId: profile.id,
-            latestMessagePreview: text,
-            lastMessage: {
-              text,
-              senderId: profile.id,
-              timestamp: serverTimestamp(),
-              timestampMs: Date.now(),
-              type,
-              mediaUrl: mediaUrl || null,
-              mood: metadata.mood || null,
-              messageId: messageId
-            },
-            unreadCount: {
-              [targetProfileId!]: 1,
-              [profile.id]: 0
-            },
-            lastRead: { [profile.id]: serverTimestamp() },
-            lastDelivered: { [profile.id]: serverTimestamp() },
-            status: initialStatus,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-            updatedAtMs: Date.now()
-          }));
-
-          // Trigger initial notification
-          const notifRef = doc(collection(db, 'notifications'));
-          if (targetOwnerUid && !this.isSafeMode && !isSelfUid) {
-            batch.set(notifRef, cleanUndefined({
-              userId: targetProfileId || targetOwnerUid,
-              fromUserId: profile.id,
-              fromUser: {
-                displayName: profile.displayName || profile.username,
-                photoURL: profile.photoURL
-              },
-              type: initialStatus === 'request' ? 'message_request' : 'message',
-              message: initialStatus === 'request' 
-                ? `Sent you a message request: ${type === 'text' ? (text.substring(0, 45) + (text.length > 45 ? '...' : '')) : `Sent a ${type}`}`
-                : (type === 'text' ? (text.substring(0, 50) + (text.length > 50 ? '...' : '')) : `Sent a ${type}`),
-              metadata: { conversationId: finalConvId },
-              read: false,
-              createdAt: serverTimestamp()
-            }));
-          }
-        }
-      } else {
-        logger.info(`[MessagingService] Updating existing chat: ${finalConvId}`);
-        const cData = convSnap?.data ? convSnap.data() : null;
-        const receiverId = targetProfileId || metadata.recipientId || (cData?.profileIds?.find((id: string) => id !== profile.id)) || null;
-        const receiverUid = targetOwnerUid || metadata.receiverUid || (cData?.participants?.find((uid: string) => uid !== user.uid)) || null;
-        
-        const shouldNotify = true;
-        if (batch && db) {
-          this.updateExistingConversation(batch, db, finalConvId, profile.id, receiverId, receiverUid, text, type, mediaUrl, { 
-            ...metadata, 
-            convData: cData,
-            senderName: metadata.senderName || profile.displayName || profile.username,
-            senderPhoto: metadata.senderPhoto || profile.photoURL || '',
-            shouldNotify, 
-            senderUid: user.uid, 
-            messageId 
-          });
-        }
-      }
-
-      // 1. Primary Device SQL DAL / Cloudflare Edge Persistence
+      // 3. Primary Device SQL DAL / Cloudflare Edge Persistence (PostgreSQL Backend)
       let resolvedConvId = finalConvId;
       try {
         const apiRes = await api.chat.sendMessage(finalConvId, {
@@ -465,39 +256,9 @@ class MessagingService {
         if (apiRes?.conversationId) {
           resolvedConvId = apiRes.conversationId;
         }
-      } catch (apiErr) {
+      } catch (apiErr: any) {
         logger.warn("[MessagingService] Device API send warning:", apiErr);
-      }
-
-      // 2. Real-time Socket Broadcast
-      try {
-        const socket = getSocket();
-        if (socket && socket.connected) {
-          socket.emit('send_message', {
-            conversationId: resolvedConvId,
-            content: text,
-            type,
-            senderId: profile.id,
-            senderUid: user.uid,
-            metadata: {
-              ...metadata,
-              optimisticId: metadata.optimisticId || null
-            }
-          });
-        }
-      } catch {}
-
-      // 3. Optional Non-Blocking Firestore Mirror (if db exists)
-      if (db && batch) {
-        try {
-          const msgRef = doc(db, 'conversations', finalConvId, 'messages', messageId);
-          batch.set(msgRef, cleanUndefined(messageData));
-          logger.info("[MessagingService] Committing neural batch...");
-          await batch.commit();
-          logger.info("[MessagingService] Batch committed successfully.");
-        } catch (fErr: any) {
-          logger.warn("[MessagingService] Non-blocking Firestore mirror skipped (saved on device SQL backend):", fErr?.message || fErr);
-        }
+        throw apiErr;
       }
 
       // 4. Update instant memory cache so sender sees bubble immediately
@@ -508,6 +269,7 @@ class MessagingService {
         senderId: profile.id,
         senderUid: user.uid,
         text,
+        content: text,
         type,
         mediaUrl: mediaUrl || null,
         status: 'sent',
@@ -526,7 +288,7 @@ class MessagingService {
       return resolvedConvId || finalConvId;
     } catch (e: any) {
       logger.error("[MessagingService] ATOMIC FAILURE:", e);
-      return finalConvId;
+      throw e;
     }
   }
 

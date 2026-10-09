@@ -2940,10 +2940,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const createdAt = data.createdAt?.toMillis 
             ? data.createdAt.toMillis() 
             : (data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0);
-
           if (createdAt >= listenerStartTime) {
-            // Skip notifications from blocked users
-            const senderId = data.fromUser?.uid || data.fromUser?.id || data.senderId;
+            // Skip notifications from myself or blocked users
+            const senderId = data.fromUser?.uid || data.fromUser?.id || data.senderId || data.fromUserId || data.actorId;
+            const isFromMe = (senderId && (senderId === profile.id || senderId === user.uid || senderId === user.id || (profile as any)?.userId === senderId)) ||
+                             (data.fromUserId && (data.fromUserId === profile.id || data.fromUserId === user.uid));
+            if (isFromMe) return;
+
             const isFromBlockedUser = senderId ? (profile.social?.blocked || []).includes(senderId) : false;
             if (isFromBlockedUser) return;
 
