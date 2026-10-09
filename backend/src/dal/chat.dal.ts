@@ -143,12 +143,15 @@ export class ChatDAL {
         .leftJoin(profiles, eq(users.id, profiles.userId))
         .where(eq(conversationMembers.conversationId, row.conversation.id));
 
+      const otherParticipant = participants.find((p) => p.userId !== userId) || null;
+
       result.push({
         ...row.conversation,
         unreadCount: row.member.unreadCount,
         isMuted: row.member.isMuted,
         isPinned: row.member.isPinned,
         participants,
+        otherParticipant,
       });
     }
 
@@ -330,5 +333,17 @@ export class ChatDAL {
       .where(eq(messages.id, messageId))
       .limit(1);
     return msg || null;
+  }
+
+  static async getConversationById(conversationId: string) {
+    if (!conversationId || typeof conversationId !== 'string') return null;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return null;
+    const [conv] = await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, conversationId))
+      .limit(1);
+    return conv || null;
   }
 }

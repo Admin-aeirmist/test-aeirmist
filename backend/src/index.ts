@@ -139,7 +139,7 @@ try {
 import { resolveUserFromCredentials } from './middleware/auth';
 import { ChatDAL } from './dal/chat.dal';
 
-// Socket.IO Authentication Middleware (JWT Validation)
+// Socket.IO Authentication Middleware (Strict JWT Validation)
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token || 
@@ -149,52 +149,46 @@ io.use(async (socket, next) => {
                       (socket.handshake.auth?.userId as string) || 
                       (socket.handshake.query?.userId as string);
 
-    const resolved = await resolveUserFromCredentials(token || null, headerUid || null);
-    if (resolved && resolved.userId) {
-      (socket as any).userId = resolved.userId;
-      (socket as any).userRole = resolved.role;
+    if (!token && !headerUid) {
+      return next(new Error('Authentication failed: Missing credentials'));
     }
+
+    const resolved = await resolveUserFromCredentials(token || null, headerUid || null);
+    if (!resolved || !resolved.userId) {
+      return next(new Error('Authentication failed: Invalid credentials'));
+    }
+
+    (socket as any).userId = resolved.userId;
+    (socket as any).userRole = resolved.role;
     next();
-  } catch (err) {
-    next();
+  } catch (err: any) {
+    next(new Error(`Authentication failed: ${err.message || 'Unauthorized'}`));
   }
 });
 
 io.on('connection', async (socket) => {
   const authedUserId = (socket as any).userId;
-  console.log(`🔌 [Socket.IO] Client connected: ${socket.id}${authedUserId ? ` (authed: ${authedUserId})` : ''}`);
-
-  if (authedUserId) {
-    socket.join(`user:${authedUserId}`);
-    try {
-      const u = await UserDAL.findById(authedUserId);
-      if (u?.firebaseUid) socket.join(`user:${u.firebaseUid}`);
-      const p = await UserDAL.findProfileById(authedUserId);
-      if (p?.userId) socket.join(`user:${p.userId}`);
-      await redis.sadd('online_users', authedUserId);
-      io.emit('user_status', { userId: authedUserId, status: 'online' });
-    } catch {}
+  if (!authedUserId) {
+    socket.disconnect(true);
+    return;
   }
+  console.log(`🔌 [Socket.IO] Authenticated client connected: ${socket.id} (user: ${authedUserId})`);
 
-  // User identification for personal notifications & Redis Presence
-  socket.on('identify_user', async (userId: string, ack?: (res: any) => void) => {
-    if (!userId) return;
-    const resolvedId = await UserDAL.resolveToUserId(userId) || userId;
-    socket.join(`user:${resolvedId}`);
-    (socket as any).userId = resolvedId;
-    console.log(`👤 [Socket.IO] User ${userId} joined personal channel (resolved: ${resolvedId})`);
+  socket.join(`user:${authedUserId}`);
+  try {
+    const u = await UserDAL.findById(authedUserId);
+    if (u?.firebaseUid) socket.join(`user:${u.firebaseUid}`);
+    const p = await UserDAL.getProfileByUserId(authedUserId);
+    if (p?.id) socket.join(`user:${p.id}`);
+    if (p?.username) socket.join(`user:${p.username}`);
+    await redis.sadd('online_users', authedUserId);
+    io.emit('user_status', { userId: authedUserId, status: 'online' });
+  } catch {}
 
-    try {
-      const u = await UserDAL.findById(resolvedId);
-      if (u?.firebaseUid) socket.join(`user:${u.firebaseUid}`);
-      await redis.sadd('online_users', resolvedId);
-      io.emit('user_status', { userId: resolvedId, status: 'online' });
-    } catch (err) {
-      console.warn('⚠️ [Redis] Presence update failed:', err);
-    }
-
-    socket.emit('user_identified', { userId: resolvedId });
-    if (typeof ack === 'function') ack({ success: true, userId: resolvedId });
+  // User identification ACK (Strict: NEVER allow client to switch identity or join foreign channels)
+  socket.on('identify_user', async (_clientSuppliedId: string, ack?: (res: any) => void) => {
+    socket.emit('user_identified', { userId: authedUserId });
+    if (typeof ack === 'function') ack({ success: true, userId: authedUserId });
   });
 
   // Fetch all online users from Redis
@@ -205,77 +199,80 @@ io.on('connection', async (socket) => {
     } catch (err) {}
   });
 
-  // Typing indicators
-  socket.on('typing_start', (data: { conversationId: string; userId: string; username?: string }) => {
-    if (data?.conversationId) {
-      socket.to(`conv:${data.conversationId}`).emit('user_typing', data);
-    }
+  // Typing indicators (Strictly authenticated and verified room participant)
+  socket.on('typing_start', async (data: { conversationId: string; username?: string }) => {
+    if (!authedUserId || !data?.conversationId) return;
+    const isMember = await ChatDAL.isParticipant(data.conversationId, authedUserId);
+    if (!isMember) return;
+
+    socket.to(`conv:${data.conversationId}`).emit('user_typing', {
+      conversationId: data.conversationId,
+      userId: authedUserId,
+      username: data.username,
+    });
   });
 
-  socket.on('typing_stop', (data: { conversationId: string; userId: string }) => {
-    if (data?.conversationId) {
-      socket.to(`conv:${data.conversationId}`).emit('user_stop_typing', data);
-    }
+  socket.on('typing_stop', async (data: { conversationId: string }) => {
+    if (!authedUserId || !data?.conversationId) return;
+    const isMember = await ChatDAL.isParticipant(data.conversationId, authedUserId);
+    if (!isMember) return;
+
+    socket.to(`conv:${data.conversationId}`).emit('user_stop_typing', {
+      conversationId: data.conversationId,
+      userId: authedUserId,
+    });
   });
 
   // Room management for chats (Authorized participants only)
-  socket.on('join_room', async (roomId: string) => {
-    if (!roomId) return;
+  socket.on('join_room', async (roomId: string, ack?: (res: any) => void) => {
+    if (!roomId || typeof roomId !== 'string') {
+      if (typeof ack === 'function') ack({ success: false, error: 'Invalid room' });
+      return;
+    }
+
     const cleanId = roomId.startsWith('conv:') ? roomId.replace(/^conv:/, '') : roomId;
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
-    const currentUid = (socket as any).userId;
 
-    if (isUuid && currentUid) {
-      const isMember = await ChatDAL.isParticipant(cleanId, currentUid);
+    if (isUuid) {
+      const isMember = await ChatDAL.isParticipant(cleanId, authedUserId);
       if (!isMember) {
-        console.warn(`🔒 [Socket.IO] Access denied: User ${currentUid} attempted to join unauthorized room ${cleanId}`);
+        console.warn(`🔒 [Socket.IO] Access denied: User ${authedUserId} attempted to join unauthorized room ${cleanId}`);
+        if (typeof ack === 'function') ack({ success: false, error: 'Access denied: Not a participant' });
         return;
       }
+    } else {
+      console.warn(`🔒 [Socket.IO] Access denied: Non-UUID room join rejected: ${roomId}`);
+      if (typeof ack === 'function') ack({ success: false, error: 'Access denied: Invalid room ID' });
+      return;
     }
 
     socket.join(roomId);
     if (!roomId.startsWith('conv:')) {
       socket.join(`conv:${roomId}`);
     }
+    if (typeof ack === 'function') ack({ success: true, room: roomId });
   });
 
   socket.on('leave_room', (roomId: string) => {
-    if (!roomId) return;
+    if (!roomId || typeof roomId !== 'string') return;
     socket.leave(roomId);
     if (!roomId.startsWith('conv:')) {
       socket.leave(`conv:${roomId}`);
     }
   });
 
-  // Real-time chat message broadcast (Strict room delivery, NO unrestricted global emit)
-  socket.on('send_message', (data: any) => {
-    if (data?.conversationId) {
-      const senderUserId = (socket as any).userId || data.senderId;
-      const payload = {
-        ...data,
-        conversationId: data.conversationId,
-        message: data.message || {
-          id: data.id || `msg_${Date.now()}`,
-          conversationId: data.conversationId,
-          content: data.content || '',
-          type: data.type || 'text',
-          mediaUrl: data.mediaUrl,
-          senderId: senderUserId,
-          createdAt: new Date().toISOString(),
-        }
-      };
-      io.to(`conv:${data.conversationId}`).emit('new_message', payload);
-      if (data.recipientId) {
-        io.to(`user:${data.recipientId}`).emit('new_message', payload);
-      }
-      if (data.receiverUid) {
-        io.to(`user:${data.receiverUid}`).emit('new_message', payload);
-      }
+  // Raw socket send_message is disabled in favor of authenticated POST /api/v1/chat/conversations/:id/messages
+  socket.on('send_message', (_data: any, ack?: (res: any) => void) => {
+    console.warn(`⚠️ [Socket.IO] Raw socket send_message rejected. Use POST /api/v1/chat/conversations/:id/messages`);
+    if (typeof ack === 'function') {
+      ack({ success: false, error: 'Use REST API to send messages' });
     }
   });
 
   // WebRTC Calling Signaling Gateway (Ultra Low-Latency)
   socket.on('call_user', async (data: { targetUserId: string; signalData: any; callerInfo: any; callType: 'audio' | 'video' }) => {
+    if (!authedUserId || !data?.targetUserId) return;
+
     if (data.signalData?.callId) {
       socket.join(`call:${data.signalData.callId}`);
     }
@@ -283,7 +280,10 @@ io.on('connection', async (socket) => {
     const payload = {
       fromSocketId: socket.id,
       signalData: data.signalData,
-      callerInfo: data.callerInfo,
+      callerInfo: {
+        ...(data.callerInfo || {}),
+        userId: authedUserId,
+      },
       callType: data.callType,
     };
 

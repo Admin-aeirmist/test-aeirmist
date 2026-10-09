@@ -42,7 +42,13 @@ export class StoryDAL {
           SELECT following_id FROM follows WHERE follower_id = ${viewerId}
         ))
         OR ((${stories.audience} = 'closeFriends' OR ${stories.audience} = 'close_friends') AND EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(COALESCE(${profiles.privacySettings}->'closeFriends', '[]'::jsonb)) AS cf
+          SELECT 1 FROM jsonb_array_elements_text(
+            CASE 
+              WHEN jsonb_typeof(${profiles.privacySettings}->'closeFriends') = 'array' 
+              THEN ${profiles.privacySettings}->'closeFriends' 
+              ELSE '[]'::jsonb 
+            END
+          ) AS cf
           WHERE cf = ${viewerId}
              OR cf IN (SELECT id::text FROM profiles WHERE user_id = ${viewerId})
              OR cf IN (SELECT username FROM profiles WHERE user_id = ${viewerId})

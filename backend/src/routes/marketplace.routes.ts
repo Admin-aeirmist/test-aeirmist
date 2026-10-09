@@ -29,9 +29,15 @@ const CreateStoreSchema = z.object({
   email: z.string().optional(),
 });
 
+const OrderItemSchema = z.object({
+  itemId: z.string().optional(),
+  id: z.string().optional(),
+  quantity: z.number().int().min(1).max(1).default(1).optional(),
+});
+
 const CreateOrderSchema = z.object({
   storeId: z.string().optional(),
-  items: z.array(z.any()).min(1).max(50),
+  items: z.array(OrderItemSchema).min(1).max(50),
   totalAmount: z.string().optional(),
   currency: z.string().default('BDT'),
   shippingAddress: z.any().optional(),

@@ -213,12 +213,18 @@ export class MarketplaceDAL {
     return await db.transaction(async (tx) => {
       let serverCalculatedTotal = 0;
       const verifiedItems: any[] = [];
+      const seenItemIds = new Set<string>();
 
       for (const rawItem of data.items) {
         const itemId = rawItem.itemId || rawItem.id;
         if (!itemId || typeof itemId !== 'string') {
           throw new Error('Invalid item ID in order');
         }
+
+        if (seenItemIds.has(itemId)) {
+          throw new Error(`Duplicate item ${itemId} in order; unique listings can only be purchased once`);
+        }
+        seenItemIds.add(itemId);
 
         // Lock row FOR UPDATE to prevent concurrency / race conditions
         const lockRes = await tx.execute(sql`
@@ -241,9 +247,13 @@ export class MarketplaceDAL {
           throw new Error(`You cannot purchase your own item ("${lockedItem.title}")`);
         }
 
-        const qty = Math.max(1, Math.min(100, parseInt(String(rawItem.quantity || '1'), 10) || 1));
+        const requestedQty = parseInt(String(rawItem.quantity ?? 1), 10);
+        if (isNaN(requestedQty) || requestedQty !== 1) {
+          throw new Error(`Item "${lockedItem.title}" is a single unique listing with inventory 1; quantity must be 1`);
+        }
+
         const unitPrice = parseFloat(lockedItem.price) || 0;
-        serverCalculatedTotal += unitPrice * qty;
+        serverCalculatedTotal += unitPrice;
 
         // Mark item as sold within transaction
         await tx.execute(sql`
@@ -257,7 +267,7 @@ export class MarketplaceDAL {
           title: lockedItem.title,
           price: lockedItem.price,
           unitPrice,
-          quantity: qty,
+          quantity: 1,
           sellerId: lockedItem.seller_id,
           mediaKeys: lockedItem.media_keys,
         });

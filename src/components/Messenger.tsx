@@ -912,27 +912,45 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
   const handleUserClick = (userData: any, autoCallType?: 'audio' | 'video') => {
     if (!userData || !profile?.id) return;
 
-    const targetId = userData.id || userData.uid || userData.ownerUid;
-    if (!targetId) return;
+    // Current user's candidate identifiers
+    const myUserId = (user as any)?.userId || user?.id || (profile as any)?.userId;
+    const myAuthUid = user?.uid;
+    const myProfileId = profile?.id;
+    const myUsername = profile?.username;
+    const myIdentifiers = new Set([myUserId, myAuthUid, myProfileId, myUsername].filter(Boolean).map(String));
 
-    const profileIds = [profile.id, targetId].sort();
-    const detId = profileIds.join('_');
-    
-    let targetUid = userData.ownerUid || userData.uid;
-    if (!targetUid && targetId.startsWith('profile_')) {
-      const parts = targetId.split('_');
-      if (parts.length >= 2) {
-        targetUid = parts[1];
+    // Target user's candidate identifiers
+    const targetUserId = userData.userId || (userData.user && userData.user.id);
+    const targetProfileId = userData.profileId || (userData.id && !String(userData.id).startsWith('new_') ? userData.id : null);
+    const targetUid = userData.uid || userData.ownerUid || userData.firebaseUid;
+    const targetUsername = userData.username;
+    const targetIdentifiers = [targetUserId, targetProfileId, targetUid, targetUsername].filter(Boolean).map(String);
+
+    if (targetIdentifiers.length === 0) return;
+
+    const isSelfTarget = targetIdentifiers.some(id => myIdentifiers.has(id));
+
+    // Find direct conversation where the other participant matches target user
+    const existingChat = chats.find(c => {
+      if (c.isGroup || c.type === 'group') return false;
+      if (isSelfTarget) {
+        return c.type === 'self' || c.otherParticipantId === profile.id || c.otherParticipantUid === myUserId;
       }
-    }
-    if (!targetUid) {
-      targetUid = targetId; // absolute fallback
-    }
+      if (c.type === 'self') return false;
 
-    const existingChat = chats.find(c => c.id === detId || c.profileIds?.includes(targetId) || c.participants?.includes(targetUid));
-    
+      const partnerIds = [
+        c.otherParticipantId,
+        c.otherParticipantUid,
+        c.otherProfile?.userId,
+        c.otherProfile?.id,
+        c.otherProfile?.username,
+        c.otherProfile?.firebaseUid,
+      ].filter(Boolean).map(String);
+
+      return partnerIds.some(pid => !myIdentifiers.has(pid) && targetIdentifiers.includes(pid));
+    });
+
     if (existingChat) {
-      // If this conversation is vaulted/private, require vault password unlock first!
       if (existingChat.isVaulted?.[profile.id] === true && !vaultState.isUnlocked) {
         setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: existingChat.id });
         setActiveChatId(existingChat.id);
@@ -947,20 +965,32 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         setTimeout(() => setPendingCall({ conversationId: existingChat.id, type: autoCallType }), 100);
       }
     } else {
+      if (isSelfTarget) return;
+
+      const canonicalTargetId = targetUserId || targetUid || targetProfileId || userData.id;
       const newTempChat: Chat = {
-        id: 'new_' + targetId,
-        name: userData.displayName || userData.name || 'User',
-        photo: userData.photoURL || userData.photo,
+        id: 'new_' + canonicalTargetId,
+        name: userData.displayName || userData.name || userData.username || 'User',
+        photo: userData.photoURL || userData.photo || (userData.avatarKey ? `/media/${userData.avatarKey}` : null),
         lastMessage: 'Tap to chat',
         time: '',
         unread: false,
-        online: !!onlineUsers?.has?.(targetId),
-        participants: [user!.uid, targetUid].filter(Boolean).sort(),
-        profileIds: profileIds,
+        online: !!onlineUsers?.has?.(canonicalTargetId),
+        participants: [myUserId, canonicalTargetId].filter(Boolean),
+        profileIds: [myProfileId, targetProfileId || canonicalTargetId].filter(Boolean),
+        otherParticipantId: targetProfileId || canonicalTargetId,
+        otherParticipantUid: canonicalTargetId,
+        otherProfile: {
+          id: targetProfileId || canonicalTargetId,
+          userId: canonicalTargetId,
+          displayName: userData.displayName || userData.name || userData.username || 'User',
+          username: userData.username,
+          avatarKey: userData.avatarKey
+        },
         isTemporary: true
       };
       setTempChat(newTempChat);
-      setActiveChatId(null);
+      setActiveChatId(newTempChat.id);
       setIsMobileList(false);
     }
     setSearchQuery('');
@@ -970,9 +1000,12 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
   // Protect vaulted chat from tempChat bypass when chats list updates
   useEffect(() => {
     if (tempChat && chats.length > 0 && profile?.id) {
-      const targetId = tempChat.profileIds?.find(id => id !== profile.id);
-      if (targetId) {
-        const matchingChat = chats.find(c => c.profileIds?.includes(targetId) || c.participants?.includes(targetId));
+      const targetPartnerId = tempChat.otherParticipantUid || tempChat.otherParticipantId;
+      if (targetPartnerId) {
+        const matchingChat = chats.find(c => {
+          if (c.isGroup || c.type === 'group' || c.type === 'self') return false;
+          return c.otherParticipantId === targetPartnerId || c.otherParticipantUid === targetPartnerId || c.otherProfile?.userId === targetPartnerId;
+        });
         if (matchingChat) {
           if (matchingChat.isVaulted?.[profile.id] === true && !vaultState.isUnlocked) {
             setTempChat(null);
@@ -2723,77 +2756,59 @@ const ChatWindow = ({
 
   const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
 
-  // Universal Sender Identity Matcher (Handles UUIDs, usr_ IDs, profile_ IDs, and usernames seamlessly)
+  // Universal Sender Identity Matcher (Strict exact matching, no partial split inference)
   const isSenderMe = useCallback((senderId?: string | null, senderUid?: string | null, isOptimistic?: boolean, msgObj?: any): boolean => {
     if (isOptimistic) return true;
     if (!senderId && !senderUid && !msgObj) return false;
-    const myProfileId = profile?.id;
-    const myUid = user?.uid || user?.id;
-    const myUsername = profile?.username;
-    const myUserId = profile?.userId || (profile as any)?.user_id || (user as any)?.userId || (user as any)?.dbId;
 
-    const myIdentifiers = [
+    const myProfileId = profile?.id;
+    const myUid = user?.uid;
+    const myUserId = (user as any)?.userId || user?.id || (profile as any)?.userId;
+    const myUsername = profile?.username;
+
+    const myIdentifiers = new Set([
       myProfileId,
-      myProfileId ? myProfileId.replace(/^profile_/, '') : null,
-      myProfileId ? myProfileId.replace(/^profile_/, '').split('_')[0] : null,
       myUid,
-      myUid ? `profile_${myUid}` : null,
-      myUid ? myUid.split('_')[0] : null,
       myUserId,
-      myUserId ? `profile_${myUserId}` : null,
-      myUserId ? String(myUserId).split('_')[0] : null,
       myUsername
-    ].filter(Boolean).map(id => String(id).toLowerCase());
+    ].filter(Boolean).map(id => String(id).toLowerCase()));
 
     const senderCandidates = [
       senderId,
-      senderId ? senderId.replace(/^profile_/, '') : null,
-      senderId ? senderId.replace(/^profile_/, '').split('_')[0] : null,
       senderUid,
-      senderUid ? senderUid.replace(/^profile_/, '') : null,
-      senderUid ? senderUid.split('_')[0] : null,
+      msgObj?.senderId,
+      msgObj?.senderUid,
       msgObj?.metadata?.senderId,
-      msgObj?.metadata?.senderId ? String(msgObj.metadata.senderId).replace(/^profile_/, '') : null,
-      msgObj?.metadata?.senderId ? String(msgObj.metadata.senderId).replace(/^profile_/, '').split('_')[0] : null,
       msgObj?.metadata?.senderUid,
-      msgObj?.metadata?.senderUid ? String(msgObj.metadata.senderUid).split('_')[0] : null,
       msgObj?.senderDbId,
       msgObj?.senderProfileId,
       msgObj?.sender?.id,
       msgObj?.sender?.firebaseUid,
-      msgObj?.sender?.firebaseUid ? String(msgObj.sender.firebaseUid).split('_')[0] : null,
       msgObj?.sender?.profileId,
       msgObj?.sender?.username
     ].filter(Boolean).map(s => String(s).toLowerCase());
 
     // 1. Direct positive check against current user's known identifiers
-    const isDirectMatch = senderCandidates.some(cand => myIdentifiers.includes(cand));
+    const isDirectMatch = senderCandidates.some(cand => myIdentifiers.has(cand));
     if (isDirectMatch) return true;
 
     // 2. In 1v1 direct chat, check if the sender matches the other person
     if (!chat.isGroup && chat.type !== 'group') {
-      const otherIds = [
+      const otherIds = new Set([
         otherParticipantId,
-        otherParticipantId ? otherParticipantId.replace(/^profile_/, '') : null,
-        otherParticipantId ? otherParticipantId.replace(/^profile_/, '').split('_')[0] : null,
         (chat as any)?.otherParticipantUid,
-        (chat as any)?.otherParticipantUid ? String((chat as any).otherParticipantUid).split('_')[0] : null,
         otherProfile?.id,
-        otherProfile?.id ? otherProfile.id.replace(/^profile_/, '') : null,
-        otherProfile?.id ? otherProfile.id.replace(/^profile_/, '').split('_')[0] : null,
         otherProfile?.userId,
         (otherProfile as any)?.firebaseUid,
-        (otherProfile as any)?.firebaseUid ? String((otherProfile as any).firebaseUid).split('_')[0] : null,
         otherProfile?.username
-      ].filter(Boolean).map(id => String(id).toLowerCase());
+      ].filter(Boolean).map(id => String(id).toLowerCase()));
 
-      const matchesOther = senderCandidates.some(cand => otherIds.includes(cand));
+      const matchesOther = senderCandidates.some(cand => otherIds.has(cand));
       if (matchesOther) return false;
     }
 
-    // Default safe fallback: never assume a foreign ID is me
     return false;
-  }, [profile?.id, profile?.username, (profile as any)?.userId, (profile as any)?.user_id, user?.uid, user?.id, (user as any)?.userId, (user as any)?.dbId, chat.isGroup, chat.type, otherParticipantId, otherProfile, (chat as any)?.otherParticipantUid]);
+  }, [profile?.id, profile?.username, (profile as any)?.userId, user?.uid, user?.id, (user as any)?.userId, chat.isGroup, chat.type, otherParticipantId, otherProfile, (chat as any)?.otherParticipantUid]);
 
   // Derive processed messages with live read/delivered status and guaranteed stable chronological order
   const displayedMessages = useMemo(() => {
@@ -3134,24 +3149,16 @@ const ChatWindow = ({
     
     try {
       const isNew = chat.id.startsWith('new_');
-      const targetProfileId = isNew ? chat.id.replace('new_', '') : null;
-
-      let otherUid = chat.otherParticipantUid || chat.participants?.find((uid: string) => uid !== user.uid);
-      if (!otherUid && targetProfileId && targetProfileId.startsWith('profile_')) {
-        const parts = targetProfileId.split('_');
-        if (parts.length >= 2) {
-          otherUid = parts[1];
-        }
-      }
+      const targetCanonicalId = isNew ? chat.id.replace('new_', '') : null;
+      const otherUid = chat.otherParticipantUid || chat.otherProfile?.userId || chat.participants?.find((uid: string) => uid !== user.uid) || targetCanonicalId;
+      const otherProfileId = chat.otherParticipantId || chat.otherProfile?.id || targetCanonicalId;
 
       const targetProfile = isNew ? {
         displayName: chat.name,
         photoURL: chat.photo,
-        username: targetProfileId,
+        username: chat.otherProfile?.username || targetCanonicalId,
         uid: otherUid
       } : null;
- 
-      const otherProfileId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile.id);
 
       logger.info(`[Messenger] sending message to ${chat.id}. TargetUID: ${otherUid}`);
 
@@ -3189,12 +3196,14 @@ const ChatWindow = ({
       // Instantly confirm optimistic bubble so spinner resolves to delivered checkmark
       setOptimistic(prev => prev.map(m => m.id === optimisticId ? { ...m, isOptimistic: false, isDelivered: true, status: 'sent' } : m));
 
-      if (chat.isTemporary && newId) {
+      if (newId && (chat.isTemporary || chat.id.startsWith('new_') || chat.id !== newId)) {
         const realChat = {
           ...chat,
           id: newId,
           isTemporary: false
         };
+        setActiveChatId(newId);
+        setTempChat(null);
         onChatUpdate(realChat);
       }
     } catch (e: any) {
@@ -3277,14 +3286,8 @@ const ChatWindow = ({
         ));
       }, useHD ? MediaQuality.HD : mediaSettings.quality);
       
-      const otherProfileId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile.id);
-      let otherUid = chat.otherParticipantUid || chat.participants?.find((uid: string) => uid !== user.uid);
-      if (!otherUid && otherProfileId && otherProfileId.startsWith('profile_')) {
-        const parts = otherProfileId.split('_');
-        if (parts.length >= 2) {
-          otherUid = parts[1];
-        }
-      }
+      const otherProfileId = chat.otherParticipantId || chat.otherProfile?.id;
+      const otherUid = chat.otherParticipantUid || chat.otherProfile?.userId || chat.participants?.find((uid: string) => uid !== user.uid);
 
       const newId = await sendMessage(chat.id, type === 'file' ? file.name : `Sent a ${type}`, type === 'voice' ? 'voice' : (type === 'file' ? 'file' : 'media'), mediaUrl, { 
         mediaType: type,
@@ -3365,13 +3368,9 @@ const ChatWindow = ({
 
     try {
       const isNew = chat.id.startsWith('new_');
-      const targetProfileId = isNew ? chat.id.replace('new_', '') : null;
-      let otherUid = chat.otherParticipantUid || chat.participants?.find((uid: string) => uid !== user.uid);
-      if (!otherUid && targetProfileId && targetProfileId.startsWith('profile_')) {
-        const parts = targetProfileId.split('_');
-        if (parts.length >= 2) otherUid = parts[1];
-      }
-      const otherProfileId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile.id);
+      const targetCanonicalId = isNew ? chat.id.replace('new_', '') : null;
+      const otherUid = chat.otherParticipantUid || chat.otherProfile?.userId || chat.participants?.find((uid: string) => uid !== user.uid) || targetCanonicalId;
+      const otherProfileId = chat.otherParticipantId || chat.otherProfile?.id || targetCanonicalId;
 
       const newId = await sendMessage(chat.id, text || `Sent a ${type}`, type, mediaUrl, {
         ...metadata,

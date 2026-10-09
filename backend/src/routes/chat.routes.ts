@@ -39,15 +39,23 @@ async function resolveUserId(rawId: string): Promise<string> {
 }
 
 async function resolveConversationId(rawConvId: string, currentUserId: string): Promise<string> {
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawConvId);
-  if (isUuid) return rawConvId;
+  if (!rawConvId || typeof rawConvId !== 'string') {
+    throw new Error('Invalid conversation identifier');
+  }
 
-  // Strip trailing Unix millisecond timestamp from compound conversation IDs
-  const normalizedConvId = rawConvId.replace(/_\d{10,14}$/, '');
+  const cleanConvId = rawConvId.trim();
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanConvId);
+  if (isUuid) {
+    const exists = await ChatDAL.getConversationById(cleanConvId);
+    if (exists) return cleanConvId;
+  }
+
+  // Strip trailing Unix millisecond timestamp if present
+  const normalizedConvId = cleanConvId.replace(/_\d{10,14}$/, '');
 
   // Case 1: new_<targetId> (Direct conversation initiation)
   if (normalizedConvId.startsWith('new_')) {
-    const rawTarget = normalizedConvId.slice(4);
+    const rawTarget = normalizedConvId.slice(4).trim();
     const resolvedTargetId = await resolveUserId(rawTarget);
     if (!resolvedTargetId || resolvedTargetId === currentUserId) {
       throw new Error(`Cannot start direct conversation with yourself or invalid recipient: ${rawTarget}`);
@@ -55,35 +63,32 @@ async function resolveConversationId(rawConvId: string, currentUserId: string): 
     return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
   }
 
-  // Case 2: Compound conversation keys: e.g. profile_userA_profile_userB, or userA_userB
-  let target = normalizedConvId;
-  if (normalizedConvId.includes('_profile_')) {
-    const splitIdx = normalizedConvId.indexOf('_profile_');
-    const partA = normalizedConvId.slice(0, splitIdx);
-    const partB = normalizedConvId.slice(splitIdx + 1);
-    const [resA, resB] = await Promise.all([resolveUserId(partA), resolveUserId(partB)]);
-    if (resA === currentUserId && resB === currentUserId) {
-      target = currentUserId;
-    } else {
-      target = (resA !== currentUserId) ? resA : resB;
+  // Case 2: Exact UUID pair: <uuidA>_<uuidB> or <uuidA>:<uuidB>
+  const uuidPairMatch = normalizedConvId.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[_:]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (uuidPairMatch) {
+    const [ , idA, idB ] = uuidPairMatch;
+    const target = idA === currentUserId ? idB : idA;
+    if (target === currentUserId) {
+      throw new Error(`Cannot start direct conversation with yourself`);
     }
-  } else if (normalizedConvId.includes('_')) {
-    const parts = normalizedConvId.split('_');
-    if (parts.length >= 2) {
-      const [resA, resB] = await Promise.all([resolveUserId(parts[0]), resolveUserId(parts[1])]);
-      if (resA === currentUserId && resB === currentUserId) {
-        target = currentUserId;
-      } else {
-        target = (resA !== currentUserId) ? resA : resB;
+    return ChatDAL.findOrCreateDirectConversation(currentUserId, target);
+  }
+
+  // Case 3: Compound pair (e.g., profile_A_profile_B or idA_idB or idA:idB)
+  const compoundMatch = normalizedConvId.match(/^([a-zA-Z0-9_]{10,64})[_:]([a-zA-Z0-9_]{10,64})$/);
+  if (compoundMatch) {
+    const [ , partA, partB ] = compoundMatch;
+    const userA = await resolveUserId(partA);
+    const userB = await resolveUserId(partB);
+    if (userA && userB && (userA === currentUserId || userB === currentUserId)) {
+      const target = userA === currentUserId ? userB : userA;
+      if (target !== currentUserId) {
+        return ChatDAL.findOrCreateDirectConversation(currentUserId, target);
       }
     }
   }
 
-  const resolvedTargetId = await resolveUserId(target);
-  if (!resolvedTargetId) {
-    throw new Error(`Invalid conversation identifier: ${rawConvId}`);
-  }
-  return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
+  throw new Error(`Invalid or nonexistent conversation identifier: ${rawConvId}`);
 }
 
 // List Conversations
@@ -102,6 +107,9 @@ router.post('/conversations/direct', authenticateToken, async (req: Authenticate
   try {
     const { participantId } = DirectChatSchema.parse(req.body);
     const resolvedTargetId = await resolveUserId(participantId);
+    if (!resolvedTargetId || resolvedTargetId === req.user!.userId) {
+      return res.status(400).json({ error: 'Cannot start direct conversation with yourself or invalid recipient' });
+    }
     const convId = await ChatDAL.findOrCreateDirectConversation(req.user!.userId, resolvedTargetId);
     res.json({ conversationId: convId });
   } catch (err: any) {
@@ -143,7 +151,10 @@ router.get('/conversations/:id/messages', authenticateToken, async (req: Authent
 
     const messages = await ChatDAL.getMessages(convId, limit, beforeDate);
     res.json({ messages, conversationId: convId });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.message?.includes('Invalid or nonexistent') || err?.message?.includes('Cannot start direct conversation')) {
+      return res.status(404).json({ error: err.message });
+    }
     console.error('[Get Messages Error]', err);
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
@@ -240,6 +251,9 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: err.errors });
     }
+    if (err?.message?.includes('Invalid or nonexistent') || err?.message?.includes('Cannot start direct conversation')) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('[Send Message Error]', err);
     res.status(500).json({ error: 'Failed to send message' });
   }
@@ -249,6 +263,10 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
 router.post('/conversations/:id/seen', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const convId = await resolveConversationId(req.params.id, req.user!.userId);
+    const isMember = await ChatDAL.isParticipant(convId, req.user!.userId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Access denied to this conversation' });
+    }
     await ChatDAL.markSeen(convId, req.user!.userId);
 
     const seenPayload = {

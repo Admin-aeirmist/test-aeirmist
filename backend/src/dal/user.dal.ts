@@ -92,36 +92,11 @@ export class UserDAL {
                  await this.findByFirebaseUid(rawId);
     if (user?.id) return user.id;
 
-    // Auto-provision external auth / Firebase / client UID in local PostgreSQL
-    try {
-      const sanitizedUsername = cleanId.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || `user_${Date.now()}`;
-      let finalUsername = sanitizedUsername;
-      const existingProfile = await this.getProfileByUsername(finalUsername);
-      if (existingProfile?.userId) return existingProfile.userId;
-      if (existingProfile) {
-        finalUsername = `${sanitizedUsername.slice(0, 18)}_${Math.random().toString(36).slice(2, 6)}`;
-      }
+    // Check if cleanId or rawId matches a profile username or id directly
+    const p = (await this.getProfileByUsername(cleanId)) || (await this.getProfileByUsername(rawId));
+    if (p?.userId) return p.userId;
 
-      const finalEmail = cleanId.includes('@') ? cleanId.toLowerCase() : `${cleanId.toLowerCase().replace(/[^a-z0-9_]/g, '')}@aeirmist.social`;
-      const existingUserByEmail = await this.findByEmail(finalEmail);
-      if (existingUserByEmail) return existingUserByEmail.id;
-
-      const newUser = await this.createUser({
-        email: finalEmail,
-        firebaseUid: cleanId,
-        role: 'user',
-      });
-      await this.createProfile({
-        userId: newUser.id,
-        username: finalUsername,
-        displayName: finalUsername || 'Aeirmist Member',
-      });
-      return newUser.id;
-    } catch (createErr) {
-      console.warn('[UserDAL.resolveToUserId] Auto-provision note:', createErr);
-      const retryUser = await this.findByFirebaseUid(cleanId) || await this.findByEmail(cleanId);
-      return retryUser?.id || null;
-    }
+    return null;
   }
 
   static async createUser(data: {

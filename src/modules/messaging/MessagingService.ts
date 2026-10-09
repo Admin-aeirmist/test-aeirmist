@@ -164,29 +164,9 @@ class MessagingService {
 
     logger.info(`[MessagingService] sending message to ${conversationId}...`);
     let finalConvId = conversationId;
-    const isNew = conversationId.startsWith('new_');
     
     try {
       logger.info(`[MessagingService] Sending message to ${finalConvId}. Sender: ${profile.id}, User: ${user.uid}`);
-      
-      // 1. Initial resolution from inputs
-      let targetProfileId = isNew ? conversationId.replace('new_', '') : (metadata.recipientId || null);
-      let targetOwnerUid = metadata.receiverUid || metadata.targetProfile?.uid || metadata.targetProfile?.ownerUid || null;
-
-      if (!targetProfileId && finalConvId.includes('_')) {
-        const parts = finalConvId.split('_');
-        targetProfileId = parts.find(p => p !== profile.id && p !== user.uid) || null;
-      }
-
-      // 2. Deterministic ID resolution for 1v1 legacy format
-      if (isNew && targetProfileId) {
-        finalConvId = [profile.id, targetProfileId].sort().join('_');
-      }
-
-      if (!targetProfileId && metadata.targetProfile?.id) {
-        targetProfileId = metadata.targetProfile.id;
-      }
-
       const messageId = metadata.optimisticId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
       // 3. Primary Persistence: PostgreSQL Backend via REST API
@@ -485,56 +465,42 @@ class MessagingService {
 
     fetchApiMessages();
 
-    // 3. High-Frequency Polling Interval (Every 1800ms while chat window is active)
-    const pollInterval = setInterval(fetchApiMessages, 1800);
-
-    // 4. Socket.io Real-Time Listener
+    // 3. Socket.io Real-Time Listener & Reconnect Reconciliation
     const socket = getSocket();
+
+    const handleReconnect = () => {
+      if (!isCancelled) fetchApiMessages();
+    };
+    socket.on('connect', handleReconnect);
+
+    const handleVisibilityChange = () => {
+      if (!isCancelled && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchApiMessages();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    // 4. Relaxed Offline Fallback (Only runs if socket is disconnected)
+    const fallbackInterval = setInterval(() => {
+      if (!isCancelled && !socket.connected) {
+        fetchApiMessages();
+      }
+    }, 30000);
+
     const handleSocketMessage = (payload: any) => {
       if (isCancelled || !payload) return;
       const rawMsg = payload.message || payload;
-      const targetConvId = String(payload.conversationId || payload.rawConversationId || '');
-      const rawConvId = String(payload.rawConversationId || payload.conversationId || '');
+      const targetConvId = String(payload.conversationId || '');
+      const rawConvId = String(payload.rawConversationId || '');
       const currentConv = String(conversationId || '');
-
-      const normConv = currentConv.includes('_') ? currentConv.split('_').sort().join('_') : currentConv;
-      const normTarget = targetConvId.includes('_') ? targetConvId.split('_').sort().join('_') : targetConvId;
-      const normRaw = rawConvId.includes('_') ? rawConvId.split('_').sort().join('_') : rawConvId;
 
       const isConvMatch = targetConvId === currentConv || 
                           rawConvId === currentConv ||
-                          (Boolean(normConv) && (normConv === normTarget || normConv === normRaw)) ||
                           (Boolean(chatData?.id) && (chatData.id === targetConvId || chatData.id === rawConvId));
 
-      const otherIds = [
-        chatData?.otherParticipantId,
-        chatData?.otherParticipantId ? chatData.otherParticipantId.replace(/^profile_/, '') : null,
-        chatData?.otherParticipantUid,
-        chatData?.otherProfile?.id,
-        chatData?.otherProfile?.id ? chatData.otherProfile.id.replace(/^profile_/, '') : null,
-        chatData?.otherProfile?.userId,
-        chatData?.otherProfile?.firebaseUid,
-        chatData?.otherProfile?.username,
-        conversationId.startsWith('new_') ? conversationId.replace('new_', '') : null,
-      ].filter(Boolean) as string[];
-
-      const incomingSenderIds = [
-        rawMsg.senderId,
-        rawMsg.senderId ? rawMsg.senderId.replace(/^profile_/, '') : null,
-        rawMsg.senderUid,
-        rawMsg.senderDbId,
-        rawMsg.senderProfileId,
-        rawMsg.sender?.id,
-        rawMsg.sender?.firebaseUid,
-        rawMsg.sender?.profileId,
-        rawMsg.sender?.username
-      ].filter(Boolean) as string[];
-
-      const isFromOther = otherIds.some(oid => 
-        incomingSenderIds.some(sid => sid === oid || sid.toLowerCase() === oid.toLowerCase())
-      );
-
-      if (isConvMatch || isFromOther) {
+      if (isConvMatch) {
         const normalized = normalizeMsg(rawMsg);
         mergeAndEmit([normalized]);
       }
@@ -573,15 +539,19 @@ class MessagingService {
 
     const cleanup = () => {
       isCancelled = true;
-      clearInterval(pollInterval);
+      clearInterval(fallbackInterval);
       leaveChatRoom(conversationId);
       if (chatData?.id && chatData.id !== conversationId) {
         leaveChatRoom(chatData.id);
       }
+      socket.off('connect', handleReconnect);
       socket.off('new_message', handleSocketMessage);
       socket.off('seen_update', handleSeenUpdate);
       socket.off('message_edited', handleMessageEdited);
       socket.off('message_deleted', handleMessageDeleted);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
       if (this.listeners.get(key) === cleanup) {
         this.listeners.delete(key);
       }
@@ -617,43 +587,41 @@ class MessagingService {
       const ms = getMs(c);
       const isMeParticipant = (p: any) => {
         if (!p) return false;
-        const pUid = String(p.userId || p.firebaseUid || '').split('_')[0].toLowerCase();
-        const pProfile = String(p.profileId || '').split('_')[0].toLowerCase();
-        const myUidClean = String(userUid || '').split('_')[0].toLowerCase();
-        const myProfileClean = String(profileId || '').replace(/^profile_/, '').split('_')[0].toLowerCase();
+        const pUserId = p.userId ? String(p.userId).toLowerCase() : null;
+        const pFirebaseUid = p.firebaseUid ? String(p.firebaseUid).toLowerCase() : null;
+        const pProfileId = p.profileId ? String(p.profileId).toLowerCase() : null;
+        const pId = p.id ? String(p.id).toLowerCase() : null;
 
-        return p.userId === userUid ||
-               p.firebaseUid === userUid ||
-               p.profileId === profileId ||
-               (Boolean(myUidClean) && (pUid === myUidClean || p.userId === myUidClean || p.firebaseUid === myUidClean)) ||
-               (Boolean(myProfileClean) && (pProfile === myProfileClean || p.profileId === myProfileClean));
+        const myUserUid = userUid ? String(userUid).toLowerCase() : null;
+        const myProfileId = profileId ? String(profileId).toLowerCase() : null;
+
+        return Boolean(
+          (myUserUid && (pUserId === myUserUid || pFirebaseUid === myUserUid || pId === myUserUid)) ||
+          (myProfileId && (pProfileId === myProfileId || pId === myProfileId || pUserId === myProfileId))
+        );
       };
 
-      const other = (Array.isArray(c.participants) && typeof c.participants[0] === 'object')
-        ? c.participants.find((p: any) => !isMeParticipant(p))
-        : null;
+      // Direct other participant: prefer backend explicit otherParticipant object
+      let other = (c as any).otherParticipant || null;
+      if (!other && Array.isArray(c.participants) && c.participants.length > 0) {
+        if (typeof c.participants[0] === 'object') {
+          other = c.participants.find((p: any) => !isMeParticipant(p)) || null;
+        }
+      }
 
-      // Extract the true partner's Firebase UID and clean profile ID
-      const otherFirebaseUid = other?.firebaseUid || 
-        (c.otherParticipantUid && !c.otherParticipantUid.includes('-') ? c.otherParticipantUid : null) ||
-        (typeof c.otherParticipantId === 'string' && c.otherParticipantId.startsWith('profile_') ? c.otherParticipantId.replace(/^profile_/, '') : null);
+      const isSelf = c.type === 'self' || (!other && !c.isGroup && c.type !== 'group' && Array.isArray(c.participants) && c.participants.length <= 1);
 
-      // Point otherParticipantId to profile_${firebaseUid} whenever available so Firestore profile hooks find it
-      const otherParticipantId = otherFirebaseUid
-        ? `profile_${otherFirebaseUid}`
-        : (c.otherParticipantId || other?.profileId || other?.userId || null);
+      const otherParticipantId = isSelf ? profileId : (other?.profileId || other?.id || other?.userId || c.otherParticipantId || null);
+      const otherParticipantUid = isSelf ? userUid : (other?.userId || other?.firebaseUid || other?.id || c.otherParticipantUid || null);
 
-      const otherParticipantUid = otherFirebaseUid || other?.userId || c.otherParticipantUid || null;
-
-      // Resolve friendly name: Never display generic placeholder 'Aeirmist Member' or 'Aeirmist User' if a username or display name exists
-      let resolvedName = c.title || c.name || other?.displayName || other?.username || c.groupName || 'Chat';
+      let resolvedName = c.title || c.name || other?.displayName || other?.username || c.groupName || (isSelf ? 'My Space' : 'Chat');
       if (resolvedName === 'Aeirmist Member' || resolvedName === 'Aeirmist User') {
         if (other?.username && other.username !== 'unknown') {
           resolvedName = other.username;
         }
       }
 
-      const resolvedPhoto = c.avatarKey ? `/media/${c.avatarKey}` : (other?.avatarKey ? `/media/${other.avatarKey}` : c.photo || (other?.photoURL || null));
+      const resolvedPhoto = c.avatarKey ? `/media/${c.avatarKey}` : (other?.avatarKey ? `/media/${other.avatarKey}` : (c.photo || other?.photoURL || null));
 
       return {
         ...c,
@@ -662,18 +630,18 @@ class MessagingService {
         photo: resolvedPhoto,
         otherParticipantId,
         otherParticipantUid,
-        otherProfile: other ? {
+        otherProfile: isSelf ? null : (other ? {
           id: otherParticipantId,
           userId: other.userId,
-          firebaseUid: otherFirebaseUid || other.firebaseUid,
-          displayName: resolvedName,
+          firebaseUid: other.firebaseUid,
+          displayName: other.displayName || other.username || resolvedName,
           username: other.username,
           avatarKey: other.avatarKey,
           isVerified: other.isVerified,
-        } : c.otherProfile,
+        } : c.otherProfile),
         latestMessageAt: c.lastMessageAt || c.latestMessageAt || new Date(ms || Date.now()).toISOString(),
         latestMessagePreview: c.lastMessagePreview || c.lastMessage?.text || '',
-        unreadCount: typeof c.unreadCount === 'object' ? c.unreadCount : { [profileId]: c.unreadCount || 0 },
+        unreadCount: typeof c.unreadCount === 'number' ? c.unreadCount : (typeof c.unreadCount === 'object' ? (c.unreadCount[profileId] || 0) : 0),
         participants: c.participants ? (Array.isArray(c.participants) && typeof c.participants[0] === 'object' ? c.participants.map((p: any) => p.userId) : c.participants) : [userUid],
         profileIds: c.profileIds || (otherParticipantId ? [profileId, otherParticipantId] : [profileId])
       } as Chat;
@@ -687,14 +655,14 @@ class MessagingService {
       for (const c of [...localCurrentChats, ...incoming]) {
         if (!c.id) continue;
 
-        // In 1v1 direct chats, check if another entry for the same partner already exists
+        // In 1v1 direct chats, check if another entry for the exact same partner already exists
         const isDirect = !c.isGroup && c.type !== 'group';
-        const partnerKey = isDirect ? (
-          (c.otherProfile?.firebaseUid ? c.otherProfile.firebaseUid.toLowerCase() : null) ||
-          (c.otherParticipantUid && !c.otherParticipantUid.includes('-') ? c.otherParticipantUid.replace(/^profile_/, '').split('_')[0].toLowerCase() : null) ||
-          (c.otherParticipantId && c.otherParticipantId.startsWith('profile_') ? c.otherParticipantId.replace(/^profile_/, '').split('_')[0].toLowerCase() : null) ||
-          (c.otherProfile?.username ? c.otherProfile.username.toLowerCase() : null) ||
-          (c.profileIds ? c.profileIds.filter((p: string) => p !== profileId).sort().join('_').toLowerCase() : null)
+        const isSelf = c.type === 'self' || c.otherParticipantId === profileId;
+        const partnerKey = (isDirect && !isSelf) ? (
+          c.otherProfile?.userId ||
+          c.otherParticipantUid ||
+          c.otherParticipantId ||
+          null
         ) : null;
 
         if (partnerKey) {
@@ -729,8 +697,9 @@ class MessagingService {
 
               const bestPhoto = existing.photo || c.photo || null;
 
-              // Retain composite chat ID or existing ID so open chat windows don't desync
-              const preferredId = existingId.includes('_') ? existingId : (c.id.includes('_') ? c.id : existingId);
+              // Retain canonical UUID whenever available (never prefer synthetic underscore keys)
+              const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+              const preferredId = isUuid(c.id) ? c.id : (isUuid(existingId) ? existingId : c.id);
 
               const merged: Chat = {
                 ...existing,
@@ -740,9 +709,7 @@ class MessagingService {
                 photo: bestPhoto,
                 latestMessagePreview: latestPreview,
                 latestMessageAt: latestAt,
-                otherParticipantId: existing.otherParticipantId?.startsWith('profile_')
-                  ? existing.otherParticipantId
-                  : (c.otherParticipantId?.startsWith('profile_') ? c.otherParticipantId : existing.otherParticipantId),
+                otherParticipantId: existing.otherParticipantId || c.otherParticipantId,
                 otherParticipantUid: existing.otherParticipantUid || c.otherParticipantUid,
                 otherProfile: { ...(existing.otherProfile || {}), ...(c.otherProfile || {}) }
               };
@@ -821,10 +788,31 @@ class MessagingService {
     };
 
     fetchApiChats();
-    const pollInterval = setInterval(fetchApiChats, 3500);
 
-    // 3. Socket listener for real-time inbox bumps
+    // 3. Socket listener for real-time inbox bumps & reconnect reconciliation
     const socket = getSocket();
+
+    const handleReconnect = () => {
+      if (!isCancelled) fetchApiChats();
+    };
+    socket.on('connect', handleReconnect);
+
+    const handleVisibilityChange = () => {
+      if (!isCancelled && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchApiChats();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    // Relaxed offline fallback (Only runs if socket is disconnected)
+    const fallbackInterval = setInterval(() => {
+      if (!isCancelled && !socket.connected) {
+        fetchApiChats();
+      }
+    }, 45000);
+
     const handleNewMessage = (payload: any) => {
       if (isCancelled || !payload) return;
       fetchApiChats();
@@ -848,9 +836,13 @@ class MessagingService {
 
     const cleanup = () => {
       isCancelled = true;
-      clearInterval(pollInterval);
+      clearInterval(fallbackInterval);
+      socket.off('connect', handleReconnect);
       socket.off('new_message', handleNewMessage);
       socket.off('seen_update', handleSeenUpdate);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
       if (this.listeners.get(key) === cleanup) {
         this.listeners.delete(key);
       }
