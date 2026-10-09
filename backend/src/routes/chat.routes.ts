@@ -41,28 +41,31 @@ async function resolveConversationId(rawConvId: string, currentUserId: string): 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawConvId);
   if (isUuid) return rawConvId;
 
+  // Strip trailing Unix millisecond timestamp from compound conversation IDs
+  const normalizedConvId = rawConvId.replace(/_\d{10,14}$/, '');
+
   // Case 1: new_<targetId> (Direct conversation initiation)
-  if (rawConvId.startsWith('new_')) {
-    const rawTarget = rawConvId.slice(4);
+  if (normalizedConvId.startsWith('new_')) {
+    const rawTarget = normalizedConvId.slice(4);
     const resolvedTargetId = await resolveUserId(rawTarget);
     return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
   }
 
   // Case 2: Compound conversation keys: e.g. profile_userA_profile_userB, or userA_userB
-  let target = rawConvId;
-  if (rawConvId.includes('_profile_')) {
-    const splitIdx = rawConvId.indexOf('_profile_');
-    const partA = rawConvId.slice(0, splitIdx);
-    const partB = rawConvId.slice(splitIdx + 1);
+  let target = normalizedConvId;
+  if (normalizedConvId.includes('_profile_')) {
+    const splitIdx = normalizedConvId.indexOf('_profile_');
+    const partA = normalizedConvId.slice(0, splitIdx);
+    const partB = normalizedConvId.slice(splitIdx + 1);
     const [resA, resB] = await Promise.all([resolveUserId(partA), resolveUserId(partB)]);
     if (resA === currentUserId && resB === currentUserId) {
       target = currentUserId;
     } else {
       target = (resA !== currentUserId) ? resA : resB;
     }
-  } else if (rawConvId.includes('_')) {
-    const parts = rawConvId.split('_');
-    if (parts.length === 2) {
+  } else if (normalizedConvId.includes('_')) {
+    const parts = normalizedConvId.split('_');
+    if (parts.length >= 2) {
       const [resA, resB] = await Promise.all([resolveUserId(parts[0]), resolveUserId(parts[1])]);
       if (resA === currentUserId && resB === currentUserId) {
         target = currentUserId;

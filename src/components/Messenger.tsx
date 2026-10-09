@@ -2728,21 +2728,33 @@ const ChatWindow = ({
     const myIdentifiers = [
       myProfileId,
       myProfileId ? myProfileId.replace(/^profile_/, '') : null,
+      myProfileId ? myProfileId.replace(/^profile_/, '').split('_')[0] : null,
       myUid,
       myUid ? `profile_${myUid}` : null,
+      myUid ? myUid.split('_')[0] : null,
       myUserId,
       myUserId ? `profile_${myUserId}` : null,
+      myUserId ? String(myUserId).split('_')[0] : null,
       myUsername
     ].filter(Boolean).map(id => String(id).toLowerCase());
 
     const senderCandidates = [
       senderId,
       senderId ? senderId.replace(/^profile_/, '') : null,
+      senderId ? senderId.replace(/^profile_/, '').split('_')[0] : null,
       senderUid,
+      senderUid ? senderUid.replace(/^profile_/, '') : null,
+      senderUid ? senderUid.split('_')[0] : null,
+      msgObj?.metadata?.senderId,
+      msgObj?.metadata?.senderId ? String(msgObj.metadata.senderId).replace(/^profile_/, '') : null,
+      msgObj?.metadata?.senderId ? String(msgObj.metadata.senderId).replace(/^profile_/, '').split('_')[0] : null,
+      msgObj?.metadata?.senderUid,
+      msgObj?.metadata?.senderUid ? String(msgObj.metadata.senderUid).split('_')[0] : null,
       msgObj?.senderDbId,
       msgObj?.senderProfileId,
       msgObj?.sender?.id,
       msgObj?.sender?.firebaseUid,
+      msgObj?.sender?.firebaseUid ? String(msgObj.sender.firebaseUid).split('_')[0] : null,
       msgObj?.sender?.profileId,
       msgObj?.sender?.username
     ].filter(Boolean).map(s => String(s).toLowerCase());
@@ -2756,11 +2768,15 @@ const ChatWindow = ({
       const otherIds = [
         otherParticipantId,
         otherParticipantId ? otherParticipantId.replace(/^profile_/, '') : null,
+        otherParticipantId ? otherParticipantId.replace(/^profile_/, '').split('_')[0] : null,
         (chat as any)?.otherParticipantUid,
+        (chat as any)?.otherParticipantUid ? String((chat as any).otherParticipantUid).split('_')[0] : null,
         otherProfile?.id,
         otherProfile?.id ? otherProfile.id.replace(/^profile_/, '') : null,
+        otherProfile?.id ? otherProfile.id.replace(/^profile_/, '').split('_')[0] : null,
         otherProfile?.userId,
         (otherProfile as any)?.firebaseUid,
+        (otherProfile as any)?.firebaseUid ? String((otherProfile as any).firebaseUid).split('_')[0] : null,
         otherProfile?.username
       ].filter(Boolean).map(id => String(id).toLowerCase());
 

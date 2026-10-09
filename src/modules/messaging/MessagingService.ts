@@ -653,14 +653,28 @@ class MessagingService {
       };
 
       const ms = getMs(c);
+      const isMeParticipant = (p: any) => {
+        if (!p) return false;
+        const pUid = String(p.userId || p.firebaseUid || '').split('_')[0].toLowerCase();
+        const pProfile = String(p.profileId || '').split('_')[0].toLowerCase();
+        const myUidClean = String(userUid || '').split('_')[0].toLowerCase();
+        const myProfileClean = String(profileId || '').replace(/^profile_/, '').split('_')[0].toLowerCase();
+
+        return p.userId === userUid ||
+               p.firebaseUid === userUid ||
+               p.profileId === profileId ||
+               (Boolean(myUidClean) && (pUid === myUidClean || p.userId === myUidClean || p.firebaseUid === myUidClean)) ||
+               (Boolean(myProfileClean) && (pProfile === myProfileClean || p.profileId === myProfileClean));
+      };
+
       const other = (Array.isArray(c.participants) && typeof c.participants[0] === 'object')
-        ? c.participants.find((p: any) => p.userId !== userUid && p.firebaseUid !== userUid && p.profileId !== profileId)
+        ? c.participants.find((p: any) => !isMeParticipant(p))
         : null;
 
-      const resolvedName = c.title || c.name || other?.displayName || other?.username || c.groupName || 'Chat';
-      const resolvedPhoto = c.avatarKey || c.photo || (other?.avatarKey ? `/media/${other.avatarKey}` : null) || null;
       const otherParticipantId = other?.profileId || other?.userId || c.otherParticipantId || null;
       const otherParticipantUid = other?.userId || other?.firebaseUid || c.otherParticipantUid || null;
+      const resolvedName = c.title || c.name || other?.displayName || other?.username || c.groupName || 'Chat';
+      const resolvedPhoto = c.avatarKey ? `/media/${c.avatarKey}` : (other?.avatarKey ? `/media/${other.avatarKey}` : c.photo || (other?.photoURL || null));
 
       return {
         ...c,
@@ -688,12 +702,43 @@ class MessagingService {
 
     const mergeAndEmitChats = (incoming: Chat[]) => {
       if (isCancelled) return;
-      const map = new Map<string, Chat>();
+      const listMap = new Map<string, Chat>();
+      const directPartnerMap = new Map<string, string>(); // partnerKey -> preferredChatId
+
       for (const c of [...localCurrentChats, ...incoming]) {
         if (!c.id) continue;
-        map.set(c.id, c);
+
+        // In 1v1 direct chats, check if another entry for the same partner already exists
+        const isDirect = !c.isGroup && c.type !== 'group';
+        const partnerKey = isDirect ? (
+          c.otherParticipantId?.replace(/^profile_/, '').split('_')[0] ||
+          c.otherParticipantUid?.replace(/^profile_/, '').split('_')[0] ||
+          (c.profileIds ? c.profileIds.filter((p: string) => p !== profileId).sort().join('_') : null)
+        ) : null;
+
+        if (partnerKey) {
+          const existingId = directPartnerMap.get(partnerKey);
+          if (existingId && existingId !== c.id) {
+            const existing = listMap.get(existingId);
+            if (existing) {
+              const msExisting = extractTimestampMs(existing.latestMessageAt || existing.lastMessageAt);
+              const msCurrent = extractTimestampMs(c.latestMessageAt || c.lastMessageAt);
+              if (msCurrent >= msExisting) {
+                listMap.delete(existingId);
+                listMap.set(c.id, { ...existing, ...c });
+                directPartnerMap.set(partnerKey, c.id);
+              }
+              continue;
+            }
+          } else {
+            directPartnerMap.set(partnerKey, c.id);
+          }
+        }
+
+        listMap.set(c.id, c);
       }
-      const list = Array.from(map.values());
+
+      const list = Array.from(listMap.values());
       list.sort((a, b) => {
         const pinA = typeof a.isPinned === 'boolean' ? a.isPinned : !!a.isPinned?.[profileId];
         const pinB = typeof b.isPinned === 'boolean' ? b.isPinned : !!b.isPinned?.[profileId];

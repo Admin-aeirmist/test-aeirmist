@@ -386,9 +386,14 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
             const myIds = [
               profile?.id,
               profile?.id ? profile.id.replace(/^profile_/, '') : null,
+              profile?.id ? profile.id.replace(/^profile_/, '').split('_')[0] : null,
               user?.uid,
+              user?.uid ? `profile_${user.uid}` : null,
+              user?.uid ? user.uid.split('_')[0] : null,
               user?.id,
+              user?.id ? user.id.split('_')[0] : null,
               (profile as any)?.userId,
+              (profile as any)?.userId ? String((profile as any).userId).split('_')[0] : null,
               (user as any)?.userId,
               (user as any)?.dbId,
               profile?.username
@@ -397,11 +402,20 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
             const senderCandidates = [
               m.senderId,
               m.senderId ? m.senderId.replace(/^profile_/, '') : null,
+              m.senderId ? m.senderId.replace(/^profile_/, '').split('_')[0] : null,
               m.senderUid,
+              m.senderUid ? m.senderUid.replace(/^profile_/, '') : null,
+              m.senderUid ? m.senderUid.split('_')[0] : null,
+              m.metadata?.senderId,
+              m.metadata?.senderId ? String(m.metadata.senderId).replace(/^profile_/, '') : null,
+              m.metadata?.senderId ? String(m.metadata.senderId).replace(/^profile_/, '').split('_')[0] : null,
+              m.metadata?.senderUid,
+              m.metadata?.senderUid ? String(m.metadata.senderUid).split('_')[0] : null,
               (m as any).senderDbId,
               (m as any).senderProfileId,
               (m as any).sender?.id,
               (m as any).sender?.firebaseUid,
+              (m as any).sender?.firebaseUid ? String((m as any).sender.firebaseUid).split('_')[0] : null,
               (m as any).sender?.profileId,
               (m as any).sender?.username
             ].filter(Boolean).map(s => String(s).toLowerCase());

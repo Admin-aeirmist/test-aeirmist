@@ -1,4 +1,4 @@
-import { eq, and, sql, desc } from 'drizzle-orm';
+import { eq, and, sql, desc, or, like } from 'drizzle-orm';
 import { db } from '../db';
 import { users, profiles, follows, blocks, loginSessions, mediaAssets } from '../db/schema';
 import { storage } from '../storage';
@@ -42,10 +42,18 @@ export class UserDAL {
   }
 
   static async findByFirebaseUid(firebaseUid: string) {
+    if (!firebaseUid || typeof firebaseUid !== 'string') return null;
+    const cleanUid = firebaseUid.replace(/_\d{10,14}$/, '').replace(/^profile_/, '');
     const [user] = await db
       .select()
       .from(users)
-      .where(eq(users.firebaseUid, firebaseUid))
+      .where(
+        or(
+          eq(users.firebaseUid, firebaseUid),
+          eq(users.firebaseUid, cleanUid),
+          like(users.firebaseUid, `${cleanUid}_%`)
+        )
+      )
       .limit(1);
     return user || null;
   }
@@ -68,7 +76,8 @@ export class UserDAL {
 
   static async resolveToUserId(rawId: string): Promise<string | null> {
     if (!rawId || typeof rawId !== 'string') return null;
-    const cleanId = rawId.startsWith('profile_') ? rawId.replace(/^profile_/, '') : rawId;
+    let cleanId = rawId.startsWith('profile_') ? rawId.replace(/^profile_/, '') : rawId;
+    cleanId = cleanId.replace(/_\d{10,14}$/, ''); // Strip trailing Unix timestamp if present
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
     if (isUuid) {
       const u = await this.findById(cleanId);
