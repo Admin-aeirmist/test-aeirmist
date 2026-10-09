@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
+import { logger } from '@/src/utils/logger';
+
 
 // Real-time custom hook to determine user's story status
 export function useUserStoryState(userId: string | undefined, secondaryUserId?: string) {
-  const { user, stories: contextStories, optimisticStories } = useAeirmist();
+  const { db, user, stories: contextStories, optimisticStories } = useAeirmist();
   const [state, setState] = useState<'active' | 'seen' | 'none'>('none');
 
   useEffect(() => {
@@ -29,13 +32,52 @@ export function useUserStoryState(userId: string | undefined, secondaryUserId?: 
     });
 
     if (matched.length > 0) {
-      const currentUid = user?.uid || (user as any)?.id;
-      const allSeen = currentUid ? matched.every(story => (story.viewers || []).includes(currentUid)) : false;
+      const allSeen = user ? matched.every(story => (story.viewers || []).includes(user.uid)) : false;
       setState(allSeen ? 'seen' : 'active');
     } else {
       setState('none');
     }
-  }, [userId, secondaryUserId, user, contextStories, optimisticStories]);
+
+    if (!db || !user) return;
+
+    const targetId = userId || secondaryUserId;
+    if (!targetId) return;
+
+    const storiesRef = collection(db, 'stories');
+    const q = query(
+      storiesRef,
+      where('userId', '==', targetId)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs
+        .map(doc => doc.data())
+        .filter(story => {
+          const created = story.createdAt;
+          if (!created) return false;
+          const ms = typeof created.toMillis === 'function' ? created.toMillis() : new Date(created).getTime();
+          return ms >= yesterdayMs;
+        });
+
+      if (docs.length === 0) {
+        if (matched.length === 0) {
+          setState('none');
+        }
+        return;
+      }
+
+      const allSeen = docs.every(story => {
+        const viewers = story.viewers || [];
+        return viewers.includes(user.uid);
+      });
+
+      setState(allSeen ? 'seen' : 'active');
+    }, (error) => {
+      logger.warn("[useUserStoryState] Real-time story listener warning:", error);
+    });
+
+    return () => unsubscribe();
+  }, [db, userId, secondaryUserId, user?.uid, contextStories, optimisticStories]);
 
   return state;
 }

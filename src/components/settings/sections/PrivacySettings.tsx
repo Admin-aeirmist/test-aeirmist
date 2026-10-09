@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, 
@@ -22,22 +22,9 @@ import {
   AtSign,
   Trash2
 } from 'lucide-react';
-import { api } from '../../../services/api/client';
+import { doc, getDoc, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { getAvatarUrl } from '../../../lib/avatar';
-
-// Stable sub-components — defined outside to avoid recreation on every render
-const PrivacyToggle = React.memo(({ enabled, onToggle, loading }: { enabled: boolean; onToggle: () => void; loading?: boolean }) => (
-  <button
-    onClick={onToggle}
-    disabled={loading}
-    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)]' : 'bg-white/10'}`}
-  >
-    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out flex items-center justify-center ${enabled ? 'translate-x-5' : 'translate-x-0'}`}>
-      {loading && <Loader2 size={10} className="animate-spin text-black" />}
-    </span>
-  </button>
-));
 
 export default function PrivacySettings() {
   const { 
@@ -132,7 +119,7 @@ export default function PrivacySettings() {
   // Real-time / direct loader for blocked user profiles
   useEffect(() => {
     let isMounted = true;
-    if (blockedUserIds.length === 0) {
+    if (!db || blockedUserIds.length === 0) {
       setBlockedUsers([]);
       setIsLoadingBlocked(false);
       return;
@@ -144,14 +131,58 @@ export default function PrivacySettings() {
         const loaded: any[] = [];
         for (const targetId of blockedUserIds) {
           if (!targetId) continue;
+          
+          // 1. Direct profile lookup by document ID
           try {
-            const res = await api.users.getProfile(targetId);
-            if (res?.profile) {
-              loaded.push({ id: res.profile.id || targetId, ...res.profile });
+            const pRef = doc(db, 'profiles', targetId);
+            const pSnap = await getDoc(pRef);
+            if (pSnap.exists()) {
+              loaded.push({ id: pSnap.id, ...pSnap.data() });
               continue;
             }
           } catch {}
 
+          // 2. Query by ownerUid
+          try {
+            const q = query(collection(db, 'profiles'), where('ownerUid', '==', targetId), limit(1));
+            const qSnap = await getDocs(q);
+            if (!qSnap.empty) {
+              const d = qSnap.docs[0];
+              loaded.push({ id: d.id, ...d.data() });
+              continue;
+            }
+          } catch {}
+
+          // 3. Query by uid
+          try {
+            const q = query(collection(db, 'profiles'), where('uid', '==', targetId), limit(1));
+            const qSnap = await getDocs(q);
+            if (!qSnap.empty) {
+              const d = qSnap.docs[0];
+              loaded.push({ id: d.id, ...d.data() });
+              continue;
+            }
+          } catch {}
+
+          // 4. Fallback from users collection
+          try {
+            const uRef = doc(db, 'users', targetId);
+            const uSnap = await getDoc(uRef);
+            if (uSnap.exists()) {
+              const uData = uSnap.data();
+              loaded.push({
+                id: targetId,
+                displayName: uData?.displayName || uData?.name || 'Aeirmist User',
+                username: uData?.username || targetId.slice(0, 8),
+                avatarUrl: uData?.photoURL || uData?.avatarUrl || '',
+                isVerified: uData?.isVerified || false,
+                ...uData
+              });
+              continue;
+            }
+          } catch {}
+
+          // 5. Clean fallback object so the row ALWAYS appears
           loaded.push({
             id: targetId,
             displayName: 'Blocked Account',
@@ -173,12 +204,12 @@ export default function PrivacySettings() {
 
     fetchBlockedDetails();
     return () => { isMounted = false; };
-  }, [blockedUserIds.join(',')]);
+  }, [db, blockedUserIds.join(',')]);
 
   // Real-time / direct loader for restricted user profiles
   useEffect(() => {
     let isMounted = true;
-    if (restrictedUserIds.length === 0) {
+    if (!db || restrictedUserIds.length === 0) {
       setRestrictedUsers([]);
       setIsLoadingRestricted(false);
       return;
@@ -191,9 +222,37 @@ export default function PrivacySettings() {
         for (const targetId of restrictedUserIds) {
           if (!targetId) continue;
           try {
-            const res = await api.users.getProfile(targetId);
-            if (res?.profile) {
-              loaded.push({ id: res.profile.id || targetId, ...res.profile });
+            const pRef = doc(db, 'profiles', targetId);
+            const pSnap = await getDoc(pRef);
+            if (pSnap.exists()) {
+              loaded.push({ id: pSnap.id, ...pSnap.data() });
+              continue;
+            }
+          } catch {}
+
+          try {
+            const q = query(collection(db, 'profiles'), where('ownerUid', '==', targetId), limit(1));
+            const qSnap = await getDocs(q);
+            if (!qSnap.empty) {
+              const d = qSnap.docs[0];
+              loaded.push({ id: d.id, ...d.data() });
+              continue;
+            }
+          } catch {}
+
+          try {
+            const uRef = doc(db, 'users', targetId);
+            const uSnap = await getDoc(uRef);
+            if (uSnap.exists()) {
+              const uData = uSnap.data();
+              loaded.push({
+                id: targetId,
+                displayName: uData?.displayName || uData?.name || 'Aeirmist User',
+                username: uData?.username || targetId.slice(0, 8),
+                avatarUrl: uData?.photoURL || uData?.avatarUrl || '',
+                isVerified: uData?.isVerified || false,
+                ...uData
+              });
               continue;
             }
           } catch {}
@@ -219,7 +278,7 @@ export default function PrivacySettings() {
 
     fetchRestrictedDetails();
     return () => { isMounted = false; };
-  }, [restrictedUserIds.join(',')]);
+  }, [db, restrictedUserIds.join(',')]);
 
   const blockedProfiles = blockedUsers.filter(p => 
     p.username?.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -296,6 +355,18 @@ export default function PrivacySettings() {
       setIsSavingPin(false);
     }
   };
+
+  const Toggle = ({ enabled, onToggle, loading }: { enabled: boolean; onToggle: () => void; loading?: boolean }) => (
+    <button
+      onClick={onToggle}
+      disabled={loading}
+      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${enabled ? 'bg-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)]' : 'bg-white/10'}`}
+    >
+      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out flex items-center justify-center ${enabled ? 'translate-x-5' : 'translate-x-0'}`}>
+        {loading && <Loader2 size={10} className="animate-spin text-black" />}
+      </span>
+    </button>
+  );
 
   return (
     <div className="w-full max-w-4xl mx-auto space-y-6 pb-24">
@@ -385,7 +456,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Private Profile</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Only confirmed followers can view your posts, stories, and activity</p>
                 </div>
-                <PrivacyToggle 
+                <Toggle 
                   enabled={!!profile?.isPrivate} 
                   onToggle={() => handleToggleSetting('isPrivate', !!profile?.isPrivate)} 
                   loading={isUpdating === 'isPrivate'} 
@@ -397,7 +468,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Activity Status</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Broadcast active online status across the network</p>
                 </div>
-                <PrivacyToggle 
+                <Toggle 
                   enabled={profile?.showOnlineStatus !== false} 
                   onToggle={() => handleToggleSetting('showOnlineStatus', profile?.showOnlineStatus !== false)} 
                   loading={isUpdating === 'showOnlineStatus'} 
@@ -409,7 +480,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Hide Followers & Following List</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Conceal your social connections graph from public view</p>
                 </div>
-                <PrivacyToggle 
+                <Toggle 
                   enabled={!!profile?.hideFollowers} 
                   onToggle={() => handleToggleSetting('hideFollowers', !!profile?.hideFollowers)} 
                   loading={isUpdating === 'hideFollowers'} 
@@ -421,7 +492,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Hide Likes & Views Count</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Conceal total likes and view counts on your posts</p>
                 </div>
-                <PrivacyToggle 
+                <Toggle 
                   enabled={!!profile?.hideLikes} 
                   onToggle={() => handleToggleSetting('hideLikes', !!profile?.hideLikes)} 
                   loading={isUpdating === 'hideLikes'} 
@@ -718,7 +789,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Auto-Archive Inactive Chats</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Automatically move chats to archive after 30 days of inactivity</p>
                 </div>
-                <PrivacyToggle
+                <Toggle
                   enabled={!!profile?.messagingSettings?.autoArchiveInactive}
                   onToggle={() => handleToggleSetting('messagingSettings.autoArchiveInactive', !!profile?.messagingSettings?.autoArchiveInactive)}
                   loading={isUpdating === 'messagingSettings.autoArchiveInactive'}
@@ -730,7 +801,7 @@ export default function PrivacySettings() {
                   <h4 className="text-xs font-black uppercase tracking-widest text-white">Auto-Archive Spam Requests</h4>
                   <p className="text-[10px] text-white/40 font-bold uppercase tracking-tight mt-0.5">Route unconfirmed promotional requests directly to archives</p>
                 </div>
-                <PrivacyToggle
+                <Toggle
                   enabled={profile?.messagingSettings?.autoArchiveSpam !== false}
                   onToggle={() => handleToggleSetting('messagingSettings.autoArchiveSpam', profile?.messagingSettings?.autoArchiveSpam !== false)}
                   loading={isUpdating === 'messagingSettings.autoArchiveSpam'}

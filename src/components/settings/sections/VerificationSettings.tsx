@@ -4,7 +4,7 @@ import { ShieldCheck, Check, AlertCircle, Loader2, ArrowRight, X, UserX, CreditC
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { useAppearance } from '../../../context/AppearanceContext';
 import { useTheme } from '../../../context/ThemeContext';
-import { api } from '../../../services/api/client';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp, writeBatch, collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
 
@@ -37,23 +37,28 @@ export const VerificationSettings = () => {
   });
 
   useEffect(() => {
-    const fetchVerificationStatus = () => {
-      if (!user) return;
+    const fetchVerificationStatus = async () => {
+      if (!user || !db) return;
       try {
-        const savedRaw = localStorage.getItem(`aeirmist_verification_${user.uid}`);
-        const data = savedRaw ? JSON.parse(savedRaw) : null;
-        if (data) {
+        const docRef = doc(db, 'verificationApplications', user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
           setVerificationData(data);
-        }
-
-        if (profile?.suspended) {
-          setStep('suspended');
-        } else if (profile?.verified || profile?.isVerified) {
-          setStep('approved');
-        } else if (data?.status === 'pending' || profile?.verificationStatus === 'pending') {
-          setStep('submitted');
-        } else if (data?.status === 'rejected') {
-          setStep('rejected');
+          
+          if (profile?.suspended) {
+            setStep('suspended');
+          } else if (profile?.verified) {
+            setStep('approved');
+          } else if (data.status === 'pending') {
+            setStep('submitted');
+          } else if (data.status === 'rejected') {
+            setStep('rejected');
+          }
+        } else {
+          if (profile?.suspended) {
+            setStep('suspended');
+          }
         }
       } catch (e) {
         logger.error('Error fetching verification status', e);
@@ -62,7 +67,7 @@ export const VerificationSettings = () => {
       }
     };
     fetchVerificationStatus();
-  }, [user, profile]);
+  }, [user, db, profile]);
 
   const handlePlanSelect = (plan: 'essential' | 'creator' | 'business') => {
     setSelectedPlan(plan);
@@ -119,13 +124,72 @@ export const VerificationSettings = () => {
         currency: 'USD',
         paymentStatus: 'paid',
         paymentProvider: method,
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
         status: 'pending',
         identity: identityData
       };
 
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(`aeirmist_verification_${user.uid}`, JSON.stringify(appData));
+      await setDoc(doc(db, 'verificationApplications', user.uid), appData);
+      
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', user.uid), { 
+        verificationStatus: 'pending',
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      
+      if (profile?.id) {
+        batch.set(doc(db, 'profiles', profile.id), {
+          verificationStatus: 'pending',
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
+      
+      await batch.commit();
+
+      // Notify Administrators in real time about new verification application
+      try {
+        const adminProfilesQuery = query(collection(db, 'profiles'), where('role', 'in', ['admin', 'Administrator', 'Super Admin', 'Owner']));
+        const adminSnap = await getDocs(adminProfilesQuery);
+        const adminUids = new Set<string>();
+        adminSnap.forEach(d => {
+          const dt = d.data();
+          if (dt.ownerUid) adminUids.add(dt.ownerUid);
+          if (dt.uid) adminUids.add(dt.uid);
+          adminUids.add(d.id);
+        });
+
+        // Add a general system notification for admin dashboard
+        adminUids.add('ADMIN_BROADCAST');
+
+        const notifPromises = Array.from(adminUids).map(admUid => 
+          addDoc(collection(db, 'notifications'), {
+            userId: admUid,
+            fromUserId: user.uid,
+            fromUserUid: user.uid,
+            user: {
+              name: profile?.displayName || profile?.username || 'User',
+              avatar: profile?.photoURL || '',
+              username: profile?.username || 'user',
+              isVerified: false
+            },
+            type: 'admin_verification_request',
+            message: `@${profile?.username || 'user'} applied for Meta-style Verification (${selectedPlan?.toUpperCase()} Plan, $${appData.amount}). Review in Enterprise Control Center.`,
+            metadata: {
+              applicationId: appId,
+              applicantUid: user.uid,
+              applicantProfileId: profile?.id || user.uid,
+              username: profile?.username,
+              plan: selectedPlan,
+              amount: appData.amount,
+              targetTab: 'verification'
+            },
+            read: false,
+            createdAt: serverTimestamp()
+          }).catch(() => {})
+        );
+        await Promise.allSettled(notifPromises);
+      } catch (notifErr) {
+        logger.warn('Failed to notify admins of verification request:', notifErr);
       }
 
       setVerificationData(appData);
@@ -146,15 +210,10 @@ export const VerificationSettings = () => {
   const handleCancelSubscription = async () => {
     setIsProcessing(true);
     try {
-      if (!user) return;
-      if (typeof window !== 'undefined') {
-        const savedRaw = localStorage.getItem(`aeirmist_verification_${user.uid}`);
-        if (savedRaw) {
-          const parsed = JSON.parse(savedRaw);
-          parsed.autoRenewal = false;
-          localStorage.setItem(`aeirmist_verification_${user.uid}`, JSON.stringify(parsed));
-        }
-      }
+      if (!db || !user) return;
+      await updateDoc(doc(db, 'verificationApplications', user.uid), {
+        autoRenewal: false
+      });
       setVerificationData((prev: any) => ({ ...prev, autoRenewal: false }));
       addToast({ title: 'Subscription Cancelled', message: 'Auto-renewal has been turned off.', type: 'info' });
     } catch (e) {
@@ -169,13 +228,16 @@ export const VerificationSettings = () => {
     e.preventDefault();
     setIsProcessing(true);
     try {
-      if (!user) return;
-      await api.support.createTicket({
-        type: 'general',
-        area: 'Appeal',
-        message: 'Appealing account suspension from Verification page'
+      if (!db || !user) return;
+      await setDoc(doc(db, 'appeals', user.uid), {
+        userId: user.uid,
+        username: profile?.username,
+        timestamp: serverTimestamp(),
+        status: 'pending',
+        reason: 'Appealing account suspension from Verification page'
       });
       addToast({ title: 'Appeal Submitted', message: 'Your appeal is under review.', type: 'success' });
+      // Usually would transition to a "Pending Appeal" state, we'll just show success
     } catch (e) {
       logger.error('Appeal failed', e);
       addToast({ title: 'Appeal Failed', message: 'Could not submit appeal.', type: 'warning' });

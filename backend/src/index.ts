@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -19,7 +20,10 @@ const server = http.createServer(app);
 // Security & Middleware
 // -------------------------------------------------------------
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
 }));
 
 app.use(cors({
@@ -136,7 +140,7 @@ io.on('connection', (socket) => {
   console.log(`🔌 [Socket.IO] Client connected: ${socket.id}`);
 
   // User identification for personal notifications & Redis Presence
-  socket.on('identify_user', async (userId: string) => {
+  socket.on('identify_user', async (userId: string, ack?: (res: any) => void) => {
     if (!userId) return;
     socket.join(`user:${userId}`);
     (socket as any).userId = userId;
@@ -155,6 +159,10 @@ io.on('connection', (socket) => {
         if (u?.firebaseUid) {
           socket.join(`user:${u.firebaseUid}`);
         }
+        const p = await UserDAL.findProfileById(userId);
+        if (p?.userId) {
+          socket.join(`user:${p.userId}`);
+        }
       }
     } catch (err) {}
 
@@ -164,6 +172,9 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.warn('⚠️ [Redis] Presence update failed:', err);
     }
+
+    socket.emit('user_identified', { userId });
+    if (typeof ack === 'function') ack({ success: true, userId });
   });
 
   // Fetch all online users from Redis
@@ -189,44 +200,130 @@ io.on('connection', (socket) => {
 
   // Room management for chats
   socket.on('join_room', (roomId: string) => {
+    if (!roomId) return;
     socket.join(roomId);
+    if (!roomId.startsWith('conv:')) {
+      socket.join(`conv:${roomId}`);
+    }
   });
 
   socket.on('leave_room', (roomId: string) => {
+    if (!roomId) return;
     socket.leave(roomId);
+    if (!roomId.startsWith('conv:')) {
+      socket.leave(`conv:${roomId}`);
+    }
   });
 
   // Real-time chat message broadcast
-  socket.on('send_message', (data: { conversationId: string; content?: string; type?: string; mediaUrl?: string }) => {
+  socket.on('send_message', (data: any) => {
     if (data?.conversationId) {
-      socket.to(`conv:${data.conversationId}`).emit('new_message', data);
+      const payload = {
+        ...data,
+        conversationId: data.conversationId,
+        message: data.message || {
+          id: data.id || `msg_${Date.now()}`,
+          conversationId: data.conversationId,
+          content: data.content || '',
+          type: data.type || 'text',
+          mediaUrl: data.mediaUrl,
+          senderId: (socket as any).userId,
+          createdAt: new Date().toISOString(),
+        }
+      };
+      io.to(`conv:${data.conversationId}`).emit('new_message', payload);
+      if (data.recipientId) {
+        io.to(`user:${data.recipientId}`).emit('new_message', payload);
+      }
+      if (data.receiverUid) {
+        io.to(`user:${data.receiverUid}`).emit('new_message', payload);
+      }
+      io.emit('new_message', payload);
     }
   });
 
   // WebRTC Calling Signaling Gateway (Ultra Low-Latency)
-  socket.on('call_user', (data: { targetUserId: string; signalData: any; callerInfo: any; callType: 'audio' | 'video' }) => {
-    io.to(`user:${data.targetUserId}`).emit('incoming_call', {
+  socket.on('call_user', async (data: { targetUserId: string; signalData: any; callerInfo: any; callType: 'audio' | 'video' }) => {
+    if (data.signalData?.callId) {
+      socket.join(`call:${data.signalData.callId}`);
+    }
+
+    const payload = {
       fromSocketId: socket.id,
       signalData: data.signalData,
       callerInfo: data.callerInfo,
       callType: data.callType,
-    });
+    };
+
+    io.to(`user:${data.targetUserId}`).emit('incoming_call', payload);
+
+    // Also resolve aliases to ensure deliverability across UUID/Firebase UID/Profile ID
+    try {
+      const resolved = await UserDAL.resolveToUserId(data.targetUserId);
+      if (resolved && resolved !== data.targetUserId) {
+        io.to(`user:${resolved}`).emit('incoming_call', payload);
+      }
+      const u = await UserDAL.findById(data.targetUserId) || (resolved ? await UserDAL.findById(resolved) : null);
+      if (u?.firebaseUid && u.firebaseUid !== data.targetUserId) {
+        io.to(`user:${u.firebaseUid}`).emit('incoming_call', payload);
+      }
+    } catch {}
   });
 
-  socket.on('accept_call', (data: { toSocketId: string; signalData: any }) => {
-    io.to(data.toSocketId).emit('call_accepted', { signalData: data.signalData });
+  socket.on('accept_call', (data: { toSocketId?: string; callId?: string; signalData: any }) => {
+    const callId = data.callId || data.signalData?.callId;
+    if (callId) {
+      socket.join(`call:${callId}`);
+      socket.to(`call:${callId}`).emit('call_accepted', { signalData: data.signalData });
+    }
+    if (data.toSocketId) {
+      io.to(data.toSocketId).emit('call_accepted', { signalData: data.signalData });
+    }
   });
 
-  socket.on('reject_call', (data: { toSocketId: string }) => {
-    io.to(data.toSocketId).emit('call_rejected');
+  socket.on('reject_call', (data: { toSocketId?: string; callId?: string }) => {
+    if (data.callId) {
+      socket.to(`call:${data.callId}`).emit('call_rejected');
+    }
+    if (data.toSocketId) {
+      io.to(data.toSocketId).emit('call_rejected');
+    }
   });
 
-  socket.on('ice_candidate', (data: { toSocketId: string; candidate: any }) => {
-    io.to(data.toSocketId).emit('ice_candidate', { candidate: data.candidate });
+  socket.on('ice_candidate', (data: { toSocketId?: string; callId?: string; candidate: any }) => {
+    if (data.callId) {
+      socket.to(`call:${data.callId}`).emit('ice_candidate', { candidate: data.candidate, callId: data.callId });
+    }
+    if (data.toSocketId) {
+      io.to(data.toSocketId).emit('ice_candidate', { candidate: data.candidate, callId: data.callId });
+    }
   });
 
-  socket.on('end_call', (data: { toSocketId: string }) => {
-    io.to(data.toSocketId).emit('call_ended');
+  socket.on('end_call', (data: { toSocketId?: string; callId?: string }) => {
+    if (data.callId) {
+      socket.to(`call:${data.callId}`).emit('call_ended');
+    }
+    if (data.toSocketId) {
+      io.to(data.toSocketId).emit('call_ended');
+    }
+  });
+
+  socket.on('renegotiate_offer', (data: { callId: string; offer: any; toSocketId?: string }) => {
+    if (data.callId) {
+      socket.to(`call:${data.callId}`).emit('renegotiate_signal', data);
+    }
+    if (data.toSocketId) {
+      io.to(data.toSocketId).emit('renegotiate_signal', data);
+    }
+  });
+
+  socket.on('renegotiate_answer', (data: { callId: string; answer: any; toSocketId?: string }) => {
+    if (data.callId) {
+      socket.to(`call:${data.callId}`).emit('renegotiate_signal', data);
+    }
+    if (data.toSocketId) {
+      io.to(data.toSocketId).emit('renegotiate_signal', data);
+    }
   });
 
   socket.on('disconnect', async () => {
@@ -239,6 +336,24 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+// -------------------------------------------------------------
+// Serve Frontend SPA Build from dist (Unified Full-Stack Deployment)
+// -------------------------------------------------------------
+const frontendDistPath = path.resolve(process.cwd(), '../dist');
+const altFrontendDistPath = path.resolve(process.cwd(), 'dist');
+const effectiveDistPath = fs.existsSync(frontendDistPath) ? frontendDistPath : (fs.existsSync(altFrontendDistPath) ? altFrontendDistPath : null);
+
+if (effectiveDistPath && fs.existsSync(path.join(effectiveDistPath, 'index.html'))) {
+  app.use(express.static(effectiveDistPath, { index: false }));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/media') || req.path.startsWith('/health') || req.path.startsWith('/socket.io')) {
+      return next();
+    }
+    res.sendFile(path.join(effectiveDistPath, 'index.html'));
+  });
+  console.log(`🌐 [Frontend SPA] Serving client interface from ${effectiveDistPath}`);
+}
 
 // -------------------------------------------------------------
 // Start Server

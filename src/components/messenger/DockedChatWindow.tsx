@@ -25,8 +25,8 @@ import { api } from '../../services/api/client';
 import { Message } from '../../types/messenger';
 import { logger } from '../../utils/logger';
 import { formatActiveStatus, extractTimestampMs, formatTimeOnly } from '../../lib/date';
-import { ChatWallpaperLayer, MESSENGER_THEMES, type ChatWallpaperConfig } from './ChatWallpaperLayer';
-import { ChatWallpaperController } from './ChatWallpaperController';
+import { ChatWallpaperLayer, type ChatWallpaperConfig } from './ChatWallpaperLayer';
+import { ChatWallpaperController, MESSENGER_THEMES } from './ChatWallpaperController';
 
 interface DockedChatWindowProps {
   chatId: string;
@@ -88,7 +88,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
     } catch {}
   }, [chatId]);
 
-  const avatar = getAvatarUrl(chatPhoto || targetProfile?.photoURL);
+  const avatar = getAvatarUrl(chatPhoto || targetProfile?.photoURL, chatName || targetProfile?.displayName || targetUserId);
   const lastSeenMs = extractTimestampMs(targetProfile?.lastSeen) || extractTimestampMs(targetProfile?.lastActiveAt) || extractTimestampMs(targetProfile?.updatedAt);
   const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
   const isOnline = !!(
@@ -289,7 +289,9 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
                 src={avatar} 
                 alt={chatName} 
                 className="w-full h-full object-cover"
-                onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                onError={(e) => { 
+                  (e.target as HTMLImageElement).src = getAvatarUrl(null, chatName || targetProfile?.displayName || targetUserId); 
+                }}
               />
               <div className="w-full h-full flex items-center justify-center text-aeirmist-cyan">
                 <MessageSquare size={16} />
@@ -495,10 +497,12 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
               >
                 {!isMe && (
                   <img
-                    src={getAvatarUrl((m as any).senderAvatar || chatPhoto)}
+                    src={getAvatarUrl((m as any).senderAvatar || chatPhoto, (m as any).senderName || m.senderId || chatName || targetUserId)}
                     alt=""
                     className="w-6 h-6 rounded-lg object-cover shrink-0 mb-0.5 border border-white/10"
-                    onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                    onError={(e) => { 
+                      (e.target as HTMLImageElement).src = getAvatarUrl(null, (m as any).senderName || m.senderId || chatName || targetUserId); 
+                    }}
                   />
                 )}
                 <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[80%]`}>

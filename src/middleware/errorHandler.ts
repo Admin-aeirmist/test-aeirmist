@@ -39,11 +39,11 @@ export const globalErrorHandler = (
   let errorCode = err.code || 'UNKNOWN_RESONANCE_FAILURE';
   let message = err.message || 'An unexpected error occurred..';
 
-  // Auth / Database Specific Handling
-  if (err.code?.startsWith('auth/') || err.code === 'UNAUTHORIZED') {
+  // Firebase / Database Specific Handling
+  if (err.code?.startsWith('auth/')) {
     statusCode = 401;
     errorCode = 'AUTH_CONNECTION_FAILED';
-  } else if (err.code === 'permission-denied' || err.code === '42501' || err.code === 'FORBIDDEN') {
+  } else if (err.name === 'FirebaseError' || err.code === 'permission-denied') {
     statusCode = 403;
     errorCode = 'DATABASE_ACCESS_DENIED';
   } else if (err.name === 'ValidationError') {

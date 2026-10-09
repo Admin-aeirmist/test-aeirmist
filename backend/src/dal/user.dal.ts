@@ -26,12 +26,19 @@ export class UserDAL {
   }
 
   static async findById(id: string) {
-    const [user] = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, id))
-      .limit(1);
-    return user || null;
+    if (!id || typeof id !== 'string') return null;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) return null;
+    try {
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      return user || null;
+    } catch {
+      return null;
+    }
   }
 
   static async findByFirebaseUid(firebaseUid: string) {
@@ -41,6 +48,71 @@ export class UserDAL {
       .where(eq(users.firebaseUid, firebaseUid))
       .limit(1);
     return user || null;
+  }
+
+  static async findProfileById(profileId: string) {
+    if (!profileId || typeof profileId !== 'string') return null;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profileId);
+    if (!isUuid) return null;
+    try {
+      const [profile] = await db
+        .select()
+        .from(profiles)
+        .where(eq(profiles.id, profileId))
+        .limit(1);
+      return profile || null;
+    } catch {
+      return null;
+    }
+  }
+
+  static async resolveToUserId(rawId: string): Promise<string | null> {
+    if (!rawId || typeof rawId !== 'string') return null;
+    const cleanId = rawId.startsWith('profile_') ? rawId.replace(/^profile_/, '') : rawId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+    if (isUuid) {
+      const u = await this.findById(cleanId);
+      if (u) return u.id;
+      const p = await this.findProfileById(cleanId);
+      if (p) return p.userId;
+      return cleanId;
+    }
+    const user = await this.findByEmailOrUsername(cleanId) ||
+                 await this.findByFirebaseUid(cleanId) ||
+                 await this.findByEmailOrUsername(rawId) ||
+                 await this.findByFirebaseUid(rawId);
+    if (user?.id) return user.id;
+
+    // Auto-provision external auth / Firebase / client UID in local PostgreSQL
+    try {
+      const sanitizedUsername = cleanId.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || `user_${Date.now()}`;
+      let finalUsername = sanitizedUsername;
+      const existingProfile = await this.getProfileByUsername(finalUsername);
+      if (existingProfile?.userId) return existingProfile.userId;
+      if (existingProfile) {
+        finalUsername = `${sanitizedUsername.slice(0, 18)}_${Math.random().toString(36).slice(2, 6)}`;
+      }
+
+      const finalEmail = cleanId.includes('@') ? cleanId.toLowerCase() : `${cleanId.toLowerCase().replace(/[^a-z0-9_]/g, '')}@aeirmist.social`;
+      const existingUserByEmail = await this.findByEmail(finalEmail);
+      if (existingUserByEmail) return existingUserByEmail.id;
+
+      const newUser = await this.createUser({
+        email: finalEmail,
+        firebaseUid: cleanId,
+        role: 'user',
+      });
+      await this.createProfile({
+        userId: newUser.id,
+        username: finalUsername,
+        displayName: 'Aeirmist Member',
+      });
+      return newUser.id;
+    } catch (createErr) {
+      console.warn('[UserDAL.resolveToUserId] Auto-provision note:', createErr);
+      const retryUser = await this.findByFirebaseUid(cleanId) || await this.findByEmail(cleanId);
+      return retryUser?.id || null;
+    }
   }
 
   static async createUser(data: {
@@ -84,6 +156,7 @@ export class UserDAL {
     bio?: string;
     avatarKey?: string;
     bannerKey?: string;
+    location?: string;
   }) {
     const [newProfile] = await db
       .insert(profiles)
@@ -94,36 +167,161 @@ export class UserDAL {
         bio: data.bio,
         avatarKey: data.avatarKey,
         bannerKey: data.bannerKey,
+        location: data.location || null,
       })
       .returning();
     return newProfile;
   }
 
+  static async recordLoginSession(data: {
+    userId: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+    deviceName?: string | null;
+    location?: string | null;
+  }) {
+    try {
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const refreshTokenHash = crypto.randomUUID();
+      const deviceStr = data.location 
+        ? `${data.deviceName || 'Device'} • ${data.location}`.slice(0, 100)
+        : (data.deviceName || 'Device').slice(0, 100);
+
+      const [session] = await db
+        .insert(loginSessions)
+        .values({
+          userId: data.userId,
+          refreshTokenHash,
+          ipAddress: data.ipAddress ? data.ipAddress.slice(0, 45) : null,
+          userAgent: data.userAgent || null,
+          deviceName: deviceStr,
+          expiresAt,
+          lastActiveAt: new Date(),
+          createdAt: new Date(),
+        })
+        .returning();
+      return session;
+    } catch (err) {
+      console.warn('[UserDAL] recordLoginSession warning:', err);
+      return null;
+    }
+  }
+
   static async getProfileById(profileId: string) {
-    const [profile] = await db
-      .select()
-      .from(profiles)
-      .where(eq(profiles.id, profileId))
-      .limit(1);
-    return profile || null;
+    if (!profileId || typeof profileId !== 'string') return null;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profileId);
+    if (!isUuid) return null;
+    try {
+      const [profile] = await db
+        .select({
+          id: profiles.id,
+          userId: profiles.userId,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          bio: profiles.bio,
+          avatarKey: profiles.avatarKey,
+          bannerKey: profiles.bannerKey,
+          website: profiles.website,
+          location: profiles.location,
+          isVerified: profiles.isVerified,
+          badge: profiles.badge,
+          creatorTier: profiles.creatorTier,
+          points: profiles.points,
+          followersCount: profiles.followersCount,
+          followingCount: profiles.followingCount,
+          postsCount: profiles.postsCount,
+          socialLinks: profiles.socialLinks,
+          privacySettings: profiles.privacySettings,
+          createdAt: profiles.createdAt,
+          updatedAt: profiles.updatedAt,
+          firebaseUid: users.firebaseUid,
+          email: users.email,
+        })
+        .from(profiles)
+        .leftJoin(users, eq(profiles.userId, users.id))
+        .where(eq(profiles.id, profileId))
+        .limit(1);
+      return profile || null;
+    } catch {
+      return null;
+    }
   }
 
   static async getProfileByUserId(userId: string) {
-    const [profile] = await db
-      .select()
-      .from(profiles)
-      .where(eq(profiles.userId, userId))
-      .limit(1);
-    return profile || null;
+    if (!userId || typeof userId !== 'string') return null;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+    if (!isUuid) return null;
+    try {
+      const [profile] = await db
+        .select({
+          id: profiles.id,
+          userId: profiles.userId,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          bio: profiles.bio,
+          avatarKey: profiles.avatarKey,
+          bannerKey: profiles.bannerKey,
+          website: profiles.website,
+          location: profiles.location,
+          isVerified: profiles.isVerified,
+          badge: profiles.badge,
+          creatorTier: profiles.creatorTier,
+          points: profiles.points,
+          followersCount: profiles.followersCount,
+          followingCount: profiles.followingCount,
+          postsCount: profiles.postsCount,
+          socialLinks: profiles.socialLinks,
+          privacySettings: profiles.privacySettings,
+          createdAt: profiles.createdAt,
+          updatedAt: profiles.updatedAt,
+          firebaseUid: users.firebaseUid,
+          email: users.email,
+        })
+        .from(profiles)
+        .leftJoin(users, eq(profiles.userId, users.id))
+        .where(eq(profiles.userId, userId))
+        .limit(1);
+      return profile || null;
+    } catch {
+      return null;
+    }
   }
 
   static async getProfileByUsername(username: string) {
-    const [profile] = await db
-      .select()
-      .from(profiles)
-      .where(eq(profiles.username, username.toLowerCase().trim()))
-      .limit(1);
-    return profile || null;
+    try {
+      const [profile] = await db
+        .select({
+          id: profiles.id,
+          userId: profiles.userId,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          bio: profiles.bio,
+          avatarKey: profiles.avatarKey,
+          bannerKey: profiles.bannerKey,
+          website: profiles.website,
+          location: profiles.location,
+          isVerified: profiles.isVerified,
+          badge: profiles.badge,
+          creatorTier: profiles.creatorTier,
+          points: profiles.points,
+          followersCount: profiles.followersCount,
+          followingCount: profiles.followingCount,
+          postsCount: profiles.postsCount,
+          socialLinks: profiles.socialLinks,
+          privacySettings: profiles.privacySettings,
+          createdAt: profiles.createdAt,
+          updatedAt: profiles.updatedAt,
+          firebaseUid: users.firebaseUid,
+          email: users.email,
+        })
+        .from(profiles)
+        .leftJoin(users, eq(profiles.userId, users.id))
+        .where(eq(profiles.username, username.toLowerCase().trim()))
+        .limit(1);
+      return profile || null;
+    } catch {
+      return null;
+    }
   }
 
   static async getProfileByIdentifier(identifier: string) {
@@ -216,13 +414,19 @@ export class UserDAL {
     return db
       .select({
         id: users.id,
+        userId: users.id,
+        profileId: profiles.id,
+        firebaseUid: users.firebaseUid,
         email: users.email,
         username: profiles.username,
         displayName: profiles.displayName,
         avatarKey: profiles.avatarKey,
+        bannerKey: profiles.bannerKey,
         bio: profiles.bio,
+        location: profiles.location,
         isVerified: profiles.isVerified,
         followersCount: profiles.followersCount,
+        createdAt: profiles.createdAt,
       })
       .from(profiles)
       .innerJoin(users, eq(profiles.userId, users.id))
@@ -230,7 +434,7 @@ export class UserDAL {
         and(
           eq(users.status, 'ACTIVE'),
           eq(users.isBanned, false),
-          sql`(LOWER(${profiles.username}) LIKE ${searchPattern} OR LOWER(${profiles.displayName}) LIKE ${searchPattern})`
+          sql`(LOWER(${profiles.username}) LIKE ${searchPattern} OR LOWER(${profiles.displayName}) LIKE ${searchPattern} OR LOWER(${users.email}) LIKE ${searchPattern} OR LOWER(COALESCE(${users.firebaseUid}, '')) LIKE ${searchPattern})`
         )
       )
       .limit(limit);
@@ -240,13 +444,19 @@ export class UserDAL {
     return db
       .select({
         id: users.id,
+        userId: users.id,
+        profileId: profiles.id,
+        firebaseUid: users.firebaseUid,
         email: users.email,
         username: profiles.username,
         displayName: profiles.displayName,
         avatarKey: profiles.avatarKey,
+        bannerKey: profiles.bannerKey,
         bio: profiles.bio,
+        location: profiles.location,
         isVerified: profiles.isVerified,
         followersCount: profiles.followersCount,
+        createdAt: profiles.createdAt,
       })
       .from(profiles)
       .innerJoin(users, eq(profiles.userId, users.id))

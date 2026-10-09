@@ -255,7 +255,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
   }, [onOpenChat, removeFloatingChatHead]);
 
   const isInboxRoute = isInboxView || (typeof window !== 'undefined' && (window.location.pathname.startsWith('/messages') || window.location.pathname === '/messages'));
-  if (heads.length === 0 || isInboxRoute) return null;
+  if (isInboxRoute || (heads.length === 0 && !onNewMessage)) return null;
 
   // Click on a head bubble
   const handleHeadClick = (id: string) => {

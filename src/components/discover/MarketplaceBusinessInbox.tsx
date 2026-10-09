@@ -20,8 +20,18 @@ import {
   XCircle
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { api } from '../../services/api/client';
-
+import { 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  onSnapshot, 
+  addDoc, 
+  serverTimestamp, 
+  doc, 
+  updateDoc,
+  Timestamp 
+} from 'firebase/firestore';
 import { getAvatarUrl } from '../../lib/avatar';
 import { StoreChat, ChatMessage, Order } from './MarketplaceTypes';
 import { logger } from '@/src/utils/logger';
@@ -36,7 +46,7 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
   onBack,
   overrideActiveChat 
 }) => {
-  const { profile, user, addToast } = useAeirmist();
+  const { db, profile, user, addToast } = useAeirmist();
   
   // Tabs for Inbox Category
   const [activeCategory, setActiveCategory] = useState<'store' | 'personal' | 'support' | 'orders'>('store');
@@ -50,52 +60,99 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
   const [submittingMessage, setSubmittingMessage] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Sync list of chats & orders
+  // Sync list of chats
   useEffect(() => {
-    if (!profile) return;
-    let isMounted = true;
+    if (!db || !profile) return;
 
-    const syncData = async () => {
-      try {
-        const [ordersRes, convsRes] = await Promise.allSettled([
-          api.marketplace.getMyOrders(),
-          api.chat.getConversations()
-        ]);
+    const chatsRef = collection(db, 'store_chats');
+    const userKeys = Array.from(new Set([profile.id, user?.uid, profile?.uid, profile?.ownerUid].filter(Boolean)));
+    
+    // Listen for customer chats and owner chats with rule-compliant queries
+    const qCustomer = query(chatsRef, where('customerId', '==', profile.id));
+    const qOwner = query(chatsRef, where('storeOwnerId', '==', profile.id));
 
-        if (!isMounted) return;
+    let customerDocs: StoreChat[] = [];
+    let ownerDocs: StoreChat[] = [];
 
-        if (ordersRes.status === 'fulfilled' && ordersRes.value?.orders) {
-          const list = ordersRes.value.orders;
-          setOrders(list);
-        }
-
-        if (convsRes.status === 'fulfilled' && convsRes.value?.conversations) {
-          const mappedChats: StoreChat[] = convsRes.value.conversations.map((c: any) => ({
-            id: c.id,
-            storeId: c.storeId || c.id,
-            storeName: c.title || c.otherUser?.displayName || c.otherUser?.username || 'Store Chat',
-            storeOwnerId: c.otherUser?.id || '',
-            customerId: profile.id,
-            customerName: profile.displayName || profile.username,
-            customerAvatar: profile.photoURL || profile.avatarKey || '',
-            lastMessage: c.lastMessage?.content || '',
-            lastMessageAt: c.lastMessage?.createdAt || c.updatedAt,
-            chatCategory: 'store'
-          }));
-          setChats(mappedChats);
-        }
-      } catch (err) {
-        logger.info("Failed to sync store inbox data:", err);
-      }
+    const mergeAndSetChats = () => {
+      const chatMap = new Map<string, StoreChat>();
+      [...customerDocs, ...ownerDocs].forEach(c => chatMap.set(c.id, c));
+      const merged = Array.from(chatMap.values());
+      merged.sort((a, b) => {
+        const timeA = (a.lastMessageAt as any)?.toMillis ? (a.lastMessageAt as any).toMillis() : new Date(a.lastMessageAt || 0).getTime();
+        const timeB = (b.lastMessageAt as any)?.toMillis ? (b.lastMessageAt as any).toMillis() : new Date(b.lastMessageAt || 0).getTime();
+        return timeB - timeA;
+      });
+      setChats(merged);
     };
 
-    syncData();
-    const interval = setInterval(syncData, 8000);
+    const unsubCustomer = onSnapshot(qCustomer, (snapshot) => {
+      customerDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoreChat));
+      mergeAndSetChats();
+    }, (err) => {
+      logger.info("Failed to sync customer store_chats:", err);
+    });
+
+    const unsubOwner = onSnapshot(qOwner, (snapshot) => {
+      ownerDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoreChat));
+      mergeAndSetChats();
+    }, (err) => {
+      logger.info("Failed to sync owner store_chats:", err);
+    });
+
     return () => {
-      isMounted = false;
-      clearInterval(interval);
+      unsubCustomer();
+      unsubOwner();
     };
-  }, [profile?.id]);
+  }, [db, profile?.id, user?.uid]);
+
+  // Sync list of orders with composite-index resilience
+  useEffect(() => {
+    if (!db || !profile) return;
+
+    const ordersRef = collection(db, 'orders');
+    const userKeys = Array.from(new Set([profile.id, user?.uid, profile?.uid, profile?.ownerUid].filter(Boolean)));
+    
+    const processOrderDocs = (snapshot: any) => {
+      const list = snapshot.docs.map((doc: any) => ({
+        id: doc.id,
+        ...doc.data()
+      } as any));
+      list.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+      setOrders(list);
+    };
+
+    const qPrimary = query(
+      ordersRef, 
+      where('sellerUids', 'array-contains-any', userKeys),
+      orderBy('createdAt', 'desc')
+    );
+    const qFallback = query(
+      ordersRef, 
+      where('sellerUids', 'array-contains-any', userKeys)
+    );
+    
+    let unsubFallback: (() => void) | null = null;
+    const unsub = onSnapshot(qPrimary, (snapshot) => {
+      processOrderDocs(snapshot);
+    }, (err) => {
+      logger.info("Orders primary sync, switching to fallback:", err);
+      unsubFallback = onSnapshot(qFallback, (snapshot) => {
+        processOrderDocs(snapshot);
+      }, (fallbackErr) => {
+        logger.error("Failed to sync orders fallback:", fallbackErr);
+      });
+    });
+
+    return () => {
+      unsub();
+      if (unsubFallback) unsubFallback();
+    };
+  }, [db, profile?.id, user?.uid]);
 
   // Keep overrides in sync
   useEffect(() => {
@@ -107,64 +164,62 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
 
   // Sync messages for selected chat
   useEffect(() => {
-    if (!selectedChat) {
+    if (!db || !selectedChat) {
       setMessages([]);
       return;
     }
-    let isMounted = true;
 
-    const syncMessages = async () => {
-      try {
-        const res = await api.chat.getMessages(selectedChat.id, 50);
-        if (isMounted && res?.messages) {
-          const mapped: ChatMessage[] = res.messages.map((m: any) => ({
-            id: m.id,
-            senderId: m.senderId,
-            senderName: m.sender?.displayName || m.sender?.username || 'User',
-            text: m.content || '',
-            createdAt: m.createdAt
-          }));
-          setMessages(mapped);
-          setTimeout(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }, 50);
-        }
-      } catch (err) {
-        logger.info("Failed to sync messages:", err);
-      }
-    };
+    const msgsRef = collection(db, 'store_chats', selectedChat.id, 'messages');
+    const q = query(msgsRef, orderBy('createdAt', 'asc'));
 
-    syncMessages();
-    const interval = setInterval(syncMessages, 4000);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [selectedChat?.id]);
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as ChatMessage));
+      setMessages(list);
+      
+      // auto scroll
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    }, (err) => {
+      logger.info("Failed to sync messages:", err);
+    });
+
+    return () => unsub();
+  }, [db, selectedChat?.id]);
 
   // Filter chats by folder/category
   const filteredChats = chats.filter(c => c.chatCategory === activeCategory);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile || !selectedChat || !messageInput.trim() || submittingMessage) return;
+    if (!db || !profile || !selectedChat || !messageInput.trim() || submittingMessage) return;
 
     const textVal = messageInput.trim();
     setMessageInput('');
     setSubmittingMessage(true);
 
     try {
-      const res = await api.chat.sendMessage(selectedChat.id, { content: textVal });
-      const newMsg: ChatMessage = {
-        id: res?.message?.id || `msg-${Date.now()}`,
+      // 1. Add message doc
+      const msgsRef = collection(db, 'store_chats', selectedChat.id, 'messages');
+      await addDoc(msgsRef, {
         senderId: profile.id,
         senderName: profile.displayName || profile.username,
         text: textVal,
-        createdAt: new Date().toISOString()
-      };
-      setMessages(prev => [...prev, newMsg]);
-      setSelectedChat(prev => prev ? { ...prev, lastMessage: textVal, lastMessageAt: new Date().toISOString() } : null);
+        createdAt: serverTimestamp()
+      });
 
+      // 2. Update parent chat preview
+      const chatRef = doc(db, 'store_chats', selectedChat.id);
+      await updateDoc(chatRef, {
+        lastMessage: textVal,
+        lastSenderId: profile.id,
+        lastMessageAt: serverTimestamp()
+      });
+
+      // Auto scroll
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
@@ -316,7 +371,7 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                 const isSentByMe = (chat as any).lastSenderId === profile?.id;
                 const rawDesc = typeof chat.lastMessage === 'string' 
                   ? chat.lastMessage 
-                  : ((chat.lastMessage as any)?.text || (chat as any).latestMessagePreview || 'Connected to feed thread...');
+                  : (chat.lastMessage?.text || (chat as any).latestMessagePreview || 'Connected to feed thread...');
                 const desc = (isSentByMe && rawDesc && rawDesc !== 'Connected to feed thread...' && !rawDesc.startsWith('You: '))
                   ? `You: ${rawDesc}`
                   : rawDesc;
@@ -430,8 +485,9 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                     <button
                       key={status.id}
                       onClick={async () => {
+                        if (!db) return;
                         const orderId = (selectedChat as any).id;
-                        const timeline = [...((selectedChat as any).trackingTimeline || [])];
+                        const timeline = [...(selectedChat as any).trackingTimeline];
                         
                         // Priority levels
                         const levels: Record<string, number> = { processing: 0, packed: 1, shipped: 2, delivered: 3 };
@@ -450,9 +506,16 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                           return entry;
                         });
 
-                        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, currentStatus: status.id as any, trackingTimeline: updatedTimeline } : o));
-                        setSelectedChat(prev => prev && prev.id === orderId ? { ...prev, currentStatus: status.id as any, trackingTimeline: updatedTimeline } as any : prev);
-                        addToast({ title: 'STATUS UPDATED', message: `Order advanced to ${status.label}.`, type: 'success' });
+                        try {
+                          await updateDoc(doc(db, 'orders', orderId), {
+                            currentStatus: status.id,
+                            trackingTimeline: updatedTimeline
+                          });
+                          addToast({ title: 'STATUS UPDATED', message: `Order advanced to ${status.label}.`, type: 'success' });
+                        } catch (err: any) {
+                          logger.error(err);
+                          addToast({ title: 'UPDATE FAILED', message: err?.message || 'Could not update order status.', type: 'warning' });
+                        }
                       }}
                       className={`flex items-center justify-center gap-2 py-3 rounded-xl border text-[10px] font-bold uppercase transition-all ${
                         (selectedChat as any).currentStatus === status.id
@@ -481,10 +544,16 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
-                        const orderId = (selectedChat as any).id;
-                        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, refundStatus: 'approved' } : o));
-                        setSelectedChat(prev => prev && prev.id === orderId ? { ...prev, refundStatus: 'approved' } as any : prev);
-                        addToast({ title: 'REFUND APPROVED', message: 'Refund request processed successfully.', type: 'success' });
+                        if (!db) return;
+                        try {
+                          await updateDoc(doc(db, 'orders', (selectedChat as any).id), {
+                            refundStatus: 'approved'
+                          });
+                          addToast({ title: 'REFUND APPROVED', message: 'Refund request processed successfully.', type: 'success' });
+                        } catch (err: any) { 
+                          logger.error(err); 
+                          addToast({ title: 'APPROVAL FAILED', message: err?.message || 'Could not approve refund.', type: 'warning' });
+                        }
                       }}
                       className="flex-1 py-3 bg-cyan-500 text-black rounded-xl text-[10px] font-bold uppercase hover:bg-cyan-400 transition-all flex items-center justify-center gap-1.5"
                     >
@@ -492,10 +561,16 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                     </button>
                     <button
                       onClick={async () => {
-                        const orderId = (selectedChat as any).id;
-                        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, refundStatus: 'rejected' } : o));
-                        setSelectedChat(prev => prev && prev.id === orderId ? { ...prev, refundStatus: 'rejected' } as any : prev);
-                        addToast({ title: 'REFUND REJECTED', message: 'Refund request has been declined.', type: 'info' });
+                        if (!db) return;
+                        try {
+                          await updateDoc(doc(db, 'orders', (selectedChat as any).id), {
+                            refundStatus: 'rejected'
+                          });
+                          addToast({ title: 'REFUND REJECTED', message: 'Refund request has been declined.', type: 'info' });
+                        } catch (err: any) { 
+                          logger.error(err); 
+                          addToast({ title: 'REJECTION FAILED', message: err?.message || 'Could not decline refund.', type: 'warning' });
+                        }
                       }}
                       className="flex-1 py-3 bg-red-500 text-white rounded-xl text-[10px] font-bold uppercase hover:bg-red-400 transition-all flex items-center justify-center gap-1.5"
                     >

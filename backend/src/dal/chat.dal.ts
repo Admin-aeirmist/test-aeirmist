@@ -20,7 +20,35 @@ export class ChatDAL {
   }
 
   static async findOrCreateDirectConversation(userA: string, userB: string) {
-    if (userA === userB) throw new Error('Cannot start conversation with yourself');
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userA) || !uuidRegex.test(userB)) {
+      throw new Error(`Invalid user IDs for direct conversation: ${userA}, ${userB}`);
+    }
+
+    if (userA === userB) {
+      return await db.transaction(async (tx) => {
+        const selfConv = await tx.execute(sql`
+          SELECT cm.conversation_id 
+          FROM conversation_members cm
+          JOIN conversations c ON c.id = cm.conversation_id
+          WHERE cm.user_id = ${userA} AND c.type = 'self'
+          LIMIT 1
+        `);
+        if (selfConv.rows && selfConv.rows.length > 0) {
+          return (selfConv.rows[0] as any).conversation_id as string;
+        }
+        const [conv] = await tx
+          .insert(conversations)
+          .values({
+            type: 'self',
+          })
+          .returning();
+        await tx.insert(conversationMembers).values([
+          { conversationId: conv.id, userId: userA, role: 'owner' },
+        ]);
+        return conv.id;
+      });
+    }
 
     const firstUser = userA < userB ? userA : userB;
     const secondUser = userA < userB ? userB : userA;
@@ -98,7 +126,7 @@ export class ChatDAL {
 
     const result = [];
     for (const row of memberRows) {
-      // Fetch all participants for this conversation
+      // Fetch all participants for this conversation with user and profile data
       const participants = await db
         .select({
           userId: conversationMembers.userId,
@@ -107,9 +135,12 @@ export class ChatDAL {
           displayName: profiles.displayName,
           avatarKey: profiles.avatarKey,
           isVerified: profiles.isVerified,
+          firebaseUid: users.firebaseUid,
+          profileId: profiles.id,
         })
         .from(conversationMembers)
-        .innerJoin(profiles, eq(conversationMembers.userId, profiles.userId))
+        .innerJoin(users, eq(conversationMembers.userId, users.id))
+        .leftJoin(profiles, eq(users.id, profiles.userId))
         .where(eq(conversationMembers.conversationId, row.conversation.id));
 
       result.push({
@@ -147,7 +178,7 @@ export class ChatDAL {
       })
       .from(messages)
       .innerJoin(users, eq(messages.senderId, users.id))
-      .innerJoin(profiles, eq(users.id, profiles.userId))
+      .leftJoin(profiles, eq(users.id, profiles.userId))
       .where(and(...conditions))
       .orderBy(desc(messages.createdAt))
       .limit(limit);
@@ -155,6 +186,8 @@ export class ChatDAL {
     return rows.reverse().map((r) => ({
       ...r.message,
       sender: r.sender,
+      senderId: r.message.senderId,
+      senderUid: r.sender?.id || r.message.senderId,
     }));
   }
 

@@ -5,6 +5,7 @@ import { db } from '../db';
 import { mediaAssets } from '../db/schema';
 import { ChatDAL } from '../dal/chat.dal';
 import { UserDAL } from '../dal/user.dal';
+import { NotificationDAL } from '../dal/notification.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { io } from '../index';
 
@@ -32,24 +33,45 @@ const GroupChatSchema = z.object({
 });
 
 async function resolveUserId(rawId: string): Promise<string> {
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
-  if (isUuid) return rawId;
-  const user = await UserDAL.findByEmailOrUsername(rawId) || await UserDAL.findByFirebaseUid(rawId);
-  return user?.id || rawId;
+  const resolved = await UserDAL.resolveToUserId(rawId);
+  return resolved || rawId;
 }
 
 async function resolveConversationId(rawConvId: string, currentUserId: string): Promise<string> {
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawConvId);
   if (isUuid) return rawConvId;
 
-  // Handles new_<targetId> or <userA>_<userB>
-  let target = rawConvId.startsWith('new_') ? rawConvId.replace('new_', '') : rawConvId;
-  if (target.includes('_')) {
-    const parts = target.split('_');
-    const resolvedParts = await Promise.all(parts.map(resolveUserId));
-    const other = resolvedParts.find((p) => p !== currentUserId);
-    target = other || resolvedParts[0];
+  // Case 1: new_<targetId> (Direct conversation initiation)
+  if (rawConvId.startsWith('new_')) {
+    const rawTarget = rawConvId.slice(4);
+    const resolvedTargetId = await resolveUserId(rawTarget);
+    return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
   }
+
+  // Case 2: Compound conversation keys: e.g. profile_userA_profile_userB, or userA_userB
+  let target = rawConvId;
+  if (rawConvId.includes('_profile_')) {
+    const splitIdx = rawConvId.indexOf('_profile_');
+    const partA = rawConvId.slice(0, splitIdx);
+    const partB = rawConvId.slice(splitIdx + 1);
+    const [resA, resB] = await Promise.all([resolveUserId(partA), resolveUserId(partB)]);
+    if (resA === currentUserId && resB === currentUserId) {
+      target = currentUserId;
+    } else {
+      target = (resA !== currentUserId) ? resA : resB;
+    }
+  } else if (rawConvId.includes('_')) {
+    const parts = rawConvId.split('_');
+    if (parts.length === 2) {
+      const [resA, resB] = await Promise.all([resolveUserId(parts[0]), resolveUserId(parts[1])]);
+      if (resA === currentUserId && resB === currentUserId) {
+        target = currentUserId;
+      } else {
+        target = (resA !== currentUserId) ? resA : resB;
+      }
+    }
+  }
+
   const resolvedTargetId = await resolveUserId(target);
   return ChatDAL.findOrCreateDirectConversation(currentUserId, resolvedTargetId);
 }
@@ -179,7 +201,35 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
     const members = await ChatDAL.getConversationMembers(convId);
     for (const m of members) {
       io.to(`user:${m.userId}`).emit('new_message', broadcastPayload);
+      io.to(`user:profile_${m.userId}`).emit('new_message', broadcastPayload);
     }
+    // Universal broadcast with conversationId matching in client
+    io.emit('new_message', broadcastPayload);
+
+    // Asynchronously dispatch in-app notifications for message recipients
+    (async () => {
+      try {
+        const senderProfile = await UserDAL.getProfileByUserId(req.user!.userId);
+        const senderName = senderProfile?.displayName || senderProfile?.username || 'New message';
+        const msgText = data.content ? (data.content.length > 80 ? data.content.slice(0, 77) + '...' : data.content) : (data.type ? `Sent a ${data.type}` : 'Sent you a message');
+        for (const m of members) {
+          if (m.userId !== req.user!.userId) {
+            const notif = await NotificationDAL.create({
+              recipientId: m.userId,
+              actorId: req.user!.userId,
+              type: 'message',
+              title: senderName,
+              body: msgText,
+              actionUrl: `/messages?chatId=${convId}`,
+              metadata: { conversationId: convId, senderId: req.user!.userId },
+            });
+            io.to(`user:${m.userId}`).emit('new_notification', { notification: notif });
+          }
+        }
+      } catch (notifErr) {
+        console.warn('[Notification Dispatch Warning]', notifErr);
+      }
+    })();
 
     res.status(201).json({ message, conversationId: convId });
   } catch (err: any) {
@@ -214,6 +264,7 @@ router.post('/conversations/:id/seen', authenticateToken, async (req: Authentica
     for (const m of members) {
       io.to(`user:${m.userId}`).emit('seen_update', seenPayload);
     }
+    io.emit('seen_update', seenPayload);
 
     res.json({ success: true, conversationId: convId });
   } catch (err) {

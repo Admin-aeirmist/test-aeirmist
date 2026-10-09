@@ -74,7 +74,7 @@ export const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({
     } catch (e) {
       console.warn("Could not save profile strength dismiss state", e);
     }
-    // Persist to user profile and cache so it never reappears on any login/logout
+    // Persist to user's Firestore profile and cache so it never reappears on any login/logout
     if (updateProfile) {
       const currentDismissed = displayUser?.dismissedWidgets || profile?.dismissedWidgets || {};
       updateProfile({

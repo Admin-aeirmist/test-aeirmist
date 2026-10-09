@@ -24,14 +24,15 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAeirmist } from '../../../context/AeirmistContext';
-import { api } from '../../../services/api/client';
+import { mapAuthError } from '../../../utils/authErrorMapper';
+import { EmailAuthProvider, sendEmailVerification, GoogleAuthProvider, reauthenticateWithPopup, reauthenticateWithCredential } from 'firebase/auth';
+import { collection, query, where, orderBy, limit, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import PasswordManager from './security/PasswordManager';
 import { AccountSecurityScore } from './security/AccountSecurityScore';
 import { DevicesAndSessions } from './security/DevicesAndSessions';
 import { EmailChangeModal } from './security/EmailChangeModal';
 import { SecurityTimeline } from './security/SecurityTimeline';
 import { logger } from '@/src/utils/logger';
-import { checkDeviceBiometrics } from '../../../lib/nativeBiometrics';
 
 
 const SectionHeader = ({ title, desc }: { title: string, desc: string }) => (
@@ -77,14 +78,6 @@ const SecuritySettings = () => {
   const { user, profile, addToast, logout, deleteAccount, updateProfile, logActivity, db } = useAeirmist();
   const [hasPassword, setHasPassword] = useState<boolean | null>(null);
   const [activeSubSection, setActiveSubSection] = useState<string | null>(null);
-  const [biometricsAvailable, setBiometricsAvailable] = useState(false);
-  useEffect(() => {
-    let mounted = true;
-    checkDeviceBiometrics()
-      .then(res => { if (mounted) setBiometricsAvailable(!!res?.available); })
-      .catch(() => { if (mounted) setBiometricsAvailable(false); });
-    return () => { mounted = false; };
-  }, []);
   const [isLoading, setIsLoading] = useState<string | null>(null);
   const [activities, setActivities] = useState<any[]>([]);
   const [sessionsCount, setSessionsCount] = useState<number>(1);
@@ -114,41 +107,59 @@ const SecuritySettings = () => {
 
   useEffect(() => {
     if (user) {
-      setHasPassword(true);
+      const passwordProvider = user.providerData.find(
+        (provider) => provider.providerId === EmailAuthProvider.PROVIDER_ID
+      );
+      setHasPassword(!!passwordProvider);
     }
   }, [user]);
 
   // Load activities timeline
   useEffect(() => {
-    if (!user) return;
-    const uid = (user as any).id || user.uid || 'guest';
-    const key = `aeirmist_activities_${uid}`;
-    const loadActivities = () => {
-      try {
-        const items = JSON.parse(localStorage.getItem(key) || '[]');
-        setActivities(items);
-      } catch {
-        setActivities([]);
-      }
-    };
-    loadActivities();
+    if (!db || !user) return;
 
-    const handler = () => loadActivities();
-    window.addEventListener('aeirmist_activity_logged', handler);
-    return () => window.removeEventListener('aeirmist_activity_logged', handler);
-  }, [user]);
+    const q = query(
+      collection(db, 'activities'),
+      where('userId', '==', user.uid),
+      limit(20)
+    );
 
-  // Active sessions count
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const activityData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      const sorted = activityData.sort((a, b) => {
+        const timeA = (a as any).timestamp?.toMillis ? (a as any).timestamp.toMillis() : 0;
+        const timeB = (b as any).timestamp?.toMillis ? (b as any).timestamp.toMillis() : 0;
+        return timeB - timeA;
+      });
+      
+      setActivities(sorted);
+    }, (error) => {
+      logger.warn("Security activities snapshot failed:", error);
+    });
+
+    return () => unsubscribe();
+  }, [db, user]);
+
+  // Active sessions count listener
   useEffect(() => {
-    if (!user) return;
-    try {
-      const raw = localStorage.getItem(`aeirmist_sessions_${user.uid || (user as any).id}`);
-      const list = raw ? JSON.parse(raw) : [];
-      setSessionsCount(list.filter((s: any) => !s.revoked).length || 1);
-    } catch {
-      setSessionsCount(1);
-    }
-  }, [user]);
+    if (!db || !user) return;
+
+    const q = query(
+      collection(db, 'login_sessions'),
+      where('userId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const activeDocs = snapshot.docs.filter(d => !d.data().revoked);
+      setSessionsCount(activeDocs.length || 1);
+    });
+
+    return () => unsubscribe();
+  }, [db, user]);
 
   const handleConfirmDelete = async () => {
     if (!user) return;
@@ -158,14 +169,21 @@ const SecuritySettings = () => {
     }
     setIsDeleting(true);
     try {
-      if (reauthPassword) {
+      if (!isGoogleOnly && !reauthPassword) {
+        addToast({ title: 'Authentication Error', message: 'Please enter your current password.', type: 'warning' });
+        setIsDeleting(false);
+        return;
+      }
+      if (isGoogleOnly) {
         try {
-          await api.auth.login({ email: user.email, password: reauthPassword });
-        } catch {
-          addToast({ title: 'Authentication Error', message: 'Current password is incorrect.', type: 'warning' });
-          setIsDeleting(false);
-          return;
+          const provider = new GoogleAuthProvider();
+          await reauthenticateWithPopup(user, provider);
+        } catch (popupError: any) {
+          logger.warn('Google reauthentication popup failed. Proceeding with deletion...', popupError);
         }
+      } else if (user.email) {
+        const credential = EmailAuthProvider.credential(user.email, reauthPassword);
+        await reauthenticateWithCredential(user, credential);
       }
       
       await deleteAccount();
@@ -186,10 +204,11 @@ const SecuritySettings = () => {
     }
     setIsLoading('verify_email');
     try {
-      await logActivity('email_verification_sent', `Verification requested for ${user.email}`);
-      addToast({ title: 'Success', message: 'Verification email processed.', type: 'success' });
+      await sendEmailVerification(user);
+      await logActivity('email_verification_sent', `Verification email dispatched to ${user.email}`);
+      addToast({ title: 'Success', message: 'Verification email sent. Please check your inbox.', type: 'success' });
     } catch (error: any) {
-      addToast({ title: 'Error', message: 'Verification failed.', type: 'warning' });
+      addToast({ title: 'Error', message: mapAuthError(error), type: 'warning' });
     } finally {
       setIsLoading(null);
     }
@@ -375,7 +394,6 @@ const SecuritySettings = () => {
       </Card>
 
       {/* Section 4: Biometric / Fingerprint App Lock */}
-      {biometricsAvailable && (
       <Card>
         <CardHeader 
           icon={Fingerprint} 
@@ -414,7 +432,6 @@ const SecuritySettings = () => {
           {profile?.securitySettings?.biometricLock ? 'Turn Off Biometric Lock' : 'Turn On Biometric Lock'}
         </button>
       </Card>
-      )}
 
       {/* Security Events Timeline */}
       <SecurityTimeline activities={activities} />

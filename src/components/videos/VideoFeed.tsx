@@ -30,7 +30,7 @@ import { VideoCard } from './VideoCard';
 import { VideoWatchPage } from './VideoWatchPage';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
-import { api } from '../../services/api/client';
+import { collection, onSnapshot, query, doc, updateDoc, increment } from 'firebase/firestore';
 import { AeirmistVideoUploader } from './AeirmistVideoUploader';
 import { AeirmistCreatorStudio } from './AeirmistCreatorStudio';
 import { getAvatarUrl } from '../../lib/avatar';
@@ -71,21 +71,23 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   const [showUploader, setShowUploader] = useState(false);
   const [showStudio, setShowStudio] = useState(false);
 
-  // Load videos from backend API
-  const loadVideos = async () => {
-    try {
-      const res = await api.videos.getFeed();
-      if (res && res.videos) {
-        setDbVideos(res.videos as any);
-      }
-    } catch (err) {
-      logger.warn('[VideoFeed] Backend feed load warning:', err);
-    }
-  };
-
+  // Listen to Firestore 'videos' collection in real-time
   useEffect(() => {
-    loadVideos();
-  }, []);
+    if (!db) {
+      setDbVideos([]);
+      return;
+    }
+    const q = collection(db, 'videos');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as Video);
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setDbVideos(list);
+    }, (error) => {
+      logger.error('[VideoFeed] Real-time snap error:', error);
+    });
+
+    return () => unsubscribe();
+  }, [db]);
 
   // Handle deep link loading from props
   useEffect(() => {

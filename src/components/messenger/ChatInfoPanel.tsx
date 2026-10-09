@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
-import { api } from '../../services/api/client';
+import { collection, query, where, getDocs, limit, orderBy, doc, updateDoc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { Chat } from '../../types/messenger';
 import { logger } from '@/src/utils/logger';
 import { DownloadManagerService } from '../../services/DownloadManagerService';
@@ -113,55 +113,48 @@ export const ChatInfoPanel = ({
   const [searchDraft, setSearchDraft] = useState('');
   
   useEffect(() => {
-    if (!otherId) return;
-    let isMounted = true;
-    api.users.getProfile(otherId).then(res => {
-      if (isMounted && res?.profile) {
-        setOtherProfile(res.profile);
+    if (!db || !otherId) return;
+    const unsub = onSnapshot(doc(db, 'profiles', otherId), (snap) => {
+      if (snap.exists()) {
+        setOtherProfile({ id: snap.id, ...snap.data() });
       }
-    }).catch(err => {
-      logger.warn('Failed to fetch other profile', err);
     });
-    return () => { isMounted = false; };
-  }, [otherId]);
+    return () => unsub();
+  }, [db, otherId]);
 
   useEffect(() => {
-    if (!chat.id) return;
-    try {
-      const stored = localStorage.getItem(`chat_settings_${chat.id}`);
-      if (stored) {
-        setChatSettings(JSON.parse(stored));
+    if (!db || !chat.id) return;
+    const unsub = onSnapshot(doc(db, 'chat_settings', chat.id), (snap) => {
+      if (snap.exists()) {
+        setChatSettings(snap.data());
+      } else {
+        setChatSettings(null);
       }
-    } catch {}
-  }, [chat.id]);
+    });
+    return () => unsub();
+  }, [db, chat.id]);
 
   const handleSaveSharedNickname = async (targetUserId: string, newNickname: string) => {
-    if (!chat.id) return;
+    if (!db || !chat.id) return;
     try {
-      const updated = {
-        ...(chatSettings || {}),
+      const chatSettingsRef = doc(db, 'chat_settings', chat.id);
+      await setDoc(chatSettingsRef, {
         nicknames: {
-          ...(chatSettings?.nicknames || {}),
           [targetUserId]: newNickname.trim()
         }
-      };
-      setChatSettings(updated);
-      localStorage.setItem(`chat_settings_${chat.id}`, JSON.stringify(updated));
+      }, { merge: true });
     } catch (err: any) { logger.error("Save shared nickname failed", err); addToast({ title: "Failed", message: "Failed to save nickname", type: "warning" }); }
   };
 
   const handleSavePermission = async (perm: 'everyone' | 'only_me') => {
-    if (!chat.id || !profile?.id) return;
+    if (!db || !chat.id || !profile?.id) return;
     try {
-      const updated = {
-        ...(chatSettings || {}),
+      const chatSettingsRef = doc(db, 'chat_settings', chat.id);
+      await setDoc(chatSettingsRef, {
         editPermissions: {
-          ...(chatSettings?.editPermissions || {}),
           [profile.id]: perm
         }
-      };
-      setChatSettings(updated);
-      localStorage.setItem(`chat_settings_${chat.id}`, JSON.stringify(updated));
+      }, { merge: true });
     } catch (err: any) { logger.error("Save permission failed", err); addToast({ title: "Failed", message: "Failed to save permission", type: "warning" }); }
   };
   const isBlocked = otherId ? checkBlocked(otherId) : false;
@@ -178,13 +171,18 @@ export const ChatInfoPanel = ({
 
   useEffect(() => {
     const fetchMedia = async () => {
-      if (!chat.id || chat.id.startsWith('new_')) return;
+      if (!db || !chat.id || chat.id.startsWith('new_')) return;
       setLoadingMedia(true);
       try {
-        const res = await api.chat.getMessages(chat.id, 100);
-        const allMsgs = res?.messages || [];
+        const q = query(
+          collection(db, 'conversations', chat.id, 'messages'),
+          orderBy('timestamp', 'desc'),
+          limit(300)
+        );
+        const snapshot = await getDocs(q);
+        const allMsgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
         const mediaTypes = ['image', 'video', 'media', 'file'];
-        const filteredMedia = allMsgs.filter((m: any) => mediaTypes.includes(m.type) || m.mediaKey || m.mediaUrl);
+        const filteredMedia = allMsgs.filter(m => mediaTypes.includes(m.type));
         setSharedMedia(filteredMedia);
       } catch (e) {
         logger.error("Shared media fetch failed", e);
@@ -193,7 +191,7 @@ export const ChatInfoPanel = ({
       }
     };
     fetchMedia();
-  }, [chat.id]);
+  }, [db, chat.id]);
 
   const handlePrevMedia = () => {
     if (selectedMediaIndex === null || sharedMedia.length === 0) return;
@@ -246,15 +244,13 @@ export const ChatInfoPanel = ({
   };
 
   const handleVaultToggle = async () => {
-    if (!profile || !chat.id) return;
+    if (!db || !profile || !chat.id) return;
     const currentVaultStatus = chat.isVaulted?.[profile.id] === true;
     try {
-      if (!chat.isVaulted) chat.isVaulted = {};
-      chat.isVaulted[profile.id] = !currentVaultStatus;
-      addToast({
-        title: !currentVaultStatus ? 'Vault Locked' : 'Vault Unlocked',
-        message: !currentVaultStatus ? 'Conversation moved to Vault' : 'Conversation removed from Vault',
-        type: 'info'
+      const chatRef = doc(db, 'conversations', chat.id);
+      await updateDoc(chatRef, {
+        [`isVaulted.${profile.id}`]: !currentVaultStatus,
+        ...(!currentVaultStatus ? { [`isMuted.${profile.id}`]: true } : {})
       });
     } catch (e) {
       logger.error("Failed to toggle vault status", e);

@@ -493,7 +493,7 @@ class PermissionServiceClass {
    * 1. Check & request Location permission (non-intrusive if already granted).
    * 2. Obtain accurate current location (never blocks indefinitely).
    * 3. Check & request Notification permission.
-   * 4. Returns location data & notification status to resume auth.
+   * 4. Returns location data & notification status to resume Firebase auth.
    * 
    * Fully non-blocking: Denial of any permission never halts login!
    */

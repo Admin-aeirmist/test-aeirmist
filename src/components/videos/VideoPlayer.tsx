@@ -261,7 +261,7 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
             <h3 className="text-lg font-semibold text-white mb-1">Couldn't load this video.</h3>
             <p className="text-xs text-white/60 mb-6">
               {video.videoURL?.startsWith('blob:') 
-                ? 'This video stream format is not supported or expired. Please re-upload.'
+                ? 'This video was saved locally before cloud storage was configured. Please re-upload with Cloudinary connected.'
                 : 'Please check your connection or try refreshing the stream.'}
             </p>
             <div className="flex items-center gap-3">

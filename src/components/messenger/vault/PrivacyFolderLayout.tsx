@@ -11,10 +11,22 @@ import {
     BookOpen, Edit3, Shield, Sparkles, FolderPlus,
     UploadCloud, Lock, Check, ExternalLink, RefreshCw, CheckSquare
 } from 'lucide-react';
+import { 
+    collection, 
+    query, 
+    where, 
+    onSnapshot, 
+    addDoc, 
+    serverTimestamp,
+    deleteDoc,
+    doc,
+    updateDoc
+} from 'firebase/firestore';
 import { MediaViewer } from './MediaViewer';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
 import { DownloadManagerService } from '../../../services/DownloadManagerService';
+import { auth } from '../../../lib/firebase';
 
 export const PrivacyFolderLayout = ({ 
     db,
@@ -71,35 +83,41 @@ export const PrivacyFolderLayout = ({
         return () => clearTimeout(timer);
     }, []);
 
-    // Listen for folders in real-time from local storage
+    // Listen for folders in real-time
     useEffect(() => {
-        if (!profile?.id) return;
-        try {
-            const raw = localStorage.getItem(`vault_folders_${profile.id}`);
-            if (raw) setFolders(JSON.parse(raw));
-        } catch {}
-    }, [profile?.id]);
-
-    const saveFolders = (newFolders: any[]) => {
-        setFolders(newFolders);
-        if (profile?.id) {
-            localStorage.setItem(`vault_folders_${profile.id}`, JSON.stringify(newFolders));
-        }
-    };
+        if (!db || !profile?.id) return;
+        const userKeys = Array.from(new Set([
+            profile.id, 
+            profile.uid, 
+            profile.ownerUid, 
+            user?.uid, 
+            auth?.currentUser?.uid,
+            `profile_${auth?.currentUser?.uid}`,
+            `profile_${user?.uid}`
+        ].filter(Boolean)));
+        const q = query(collection(db, 'vault_folders'), where('userId', 'in', userKeys));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const foldersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setFolders(foldersData);
+        }, (err) => {
+            logger.warn("Vault folders listen error:", err);
+        });
+        return () => unsubscribe();
+    }, [db, profile?.id, profile?.uid, profile?.ownerUid, user?.uid]);
 
     // Create Album/Folder
     const handleSubmitNewFolder = async () => {
-        if (!profile?.id || !newFolderName.trim()) return;
+        if (!db || !profile?.id || !newFolderName.trim()) return;
+        const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile.id;
         try {
-            const newFolder = {
-                id: 'folder_' + Date.now(),
-                userId: profile.id,
+            await addDoc(collection(db, 'vault_folders'), {
+                userId: currentAuthUid,
+                ownerUid: currentAuthUid,
                 profileId: profile.id,
                 name: newFolderName.trim(),
-                createdAt: new Date().toISOString(),
+                createdAt: serverTimestamp(),
                 mediaCount: 0
-            };
-            saveFolders([...folders, newFolder]);
+            });
             addToast({ title: "Album Created", message: `Album "${newFolderName.trim()}" created successfully.`, type: "success" });
             setNewFolderModalOpen(false);
             setNewFolderName('');
@@ -114,7 +132,7 @@ export const PrivacyFolderLayout = ({
         e.stopPropagation();
         if (!window.confirm(`Delete folder "${folderName}"? (Files inside will be kept in Photos/Videos)`)) return;
         try {
-            saveFolders(folders.filter(f => f.id !== folderId));
+            await deleteDoc(doc(db, 'vault_folders', folderId));
             if (selectedFolder === folderId) setSelectedFolder(null);
             addToast({ title: "Folder Removed", message: `Folder "${folderName}" deleted.`, type: "info" });
         } catch (err) {
@@ -125,8 +143,31 @@ export const PrivacyFolderLayout = ({
     // Save Cloud Diary / Note
     const handleSaveDiaryNote = async () => {
         if (!noteTitle.trim() && !noteContent.trim()) return;
+        const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile?.id;
         try {
-            addToast({ title: "Note Secured", message: "Private note secured in Notepad.", type: "success" });
+            if (editingNoteId) {
+                await updateDoc(doc(db, 'vault_media', editingNoteId), {
+                    name: noteTitle.trim() || 'Untitled Note',
+                    content: noteContent.trim(),
+                    category: noteCategory,
+                    updatedAt: serverTimestamp()
+                });
+                addToast({ title: "Note Saved", message: "Notepad note updated.", type: "success" });
+            } else {
+                await addDoc(collection(db, 'vault_media'), {
+                    userId: currentAuthUid,
+                    ownerUid: currentAuthUid,
+                    profileId: profile.id,
+                    type: 'text',
+                    name: noteTitle.trim() || 'Untitled Note',
+                    content: noteContent.trim(),
+                    category: noteCategory,
+                    createdAt: serverTimestamp(),
+                    isFavorite: false,
+                    folderId: selectedFolder || null
+                });
+                addToast({ title: "Note Created", message: "Private note secured in Notepad.", type: "success" });
+            }
             setNoteModalOpen(false);
             setNoteTitle('');
             setNoteContent('');
@@ -140,8 +181,9 @@ export const PrivacyFolderLayout = ({
     // Direct File Processing (images, videos, documents)
     const handleDirectFiles = async (files: FileList | null) => {
         setIsFabOpen(false);
-        if (!files || files.length === 0 || !profile?.id) return;
+        if (!files || files.length === 0 || !db || !profile?.id) return;
         setIsUploadingDirect(true);
+        const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile.id;
 
         try {
             for (let i = 0; i < files.length; i++) {
@@ -150,7 +192,7 @@ export const PrivacyFolderLayout = ({
                     let mediaUrl = '';
                     if (uploadMedia) {
                         try {
-                            mediaUrl = await uploadMedia(file, `vault/${profile.id}`);
+                            mediaUrl = await uploadMedia(file, `vault/${currentAuthUid}`);
                         } catch (e) {
                             logger.warn("Storage upload fallback:", e);
                         }
@@ -163,6 +205,24 @@ export const PrivacyFolderLayout = ({
                             reader.readAsDataURL(file);
                         });
                     }
+
+                    const isVideo = file.type.startsWith('video');
+                    const isImage = file.type.startsWith('image');
+                    const isDoc = !isVideo && !isImage;
+
+                    await addDoc(collection(db, 'vault_media'), {
+                        userId: currentAuthUid,
+                        ownerUid: currentAuthUid,
+                        profileId: profile.id,
+                        url: mediaUrl,
+                        type: isVideo ? 'video' : isImage ? 'image' : 'file',
+                        name: file.name,
+                        size: file.size,
+                        mimeType: file.type,
+                        createdAt: serverTimestamp(),
+                        isFavorite: false,
+                        folderId: selectedFolder || null
+                    });
 
                     addToast({
                         title: "Encrypted & Saved",
@@ -191,8 +251,13 @@ export const PrivacyFolderLayout = ({
 
     // Move Selected Items to Folder
     const handleMoveToFolder = async (targetFolderId: string | null) => {
-        if (selectedIds.length === 0) return;
+        if (!db || selectedIds.length === 0) return;
         try {
+            for (const id of selectedIds) {
+                await updateDoc(doc(db, 'vault_media', id), {
+                    folderId: targetFolderId
+                });
+            }
             addToast({ title: "Moved", message: `${selectedIds.length} items moved successfully.`, type: "success" });
             setSelectedIds([]);
             setSelectionMode(false);

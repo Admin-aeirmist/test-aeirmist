@@ -25,7 +25,7 @@ import {
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
 import { getAvatarUrl } from '../../lib/avatar';
-import { api } from '../../services/api/client';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
 
@@ -172,60 +172,72 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
     return () => clearInterval(timer);
   }, []);
 
-  // Sync profile suggestions via Postgres backend API
+  // Real-time Firestore Sync with mounting safety
   useEffect(() => {
+    if (!db) {
+      setProfiles([]);
+      setLoadingProfiles(false);
+      return;
+    }
+
     let isMounted = true;
     setLoadingProfiles(true);
+    const profilesColl = collection(db, 'profiles');
+    
+    const unsubProfiles = onSnapshot(profilesColl, (snap) => {
+      if (!isMounted) return;
+      const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const others = docs.filter((p: any) => {
+        // Exclude current user
+        if (p.id === profile?.id || p.uid === user?.uid || p.ownerUid === user?.uid) return false;
 
-    const loadData = async () => {
-      try {
-        const res = await api.users.search('', 50).catch(() => ({ users: [] }));
-        if (!isMounted) return;
-        const docs = (res?.users || []).map((u: any) => ({
-          id: u.id,
-          uid: u.id,
-          username: u.username,
-          displayName: u.displayName,
-          photoURL: u.avatarKey || u.photoURL,
-          bio: u.bio,
-          location: u.location,
-          isVerified: u.isVerified,
-          ...u
-        }));
-        const others = docs.filter((p: any) => {
-          // Exclude current user
-          if (p.id === profile?.id || p.uid === user?.uid || p.ownerUid === user?.uid) return false;
+        // Kick unregistered / incomplete accounts: Must have a valid username (not 'user', null, undefined, or empty)
+        const rawUname = (p.username || '').trim().toLowerCase();
+        if (!rawUname || rawUname === 'user' || rawUname === 'null' || rawUname === 'undefined' || rawUname.length < 2) {
+          return false;
+        }
 
-          // Kick unregistered / incomplete accounts: Must have a valid username
-          const rawUname = (p.username || '').trim().toLowerCase();
-          if (!rawUname || rawUname === 'user' || rawUname === 'null' || rawUname === 'undefined' || rawUname.length < 2) {
-            return false;
-          }
+        // Must have a valid display name
+        const rawName = (p.displayName || p.name || '').trim();
+        if (!rawName) return false;
 
-          // Must have a valid display name
-          const rawName = (p.displayName || p.name || '').trim();
-          if (!rawName) return false;
+        // Exclude accounts scheduled for deletion or purge or banned
+        if (p.scheduledForPurge || p.status === 'scheduled_for_deletion' || p.isBanned) return false;
 
-          // Exclude accounts scheduled for deletion or purge or banned
-          if (p.scheduledForPurge || p.status === 'scheduled_for_deletion' || p.isBanned) return false;
-
-          return true;
-        });
-
-        setProfiles(others);
-      } catch (err) {
-        logger.warn("Profiles load failing:", err);
-        if (isMounted) setProfiles([]);
-      } finally {
-        if (isMounted) setLoadingProfiles(false);
+        return true;
+      });
+      
+      setProfiles(others);
+      setLoadingProfiles(false);
+    }, (error) => {
+      logger.warn("Profiles subscription failing:", error);
+      if (isMounted) {
+        setProfiles([]);
+        setLoadingProfiles(false);
       }
-    };
+    });
 
-    loadData();
+    let unsubRequests = () => {};
+    if (profile?.id) {
+      const reqsColl = collection(db, 'follow_requests');
+      const q = query(reqsColl, where('toId', '==', profile.id));
+      
+      unsubRequests = onSnapshot(q, (snap) => {
+        if (isMounted) {
+          setFollowRequests(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }
+      }, (error) => {
+        logger.warn("Follow requests subscription failed system boundary check:", error);
+        if (isMounted) setFollowRequests([]);
+      });
+    }
+
     return () => {
       isMounted = false;
+      unsubProfiles();
+      unsubRequests();
     };
-  }, [profile?.id, user?.uid]);
+  }, [db, profile?.id, user?.uid]);
 
   // Handle follow click
   const handleFollow = async (targetId: string, displayName: string) => {

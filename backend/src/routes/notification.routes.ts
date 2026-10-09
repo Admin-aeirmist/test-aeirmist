@@ -7,10 +7,8 @@ import { io } from '../index';
 const router = Router();
 
 async function resolveUserId(rawId: string): Promise<string> {
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
-  if (isUuid) return rawId;
-  const user = await UserDAL.findByEmailOrUsername(rawId) || await UserDAL.findByFirebaseUid(rawId);
-  return user?.id || rawId;
+  const resolved = await UserDAL.resolveToUserId(rawId);
+  return resolved || rawId;
 }
 
 // Create Notification

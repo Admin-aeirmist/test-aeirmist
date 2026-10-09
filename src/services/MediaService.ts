@@ -1,5 +1,7 @@
+import { ref, uploadBytesResumable, getDownloadURL, uploadBytes } from 'firebase/storage';
 import { aeirmistCache } from './CacheService';
 import { logger } from '@/src/utils/logger';
+import { cloudinaryService } from './cloudinaryService';
 import { api } from './api/client';
 
 
@@ -221,6 +223,9 @@ class MediaService {
     const { file, path, onProgress } = task;
     logger.info(`[MediaService] Execution started: ${file.name}, path: ${path}, type: ${file.type}`);
     
+    const storageRef = ref(storage, path);
+    logger.info(`[MediaService] Storage ref created: ${storageRef.fullPath}`);
+    
     // Step 1: Pre-compression if image
     let uploadFile = file;
     const isPreOptimizedCrop = file.name.startsWith('aeirmist_cover_') || file.name.startsWith('aeirmist_avatar_');
@@ -261,32 +266,125 @@ class MediaService {
       });
     };
 
-    // Priority 1: Try Universal Backend API (S3 / Local Storage module)
+    // Try Device Local/API Storage Upload First (Keep storage on device backend)
     try {
       const folderName = path.split('/')[0] || 'general';
-      const uploadRes = await api.media.upload(uploadFile, folderName);
-      if (uploadRes?.url) {
-        logger.info("[MediaService] Uploaded via Universal Storage:", uploadRes.url);
-        aeirmistCache.saveMedia(uploadRes.url, uploadFile, uploadFile.type).catch(() => {});
-        aeirmistCache.removePendingUpload(task.id).catch(() => {});
-        onProgress(100, 'Done');
-        return uploadRes.url;
+      const deviceRes = await api.media.upload(uploadFile, folderName);
+      if (deviceRes && (deviceRes.url || deviceRes.key)) {
+        const publicUrl = deviceRes.url || `/media/${deviceRes.key}`;
+        onProgress(100, 'Uploaded');
+        aeirmistCache.saveMedia(publicUrl, uploadFile, uploadFile.type).catch(e => logger.warn("Cache save failed", e));
+        aeirmistCache.removePendingUpload(task.id).catch(e => logger.warn("Cache remove failed", e));
+        return publicUrl;
       }
-    } catch (apiErr: any) {
-      logger.warn("[MediaService] Server storage upload notice (falling back):", apiErr.message);
+    } catch (dErr) {
+      logger.warn("[MediaService] Local device storage upload skipped or failed, trying CDN/Firebase fallback:", dErr);
     }
 
-    // Priority 3: Fallback data URL for images
-    if (uploadFile.type.startsWith('image/')) {
-      onProgress(100, 'Done');
-      const fallbackUrl = await convertFileToDataURL(uploadFile);
-      aeirmistCache.saveMedia(fallbackUrl, uploadFile, uploadFile.type).catch(() => {});
+    // Try Cloudinary CDN Upload First if configured
+    if (cloudinaryService.isConfigured()) {
+      try {
+        const folderName = path.split('/')[0] || 'aeirmist';
+        const cdnUrl = await cloudinaryService.upload(uploadFile, {
+          folder: `aeirmist/${folderName}`,
+          onProgress: (p, status) => onProgress(Math.min(95, Math.floor(15 + p * 0.8)), status)
+        });
+        if (cdnUrl) {
+          aeirmistCache.saveMedia(cdnUrl, uploadFile, uploadFile.type).catch(e => logger.warn("Cache save failed", e));
+          aeirmistCache.removePendingUpload(task.id).catch(e => logger.warn("Cache remove failed", e));
+          return cdnUrl;
+        }
+      } catch (cErr) {
+        logger.warn("[MediaService] Cloudinary upload failed/timed out, falling back to Firebase Storage:", cErr);
+      }
+    }
+
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        // Step: PROGRESS-ACTIVITY WATCHDOG (cellular-resilient: 25s for images, 60s for videos)
+        const isVideoUpload = uploadFile.type.startsWith('video/');
+        const inactivityLimit = isVideoUpload ? 60000 : 25000;
+        let watchdogId: any = null;
+
+        const resetWatchdog = () => {
+          if (watchdogId) clearTimeout(watchdogId);
+          watchdogId = setTimeout(() => {
+            logger.error(`[MediaService] Upload INACTIVITY TIMEOUT for task ${task.id} after ${inactivityLimit/1000}s`);
+            try { uploadTask.cancel(); } catch(e) {}
+            reject({ code: 'storage/retry-limit-exceeded', message: `Inactivity timeout (${inactivityLimit/1000}s). Check internet connection.` });
+          }, inactivityLimit);
+        };
+
+        const cleanup = () => {
+          if (watchdogId) clearTimeout(watchdogId);
+        };
+
+        resetWatchdog();
+
+        logger.info(`[MediaService] Starting Resumable Upload: ${uploadFile.size} bytes, path: ${path}, type: ${uploadFile.type}`);
+        const uploadTask = uploadBytesResumable(storageRef, uploadFile, metadata);
+
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            resetWatchdog();
+            const progress = snapshot.totalBytes > 0 ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 : 0;
+            onProgress(progress, 'Uploading...');
+          },
+          (error: any) => {
+            cleanup();
+            reject(error);
+          },
+          async () => {
+            try {
+              cleanup();
+              onProgress(100, 'Publishing...');
+              const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+              
+              aeirmistCache.saveMedia(downloadURL, uploadFile, uploadFile.type).catch(e => logger.warn("Cache save failed", e));
+              aeirmistCache.removePendingUpload(task.id).catch(e => logger.warn("Cache remove failed", e));
+              
+              resolve(downloadURL);
+            } catch (e) {
+              reject(e);
+            }
+          }
+        );
+      });
+    } catch (storageErr) {
+      logger.warn("[MediaService] Storage upload failed:", storageErr);
+      
+      // Video files MUST NEVER fall back to Data URLs - base64 video will freeze the UI thread and crash Firestore
+      if (uploadFile.type.startsWith('video/')) {
+        aeirmistCache.removePendingUpload(task.id).catch(() => {});
+        throw new Error(
+          cloudinaryService.isConfigured() 
+            ? "Video upload failed. Please check your internet connection or verify your Cloudinary storage quota."
+            : "Cloudinary CDN storage is not configured. Please enter your Cloud Name & Upload Preset in the uploader to stream videos."
+        );
+      }
+
+      onProgress(100, 'Finalizing...');
+      // Safe fallback: compress image tightly so Data URI won't blow Firestore 1MB doc size
+      let safeFile = uploadFile;
+      if (uploadFile.type.startsWith('image/')) {
+        try {
+          safeFile = await this.compressImage(uploadFile, MediaQuality.LITE);
+        } catch (compErr) {
+          logger.warn("[MediaService] Fallback compression failed, using original:", compErr);
+        }
+      }
+      
+      // If still over 700KB, do not create Data URL as it will exceed Firestore's 1MB limit
+      if (safeFile.size > 700 * 1024) {
+        aeirmistCache.removePendingUpload(task.id).catch(() => {});
+        throw new Error("Image too large for local fallback. Please check connection and try again.");
+      }
+
+      const fallbackUrl = await convertFileToDataURL(safeFile);
       aeirmistCache.removePendingUpload(task.id).catch(() => {});
       return fallbackUrl;
     }
-
-    aeirmistCache.removePendingUpload(task.id).catch(() => {});
-    throw new Error("Media upload to Aeirmist server failed. Please check your server connection and try again.");
   }
 
   async getCachedMediaURL(url: string, type: string): Promise<string> {

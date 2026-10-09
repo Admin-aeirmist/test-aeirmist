@@ -1,31 +1,35 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAeirmist } from '../context/AeirmistContext';
-import { api } from '../services/api/client';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { MediaQuality } from '../services/MediaService';
 
 export const usePostComposer = () => {
-  const { user, addToast } = useAeirmist();
+  const { db, user, profile, uploadMedia, addToast } = useAeirmist();
   const [content, setContent] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  const uploadAndBroadcastPost = async (payloadExtras: any = {}) => {
-    if (!user) return;
+  const uploadAndBroadcastPost = async (payloadExtras: any) => {
+    if (!user || !db) return;
     setIsUploading(true);
     setUploadProgress(15);
 
     try {
-      await api.posts.create({
+      // ... (re-implement the upload logic from the previous CreatePost.tsx)
+      const payload = {
+        userId: user.uid,
         content,
+        createdAt: serverTimestamp(),
         ...payloadExtras
-      });
+      };
+
+      await addDoc(collection(db, 'posts'), payload);
       
       addToast({ title: "Published", message: "Post broadcasted successfully.", type: "success" });
-      setContent('');
-    } catch (err: any) {
-      addToast({ title: "Error", message: err.message || "Failed to broadcast post.", type: "warning" });
+    } catch (err) {
+      addToast({ title: "Error", message: "Failed to broadcast post.", type: "warning" });
     } finally {
       setIsUploading(false);
-      setUploadProgress(0);
     }
   };
 

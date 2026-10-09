@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { CallsDAL } from '../dal/calls.dal';
+import { UserDAL } from '../dal/user.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
@@ -28,9 +29,14 @@ router.get('/history', authenticateToken, async (req: AuthenticatedRequest, res:
 router.post('/log', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = LogCallSchema.parse(req.body);
+    const resolvedReceiverId = await UserDAL.resolveToUserId(data.receiverId);
+    if (!resolvedReceiverId) {
+      return res.status(400).json({ error: 'Receiver user not found' });
+    }
     const call = await CallsDAL.logCall({
       callerId: req.user!.userId,
       ...data,
+      receiverId: resolvedReceiverId,
     });
     res.status(201).json({ call });
   } catch (err: any) {

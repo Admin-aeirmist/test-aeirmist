@@ -1,6 +1,8 @@
 import Stripe from 'stripe';
+import { getFirestoreAdmin, admin } from './FirebaseAdminService';
 import { transactionAudit } from './TransactionAuditService';
-import { logger } from '../utils/logger';
+import { logger } from '@/src/utils/logger';
+
 
 let stripeClient: Stripe | null = null;
 
@@ -36,6 +38,17 @@ export const PAYMENT_CONFIG = {
 };
 
 export async function createAeirmistCheckoutSession(userId: string, type: 'premium' | 'verified', successUrl: string, cancelUrl: string) {
+  const db = getFirestoreAdmin();
+  const userDoc = await db.collection('users').doc(userId).get();
+  const userData = userDoc.data();
+
+  if (type === 'premium' && userData?.isPremium) {
+    throw new Error("ALREADY_PREMIUM");
+  }
+  if (type === 'verified' && userData?.isVerified) {
+    throw new Error("ALREADY_VERIFIED");
+  }
+
   const stripe = getStripe();
   if (!stripe) {
     throw new Error("STRIPE_SYSTEM_OFFLINE");
@@ -73,7 +86,9 @@ export async function createAeirmistCheckoutSession(userId: string, type: 'premi
     }
   };
 
-  const idempotencyKey = `checkout_${userId}_${type}_${Math.floor(Date.now() / 60000)}`;
+  // Idempotency Key: payment_${userId}_${type}_${Math.floor(Date.now() / 3600000)} 
+  // (Changes every hour to allow retries but prevent rapid double clicks)
+  const idempotencyKey = `checkout_${userId}_${type}_${Math.floor(Date.now() / 60000)}`; // 1 minute window
 
   return await stripe.checkout.sessions.create(sessionParams, {
     idempotencyKey
@@ -81,8 +96,23 @@ export async function createAeirmistCheckoutSession(userId: string, type: 'premi
 }
 
 export async function handleStripeEvent(event: Stripe.Event) {
+  const db = getFirestoreAdmin();
+  
+  // Idempotency: Prevent duplicate processing
   const eventId = event.id;
-  logger.info(`Handling Stripe event ${eventId}: ${event.type}`);
+  const processedEventRef = db.collection('processed_events').doc(eventId);
+  const processedEventDoc = await processedEventRef.get();
+  
+  if (processedEventDoc.exists) {
+    logger.info(`Message Already Processed: ${eventId}`);
+    return;
+  }
+
+  // Register event for idempotency
+  await processedEventRef.set({
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    type: event.type
+  });
 
   switch (event.type) {
     case 'checkout.session.completed': {
@@ -97,29 +127,106 @@ export async function handleStripeEvent(event: Stripe.Event) {
 
       logger.info(`Transaction Verified: ${type} for User ${userId}`);
 
+      // Transaction Logging (Detailed Ledger)
+      await db.collection('transaction_logs').add({
+        userId,
+        stripeSessionId: session.id,
+        paymentType: type,
+        amount: session.amount_total,
+        currency: session.currency,
+        status: 'completed',
+        purchaseTimestamp: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: session.metadata
+      });
+
+      // Audit Logging
       await transactionAudit.logPaymentActivity(userId, 'PURCHASE_COMPLETED', {
         sessionId: session.id,
         type,
         amount: session.amount_total
       });
+
+      // Status Activation logic
+      const userUpdate: Record<string, any> = {
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+      
+      const profileUpdate: Record<string, any> = {
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+
+      if (type === 'premium') {
+        const expirationDate = new Date();
+        expirationDate.setMonth(expirationDate.getMonth() + 1); // 1 month premium tier
+        userUpdate.isPremium = true;
+        userUpdate.premiumUntil = expirationDate.toISOString();
+        profileUpdate.isPremium = true;
+      } else if (type === 'verified') {
+        // Special logic: Verification can be instant or pending review
+        // For this implementation, we grant it but mark as 'active' status
+        userUpdate.isVerified = true;
+        userUpdate.verificationStatus = 'active'; 
+        profileUpdate.isVerified = true;
+      }
+
+      await db.collection('users').doc(userId).update(userUpdate);
+
+      // Multi-profile Sync Activation
+      const profilesSnap = await db.collection('profiles').where('ownerUid', '==', userId).get();
+      if (!profilesSnap.empty) {
+        const batch = db.batch();
+        profilesSnap.docs.forEach(doc => {
+          batch.update(doc.ref, profileUpdate);
+        });
+        await batch.commit();
+        logger.info(`Profiles Swapped: Syncing ${profilesSnap.size} users.`);
+      }
       break;
     }
 
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
-      const userId = subscription.metadata?.userId;
+      const userId = subscription.metadata.userId; // Ensure we pass this on sub creation
+
       if (userId) {
-        logger.info(`Subscription cancelled for user ${userId}`);
+        await db.collection('users').doc(userId).update({
+          isPremium: false,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
       }
       break;
     }
     
+    // Add more cases as needed (refunds, failures)
     case 'charge.refunded': {
       const charge = event.data.object as Stripe.Charge;
-      const userId = charge.metadata?.userId; 
+      const userId = charge.metadata.userId; 
       
       if (userId) {
         logger.info(`Refund Message: Reversing access for user ${userId}`);
+        
+        await db.collection('users').doc(userId).update({
+          isPremium: false,
+          isVerified: false,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        // Multi-profile Sync Access Revocation
+        const profilesSnap = await db.collection('profiles').where('ownerUid', '==', userId).get();
+        if (!profilesSnap.empty) {
+          const batch = db.batch();
+          profilesSnap.docs.forEach(doc => {
+            batch.update(doc.ref, {
+              isPremium: false,
+              isVerified: false,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          });
+          await batch.commit();
+          logger.info(`Refund Processed: Revoking access for ${profilesSnap.size} users.`);
+        }
+
+        // Audit Logging
         await transactionAudit.logPaymentActivity(userId, 'REFUND_PROCESSED', {
           chargeId: charge.id,
           amount: charge.amount_refunded

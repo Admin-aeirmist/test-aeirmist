@@ -99,7 +99,7 @@ export const showSystemNotification = async (options: SystemNotificationOptions)
 
   // 2. Desktop & Mobile Browser Web Notification Fallback
   if ('Notification' in window && Notification.permission === 'granted') {
-    const notifOptions: NotificationOptions & { renotify?: boolean } = {
+    const notifOptions: NotificationOptions = {
       body: options.body,
       icon: options.avatarUrl || '/icons/icon-192x192.png',
       badge: options.avatarUrl || '/icons/icon-192x192.png',

@@ -24,13 +24,10 @@ import {
   Maximize2
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { ChatWallpaperConfig, MESSENGER_THEMES } from './ChatWallpaperLayer';
-import type { MessengerTheme } from './ChatWallpaperLayer';
+import { ChatWallpaperConfig } from './ChatWallpaperLayer';
 import { MediaQuality } from '../../services/MediaService';
 import { logger } from '@/src/utils/logger';
 
-export { MESSENGER_THEMES };
-export type { MessengerTheme };
 
 interface ChatWallpaperControllerProps {
   chatId: string;
@@ -48,6 +45,100 @@ const PRESET_WALLPAPERS = [
   { id: 'preset-blue-vibes', name: 'Blue Pastel', value: '/wallpapers/blue-vibes.jpg', isGradient: false },
   { id: 'preset-lavender-bunny', name: 'Lavender Bunny', value: '/wallpapers/lavender-bunny.jpg', isGradient: false },
   { id: 'preset-mint-froggy', name: 'Mint Froggy', value: '/wallpapers/mint-froggy.jpg', isGradient: false },
+];
+
+export interface MessengerTheme {
+  id: string;
+  name: string;
+  category: string;
+  bubbleGradient: string; // Used on message bubbles
+  previewColor: string; // Main color for swatch circle
+  bgGradientDark: string; // Thematic background for dark theme
+  bgGradientLight: string; // Thematic background for light theme
+  description: string;
+}
+
+export const MESSENGER_THEMES: MessengerTheme[] = [
+  {
+    id: 'ocean',
+    name: 'Ocean Blue',
+    category: 'Classic',
+    bubbleGradient: 'linear-gradient(135deg, #0084FF 0%, #00C6FF 100%)',
+    previewColor: '#0084FF',
+    bgGradientDark: 'linear-gradient(135deg, #030f1c 0%, #08213b 50%, #004e92 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 50%, #7dd3fc 100%)',
+    description: 'Classic azure & sky'
+  },
+  {
+    id: 'sunset',
+    name: 'Sunset Peach',
+    category: 'Vibrant',
+    bubbleGradient: 'linear-gradient(135deg, #FF512F 0%, #DD2476 100%)',
+    previewColor: '#FF512F',
+    bgGradientDark: 'linear-gradient(135deg, #1c0813 0%, #3a0d26 50%, #681534 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #ffedd5 0%, #fecdd3 50%, #fed7aa 100%)',
+    description: 'Amber & coral sunset'
+  },
+  {
+    id: 'cyberpunk',
+    name: 'Neon Cyber',
+    category: 'Electric',
+    bubbleGradient: 'linear-gradient(135deg, #00f2ff 0%, #ff00ea 100%)',
+    previewColor: '#00f2ff',
+    bgGradientDark: 'linear-gradient(135deg, #060814 0%, #170d2b 50%, #0c1a2e 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #ecfeff 0%, #fdf4ff 50%, #ede9fe 100%)',
+    description: 'Electric cyan & magenta'
+  },
+  {
+    id: 'lavender',
+    name: 'Lilac Dream',
+    category: 'Pastel',
+    bubbleGradient: 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)',
+    previewColor: '#8B5CF6',
+    bgGradientDark: 'linear-gradient(135deg, #130924 0%, #25103d 50%, #3e145e 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 50%, #e9d5ff 100%)',
+    description: 'Soft lavender & orchid'
+  },
+  {
+    id: 'emerald',
+    name: 'Emerald Mint',
+    category: 'Nature',
+    bubbleGradient: 'linear-gradient(135deg, #10B981 0%, #06B6D4 100%)',
+    previewColor: '#10B981',
+    bgGradientDark: 'linear-gradient(135deg, #02140e 0%, #062b1e 50%, #0b4532 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 50%, #a7f3d0 100%)',
+    description: 'Crisp botanical mint'
+  },
+  {
+    id: 'berry',
+    name: 'Berry Rose',
+    category: 'Romantic',
+    bubbleGradient: 'linear-gradient(135deg, #f43f5e 0%, #be123c 100%)',
+    previewColor: '#f43f5e',
+    bgGradientDark: 'linear-gradient(135deg, #1c050c 0%, #380a19 50%, #5c0f2a 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 50%, #fecdd3 100%)',
+    description: 'Velvet raspberry & ruby'
+  },
+  {
+    id: 'cotton_candy',
+    name: 'Cotton Candy',
+    category: 'Sweet',
+    bubbleGradient: 'linear-gradient(135deg, #ec4899 0%, #3b82f6 100%)',
+    previewColor: '#ec4899',
+    bgGradientDark: 'linear-gradient(135deg, #160a22 0%, #28123c 50%, #152244 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #fdf2f8 0%, #fce7f3 50%, #e0f2fe 100%)',
+    description: 'Playful pink & blue'
+  },
+  {
+    id: 'midnight',
+    name: 'Midnight Slate',
+    category: 'Minimal',
+    bubbleGradient: 'linear-gradient(135deg, #334155 0%, #0f172a 100%)',
+    previewColor: '#475569',
+    bgGradientDark: 'linear-gradient(135deg, #020617 0%, #0f172a 50%, #1e293b 100%)',
+    bgGradientLight: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%)',
+    description: 'Minimal slate & obsidian'
+  }
 ];
 
 export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = ({

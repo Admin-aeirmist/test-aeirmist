@@ -16,6 +16,7 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { analytics } from '../../services/AnalyticsService';
 import { MediaQuality } from '../../services/MediaService';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 import { MusicSearchModal } from '../music/MusicSearchModal';
 import { logger } from '@/src/utils/logger';
@@ -328,7 +329,6 @@ interface PhotoLayer {
   zIndex: number;
   aspectRatio: number;
   file?: File;
-  shape?: string;
 }
 
 interface TextLayer {
@@ -1164,7 +1164,6 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
 
   // Layout state
   const [layoutModeOpen, setLayoutModeOpen] = useState(false);
-  const [isHandsFree, setIsHandsFree] = useState(false);
   const [currentLayout, setCurrentLayout] = useState<LayoutTemplate | null>(null);
   const [layoutSlots, setLayoutSlots] = useState<LayoutSlot[]>([]);
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);

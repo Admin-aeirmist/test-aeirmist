@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShieldAlert, Send, LogOut, Download, Clock, Info, ShieldCheck, RefreshCw, AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { api } from '../../services/api/client';
+import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
 
 export const BannedScreen: React.FC = () => {
-  const { profile, user, logout, addToast, updateProfile } = useAeirmist();
+  const { profile, user, logout, db, addToast, updateProfile } = useAeirmist();
   const [appealReason, setAppealReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -18,6 +18,7 @@ export const BannedScreen: React.FC = () => {
   const isSuspensionExpired = Boolean(expiresAt && Date.now() >= expiresAt);
 
   const handleRestoreAccount = async () => {
+    if (!profile?.id || !db) return;
     if (!isSuspensionExpired) {
       addToast({
         title: 'Suspension Active',
@@ -29,29 +30,38 @@ export const BannedScreen: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      if (updateProfile) {
-        await updateProfile({
-          isBanned: false,
-          status: 'ACTIVE',
-          suspensionInfo: null
-        });
-      } else {
-        await api.users.updateProfile({
-          privacySettings: { isBanned: false, status: 'ACTIVE' }
-        });
-      }
+      const profileRef = doc(db, 'profiles', profile.id);
+      await updateDoc(profileRef, {
+        isBanned: false,
+        status: 'ACTIVE',
+        suspensionInfo: null
+      });
       addToast({
         title: 'Account Restored',
         message: 'Your temporary suspension has ended. Welcome back!',
         type: 'success'
       });
     } catch (err) {
-      logger.error('Failed to unban profile:', err);
-      addToast({
-        title: 'Restoration Error',
-        message: 'Could not restore account directly. Please contact support.',
-        type: 'warning'
-      });
+      logger.error('Failed to update profile directly, trying updateProfile fallback:', err);
+      try {
+        await updateProfile({
+          isBanned: false,
+          status: 'ACTIVE',
+          suspensionInfo: null
+        });
+        addToast({
+          title: 'Account Restored',
+          message: 'Your temporary suspension has ended.',
+          type: 'success'
+        });
+      } catch (err2) {
+        logger.error('Failed to unban profile:', err2);
+        addToast({
+          title: 'Restoration Error',
+          message: 'Could not restore account directly. Please contact support.',
+          type: 'warning'
+        });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -83,14 +93,18 @@ export const BannedScreen: React.FC = () => {
 
   const handleSubmitAppeal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!appealReason.trim()) return;
+    if (!user || !db || !appealReason.trim()) return;
 
     setIsSubmitting(true);
     try {
-      await api.support.createTicket({
-        type: 'general',
-        area: 'Appeal',
-        message: `Account suspension appeal from @${profile?.username || user?.email || 'user'}: ${appealReason.trim()}`
+      await addDoc(collection(db, 'appeals'), {
+        userId: user.uid,
+        username: profile?.username || 'Anonymous',
+        userEmail: user.email,
+        reason: appealReason.trim(),
+        status: 'pending',
+        timestamp: serverTimestamp(),
+        createdAt: new Date().toISOString()
       });
       setSubmitted(true);
       addToast({
@@ -99,12 +113,11 @@ export const BannedScreen: React.FC = () => {
         type: 'success'
       });
     } catch (error) {
-      logger.warn('Appeal ticket submission notice:', error);
-      setSubmitted(true);
+      logger.error('Appeal submission failed:', error);
       addToast({
-        title: 'Appeal Submitted',
-        message: 'Your appeal has been received and is pending moderator review.',
-        type: 'success'
+        title: 'Submission Error',
+        message: 'Could not submit appeal. Please try again later.',
+        type: 'warning'
       });
     } finally {
       setIsSubmitting(false);

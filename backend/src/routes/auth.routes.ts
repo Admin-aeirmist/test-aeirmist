@@ -12,12 +12,20 @@ const RegisterSchema = z.object({
   password: z.string().min(6),
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
   displayName: z.string().min(1).max(100),
+  location: z.string().optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  deviceInfo: z.string().optional(),
 });
 
 const LoginSchema = z.object({
   identifier: z.string().optional(),
   email: z.string().optional(),
   password: z.string().min(1),
+  location: z.string().optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  deviceInfo: z.string().optional(),
 }).refine(data => !!(data.identifier || data.email), {
   message: 'Either identifier or email must be provided',
 });
@@ -44,10 +52,22 @@ router.post('/register', authRateLimiter, async (req, res: Response) => {
       passwordAlgorithm: 'bcrypt',
     });
 
+    const detectedLocation = data.location || 'Dhaka, Bangladesh';
+
     const profile = await UserDAL.createProfile({
       userId: user.id,
       username: data.username,
       displayName: data.displayName,
+      location: detectedLocation,
+    });
+
+    // Record login session in SQL
+    await UserDAL.recordLoginSession({
+      userId: user.id,
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+      deviceName: data.deviceInfo || 'Browser Session',
+      location: detectedLocation,
     });
 
     const token = generateAccessToken({
@@ -111,6 +131,20 @@ router.post('/login', authRateLimiter, async (req, res: Response) => {
       await UserDAL.updatePassword(user.id, newBcryptHash, 'bcrypt');
       console.log(`🔑 [Auto-Upgrade] User ${user.email} password upgraded from Firebase Scrypt to Bcrypt`);
     }
+
+    const detectedLocation = data.location || 'Dhaka, Bangladesh';
+    if (data.location) {
+      await UserDAL.updateProfile(user.id, { location: detectedLocation });
+    }
+
+    // Record login session in SQL
+    await UserDAL.recordLoginSession({
+      userId: user.id,
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+      deviceName: data.deviceInfo || 'Browser Session',
+      location: detectedLocation,
+    });
 
     const profile = await UserDAL.getProfileByUserId(user.id);
     const token = generateAccessToken({

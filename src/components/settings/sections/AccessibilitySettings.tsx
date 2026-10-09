@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { 
   Eye, 
   Type, 
@@ -42,7 +43,11 @@ const AccessibilitySettings = () => {
   };
 
   return (
-    <div className="space-y-12">
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-12"
+    >
       <div className="space-y-1">
         <h2 className="text-3xl font-display font-bold text-white">Visual Synthesis</h2>
         <p className="text-xs text-white/45 uppercase tracking-widest font-medium">Calibrate the interface to your sensory requirements</p>
@@ -177,11 +182,11 @@ const AccessibilitySettings = () => {
           </div>
         </div>
       </section>
-    </div>
+    </motion.div>
   );
 };
 
-const AccessibilityToggle = React.memo(({ icon, title, desc, enabled, onChange }: any) => (
+const AccessibilityToggle = ({ icon, title, desc, enabled, onChange }: any) => (
   <button 
     onClick={() => onChange(!enabled)}
     className={`p-5 rounded-3xl border transition-all text-left flex items-start gap-4 group ${
@@ -207,6 +212,6 @@ const AccessibilityToggle = React.memo(({ icon, title, desc, enabled, onChange }
       <p className="text-[10px] text-white/30 mt-1 leading-relaxed">{desc}</p>
     </div>
   </button>
-));
+);
 
 export default AccessibilitySettings;

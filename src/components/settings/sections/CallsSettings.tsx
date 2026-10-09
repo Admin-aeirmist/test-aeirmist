@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { 
   Phone, 
   Video, 
@@ -17,7 +18,11 @@ const CallsSettings = () => {
   const { addToast } = useAeirmist();
 
   return (
-    <div className="space-y-12">
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-12"
+    >
       <div className="space-y-1">
         <h2 className="text-3xl font-display font-bold text-white">Sonic Transmission</h2>
         <p className="text-xs text-white/45 uppercase tracking-widest font-medium">Calibrate audio and video communication parameters</p>
@@ -129,11 +134,11 @@ const CallsSettings = () => {
           </button>
         </div>
       </section>
-    </div>
+    </motion.div>
   );
 };
 
-const CallToggle = React.memo(({ icon, title, desc, enabled }: any) => (
+const CallToggle = ({ icon, title, desc, enabled }: any) => (
   <button className="w-full p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all flex items-center justify-between text-left group">
     <div className="flex items-center gap-5">
       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
@@ -154,6 +159,6 @@ const CallToggle = React.memo(({ icon, title, desc, enabled }: any) => (
       }`} />
     </div>
   </button>
-));
+);
 
 export default CallsSettings;

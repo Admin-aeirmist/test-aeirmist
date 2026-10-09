@@ -63,8 +63,22 @@ import { ChatWallpaperLayer } from './messenger/ChatWallpaperLayer';
 import { ChatWallpaperController } from './messenger/ChatWallpaperController';
 import { GroupCreationModal } from './messenger/GroupCreationModal';
 import { GroupInfoPanel } from './messenger/GroupInfoPanel';
-import { api } from '../services/api/client';
-import { getSocket } from '../services/api/socket';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  orderBy, 
+  addDoc, 
+  serverTimestamp, 
+  doc, 
+  getDoc,
+  updateDoc,
+  limit,
+  deleteDoc,
+  arrayUnion
+} from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { Chat, Message } from '../types/messenger';
 import { 
   formatAeirmistTimestamp, 
@@ -210,44 +224,38 @@ export const LiveParticipantName = ({ participantId, fallbackName, className = "
     : (profileData?.displayName || profileData?.username || (isFallbackValid ? fallbackName : '') || 'Aeirmist User');
 
   useEffect(() => {
-    if (!chatId || typeof chatId !== 'string' || !chatId.trim()) return;
-    try {
-      const stored = localStorage.getItem(`chat_settings_${chatId.trim()}`);
-      if (stored) {
-        const nicks = JSON.parse(stored).nicknames || {};
+    if (!db || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
+    // Nickname listener (separate collection — cannot be shared via profile cache)
+    const unsubNickname = onSnapshot(doc(db, 'chat_settings', chatId.trim()), (docSnap) => {
+      if (docSnap.exists()) {
+        const nicks = docSnap.data().nicknames || {};
         setNickname(nicks[participantId] || '');
       } else {
         setNickname('');
       }
-    } catch (e) {
-      setNickname('');
-    }
-  }, [participantId, chatId]);
+    }, (err) => {
+      logger.error("Error listening for shared nickname:", err);
+    });
+    return () => unsubNickname();
+  }, [db, participantId, chatId]);
 
   return <span className={className}>{isDeleted ? 'Aeirmist User' : (nickname || profileName)}</span>;
 };
 
 const LiveParticipantPresenceDot = ({ participantId }: { participantId: string }) => {
-  const { db, onlineUsers, profile } = useAeirmist();
+  const { db, onlineUsers } = useAeirmist();
   const profileData = useSharedProfile(db, participantId);
 
   const isDeleted = profileData?.isDeleted === true;
-  const lastSeenMs = extractTimestampMs(profileData?.lastSeen) || extractTimestampMs(profileData?.lastActiveAt);
-  const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
-  const isOnline = !!(
-    (participantId && onlineUsers?.has?.(participantId)) ||
-    (profileData?.uid && onlineUsers?.has?.(profileData.uid)) ||
-    (profileData?.status === 'online' && isRecentHeartbeat)
-  );
+  const isOnline = !!onlineUsers?.has?.(participantId);
   const hasShowActivity = profileData?.privacySettings?.showActivity !== false;
   const isOnlineStatusOn = profileData?.messagingSettings?.onlineStatus !== false;
-  const myOnlineStatusOn = profile?.messagingSettings?.onlineStatus !== false;
-  const showPresence = !isDeleted && profileData != null && isOnline && hasShowActivity && isOnlineStatusOn && myOnlineStatusOn;
+  const showPresence = !isDeleted && profileData != null && isOnline && hasShowActivity && isOnlineStatusOn;
 
   if (!showPresence) return null;
 
   return (
-    <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-[#0c0d12] shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
+    <div className="absolute bottom-1 right-1 w-4 h-4 bg-aeirmist-lime rounded-lg border-2 border-aeirmist-bg lg:border-[3px]" />
   );
 };
 
@@ -261,41 +269,37 @@ const LiveParticipantSubDetails = ({ participantId, chatId }: { participantId: s
 
   // Derive from shared cache instead of individual listener
   const username = profileData?.username || '';
-  const lastSeen = profileData?.lastSeen || profileData?.lastActiveAt || null;
+  const lastSeen = profileData?.lastSeen || null;
   const showPresence = profileData?.privacySettings?.showActivity !== false;
   const isOnlineStatusOn = profileData?.messagingSettings?.onlineStatus !== false;
 
   useEffect(() => {
-    if (!participantId || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
+    if (!db || !participantId || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
 
-    const socket = getSocket();
-    const handleTyping = (data: any) => {
-      if (data?.conversationId === chatId.trim() && (data?.userId === participantId || data?.profileId === participantId)) {
-        setIsTyping(true);
-      }
-    };
-    const handleStopTyping = (data: any) => {
-      if (data?.conversationId === chatId.trim() && (data?.userId === participantId || data?.profileId === participantId)) {
+    const indicatorId = `${chatId.trim()}_${participantId.trim()}`;
+    const unsubTyping = onSnapshot(doc(db, 'typing_indicators', indicatorId), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.updatedAt) {
+          try {
+            const date = typeof data.updatedAt.toDate === 'function' ? data.updatedAt.toDate() : new Date(data.updatedAt);
+            const isCurrentlyTyping = (Date.now() - date.getTime()) < 4000;
+            setIsTyping(isCurrentlyTyping);
+          } catch (e) {
+            setIsTyping(false);
+          }
+        } else {
+          setIsTyping(false);
+        }
+      } else {
         setIsTyping(false);
       }
-    };
+    });
 
-    socket.on('user_typing', handleTyping);
-    socket.on('user_stop_typing', handleStopTyping);
+    return () => unsubTyping();
+  }, [db, participantId, chatId]);
 
-    return () => {
-      socket.off('user_typing', handleTyping);
-      socket.off('user_stop_typing', handleStopTyping);
-    };
-  }, [participantId, chatId]);
-
-  const lastSeenMs = extractTimestampMs(lastSeen) || extractTimestampMs(profileData?.updatedAt);
-  const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
-  const isOnline = !!(
-    (participantId && onlineUsers?.has?.(participantId)) ||
-    (profileData?.uid && onlineUsers?.has?.(profileData.uid)) ||
-    (profileData?.status === 'online' && isRecentHeartbeat)
-  );
+  const isOnline = !!onlineUsers?.has?.(participantId);
 
   let presenceText = '';
   if (showPresence) {
@@ -348,8 +352,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     localAvatarURL,
     toggleNotification,
     deleteConversation,
-    addToast,
-    setFloatingChatHead
+    addToast
   } = useAeirmist();
   const { settings } = useAppearance();
   const [chats, setChats] = useState<Chat[]>(() => {
@@ -780,11 +783,13 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         const rawLastText = typeof rawLastMsg === 'string' 
           ? rawLastMsg 
           : (data.latestMessagePreview || rawLastMsg?.text || ((data as any).lastMessageText || 'No messages yet'));
+        const lastSenderId = data.latestMessageSenderId || rawLastMsg?.senderId || (data as any).lastSenderId;
         const isSentByMe = !!(lastSenderId && (
           lastSenderId === profile.id || 
           lastSenderId === user.uid || 
-          lastSenderId === (profile as any)?.userId || 
-          lastSenderId === (user as any)?.id
+          lastSenderId === user.id ||
+          lastSenderId.replace(/^profile_/, '') === profile.id.replace(/^profile_/, '') ||
+          lastSenderId.replace(/^profile_/, '') === (user.uid || '').replace(/^profile_/, '')
         ));
 
         let displayLastMsg = rawLastText;
@@ -993,42 +998,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     setMessageSearchQuery('');
     setIsInfoOpen(false);
     setIsMobileList(false);
-
-    // Keep floating chat heads updated so exiting inbox into feed retains the chat head
-    if (profile?.messagingSettings?.enableChatHeads !== false && setFloatingChatHead) {
-      const isGroup = chat.isGroup || chat.type === 'group';
-      const headPhoto = isGroup ? (chat.photo || (chat as any).groupPhotoURL) : (chat.photo || '');
-      const headName = isGroup ? (chat.name || 'Group') : (chat.name || 'Chat');
-      setFloatingChatHead({
-        id: chat.id,
-        name: headName || 'Chat',
-        photo: headPhoto || '',
-        unreadCount: chat.unreadCount?.[profile?.id || ''] || 0,
-        participantId: chat.otherParticipantId || (!isGroup ? chat.participants?.find((p: string) => p !== profile?.id) : undefined)
-      });
-    }
   };
-
-  // When leaving Messenger (switching to feed or other tabs), preserve active chat as floating head
-  useEffect(() => {
-    return () => {
-      if (activeChatId && currentChat && profile?.messagingSettings?.enableChatHeads !== false && setFloatingChatHead) {
-        const isVault = currentChat.isVaulted?.[profile?.id || ''] === true;
-        if (!isVault) {
-          const isGroup = currentChat.isGroup || currentChat.type === 'group';
-          const headPhoto = isGroup ? (currentChat.photo || (currentChat as any).groupPhotoURL) : (currentChat.photo || '');
-          const headName = isGroup ? (currentChat.name || 'Group') : (currentChat.name || 'Chat');
-          setFloatingChatHead({
-            id: currentChat.id,
-            name: headName || 'Chat',
-            photo: headPhoto || '',
-            unreadCount: currentChat.unreadCount?.[profile?.id || ''] || 0,
-            participantId: currentChat.otherParticipantId || (!isGroup ? currentChat.participants?.find((p: string) => p !== profile?.id) : undefined)
-          });
-        }
-      }
-    };
-  }, [activeChatId, currentChat, profile?.id, profile?.messagingSettings?.enableChatHeads, setFloatingChatHead]);
 
   const handleOptimisticChatBump = useCallback((chatId: string, text: string, currentChatObj?: any) => {
     const now = Date.now();
@@ -1192,8 +1162,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       </AnimatePresence>
       {/* Background Gradients - Dimmed when wallpaper is active to prevent clashing */}
       <div className={`absolute inset-0 overflow-hidden pointer-events-none transition-opacity duration-500 ${activeChatTheme?.wallpaperURL ? 'opacity-10' : 'opacity-100'}`}>
-        <div className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-white/5' : 'bg-aeirmist-cyan/10'} rounded-full [-webkit-mask-image:radial-gradient(closest-side,black,transparent)] [mask-image:radial-gradient(closest-side,black,transparent)]`} />
-        <div className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-aeirmist-magenta/5' : 'bg-aeirmist-magenta/10'} rounded-full [-webkit-mask-image:radial-gradient(closest-side,black,transparent)] [mask-image:radial-gradient(closest-side,black,transparent)]`} />
+        <div className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-white/5' : 'bg-aeirmist-cyan/10'} rounded-full blur-[120px]`} />
+        <div className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${currentChat?.isVanishMode ? 'bg-aeirmist-magenta/5' : 'bg-aeirmist-magenta/10'} rounded-full blur-[120px]`} />
       </div>
 
       <AnimatePresence>
@@ -2127,9 +2097,9 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
             <CallHistorySection 
               onBack={() => { setView('chats'); setIsMobileList(true); }} 
               onRedial={async (pid, type) => {
-                const res = await api.users.getProfile(pid).catch(() => null);
-                if (res?.profile) {
-                  handleUserClick(res.profile, type);
+                const profileDoc = await getDoc(doc(db, 'profiles', pid));
+                if (profileDoc.exists()) {
+                  handleUserClick({ id: pid, ...profileDoc.data() }, type);
                 }
               }}
               onUserClick={onUserClick}
@@ -2242,7 +2212,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-12 text-center bg-transparent relative overflow-hidden select-none min-h-0 w-full animate-fade-in">
             {/* Subtle Ambient Glow */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] h-[320px] bg-aeirmist-cyan/10 rounded-full [-webkit-mask-image:radial-gradient(closest-side,black,transparent)] [mask-image:radial-gradient(closest-side,black,transparent)]" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] h-[320px] bg-aeirmist-cyan/10 rounded-full blur-[100px]" />
             </div>
 
             <div className="relative z-10 max-w-sm mx-auto flex flex-col items-center">
@@ -2435,7 +2405,6 @@ const ChatWindow = ({
     togglePinMessage, 
     clearChat, 
     toggleFollow, 
-    toggleBlockUser, 
     startCall,
     addToast,
     setFloatingChatHead
@@ -2507,50 +2476,6 @@ const ChatWindow = ({
   const [otherProfile, setOtherProfile] = useState<any>(null);
   const [otherProfileLoaded, setOtherProfileLoaded] = useState(false);
 
-  // Unified multi-identity resolution for sender identity
-  const myIds = useMemo(() => {
-    return [
-      profile?.id,
-      (profile as any)?.userId,
-      (profile as any)?.ownerUid,
-      (profile as any)?.uid,
-      user?.uid,
-      user?.id,
-      (user as any)?._id
-    ].filter(Boolean) as string[];
-  }, [profile, user]);
-
-  const isMessageFromMe = useCallback((senderId?: string) => {
-    if (!senderId) return false;
-    if (myIds.includes(senderId)) return true;
-
-    const isGroup = Boolean(chat.isGroup || (chat as any).type === 'group' || (chat.participants && chat.participants.length > 2));
-    if (!isGroup) {
-      const otherIds = [
-        chat.otherParticipantId,
-        chat.otherParticipantUid,
-        otherProfile?.id,
-        (otherProfile as any)?.userId,
-        (otherProfile as any)?.uid
-      ].filter(Boolean) as string[];
-
-      if (otherIds.length > 0) {
-        if (otherIds.includes(senderId)) return false;
-        // In 1-on-1 chat, if sender is not the other person, it is me
-        return true;
-      }
-    }
-
-    return false;
-  }, [myIds, chat.isGroup, (chat as any).type, chat.participants, chat.otherParticipantId, chat.otherParticipantUid, otherProfile]);
-
-  // Live presence ticker so relative active status ("Active 5m ago", etc.) updates automatically in real time
-  const [, setPresenceTicker] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => setPresenceTicker(t => t + 1), 15000);
-    return () => clearInterval(timer);
-  }, []);
-
   // Messenger 2.0: Hydrate persistent local outbox on active chat selection
   useEffect(() => {
     if (!chat.id) return;
@@ -2563,7 +2488,7 @@ const ChatWindow = ({
           .map(item => ({
             id: item.id,
             text: item.text,
-            senderId: user?.uid || profile?.id,
+            senderId: profile?.id,
             type: item.type as any,
             mediaUrl: item.mediaUrl || undefined,
             timestamp: item.status === 'failed' ? 'Failed to send' : 'Sending...',
@@ -2581,11 +2506,11 @@ const ChatWindow = ({
         return next;
       });
     }
-  }, [chat.id, profile?.id, user?.uid]);
+  }, [chat.id, profile?.id]);
 
   const showTheirPresence = otherProfile?.privacySettings?.showActivity !== false;
   const isMySpace = chat.id.startsWith('myspace_');
-  const isSelfChat = isMessageFromMe(chat.otherParticipantId);
+  const isSelfChat = chat.otherParticipantId === profile?.id;
   const isPrivateSpace = isMySpace || isSelfChat;
 
   const isGroupChat = Boolean(chat.isGroup || (chat as any).type === 'group' || (chat.participants && chat.participants.length > 2));
@@ -2621,33 +2546,33 @@ const ChatWindow = ({
 
   useEffect(() => {
     const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
-    if (!otherId) {
+    if (!db || !otherId) {
       setOtherProfile(null);
       setOtherProfileLoaded(true);
       return;
     }
     
-    let isMounted = true;
-    api.users.getProfile(otherId).then(res => {
-      if (isMounted) {
-        setOtherProfileLoaded(true);
-        if (res?.profile) {
-          const p = res.profile;
-          setOtherProfile({ id: p.id, ...p, isDeleted: p.isDeleted === true || p.status === 'deleted' });
+    // Subscribe to other user's profile to check if they are private or deleted
+    const unsub = onSnapshot(doc(db, 'profiles', otherId), (snap) => {
+      setOtherProfileLoaded(true);
+      if (snap.exists()) {
+        const pData = snap.data();
+        if (pData.isDeleted === true || pData.status === 'deleted') {
+          setOtherProfile({ id: snap.id, ...pData, isDeleted: true });
         } else {
-          setOtherProfile(null);
+          setOtherProfile({ id: snap.id, ...pData });
         }
-      }
-    }).catch(err => {
-      if (isMounted) {
-        logger.warn("Could not listen to other profile:", err);
-        setOtherProfileLoaded(true);
+      } else {
         setOtherProfile(null);
       }
+    }, (err) => {
+      logger.warn("Could not listen to other profile:", err);
+      setOtherProfileLoaded(true);
+      setOtherProfile(null);
     });
     
-    return () => { isMounted = false; };
-  }, [chat.otherParticipantId, chat.profileIds, profile?.id]);
+    return () => unsub();
+  }, [db, chat.otherParticipantId, chat.profileIds, profile?.id]);
 
   const handleReply = (msg: any) => {
     setReplyingTo(msg);
@@ -2729,22 +2654,29 @@ const ChatWindow = ({
 
   // Intersection Observer for Seen Status
   useEffect(() => {
-    if (!chat.id || !profile?.id || chat.id.startsWith('new_') || chat.status === 'request') return;
+    if (!db || !chat.id || !user || chat.id.startsWith('new_') || chat.status === 'request') return;
 
     // Check if there are any unread messages from the other user
     const hasUnread = messages.some(m => {
-      if (isMessageFromMe(m.senderId)) return false;
-      return !m.isSeen;
+      const isFromMe = m.senderId === profile?.id || m.senderId === user?.uid || (m.senderId && profile?.id && m.senderId.replace(/^profile_/, '') === profile.id.replace(/^profile_/, ''));
+      if (isFromMe) return false;
+      const lastReadTs = chat.lastRead?.[profile.id];
+      const lastReadMs = lastReadTs?.toMillis ? lastReadTs.toMillis() : (lastReadTs || 0);
+      return m.timestampMs > lastReadMs;
     });
     
     if (hasUnread) {
-      updateSeenStatus(chat.id);
+      // Debounce: wait 2 seconds before marking as read to batch updates during rapid chat
+      const timer = setTimeout(() => {
+        updateSeenStatus(chat.id);
+      }, 2000);
+      return () => clearTimeout(timer);
     }
-  }, [messages, chat.id, profile?.id, isMessageFromMe, updateSeenStatus]);
+  }, [messages, chat.id, user?.uid, chat.lastRead]);
 
   // Message Listener
   useEffect(() => {
-    if (!db || !chat.id || !user || !profile?.id || chat.id.startsWith('new_')) {
+    if (!chat.id || !user || !profile?.id || chat.id.startsWith('new_')) {
       setLoading(false);
       return;
     }
@@ -2773,7 +2705,7 @@ const ChatWindow = ({
       setMessages(fetchedMessages);
       setLoading(false);
       requestAnimationFrame(() => scrollToBottom('auto'));
-    }, 50, user?.uid);
+    });
 
     return () => {
       isCurrent = false;
@@ -2782,10 +2714,40 @@ const ChatWindow = ({
     };
   }, [db, chat.id, user?.uid, profile?.id, scrollToBottom]);
 
+  const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
+
+  // Universal Sender Identity Matcher (Handles UUIDs, usr_ IDs, profile_ IDs, and usernames seamlessly)
+  const isSenderMe = useCallback((senderId?: string | null, senderUid?: string | null, isOptimistic?: boolean): boolean => {
+    if (isOptimistic) return true;
+    if (!senderId && !senderUid) return false;
+    const myProfileId = profile?.id;
+    const myUid = user?.uid || user?.id;
+    const myUsername = profile?.username;
+
+    if (senderId && myProfileId && senderId === myProfileId) return true;
+    if (senderId && myUid && (senderId === myUid || senderId === `profile_${myUid}`)) return true;
+    if (senderUid && myUid && senderUid === myUid) return true;
+    if (senderUid && myProfileId && (senderUid === myProfileId || `profile_${senderUid}` === myProfileId)) return true;
+    if (myProfileId && senderId && myProfileId.replace(/^profile_/, '') === senderId.replace(/^profile_/, '')) return true;
+    if (senderId && myUsername && senderId.toLowerCase() === myUsername.toLowerCase()) return true;
+
+    // In 1v1 direct chat, if senderId is NOT otherParticipantId, it's definitely me!
+    if (!chat.isGroup && chat.type !== 'group' && otherParticipantId) {
+      const isOther = senderId === otherParticipantId || 
+                      senderId === otherParticipantId.replace(/^profile_/, '') || 
+                      `profile_${senderId}` === otherParticipantId ||
+                      (otherProfile?.id && (senderId === otherProfile.id || `profile_${senderId}` === otherProfile.id)) ||
+                      (otherProfile?.userId && senderId === otherProfile.userId) ||
+                      (otherProfile?.username && senderId?.toLowerCase() === otherProfile.username.toLowerCase());
+      if (!isOther) {
+        return true;
+      }
+    }
+    return false;
+  }, [profile?.id, profile?.username, user?.uid, user?.id, chat.isGroup, chat.type, otherParticipantId]);
+
   // Derive processed messages with live read/delivered status and guaranteed stable chronological order
   const displayedMessages = useMemo(() => {
-    const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
-    
     const parseTimestampMs = (val: any): number => {
       if (!val) return 0;
       if (typeof val.toMillis === 'function') return val.toMillis();
@@ -2805,7 +2767,14 @@ const ChatWindow = ({
     const merged = [...messages, ...optimistic].filter((msg, index, self) => {
       // Deduplicate optimistic messages if server confirms receipt
       if (msg.isOptimistic) {
-        const confirmed = messages.some(m => m.metadata?.optimisticId === msg.id || m.id === msg.id);
+        const confirmed = messages.some(m => {
+          const optMatch = m.metadata?.optimisticId === msg.id || (m as any).optimisticId === msg.id || m.id === msg.id;
+          if (optMatch) return true;
+          if (m.text === msg.text && isSenderMe(m.senderId, (m as any).senderUid) && Math.abs((m.timestampMs || 0) - (msg.timestampMs || Date.now())) < 30000) {
+            return true;
+          }
+          return false;
+        });
         if (confirmed) return false;
       }
       return index === self.findIndex((m) => m.id === msg.id);
@@ -2815,12 +2784,13 @@ const ChatWindow = ({
        const timestampMs = (typeof m.timestampMs === 'number' && m.timestampMs > 0)
          ? m.timestampMs
          : (parseTimestampMs(m.createdAt) || parseTimestampMs(m.timestamp) || (m.isOptimistic ? Date.now() : Date.now()));
+       const fromMe = isSenderMe(m.senderId, (m as any).senderUid, m.isOptimistic);
        return {
          ...m,
          timestampMs,
          _originalIndex: originalIndex,
-         isSeen: m.isSeen || (isMessageFromMe(m.senderId) && timestampMs <= lastRead),
-         isDelivered: m.isDelivered || (isMessageFromMe(m.senderId) && timestampMs <= lastDelivered),
+         isSeen: m.isSeen || (fromMe && timestampMs <= lastRead),
+         isDelivered: m.isDelivered || (fromMe && timestampMs <= lastDelivered),
          isFailed: failedMessages.has(m.id)
        };
     }).sort((a, b) => {
@@ -2837,7 +2807,7 @@ const ChatWindow = ({
         isNewSender: i === 0 || sorted[i-1].senderId !== m.senderId
       }
     }));
-  }, [messages, optimistic, chat.lastRead, chat.lastDelivered, chat.id, profile?.id, failedMessages]);
+  }, [messages, optimistic, chat.lastRead, chat.lastDelivered, chat.id, profile?.id, failedMessages, otherParticipantId, isSenderMe]);
   
   // Group consecutive media messages (sent within 120s by same sender with no caption) into Telegram albums
   const groupedDisplayItems = useMemo(() => {
@@ -2946,26 +2916,30 @@ const ChatWindow = ({
     const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
     if (!otherParticipantId) return;
 
-    const socket = getSocket();
-    const handleTyping = (data: any) => {
-      if (data?.conversationId === chat.id && (data?.userId === otherParticipantId || data?.profileId === otherParticipantId)) {
-        setRemoteTyping(true);
-      }
-    };
-    const handleStopTyping = (data: any) => {
-      if (data?.conversationId === chat.id && (data?.userId === otherParticipantId || data?.profileId === otherParticipantId)) {
+    const indicatorId = `${chat.id}_${otherParticipantId}`;
+    const indicatorRef = doc(db, 'typing_indicators', indicatorId);
+    
+    const unsubscribe = onSnapshot(indicatorRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.updatedAt) {
+          try {
+            const date = typeof data.updatedAt.toDate === 'function' ? data.updatedAt.toDate() : new Date(data.updatedAt);
+            const isCurrentlyTyping = (Date.now() - date.getTime()) < 4000;
+            setRemoteTyping(isCurrentlyTyping);
+          } catch (e) {
+            setRemoteTyping(false);
+          }
+        } else {
+          setRemoteTyping(false);
+        }
+      } else {
         setRemoteTyping(false);
       }
-    };
+    }, (err) => logger.warn("Typing sync delayed", err));
 
-    socket.on('user_typing', handleTyping);
-    socket.on('user_stop_typing', handleStopTyping);
-
-    return () => {
-      socket.off('user_typing', handleTyping);
-      socket.off('user_stop_typing', handleStopTyping);
-    };
-  }, [chat.id, profile?.id]);
+    return () => unsubscribe();
+  }, [db, chat.id, profile?.id]);
 
   // Auto-retry failed messages when coming back online
   useEffect(() => {
@@ -3005,7 +2979,7 @@ const ChatWindow = ({
     const optimisticMsg: Message = {
       id: optimisticId,
       text: `Sent a ${type}`,
-      senderId: user?.uid || profile.id,
+      senderId: profile.id,
       type: type,
       mediaUrl,
       timestamp: 'Sending...',
@@ -3058,7 +3032,6 @@ const ChatWindow = ({
       });
       
       messageOutboxService.markDelivered(chat.id, optimisticId);
-      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
 
       setFailedMessages(prev => {
         const next = new Set(prev);
@@ -3089,7 +3062,7 @@ const ChatWindow = ({
     const optimisticMsg = {
       id: optimisticId,
       text,
-      senderId: user?.uid || profile.id,
+      senderId: profile.id,
       type: 'text',
       timestamp: 'Sending...',
       timestampMs: Date.now(),
@@ -3147,7 +3120,7 @@ const ChatWindow = ({
           id: replyingTo.id,
           text: replyingTo.text,
           senderId: replyingTo.senderId || null,
-          senderName: isMessageFromMe(replyingTo.senderId) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || otherProfile?.username || chat.name || "Sizuka")
+          senderName: isSenderMe(replyingTo.senderId, (replyingTo as any).senderUid) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || otherProfile?.username || chat.name || "Aeirmist User")
         } : null
       });
       
@@ -3157,22 +3130,6 @@ const ChatWindow = ({
       
       // Mark delivered in outbox
       messageOutboxService.markDelivered(chat.id, optimisticId);
-
-      // Remove optimistic pending message immediately
-      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
-
-      // Instantly inject into messages as sent if not already added by socket
-      setMessages(prev => {
-        if (prev.some(m => m.id === newId || m.id === optimisticId || (m.metadata?.optimisticId && m.metadata.optimisticId === optimisticId))) return prev;
-        const confirmedMsg: Message = {
-          ...optimisticMsg,
-          id: newId || optimisticId,
-          isOptimistic: false,
-          status: 'sent',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        } as any;
-        return [...prev, confirmedMsg];
-      });
 
       setFailedMessages(prev => {
         const next = new Set(prev);
@@ -3224,7 +3181,7 @@ const ChatWindow = ({
       const optimisticMsg: any = {
         id: optimisticId,
         text: type === 'file' ? file.name : (useHD ? 'Sending Ultra HD Connections...' : `Sending ${type}...`),
-        senderId: user?.uid || profile.id,
+        senderId: profile.id,
         type: type === 'voice' ? 'voice' : (type === 'file' ? 'file' : 'media'),
         mediaUrl: localUrl,
         thumbnail: thumbnail,
@@ -3295,7 +3252,7 @@ const ChatWindow = ({
           id: replyingTo.id,
           text: replyingTo.text,
           senderId: replyingTo.senderId || null,
-          senderName: isMessageFromMe(replyingTo.senderId) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
+          senderName: isSenderMe(replyingTo.senderId, (replyingTo as any).senderUid) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "Aeirmist User")
         } : null)
       });
       
@@ -3333,7 +3290,7 @@ const ChatWindow = ({
     const optimisticMsg: Message = {
       id: optimisticId,
       text: text || `Sent a ${type}`,
-      senderId: user?.uid || profile.id,
+      senderId: profile.id,
       type,
       mediaUrl,
       timestamp: 'Sending...',
@@ -3376,13 +3333,12 @@ const ChatWindow = ({
           id: replyingTo.id,
           text: replyingTo.text,
           senderId: replyingTo.senderId || null,
-          senderName: isMessageFromMe(replyingTo.senderId) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "User")
+          senderName: isSenderMe(replyingTo.senderId, (replyingTo as any).senderUid) ? "You" : (replyingTo.metadata?.senderName || otherProfile?.displayName || chat.name || "Aeirmist User")
         } : null)
       });
 
       setReplyingTo(null);
       messageOutboxService.markDelivered(chat.id, optimisticId);
-      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
       setFailedMessages(prev => {
         const next = new Set(prev);
         next.delete(optimisticId);
@@ -3414,18 +3370,6 @@ const ChatWindow = ({
     return profile?.themeSettings?.perChatWallpapers?.[chat.id] || chat.themeSettings;
   }, [profile?.themeSettings?.perChatWallpapers, chat.id, chat.themeSettings]);
 
-  const otherParticipantTargetId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || otherProfile?.id;
-  const otherUid = otherProfile?.uid;
-  const lastSeenMs = extractTimestampMs(otherProfile?.lastSeen) || extractTimestampMs(otherProfile?.lastActiveAt) || extractTimestampMs(otherProfile?.updatedAt);
-  const isRecentHeartbeat = lastSeenMs > 0 ? (Date.now() - lastSeenMs < 120000) : true;
-  const isOtherOnline = !!(
-    (otherProfile?.status === 'online' && isRecentHeartbeat) ||
-    (otherParticipantTargetId && onlineUsers?.has(otherParticipantTargetId)) ||
-    (otherUid && onlineUsers?.has(otherUid)) ||
-    (otherProfile?.id && onlineUsers?.has(otherProfile.id))
-  ) && otherProfile?.messagingSettings?.onlineStatus !== false;
-  const showStatus = otherProfile?.messagingSettings?.onlineStatus !== false && profile?.messagingSettings?.onlineStatus !== false;
-
   return (
     <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto h-full min-h-0 overflow-hidden relative z-10 ${isVaultMode ? 'bg-[#030107]/98' : 'bg-transparent'}`}>
       {/* Direct Scoped Chat Wallpaper Layer */}
@@ -3453,8 +3397,8 @@ const ChatWindow = ({
               userId={!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable ? chat.otherParticipantId : undefined}
               className="group-hover:border-aeirmist-cyan transition-colors"
             />
-            {!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable && isOtherOnline && showTheirPresence && showStatus && (
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#0c0d14] ring-1 ring-emerald-400/40 z-10 shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
+            {!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable && !!onlineUsers?.has?.(chat.otherParticipantId || '') && showTheirPresence && (
+              <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-aeirmist-lime rounded-full border-2 border-aeirmist-bg z-10" />
             )}
           </div>
           <div className={`group min-w-0 flex-1 ${!isPrivateSpace && !isOtherUnavailable ? 'cursor-pointer' : ''}`} onClick={!isPrivateSpace && !isOtherUnavailable ? (chat?.isGroup ? toggleInfo : handleVisitProfile) : undefined}>
@@ -3477,28 +3421,26 @@ const ChatWindow = ({
             )}
             {!isPrivateSpace && !isOtherUnavailable && showTheirPresence && (
               remoteTyping ? (
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="flex gap-0.5 items-center">
-                    <span className="w-1 h-1 rounded-full bg-aeirmist-cyan animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1 h-1 rounded-full bg-aeirmist-cyan animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1 h-1 rounded-full bg-aeirmist-cyan animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </span>
-                  <span className={`text-[11px] font-semibold italic ${isVaultMode ? 'text-[#c77dff]' : 'text-aeirmist-cyan'}`}>Typing...</span>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <span className={`text-[8px] uppercase tracking-widest font-black italic ${isVaultMode ? 'text-[#c77dff]' : 'text-aeirmist-cyan'}`}>Typing...</span>
                 </div>
-              ) : (
-                <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                  {isOtherOnline && showStatus ? (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-emerald-500/25 shrink-0 animate-pulse" />
-                      <span className="text-[11px] font-medium text-emerald-400 truncate">Active now</span>
-                    </>
-                  ) : (
-                    <span className="text-[11px] font-normal text-slate-500 dark:text-neutral-400 truncate">
-                      {formatActiveStatus(false, lastSeenMs || otherProfile?.lastSeen, !showStatus)}
-                    </span>
-                  )}
-                </div>
-              )
+              ) : (() => {
+                const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || otherProfile?.id;
+                const isOtherOnline = (otherProfile?.status === 'online' || !!onlineUsers?.has(otherId || '')) && otherProfile?.messagingSettings?.onlineStatus !== false;
+                const showStatus = otherProfile?.messagingSettings?.onlineStatus !== false && profile?.messagingSettings?.onlineStatus !== false;
+                return (
+                  <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                    <p className={`text-[8px] uppercase tracking-widest font-bold ${isOtherOnline && showStatus ? 'text-aeirmist-lime flex items-center gap-1' : 'text-white/40'} truncate`}>
+                      {isOtherOnline && showStatus && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-lime animate-pulse inline-block" />}
+                      {formatActiveStatus(
+                        isOtherOnline && showStatus, 
+                        otherProfile?.lastSeen || otherProfile?.updatedAt, 
+                        !showStatus
+                      )}
+                    </p>
+                  </div>
+                );
+              })()
             )}
           </div>
         </div>
@@ -3529,7 +3471,7 @@ const ChatWindow = ({
                   id: chat.id,
                   name: headName,
                   photo: headPhoto,
-                  participantId: chat.otherParticipantId || otherProfile?.id
+                  participantId: otherParticipantId || otherProfile?.id || otherProfile?.userId || chat.otherParticipantId
                 });
                 onBack?.();
               }}
@@ -3588,7 +3530,7 @@ const ChatWindow = ({
         </div>
 
         {isOtherUnavailable && (
-          <div className="mx-auto my-6 max-w-sm px-6 py-5 bg-white/[0.03] border border-white/10 rounded-2xl text-center shadow-lg animate-fade-in">
+          <div className="mx-auto my-6 max-w-sm px-6 py-5 bg-white/[0.03] border border-white/10 rounded-2xl text-center backdrop-blur-xl shadow-lg animate-fade-in">
             <div className="w-10 h-10 rounded-full bg-white/5 mx-auto flex items-center justify-center mb-2.5 text-white/40">
               <UserX size={20} />
             </div>
@@ -3619,7 +3561,7 @@ const ChatWindow = ({
                 {showDate && (
                   <div className="flex items-center gap-4 my-8 sticky top-2 z-10 px-4 md:px-8">
                     <div className="flex-1 h-px bg-white/5" />
-                    <div className="bg-[#1A1B22]/80 backdrop-blur-sm border border-white/10 px-6 py-2 rounded-full text-[11px] font-bold uppercase tracking-[0.1em] text-white/50 shadow-xl pointer-events-auto">
+                    <div className="bg-[#1A1B22]/80 backdrop-blur-xl border border-white/10 px-6 py-2 rounded-full text-[11px] font-bold uppercase tracking-[0.1em] text-white/50 shadow-xl pointer-events-auto">
                       {formatDateSeparator(msg.timestampMs)}
                     </div>
                     <div className="flex-1 h-px bg-white/5" />
@@ -3628,10 +3570,10 @@ const ChatWindow = ({
                 <MessageItem 
                   message={msg} 
                   albumItems={albumItems}
-                  isMe={isMessageFromMe(msg.senderId)} 
+                  isMe={isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic)} 
                   theme={chat.theme}
                   bubbleGradient={currentChatTheme?.bubbleGradient}
-                  senderPhoto={isMessageFromMe(msg.senderId) ? (localAvatarURL || profile?.photoURL) : (otherProfile?.photoURL || chat.photo)}
+                  senderPhoto={isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic) ? (localAvatarURL || profile?.photoURL) : (otherProfile?.photoURL || chat.photo)}
                   onRetry={() => handleRetry(msg)} 
                   conversationId={chat.id}
                   onImageClick={(url, imgIdx, allUrls) => {
@@ -3647,15 +3589,15 @@ const ChatWindow = ({
                   onPin={(message) => togglePinMessage(chat.id, message.id, message.text || '', (chat as any).pinnedMessage?.id === message.id)}
                   otherUserRestricted={isRestricted(chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || '')}
                   seenAt={(() => {
-                    const isSelf = isMessageFromMe(chat.otherParticipantId);
+                    const isSelf = chat.otherParticipantId === profile?.id;
                     if (isSelf) return null;
                     const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
                     if (!otherId || !chat.lastRead) return null;
                     return chat.lastRead[otherId];
                   })()}
                   otherParticipantName={otherProfile?.displayName || otherProfile?.username || chat.name}
-                  isFirstInSequence={idx === 0 || isMessageFromMe(self[idx-1].msg.senderId) !== isMessageFromMe(msg.senderId)}
-                  isLastInSequence={idx === self.length - 1 || isMessageFromMe(self[idx+1].msg.senderId) !== isMessageFromMe(msg.senderId)}
+                  isFirstInSequence={idx === 0 || self[idx-1].msg.senderId !== msg.senderId}
+                  isLastInSequence={idx === self.length - 1 || self[idx+1].msg.senderId !== msg.senderId}
                 />
               </div>
             );
@@ -3717,10 +3659,10 @@ const ChatWindow = ({
             const isOtherBlocked = otherId ? isBlocked(otherId) : false;
 
             // Check for inbound message requests first
-            const isIncomingRequest = chat.status === 'request' && !isMessageFromMe(chat.lastMessageSenderId);
+            const isIncomingRequest = chat.status === 'request' && chat.lastMessageSenderId !== profile?.id;
             if (isIncomingRequest) {
               return (
-                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center">
+                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
                   <span className="text-aeirmist-magenta font-black uppercase tracking-[0.2em] text-[10px] block mb-2">Inbound Signal Request</span>
                   <p className="text-white/60 text-xs mb-4">
                     Do you want to authorize connection with @{otherProfile?.username || 'user'}? They won't know you've read their message until you Accept.
@@ -3729,10 +3671,11 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
+                          await updateDoc(doc(db, 'conversations', chat.id), {
+                            status: 'active',
+                            acceptedAt: serverTimestamp()
+                          });
                           onChatUpdate?.({ ...chat, status: 'active' });
-                          if (chat?.id) {
-                            api.chat.markSeen(chat.id).catch(() => {});
-                          }
                           if (otherId) {
                             try {
                               await toggleFollow(otherId);
@@ -3761,6 +3704,7 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
+                          await deleteDoc(doc(db, 'conversations', chat.id));
                           onBack();
                           addToast?.({
                             title: 'Deleted',
@@ -3783,9 +3727,12 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
-                          if (otherId && toggleBlockUser) {
-                            await toggleBlockUser(otherId);
+                          if (otherId) {
+                            await updateDoc(doc(db, 'profiles', profile.id), {
+                              'social.blocked': arrayUnion(otherId)
+                            });
                           }
+                          await deleteDoc(doc(db, 'conversations', chat.id));
                           onBack();
                           addToast?.({
                             title: 'Connection Severed',
@@ -3812,7 +3759,7 @@ const ChatWindow = ({
 
             if (isOtherUnavailable) {
               return (
-                <div className="w-full py-4 px-6 bg-white/[0.02] border border-white/10 rounded-2xl md:rounded-[2rem] text-center select-none">
+                <div className="w-full py-4 px-6 bg-white/[0.02] border border-white/10 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl select-none">
                   <span className="text-white/40 text-xs font-medium tracking-wide">
                     This person is unavailable on Aeirmist.
                   </span>
@@ -3822,7 +3769,7 @@ const ChatWindow = ({
 
             if (isOtherBlocked) {
               return (
-                <div className="w-full p-4 md:p-6 bg-red-500/10 border border-red-500/20 rounded-2xl md:rounded-[2rem] text-center">
+                <div className="w-full p-4 md:p-6 bg-red-500/10 border border-red-500/20 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
                   <span className="text-red-400 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Connections Severed</span>
                   <span className="text-white/60 text-xs">You have blocked this Profile. Lift the Block in the details panel to resume activity.</span>
                 </div>
@@ -3837,7 +3784,7 @@ const ChatWindow = ({
 
             if (otherParticipantId && isBlocked(otherParticipantId)) {
               return (
-                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center">
+                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
                   <span className="text-white/40 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Transmission Suspended</span>
                   <span className="text-white/60 text-xs">
                     You have blocked this user. Unblock this user to resume conversation.
@@ -3848,7 +3795,7 @@ const ChatWindow = ({
 
             if (isOtherPrivate && !amFollowingOther && chat.status !== 'active') {
               return (
-                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center">
+                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
                   <span className="text-white/40 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Connections Locked</span>
                   <span className="text-white/60 text-xs">
                     {isFollowRequestPending ? "Follow request pending" : "You can't message this user yet."}
@@ -3913,3 +3860,4 @@ const ChatWindow = ({
 };
 
 export default Messenger;
+

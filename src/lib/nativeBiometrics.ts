@@ -12,7 +12,7 @@ export const checkDeviceBiometrics = async (): Promise<BiometricCheckResult> => 
     if (!Capacitor.isNativePlatform()) {
       return { available: false, error: 'Not a native mobile platform' };
     }
-    const plugin = ((Capacitor as any).Plugins)?.NativeSettings;
+    const plugin = (Capacitor.Plugins as any)?.NativeSettings;
     if (plugin?.checkBiometrics) {
       const res = await plugin.checkBiometrics();
       return { available: !!res?.available, status: res?.status };
@@ -29,7 +29,7 @@ export const authenticateWithBiometrics = async (
 ): Promise<boolean> => {
   try {
     if (!Capacitor.isNativePlatform()) return false;
-    const plugin = ((Capacitor as any).Plugins)?.NativeSettings;
+    const plugin = (Capacitor.Plugins as any)?.NativeSettings;
     if (!plugin?.authenticateBiometrics) return false;
 
     const res = await plugin.authenticateBiometrics({

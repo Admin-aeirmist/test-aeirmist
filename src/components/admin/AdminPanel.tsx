@@ -68,18 +68,18 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getCanonicalUid, getProfileId, normalizeAdminUser } from '@/src/utils/identityUtils';
-import { formatAeirmistTimestamp } from '../../lib/date';
-import { fadeTransition } from '../../lib/motion';
-import { api } from '../../services/api/client';
+import {
 
-const sendPasswordResetEmail = async (_auth: any, email: string) => {
-  try {
-    await api.auth.forgotPassword(email);
-  } catch (e) {
-    logger.warn('Password reset failed', e);
-  }
-};
-const serverTimestamp = () => new Date().toISOString();
+sendPasswordResetEmail } from 'firebase/auth';
+import {
+
+formatAeirmistTimestamp } from '../../lib/date';
+import {
+
+doc, getDoc, updateDoc, collection, query, orderBy, limit, onSnapshot, where, serverTimestamp, setDoc, deleteDoc, writeBatch, getDocs, addDoc } from 'firebase/firestore';
+import {
+
+fadeTransition } from '../../lib/motion';
 
 const AuditLogTab = ({ db }: { db: any }) => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -87,34 +87,17 @@ const AuditLogTab = ({ db }: { db: any }) => {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    let isCancelled = false;
-    api.admin.getAuditLogs().then(res => {
-      if (!isCancelled) {
-        setLogs((res.logs || []).map(l => ({
-          id: l.id,
-          action: l.action,
-          targetUid: l.targetId,
-          adminEmail: l.adminEmail || l.actorEmail || 'System Admin',
-          adminRole: l.adminRole || 'admin',
-          reason: l.details?.reason || l.metadata?.reason || (l.details && typeof l.details === 'object' && Object.keys(l.details).length > 0 ? JSON.stringify(l.details) : ''),
-          severity: l.details?.severity || (l.action?.includes('DELETE') || l.action?.includes('BAN') ? 'high' : 'medium'),
-          ip: l.details?.ip || '127.0.0.1',
-          before: l.details?.before,
-          after: l.details?.after,
-          timestamp: l.createdAt,
-        })));
-        setLoading(false);
-      }
-    }).catch(() => {
-      if (!isCancelled) {
-        setLogs([]);
-        setLoading(false);
-      }
+    if (!db) return;
+    const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(150));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, (err) => {
+      logger.warn("Audit logs error:", err);
+      setLoading(false);
     });
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+    return () => unsub();
+  }, [db]);
 
   const filteredLogs = logs.filter(l => 
     l.action?.toLowerCase().includes(search.toLowerCase()) ||
@@ -162,11 +145,7 @@ const AuditLogTab = ({ db }: { db: any }) => {
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-mono text-white/60">
-                  {log.timestamp
-                    ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(
-                        typeof log.timestamp?.toDate === 'function' ? log.timestamp.toDate() : new Date(log.timestamp)
-                      )
-                    : 'Recent'}
+                  {log.timestamp?.toDate ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(log.timestamp.toDate()) : 'Recent'}
                 </p>
                 <p className="text-[9px] font-mono text-white/30">IP: {log.ip || '127.0.0.1'}</p>
               </div>
@@ -309,7 +288,7 @@ const SystemTab = () => {
         darkLogoUrl: darkLogo,
         lightLogoUrl: lightLogo
       });
-      addToast({ title: 'Logos Saved to Database', message: 'Custom app logos are permanently saved in database.', type: 'success' });
+      addToast({ title: 'Logos Saved to Database', message: 'Custom app logos are permanently saved in Firestore.', type: 'success' });
     } catch (err: any) {
       addToast({ title: 'Save Failed', message: 'Could not save branding to database.', type: 'warning' });
     } finally {
@@ -359,7 +338,7 @@ const SystemTab = () => {
               <h3 className="text-sm font-black uppercase tracking-widest text-white flex items-center gap-2">
                 App Logo
                 <span className="px-2 py-0.5 rounded-md text-[9px] font-mono font-bold uppercase bg-aeirmist-cyan/20 text-aeirmist-cyan border border-aeirmist-cyan/30">
-                  Database Permanent
+                  Firestore Permanent
                 </span>
               </h3>
               <p className="text-xs text-white/50">
@@ -485,7 +464,7 @@ const SystemTab = () => {
         <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-white/50 font-mono">
           <div className="flex items-center gap-2">
             <CheckCircle size={14} className="text-emerald-400 shrink-0" />
-            <span>Database Storage: <strong className="text-white">PostgreSQL system_config/app_branding</strong></span>
+            <span>Database Storage: <strong className="text-white">Firestore system_config/app_branding</strong></span>
           </div>
           <div className="text-[10px] text-white/30">
             {appBranding?.updatedAt ? `Last Synced: ${new Date(appBranding.updatedAt).toLocaleString()}` : 'Ready for logo configuration'}
@@ -496,155 +475,85 @@ const SystemTab = () => {
   );
 };
 
-const DashboardTab = ({ 
-  db, 
-  setActiveTab, 
-  addToast, 
-  onOpenAddAdmin 
-}: { 
-  db: any; 
-  setActiveTab: (tab: any) => void;
-  addToast?: any;
-  onOpenAddAdmin?: () => void;
-}) => {
+const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) => void }) => {
   const [stats, setStats] = useState({
-    totalUsers: 1483,
-    activeUsers: 945,
-    suspended: 6,
-    banned: 3,
-    appeals: 1,
-    reportsToday: 4,
-    orders: 128,
-    revenue: '$34,820.00',
-    subscribers: 142,
-    onlineNow: '942 active',
-    serverHealth: '99.99% Healthy',
-    uptime: '99.99%',
-    edgeLatency: '18ms',
-    dailyActiveSeries: [
-      { day: 'Mon', count: 880, date: 'Oct 02' },
-      { day: 'Tue', count: 915, date: 'Oct 03' },
-      { day: 'Wed', count: 940, date: 'Oct 04' },
-      { day: 'Thu', count: 910, date: 'Oct 05' },
-      { day: 'Fri', count: 975, date: 'Oct 06' },
-      { day: 'Sat', count: 1040, date: 'Oct 07' },
-      { day: 'Sun', count: 942, date: 'Oct 08' }
-    ],
-    reportsTrendSeries: [
-      { day: 'Mon', flagged: 4, resolved: 4 },
-      { day: 'Tue', flagged: 6, resolved: 5 },
-      { day: 'Wed', flagged: 3, resolved: 3 },
-      { day: 'Thu', flagged: 7, resolved: 6 },
-      { day: 'Fri', flagged: 5, resolved: 5 },
-      { day: 'Sat', flagged: 8, resolved: 7 },
-      { day: 'Sun', flagged: 4, resolved: 4 }
-    ]
+    totalUsers: 0,
+    suspended: 0,
+    banned: 0,
+    appeals: 0,
+    reportsToday: 0,
+    orders: 0,
+    revenue: '—',
+    subscribers: 0,
+    onlineNow: '—'
   });
 
-  const [activeDauHover, setActiveDauHover] = useState<number | null>(null);
-  const [isPurgingCache, setIsPurgingCache] = useState(false);
-
   useEffect(() => {
-    let isCancelled = false;
-    Promise.allSettled([
-      api.admin.getStats(),
-      api.admin.getReports().catch(() => ({ reports: [] })),
-      api.admin.getTickets().catch(() => ({ tickets: [] })),
-    ]).then(([statsRes, reportsRes, ticketsRes]) => {
-      if (isCancelled) return;
-      const s = statsRes.status === 'fulfilled' ? statsRes.value?.stats : null;
-      const rep = reportsRes.status === 'fulfilled' ? (reportsRes.value?.reports || []) : [];
-      const tick = ticketsRes.status === 'fulfilled' ? (ticketsRes.value?.tickets || []) : [];
-
-      setStats(prev => ({
-        ...prev,
-        totalUsers: s?.totalUsers || (1480 + (tick.length || 0)),
-        activeUsers: s?.activeUsers || 942,
-        suspended: s?.suspendedUsers ?? prev.suspended,
-        banned: s?.bannedUsers ?? prev.banned,
-        appeals: s?.pendingAppeals ?? tick.filter((t: any) => t.type === 'appeal' && (t.status === 'pending' || t.status === 'open')).length,
-        reportsToday: s?.totalReports ?? rep.length,
-        orders: s?.totalMarketplaceOrders ?? s?.marketplaceOrders ?? 128,
-        revenue: s?.revenue || '$34,820.00',
-        subscribers: s?.subscribers || 142,
-        onlineNow: s?.activeUsers ? `${s.activeUsers} active` : `${prev.activeUsers} active`,
-        serverHealth: s?.serverHealth ? '99.99% Healthy' : prev.serverHealth,
-        uptime: s?.uptime || '99.99%',
-        edgeLatency: s?.edgeLatency || '18ms',
-        dailyActiveSeries: s?.dailyActiveSeries || prev.dailyActiveSeries,
-        reportsTrendSeries: s?.reportsTrendSeries || prev.reportsTrendSeries
+    if (!db) return;
+    const unsubProfiles = onSnapshot(collection(db, 'profiles'), (snap) => {
+      const docs = snap.docs.map(d => d.data());
+      const subs = docs.filter(d => d.creatorModeEnabled || d.isVerified || d.isPremium).length;
+      setStats(s => ({
+        ...s,
+        totalUsers: docs.length,
+        suspended: docs.filter(d => d.status === 'SUSPENDED').length,
+        banned: docs.filter(d => d.status === 'BANNED' || d.isBanned).length,
+        subscribers: subs,
+        onlineNow: '—'
       }));
-    });
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+    }, (err) => logger.warn("Admin profiles listener:", err));
 
-  const handlePurgeCache = () => {
-    setIsPurgingCache(true);
-    setTimeout(() => {
-      setIsPurgingCache(false);
-      if (addToast) {
-        addToast({
-          title: 'Edge Cache Purged',
-          message: 'Cloudflare Pages edge cache and Redis keys synchronized globally across 285+ data centers.',
-          type: 'success'
-        });
-      }
-    }, 700);
-  };
+    const unsubAppeals = onSnapshot(collection(db, 'appeals'), (snap) => {
+      setStats(s => ({ ...s, appeals: snap.docs.filter(d => d.data().status === 'pending').length }));
+    }, (err) => logger.warn("Admin appeals listener:", err));
+
+    const unsubReports = onSnapshot(collection(db, 'reports'), (snap) => {
+      setStats(s => ({ ...s, reportsToday: snap.size }));
+    }, (err) => logger.warn("Admin reports listener:", err));
+
+    const unsubMarketplace = onSnapshot(collection(db, 'marketplace_items'), (snap) => {
+      const count = snap.size;
+      setStats(s => ({
+        ...s,
+        orders: count,
+        revenue: '—'
+      }));
+    }, (err) => logger.warn("Admin marketplace listener:", err));
+
+    return () => {
+      unsubProfiles();
+      unsubAppeals();
+      unsubReports();
+      unsubMarketplace();
+    };
+  }, [db]);
 
   const cards = [
-    { label: 'Active Users', value: stats.totalUsers - stats.banned, icon: <Users size={20} className="text-emerald-400" />, change: '+12.4% this week', tab: 'users' },
-    { label: 'Online Now', value: stats.onlineNow, icon: <Activity size={20} className="text-aeirmist-cyan" />, change: 'Real-time sync', tab: 'users' },
-    { label: 'Suspended', value: stats.suspended, icon: <Lock size={20} className="text-amber-400" />, change: 'Under review', tab: 'users' },
+    { label: 'Active Users', value: stats.totalUsers - stats.banned, icon: <Users size={20} className="text-emerald-400" />, change: 'Real-time sync', tab: 'users' },
+    { label: 'Online Now', value: stats.onlineNow, icon: <Activity size={20} className="text-aeirmist-cyan" />, change: 'Active sessions', tab: 'users' },
+    { label: 'Suspended', value: stats.suspended, icon: <Lock size={20} className="text-amber-400" />, change: 'Restricted access', tab: 'users' },
     { label: 'Banned', value: stats.banned, icon: <AlertTriangle size={20} className="text-red-400" />, change: 'Permanently blocked', tab: 'users' },
     { label: 'Pending Appeals', value: stats.appeals, icon: <ShieldCheck size={20} className="text-purple-400" />, change: 'Action required', tab: 'appeals' },
-    { label: 'Reports Today', value: stats.reportsToday, icon: <Flag size={20} className="text-orange-400" />, change: 'Active queue', tab: 'reports' },
-    { label: 'Marketplace Orders', value: stats.orders, icon: <ShoppingBag size={20} className="text-aeirmist-lime" />, change: 'Volume active', tab: 'marketplace' },
-    { label: 'Total Revenue', value: stats.revenue, icon: <DollarSign size={20} className="text-emerald-400" />, change: 'Escrow + Subs', tab: 'marketplace' },
+    { label: 'Reports Today', value: stats.reportsToday, icon: <Flag size={20} className="text-orange-400" />, change: 'Queue monitoring', tab: 'reports' },
+    { label: 'Marketplace Orders', value: stats.orders, icon: <ShoppingBag size={20} className="text-aeirmist-lime" />, change: 'Total listings', tab: 'marketplace' },
+    { label: 'Total Revenue', value: stats.revenue, icon: <DollarSign size={20} className="text-emerald-400" />, change: 'Calculated volume', tab: 'marketplace' },
     { label: 'Premium Subscribers', value: stats.subscribers, icon: <CreditCard size={20} className="text-purple-400" />, change: 'Creators & Verified', tab: 'marketplace' },
-    { label: 'System Health', value: stats.serverHealth, icon: <Server size={20} className="text-emerald-400" />, change: `Edge ${stats.edgeLatency}`, tab: 'security' }
+    { label: 'System Health', value: '—', icon: <Server size={20} className="text-emerald-400" />, change: 'Awaiting data', tab: 'security' }
   ];
-
-  const maxDau = Math.max(...stats.dailyActiveSeries.map(d => d.count), 1);
-  const maxRep = Math.max(...stats.reportsTrendSeries.map(d => Math.max(d.flagged, d.resolved)), 1);
 
   return (
     <div className="space-y-8">
-      {/* Top Header & Overview */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-lg md:text-xl font-black uppercase tracking-widest text-white flex items-center gap-2">
-            Enterprise Command Center
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-          </h2>
-          <p className="text-xs font-mono text-white/40 mt-0.5">Real-time platform telemetry, trust & safety metrics, and financial performance.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handlePurgeCache}
-            disabled={isPurgingCache}
-            className="flex items-center gap-2 h-9 px-3.5 rounded-xl bg-white/5 border border-white/10 hover:border-aeirmist-cyan/40 text-[10px] font-mono text-white/80 hover:text-white transition-all cursor-pointer"
-            title="Invalidate Edge & Redis Cache"
-          >
-            <RefreshCw size={12} className={isPurgingCache ? 'animate-spin text-aeirmist-cyan' : 'text-white/60'} />
-            <span>{isPurgingCache ? 'Purging...' : 'Flush Cache'}</span>
-          </button>
-          <div className="h-9 px-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center gap-2 text-[10px] font-mono font-bold">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Edge Mesh Active
-          </div>
-        </div>
+      <div>
+        <h2 className="text-lg font-black uppercase tracking-widest text-white">Enterprise Overview</h2>
+        <p className="text-xs font-mono text-white/40">Real-time platform telemetry, trust & safety metrics, and financial performance.</p>
       </div>
 
-      {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {cards.map((c, i) => (
           <div 
             key={i} 
             onClick={() => setActiveTab(c.tab)}
-            className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] flex flex-col justify-between space-y-4 cursor-pointer hover:border-aeirmist-cyan/40 hover:bg-white/[0.03] transition-all group relative overflow-hidden"
+            className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] flex flex-col justify-between space-y-4 cursor-pointer hover:border-aeirmist-cyan/40 hover:bg-white/[0.03] transition-all group"
           >
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-black uppercase tracking-widest text-white/40 group-hover:text-white transition-colors">{c.label}</span>
@@ -653,229 +562,34 @@ const DashboardTab = ({
               </div>
             </div>
             <div>
-              <p className="text-2xl font-mono font-bold text-white tracking-tight">{c.value}</p>
+              <p className="text-2xl font-mono font-bold text-white">{c.value}</p>
               <p className="text-[10px] font-mono text-aeirmist-cyan mt-1 flex items-center gap-1">
                 {c.change} <ChevronRight size={10} className="opacity-60 group-hover:translate-x-0.5 transition-transform" />
               </p>
             </div>
-            <div className="absolute -bottom-6 -right-6 w-16 h-16 bg-aeirmist-cyan/5 rounded-full blur-xl group-hover:bg-aeirmist-cyan/15 transition-all" />
           </div>
         ))}
       </div>
 
       {/* Analytics Charts Overview */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Daily Active Users Chart */}
-        <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-5">
+        <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-                <Activity size={14} className="text-aeirmist-cyan" />
-                Daily Active Users (DAU)
-              </h3>
-              <p className="text-[10px] font-mono text-white/40 mt-0.5">Rolling 7-day unique visitor sessions</p>
-            </div>
-            <div className="text-right">
-              <span className="text-xs font-mono font-bold text-aeirmist-cyan">~943 Avg / Day</span>
-              <p className="text-[9px] font-mono text-emerald-400">+14.2% Growth</p>
-            </div>
+            <h3 className="text-xs font-black uppercase tracking-widest text-white">Daily Active Users (DAU)</h3>
+            <span className="text-[10px] font-mono text-aeirmist-cyan">Last 7 Days</span>
           </div>
-
-          <div className="h-52 flex items-end gap-3 pt-6 px-2 border-b border-white/10 relative">
-            {stats.dailyActiveSeries.map((item, idx) => {
-              const heightPct = Math.round((item.count / maxDau) * 85);
-              const isHovered = activeDauHover === idx;
-              return (
-                <div 
-                  key={idx}
-                  onMouseEnter={() => setActiveDauHover(idx)}
-                  onMouseLeave={() => setActiveDauHover(null)}
-                  className="flex-1 flex flex-col items-center gap-2 h-full justify-end group cursor-pointer relative"
-                >
-                  {isHovered && (
-                    <div className="absolute -top-10 bg-[#0d131f] border border-aeirmist-cyan/40 px-2.5 py-1 rounded-xl text-[10px] font-mono text-white shadow-xl z-10 whitespace-nowrap">
-                      <span className="font-bold text-aeirmist-cyan">{item.count}</span> active • {item.date}
-                    </div>
-                  )}
-                  <div className="w-full relative flex items-end justify-center h-full">
-                    <div 
-                      style={{ height: `${heightPct}%` }}
-                      className={`w-full max-w-[36px] rounded-t-xl transition-all duration-300 ${
-                        isHovered 
-                          ? 'bg-gradient-to-t from-aeirmist-cyan to-emerald-400 shadow-lg shadow-aeirmist-cyan/20 scale-y-105' 
-                          : 'bg-gradient-to-t from-aeirmist-cyan/30 to-aeirmist-cyan/80 group-hover:from-aeirmist-cyan/60 group-hover:to-aeirmist-cyan'
-                      }`}
-                    />
-                  </div>
-                  <div className="text-center">
-                    <span className="text-[10px] font-mono text-white/70 block font-bold">{item.day}</span>
-                    <span className="text-[8px] font-mono text-white/30 block">{item.date.split(' ')[1]}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center justify-between text-[10px] font-mono text-white/40 pt-1">
-            <span>Peak: {maxDau} DAU</span>
-            <span className="text-aeirmist-cyan">Telemetry interval: 60s</span>
+          <div className="h-48 flex items-center justify-center pt-6 px-2 border-b border-white/10 opacity-30">
+            <span className="text-xs font-mono uppercase tracking-widest">Awaiting Data</span>
           </div>
         </div>
 
-        {/* Reports & Moderation Trend Chart */}
-        <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-5">
+        <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-                <ShieldCheck size={14} className="text-amber-400" />
-                Reports & Moderation Velocity
-              </h3>
-              <p className="text-[10px] font-mono text-white/40 mt-0.5">Trust & safety queue resolution</p>
-            </div>
-            <div className="text-right">
-              <span className="text-xs font-mono font-bold text-emerald-400">94.4% Solved</span>
-              <p className="text-[9px] font-mono text-white/40">Avg time: 42m</p>
-            </div>
+            <h3 className="text-xs font-black uppercase tracking-widest text-white">Reports & Moderation Trend</h3>
+            <span className="text-[10px] font-mono text-amber-400">Resolved vs Flagged</span>
           </div>
-
-          <div className="h-52 flex items-end gap-3 pt-6 px-2 border-b border-white/10 relative">
-            {stats.reportsTrendSeries.map((item, idx) => {
-              const flaggedHeight = Math.round((item.flagged / maxRep) * 80);
-              const resolvedHeight = Math.round((item.resolved / maxRep) * 80);
-              return (
-                <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group cursor-pointer relative">
-                  <div className="w-full flex items-end justify-center gap-1 h-full">
-                    {/* Flagged Bar */}
-                    <div 
-                      style={{ height: `${flaggedHeight}%` }}
-                      className="w-1/2 max-w-[16px] rounded-t-lg bg-gradient-to-t from-red-500/40 to-amber-500/80 group-hover:to-amber-400 transition-all"
-                      title={`${item.flagged} Flagged on ${item.day}`}
-                    />
-                    {/* Resolved Bar */}
-                    <div 
-                      style={{ height: `${resolvedHeight}%` }}
-                      className="w-1/2 max-w-[16px] rounded-t-lg bg-gradient-to-t from-emerald-500/40 to-emerald-400 group-hover:to-emerald-300 transition-all"
-                      title={`${item.resolved} Resolved on ${item.day}`}
-                    />
-                  </div>
-                  <span className="text-[10px] font-mono text-white/70 block font-bold">{item.day}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center justify-between text-[10px] font-mono text-white/60 pt-1">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded bg-amber-400" />
-                <span>Flagged</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded bg-emerald-400" />
-                <span>Resolved</span>
-              </div>
-            </div>
-            <button 
-              onClick={() => setActiveTab('reports')}
-              className="text-aeirmist-cyan hover:underline flex items-center gap-1"
-            >
-              Open Queue <ChevronRight size={10} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Quick Action Command Grid */}
-      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-              <Zap size={14} className="text-aeirmist-cyan" />
-              Administrative Quick Actions
-            </h3>
-            <p className="text-[10px] font-mono text-white/40 mt-0.5">Direct shortcuts to high-frequency governance and operations stations.</p>
-          </div>
-          <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">Enterprise Hub</span>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-          {[
-            { label: 'User Directory', desc: 'Manage & filter users', icon: <Users size={16} className="text-emerald-400" />, action: () => setActiveTab('users') },
-            { label: 'Moderation Queue', desc: `${stats.reportsToday} reports pending`, icon: <AlertTriangle size={16} className="text-orange-400" />, action: () => setActiveTab('reports') },
-            { label: 'Support Inbox', desc: 'Tickets & help requests', icon: <LifeBuoy size={16} className="text-blue-400" />, action: () => setActiveTab('tickets') },
-            { label: 'Verification Desk', desc: 'Meta-style badge reviews', icon: <CheckCircle size={16} className="text-aeirmist-cyan" />, action: () => setActiveTab('verification') },
-            { label: 'Marketplace & Pay', desc: 'Vendor orders & escrow', icon: <ShoppingBag size={16} className="text-aeirmist-lime" />, action: () => setActiveTab('marketplace') },
-            { label: 'Security Center', desc: 'Firewall & WAF status', icon: <Shield size={16} className="text-red-400" />, action: () => setActiveTab('security') },
-            { label: 'Feature Flags', desc: 'Rollouts & killswitches', icon: <Sliders size={16} className="text-purple-400" />, action: () => setActiveTab('flags') },
-            { label: 'Audit Logs', desc: 'Immutable action trail', icon: <History size={16} className="text-indigo-400" />, action: () => setActiveTab('logs') },
-            { label: 'System Branding', desc: 'Logo, favicon & name', icon: <Sparkles size={16} className="text-amber-400" />, action: () => setActiveTab('system') },
-            { label: '+ Add Administrator', desc: 'Provision superadmin', icon: <UserPlus size={16} className="text-teal-400" />, action: () => onOpenAddAdmin ? onOpenAddAdmin() : setActiveTab('roles') }
-          ].map((action, idx) => (
-            <button
-              key={idx}
-              onClick={action.action}
-              className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-aeirmist-cyan/40 hover:bg-white/[0.05] transition-all flex flex-col justify-between text-left group cursor-pointer space-y-3"
-            >
-              <div className="w-8 h-8 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
-                {action.icon}
-              </div>
-              <div>
-                <span className="text-[11px] font-bold text-white block group-hover:text-aeirmist-cyan transition-colors">{action.label}</span>
-                <span className="text-[9px] font-mono text-white/40 block mt-0.5">{action.desc}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Live Infrastructure & Edge Vitals */}
-      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-              <Server size={14} className="text-emerald-400" />
-              Platform Infrastructure & Edge Vitals
-            </h3>
-            <p className="text-[10px] font-mono text-white/40 mt-0.5">Hyper-converged Cloudflare Edge, PostgreSQL, and Redis cache clusters.</p>
-          </div>
-          <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-1 rounded-xl">99.99% Uptime</span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-            <div className="flex items-center justify-between text-[10px] font-mono text-white/50">
-              <span className="uppercase">Edge Network</span>
-              <span className="text-emerald-400 font-bold">OPERATIONAL</span>
-            </div>
-            <p className="text-base font-bold text-white font-mono">Cloudflare Pages</p>
-            <p className="text-[9px] font-mono text-white/40">285+ Global PoPs • Latency: {stats.edgeLatency} • HTTP/3 QUIC</p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-            <div className="flex items-center justify-between text-[10px] font-mono text-white/50">
-              <span className="uppercase">Primary DB</span>
-              <span className="text-emerald-400 font-bold">CONNECTED</span>
-            </div>
-            <p className="text-base font-bold text-white font-mono">PostgreSQL v16</p>
-            <p className="text-[9px] font-mono text-white/40">Pooled connection: 14/20 active • Query: 2.1ms</p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-            <div className="flex items-center justify-between text-[10px] font-mono text-white/50">
-              <span className="uppercase">KeyStore Cache</span>
-              <span className="text-emerald-400 font-bold">SYNCED</span>
-            </div>
-            <p className="text-base font-bold text-white font-mono">Redis Distributed</p>
-            <p className="text-[9px] font-mono text-white/40">Hit rate: 99.8% • Memory: 142MB • RTT: 0.4ms</p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-            <div className="flex items-center justify-between text-[10px] font-mono text-white/50">
-              <span className="uppercase">WebRTC Relay</span>
-              <span className="text-emerald-400 font-bold">ACTIVE</span>
-            </div>
-            <p className="text-base font-bold text-white font-mono">STUN / TURN Mesh</p>
-            <p className="text-[9px] font-mono text-white/40">Zero packet loss • Audio room jitter &lt; 12ms</p>
+          <div className="h-48 flex items-center justify-center pt-6 px-2 border-b border-white/10 opacity-30">
+            <span className="text-xs font-mono uppercase tracking-widest">Awaiting Data</span>
           </div>
         </div>
       </div>
@@ -1168,24 +882,23 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
     if (!targetUid) return;
 
     setLoadingUserReports(true);
-    let isCancelled = false;
-    api.admin.getReports().then(res => {
-      if (!isCancelled) {
-        const matching = (res.reports || []).filter((r: any) => r.reportedUid === targetUid || r.targetId === targetUid);
-        setUserReports(matching);
-        setLoadingUserReports(false);
-      }
-    }).catch(() => {
-      if (!isCancelled) {
-        setUserReports([]);
-        setLoadingUserReports(false);
-      }
+    const q1 = query(
+      collection(db, 'reports'),
+      where('reportedUid', '==', targetUid),
+      limit(20)
+    );
+
+    const unsub = onSnapshot(q1, (snap) => {
+      setUserReports(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoadingUserReports(false);
+    }, (err) => {
+      logger.warn("User reports fetch error:", err);
+      setUserReports([]);
+      setLoadingUserReports(false);
     });
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [selectedUserForDrawer]);
+    return () => unsub();
+  }, [selectedUserForDrawer, db]);
 
   const formatAccountCreationDate = (user: any): string => {
     if (!user) return 'N/A';
@@ -1224,21 +937,16 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
   };
 
   useEffect(() => {
-    let isCancelled = false;
-    setLoading(true);
-    api.users.search('', 100).then(res => {
-      if (!isCancelled) {
-        setUsers((res.users || []).map((u: any) => normalizeAdminUser(u)));
-        setLoading(false);
-      }
-    }).catch(err => {
+    if (!db) return;
+    const unsub = onSnapshot(collection(db, 'profiles'), (snapshot) => {
+      setUsers(snapshot.docs.map(d => normalizeAdminUser({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, (err) => {
       logger.warn("Profiles list error:", err);
-      if (!isCancelled) setLoading(false);
+      setLoading(false);
     });
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+    return () => unsub();
+  }, [db]);
 
   const handleApplySuspension = async () => {
     if (!suspendingUser) return;
@@ -1269,19 +977,74 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
     
     try {
       if (deleteType === 'anonymize') {
-        if (targetId) {
-          await api.admin.updateUserStatus(targetId, 'DEACTIVATED').catch(() => {});
+        if (profileId) {
+          await updateDoc(doc(db, 'profiles', profileId), {
+            displayName: 'Aeirmist User',
+            username: null,
+            usernameNormalized: null,
+            bio: '',
+            photoURL: '',
+            coverURL: '',
+            isAnonymized: true,
+            status: 'ANONYMIZED'
+          }).catch(() => {});
         }
-        setUsers(prev => prev.map(u => u.id === targetId ? { ...u, displayName: 'Aeirmist User', status: 'ANONYMIZED' } : u));
+        if (targetUid) {
+          await updateDoc(doc(db, 'users', targetUid), {
+            displayName: 'Aeirmist User',
+            username: null,
+            usernameNormalized: null,
+            isAnonymized: true,
+            status: 'ANONYMIZED'
+          }).catch(() => {});
+        }
         addToast({ title: 'User Anonymized', message: 'Personal data removed; posts remain.', type: 'success' });
       } else if (deleteType === 'soft') {
-        if (targetId) {
-          await api.admin.updateUserStatus(targetId, 'DELETED').catch(() => {});
+        if (profileId) {
+          await updateDoc(doc(db, 'profiles', profileId), {
+            status: 'DELETED',
+            isBanned: true
+          }).catch(() => {});
         }
-        setUsers(prev => prev.map(u => u.id === targetId ? { ...u, status: 'DELETED' } : u));
+        if (targetUid) {
+          await updateUserStatus(targetUid, 'DELETED', profileId);
+        }
         addToast({ title: 'Soft Deleted', message: 'Account marked as deleted (recoverable).', type: 'success' });
       } else {
-        // FULL HARD DELETE - ERASE EVERYTHING BY HARD DELETE VIA POSTGRESQL & STORAGE PURGE
+        // FULL HARD DELETE - ERASE EVERYTHING BY HARD DELETE
+        
+        // 1. Direct guaranteed deletion of all profile document variations
+        const profileDocsToDelete = new Set<string>();
+        if (profileId) profileDocsToDelete.add(profileId);
+        if (deleteModalUser.id) profileDocsToDelete.add(deleteModalUser.id);
+        if (targetUid) {
+          profileDocsToDelete.add(targetUid);
+          profileDocsToDelete.add(`profile_${targetUid}`);
+        }
+        if (deleteModalUser.rawRecord?.id) profileDocsToDelete.add(deleteModalUser.rawRecord.id);
+
+        for (const pId of Array.from(profileDocsToDelete)) {
+          if (pId) {
+            await deleteDoc(doc(db, 'profiles', pId)).catch((err) => logger.warn("Direct profile delete warning:", err));
+          }
+        }
+
+        // 2. Direct deletion of user doc & auth references
+        if (targetUid) {
+          await deleteDoc(doc(db, 'users', targetUid)).catch(() => {});
+          await deleteDoc(doc(db, 'users', `user_${targetUid}`)).catch(() => {});
+        }
+        if (deleteModalUser.id && deleteModalUser.id !== targetUid) {
+          await deleteDoc(doc(db, 'users', deleteModalUser.id)).catch(() => {});
+        }
+
+        // 3. Release username reservation lock
+        const uname = deleteModalUser.username || deleteModalUser.usernameNormalized;
+        if (uname && uname !== 'unknown') {
+          await deleteDoc(doc(db, 'usernames', uname.toLowerCase())).catch(() => {});
+        }
+
+        // 4. Deep database wipe across posts, feed_posts, notes, comments, stories, etc.
         try {
           if (targetId) {
             await purgeUser(targetId, profileId);
@@ -1852,6 +1615,16 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
                           return;
                         }
                         try {
+                          const q = query(collection(db, 'login_sessions'), where('userId', '==', targetUid));
+                          const snap = await getDocs(q);
+                          for (const d of snap.docs) {
+                            await updateDoc(doc(db, 'login_sessions', d.id), { revoked: true, revokedAt: serverTimestamp() });
+                          }
+                          await addDoc(collection(db, 'audit_logs'), {
+                            action: 'FORCE_LOGOUT_ALL_SESSIONS',
+                            targetUser: selectedUserForDrawer.id,
+                            timestamp: serverTimestamp()
+                          });
                           addToast({ title: 'Admin Override', message: `Revoked all active sessions for ${selectedUserForDrawer.displayName || selectedUserForDrawer.username}.`, type: 'success' });
                         } catch (err) {
                           addToast({ title: 'Error', message: 'Failed to revoke user sessions.', type: 'warning' });
@@ -1867,7 +1640,13 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
                       <button 
                         onClick={async () => {
                           try {
-                            await sendPasswordResetEmail(null, selectedUserForDrawer.email);
+                            await sendPasswordResetEmail(auth, selectedUserForDrawer.email);
+                            await addDoc(collection(db, 'audit_logs'), {
+                              action: 'ADMIN_TRIGGERED_PASSWORD_RESET',
+                              targetUser: selectedUserForDrawer.id,
+                              targetEmail: selectedUserForDrawer.email,
+                              timestamp: serverTimestamp()
+                            });
                             addToast({ title: 'Password Reset Sent', message: `Dispatched reset email to ${selectedUserForDrawer.email}.`, type: 'success' });
                           } catch (err: any) {
                             addToast({ title: 'Error', message: 'Failed to trigger password reset.', type: 'warning' });
@@ -2024,27 +1803,22 @@ const AppealsTab = ({ db, addToast }: { db: any; addToast: any }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let isCancelled = false;
-    api.admin.getTickets().then(res => {
-      if (!isCancelled) {
-        setAppeals(res.tickets || []);
-        setLoading(false);
-      }
-    }).catch(() => {
-      if (!isCancelled) {
-        setAppeals([]);
-        setLoading(false);
-      }
+    if (!db) return;
+    const q = query(collection(db, 'appeals'), orderBy('timestamp', 'desc'), limit(50));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setAppeals(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, (err) => {
+      logger.warn("Appeals list error:", err);
+      setLoading(false);
     });
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+    return () => unsub();
+  }, [db]);
 
   const handleResolveAppeal = async (appealId: string, status: 'approved' | 'rejected') => {
+    if (!db) return;
     try {
-      await api.admin.updateTicket(appealId, { status });
-      setAppeals(prev => prev.map(a => a.id === appealId ? { ...a, status } : a));
+      await updateDoc(doc(db, 'appeals', appealId), { status });
       addToast({ title: 'Appeal Updated', message: `Appeal marked as ${status}.`, type: 'success' });
     } catch (e) {
       logger.error("Failed to update appeal:", e);
@@ -2114,584 +1888,102 @@ const AppealsTab = ({ db, addToast }: { db: any; addToast: any }) => {
   );
 };
 
-interface MarketplaceOrder {
-  id: string;
-  buyer: string;
-  vendor: string;
-  item: string;
-  amount: number;
-  fee: number;
-  status: 'Completed' | 'Escrow Pending' | 'Disputed' | 'Refunded';
-  date: string;
-}
-
-const MarketplacePaymentsTab = ({ db, addToast }: { db?: any; addToast?: any }) => {
-  const [orders, setOrders] = useState<MarketplaceOrder[]>([
-    {
-      id: 'ORD-8921',
-      buyer: '@david_m',
-      vendor: '@elena_design',
-      item: 'Cyberpunk 3D Asset Pack Vol. 4',
-      amount: 85.00,
-      fee: 8.50,
-      status: 'Completed',
-      date: 'Oct 08, 2026'
-    },
-    {
-      id: 'ORD-8920',
-      buyer: '@marcus_dev',
-      vendor: '@kai_music',
-      item: 'Analog Modular Synth Stems Kit',
-      amount: 120.00,
-      fee: 12.00,
-      status: 'Escrow Pending',
-      date: 'Oct 08, 2026'
-    },
-    {
-      id: 'ORD-8919',
-      buyer: '@aisha_ai',
-      vendor: '@elena_design',
-      item: 'Holographic Vector UI Elements',
-      amount: 45.00,
-      fee: 4.50,
-      status: 'Completed',
-      date: 'Oct 07, 2026'
-    },
-    {
-      id: 'ORD-8918',
-      buyer: '@spambot_3000',
-      vendor: '@kai_music',
-      item: 'Commercial Audio Sync License',
-      amount: 250.00,
-      fee: 25.00,
-      status: 'Disputed',
-      date: 'Oct 06, 2026'
-    },
-    {
-      id: 'ORD-8917',
-      buyer: '@david_m',
-      vendor: '@marcus_dev',
-      item: 'Edge Worker Template Bundle',
-      amount: 150.00,
-      fee: 15.00,
-      status: 'Refunded',
-      date: 'Oct 05, 2026'
-    }
-  ]);
-
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Completed' | 'Escrow Pending' | 'Disputed' | 'Refunded'>('All');
-  const [search, setSearch] = useState('');
-
-  const handleReleaseEscrow = (orderId: string) => {
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Completed' } : o));
-    if (addToast) {
-      addToast({
-        title: 'Escrow Released',
-        message: `Order #${orderId} escrow funds successfully released to vendor account.`,
-        type: 'success'
-      });
-    }
-  };
-
-  const handleRefund = (orderId: string) => {
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Refunded' } : o));
-    if (addToast) {
-      addToast({
-        title: 'Refund Processed',
-        message: `Order #${orderId} was refunded to the original payment method.`,
-        type: 'info'
-      });
-    }
-  };
-
-  const handleResolveDispute = (orderId: string) => {
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Completed' } : o));
-    if (addToast) {
-      addToast({
-        title: 'Dispute Resolved',
-        message: `Order #${orderId} dispute closed and verified legitimate.`,
-        type: 'success'
-      });
-    }
-  };
-
-  const filteredOrders = orders.filter(o => {
-    const matchStatus = statusFilter === 'All' || o.status === statusFilter;
-    const matchSearch = 
-      o.id.toLowerCase().includes(search.toLowerCase()) ||
-      o.buyer.toLowerCase().includes(search.toLowerCase()) ||
-      o.vendor.toLowerCase().includes(search.toLowerCase()) ||
-      o.item.toLowerCase().includes(search.toLowerCase());
-    return matchStatus && matchSearch;
-  });
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-base font-black uppercase tracking-widest text-white flex items-center gap-2">
-            Marketplace, Escrow & Subscriptions
-            <span className="w-2 h-2 rounded-full bg-aeirmist-lime animate-pulse" />
-          </h2>
-          <p className="text-[10px] font-mono text-white/40">Manage vendor stores, dispute resolution, escrow payouts, and recurring subscription tiers.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-mono text-emerald-400 font-bold">
-            Stripe & Web3 Gateway Live
-          </span>
-        </div>
+const MarketplacePaymentsTab = ({ db }: { db: any }) => (
+  <div className="space-y-6">
+    <div>
+      <h2 className="text-base font-black uppercase tracking-widest text-white">Marketplace & Subscriptions Center</h2>
+      <p className="text-[10px] font-mono text-white/40">Manage vendor stores, dispute resolution, refund requests, and recurring subscription tiers.</p>
+    </div>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-2">
+        <ShoppingBag className="text-aeirmist-cyan mb-2" size={24} />
+        <h3 className="text-sm font-bold text-white">Active Stores</h3>
+        <p className="text-2xl font-mono font-bold text-white">—</p>
+        <p className="text-[10px] font-mono text-aeirmist-cyan">Awaiting data</p>
       </div>
-
-      {/* KPI Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Gross Merchandise Vol</span>
-            <DollarSign className="text-emerald-400" size={18} />
-          </div>
-          <p className="text-2xl font-mono font-bold text-white">$48,290.00</p>
-          <p className="text-[10px] font-mono text-emerald-400">+18.4% month-over-month</p>
-        </div>
-
-        <div className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Platform Fees (10%)</span>
-            <Sparkles className="text-aeirmist-cyan" size={18} />
-          </div>
-          <p className="text-2xl font-mono font-bold text-aeirmist-cyan">$4,829.00</p>
-          <p className="text-[10px] font-mono text-white/40">Automated instant split</p>
-        </div>
-
-        <div className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Active Verified Vendors</span>
-            <ShoppingBag className="text-aeirmist-lime" size={18} />
-          </div>
-          <p className="text-2xl font-mono font-bold text-white">28 Stores</p>
-          <p className="text-[10px] font-mono text-aeirmist-lime">4 pending verification</p>
-        </div>
-
-        <div className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Escrow Protected</span>
-            <CreditCard className="text-purple-400" size={18} />
-          </div>
-          <p className="text-2xl font-mono font-bold text-purple-400">$6,140.00</p>
-          <p className="text-[10px] font-mono text-purple-300">Safe multi-party escrow</p>
-        </div>
+      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-2">
+        <CreditCard className="text-purple-400 mb-2" size={24} />
+        <h3 className="text-sm font-bold text-white">Pro Subscriptions</h3>
+        <p className="text-2xl font-mono font-bold text-white">—</p>
+        <p className="text-[10px] font-mono text-purple-400">Awaiting data</p>
       </div>
-
-      {/* Subscription Tier Matrix */}
-      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xs font-black uppercase tracking-widest text-white">Creator & Enterprise Subscriptions</h3>
-            <p className="text-[10px] font-mono text-white/40">Active recurring memberships generating recurring monthly platform MRR.</p>
-          </div>
-          <span className="text-xs font-mono font-bold text-purple-400">142 Total Paid Subs</span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-blue-400">Essential Tier</span>
-              <span className="text-[10px] font-mono text-white/60">$4.99 / mo</span>
-            </div>
-            <p className="text-xl font-mono font-bold text-white">82 Members</p>
-            <p className="text-[9px] font-mono text-white/40">Verified checkmark, priority replies, 1080p stream.</p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-aeirmist-cyan/20 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-aeirmist-cyan">Creator Pro</span>
-              <span className="text-[10px] font-mono text-white/60">$14.99 / mo</span>
-            </div>
-            <p className="text-xl font-mono font-bold text-white">46 Creators</p>
-            <p className="text-[9px] font-mono text-aeirmist-cyan">Marketplace vendor perks, 4K streaming, analytics API.</p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-amber-500/20 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-400">Business / Studio</span>
-              <span className="text-[10px] font-mono text-white/60">$49.99 / mo</span>
-            </div>
-            <p className="text-xl font-mono font-bold text-white">14 Studios</p>
-            <p className="text-[9px] font-mono text-amber-400">Multi-seat team manager, gold badge, bespoke SLA.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Orders & Escrow Table */}
-      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h3 className="text-xs font-black uppercase tracking-widest text-white">Live Transactions & Escrow Pipeline</h3>
-            <p className="text-[10px] font-mono text-white/40">Review, release escrow, resolve merchant disputes, or issue chargeback refunds.</p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" size={13} />
-              <input 
-                type="text"
-                placeholder="Search orders, buyer, item..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-8 pl-8 pr-3 rounded-xl bg-white/5 border border-white/10 text-white text-[11px] font-mono outline-none focus:border-aeirmist-cyan/50 w-52"
-              />
-            </div>
-
-            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl">
-              {(['All', 'Completed', 'Escrow Pending', 'Disputed', 'Refunded'] as const).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setStatusFilter(tab)}
-                  className={`h-6 px-2.5 rounded-lg text-[9px] font-mono uppercase tracking-wider transition-all ${
-                    statusFilter === tab ? 'bg-aeirmist-cyan text-black font-bold' : 'text-white/60 hover:text-white'
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs font-mono">
-            <thead>
-              <tr className="border-b border-white/5 text-[9px] uppercase tracking-widest text-white/40">
-                <th className="pb-3 font-normal">Order</th>
-                <th className="pb-3 font-normal">Buyer / Vendor</th>
-                <th className="pb-3 font-normal">Item Details</th>
-                <th className="pb-3 font-normal">Amount / Fee</th>
-                <th className="pb-3 font-normal">Status</th>
-                <th className="pb-3 font-normal text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredOrders.map(order => (
-                <tr key={order.id} className="hover:bg-white/[0.02] transition-colors">
-                  <td className="py-3.5 font-bold text-white">{order.id}</td>
-                  <td className="py-3.5">
-                    <span className="text-white font-bold block">{order.buyer}</span>
-                    <span className="text-white/40 text-[10px] block">to {order.vendor}</span>
-                  </td>
-                  <td className="py-3.5 text-white/80 max-w-xs truncate">{order.item}</td>
-                  <td className="py-3.5">
-                    <span className="text-emerald-400 font-bold block">${order.amount.toFixed(2)}</span>
-                    <span className="text-white/40 text-[9px] block">Fee: ${order.fee.toFixed(2)}</span>
-                  </td>
-                  <td className="py-3.5">
-                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg border ${
-                      order.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                      order.status === 'Escrow Pending' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse' :
-                      order.status === 'Disputed' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                      'bg-white/5 text-white/40 border-white/10'
-                    }`}>
-                      {order.status}
-                    </span>
-                  </td>
-                  <td className="py-3.5 text-right space-x-1.5">
-                    {order.status === 'Escrow Pending' && (
-                      <button
-                        onClick={() => handleReleaseEscrow(order.id)}
-                        className="h-7 px-2.5 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[9px] font-bold uppercase tracking-wider hover:bg-emerald-500/30 transition-all cursor-pointer"
-                        title="Release Escrow Funds"
-                      >
-                        Release
-                      </button>
-                    )}
-                    {order.status === 'Disputed' && (
-                      <button
-                        onClick={() => handleResolveDispute(order.id)}
-                        className="h-7 px-2.5 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-300 text-[9px] font-bold uppercase tracking-wider hover:bg-purple-500/30 transition-all cursor-pointer"
-                        title="Resolve Dispute"
-                      >
-                        Resolve
-                      </button>
-                    )}
-                    {order.status !== 'Refunded' && (
-                      <button
-                        onClick={() => handleRefund(order.id)}
-                        className="h-7 px-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-bold uppercase tracking-wider hover:bg-red-500/20 transition-all cursor-pointer"
-                        title="Issue Refund"
-                      >
-                        Refund
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filteredOrders.length === 0 && (
-            <div className="py-8 text-center text-white/30 text-[11px] font-mono">
-              No transactions matching the criteria.
-            </div>
-          )}
-        </div>
+      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-2">
+        <DollarSign className="text-emerald-400 mb-2" size={24} />
+        <h3 className="text-sm font-bold text-white">Escrow Volume</h3>
+        <p className="text-2xl font-mono font-bold text-white">—</p>
+        <p className="text-[10px] font-mono text-emerald-400">Awaiting data</p>
       </div>
     </div>
-  );
-};
+  </div>
+);
 
-const SecurityCenterTab = ({ addToast }: { addToast?: any }) => {
-  const [securityPolicies, setSecurityPolicies] = useState({
-    botFirewall: true,
-    twoFactorEnforce: true,
-    rateLimiting: true,
-    wafShield: true,
-    torGeoblock: true,
-    corsStrict: true
-  });
-
-  const [isScanning, setIsScanning] = useState(false);
-
-  const threatEvents = [
-    {
-      id: 'EVT-109',
-      threat: 'SQL Injection Signature Blocked',
-      ip: '194.26.29.112',
-      target: "/api/v1/posts?filter=' OR 1=1--",
-      action: 'BLOCKED 403',
-      time: '2m ago',
-      severity: 'high'
-    },
-    {
-      id: 'EVT-108',
-      threat: 'Brute Force Auth Velocity Detected',
-      ip: '45.154.255.89',
-      target: '/api/v1/auth/login',
-      action: 'RATE LIMITED 429',
-      time: '12m ago',
-      severity: 'medium'
-    },
-    {
-      id: 'EVT-107',
-      threat: 'Anomalous User-Agent Scraper Mitigated',
-      ip: '185.220.101.4',
-      target: '/api/v1/users/search',
-      action: 'DROPPED 400',
-      time: '34m ago',
-      severity: 'low'
-    },
-    {
-      id: 'EVT-106',
-      threat: 'Unauthorized Token Signature Rejected',
-      ip: '89.248.165.11',
-      target: '/api/v1/admin/stats',
-      action: 'REJECTED 401',
-      time: '1h ago',
-      severity: 'high'
-    }
-  ];
-
-  const togglePolicy = (key: keyof typeof securityPolicies, label: string) => {
-    const nextVal = !securityPolicies[key];
-    setSecurityPolicies(prev => ({ ...prev, [key]: nextVal }));
-    if (addToast) {
-      addToast({
-        title: 'Security Policy Updated',
-        message: `${label} is now ${nextVal ? 'ENABLED' : 'DISABLED'}.`,
-        type: nextVal ? 'success' : 'warning'
-      });
-    }
-  };
-
-  const runSecurityAudit = () => {
-    setIsScanning(true);
-    setTimeout(() => {
-      setIsScanning(false);
-      if (addToast) {
-        addToast({
-          title: 'Security Audit Passed',
-          message: 'All 6 Edge WAF policies verified active. Score: 98/100 (Grade A+ Enterprise Shield). Zero breaches.',
-          type: 'success'
-        });
-      }
-    }, 1200);
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-base font-black uppercase tracking-widest text-white flex items-center gap-2">
-            Enterprise Security & Threat Defense
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-          </h2>
-          <p className="text-[10px] font-mono text-white/40">Advanced threat detection, bot mitigation, edge firewall rules, and cryptographic security posture.</p>
+const SecurityCenterTab = () => (
+  <div className="space-y-6">
+    <div>
+      <h2 className="text-base font-black uppercase tracking-widest text-white">Enterprise Security Center</h2>
+      <p className="text-[10px] font-mono text-white/40">Advanced threat detection, bot mitigation, VPN flagging, and automated security policies.</p>
+    </div>
+    <div className="space-y-3">
+      <div className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <Shield size={20} />
+          </div>
+          <div>
+            <span className="text-xs font-bold text-white">AI Bot & Spam Firewall</span>
+            <p className="text-[10px] font-mono text-emerald-400">Active • Blocking heuristic anomalies</p>
+          </div>
         </div>
-        <button
-          onClick={runSecurityAudit}
-          disabled={isScanning}
-          className="flex items-center gap-2 h-9 px-4 rounded-xl bg-aeirmist-cyan text-black hover:bg-white text-[10px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-aeirmist-cyan/20"
-        >
-          <RefreshCw size={13} className={isScanning ? 'animate-spin' : ''} />
-          <span>{isScanning ? 'Auditing Edge...' : 'Run Security Scan'}</span>
-        </button>
+        <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-xl">PROTECTED</span>
       </div>
-
-      {/* Security Posture Gauge & Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] flex items-center gap-5">
-          <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shrink-0">
-            <span className="text-2xl font-mono font-black text-emerald-400">98</span>
+      <div className="glass-panel p-5 rounded-3xl border-white/5 bg-white/[0.01] flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-aeirmist-cyan/10 border border-aeirmist-cyan/20 flex items-center justify-center text-aeirmist-cyan">
+            <Key size={20} />
           </div>
           <div>
-            <span className="text-xs font-bold text-white block">Security Health Score</span>
-            <p className="text-[10px] font-mono text-emerald-400 mt-0.5">Grade A+ • Enterprise Hardened</p>
-            <p className="text-[9px] font-mono text-white/40 mt-1">Zero vulnerabilities detected</p>
+            <span className="text-xs font-bold text-white">Mandatory Two-Factor Enforcement</span>
+            <p className="text-[10px] font-mono text-white/60">Enforced for all admin and creator accounts</p>
           </div>
         </div>
-
-        <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] flex items-center gap-5">
-          <div className="w-16 h-16 rounded-2xl bg-aeirmist-cyan/10 border border-aeirmist-cyan/30 flex items-center justify-center text-aeirmist-cyan shrink-0">
-            <Shield size={26} />
-          </div>
-          <div>
-            <span className="text-xs font-bold text-white block">Edge WAF Mitigation</span>
-            <p className="text-[10px] font-mono text-aeirmist-cyan mt-0.5">142 Ingress Probes Blocked</p>
-            <p className="text-[9px] font-mono text-white/40 mt-1">Cloudflare Layer 7 Shield active</p>
-          </div>
-        </div>
-
-        <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] flex items-center gap-5">
-          <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
-            <Key size={26} />
-          </div>
-          <div>
-            <span className="text-xs font-bold text-white block">2FA & Token Isolation</span>
-            <p className="text-[10px] font-mono text-purple-400 mt-0.5">100% Admin Adoption</p>
-            <p className="text-[9px] font-mono text-white/40 mt-1">Strict cross-account isolation active</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Security Policies Matrix */}
-      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
-        <div>
-          <h3 className="text-xs font-black uppercase tracking-widest text-white">Active Defense Policies</h3>
-          <p className="text-[10px] font-mono text-white/40">Toggle edge security rules, intrusion detection systems, and rate controls.</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {[
-            {
-              key: 'botFirewall' as const,
-              label: 'AI Bot & Heuristic Spam Firewall',
-              desc: 'Blocks automated crawlers, headless browser spammers, and comment bots.',
-              enabled: securityPolicies.botFirewall
-            },
-            {
-              key: 'twoFactorEnforce' as const,
-              label: 'Mandatory Two-Factor Authentication',
-              desc: 'Enforces hardware TOTP or email OTP verification for administrative roles.',
-              enabled: securityPolicies.twoFactorEnforce
-            },
-            {
-              key: 'rateLimiting' as const,
-              label: 'Aggressive IP Rate Limiter (120 req/min)',
-              desc: 'Throttles high-frequency request bursts to prevent endpoint exhaustion.',
-              enabled: securityPolicies.rateLimiting
-            },
-            {
-              key: 'wafShield' as const,
-              label: 'WAF SQL Injection & XSS Probe Shield',
-              desc: 'Deep packet inspection drops malicious query strings and SQL delimiters.',
-              enabled: securityPolicies.wafShield
-            },
-            {
-              key: 'torGeoblock' as const,
-              label: 'Tor Exit Node & Anonymous Proxy Shield',
-              desc: 'Requires additional CAPTCHA verification for flagged anonymous exit relays.',
-              enabled: securityPolicies.torGeoblock
-            },
-            {
-              key: 'corsStrict' as const,
-              label: 'Strict CORS & Origin Lockdown',
-              desc: 'Restricts API mutations to verified Aeirmist origin domains.',
-              enabled: securityPolicies.corsStrict
-            }
-          ].map(policy => (
-            <div 
-              key={policy.key}
-              className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between gap-4 hover:border-white/10 transition-all"
-            >
-              <div className="space-y-0.5">
-                <span className="text-xs font-bold text-white block">{policy.label}</span>
-                <p className="text-[9px] font-mono text-white/40">{policy.desc}</p>
-              </div>
-              <button
-                onClick={() => togglePolicy(policy.key, policy.label)}
-                className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
-                  policy.enabled ? 'bg-aeirmist-cyan' : 'bg-white/10'
-                }`}
-              >
-                <div className={`w-4 h-4 rounded-full bg-black absolute top-1 transition-transform ${
-                  policy.enabled ? 'left-6' : 'left-1'
-                }`} />
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Live Threat Intelligence Events Stream */}
-      <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-              <ShieldAlert size={14} className="text-red-400" />
-              Live Edge Threat Intelligence
-            </h3>
-            <p className="text-[10px] font-mono text-white/40">Real-time edge firewall intrusion mitigation logs.</p>
-          </div>
-          <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">Streaming</span>
-        </div>
-
-        <div className="divide-y divide-white/5">
-          {threatEvents.map(evt => (
-            <div key={evt.id} className="py-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-xl ${
-                  evt.severity === 'high' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                  evt.severity === 'medium' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
-                  'bg-white/5 text-white/60 border border-white/10'
-                }`}>
-                  <Shield size={14} />
-                </div>
-                <div>
-                  <span className="text-white font-bold block">{evt.threat}</span>
-                  <span className="text-[10px] text-white/40 block">Target: {evt.target} • IP: {evt.ip}</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 text-right">
-                <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg border ${
-                  evt.action.includes('BLOCKED') ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                  evt.action.includes('RATE') ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                  'bg-white/5 text-white/60 border-white/10'
-                }`}>
-                  {evt.action}
-                </span>
-                <span className="text-[10px] text-white/30">{evt.time}</span>
-              </div>
-            </div>
-          ))}
-        </div>
+        <span className="text-xs font-mono font-bold text-aeirmist-cyan bg-aeirmist-cyan/10 px-3 py-1.5 rounded-xl">ENABLED</span>
       </div>
     </div>
-  );
-};
+  </div>
+);
 
 export const updateUserRole = async (db: any, addToast: any, targetUid: string, targetProfileId: string, newRole: string) => {
   if (!db) return;
   try {
     const roleUpper = newRole.toUpperCase();
     const isAdminRole = ['OWNER', 'SUPER ADMIN', 'SUPER_ADMIN', 'ADMINISTRATOR', 'ADMIN', 'MODERATOR', 'MARKETPLACE MODERATOR', 'SUPPORT'].includes(roleUpper);
+
+    if (targetProfileId) {
+      await updateDoc(doc(db, 'profiles', targetProfileId), {
+        role: newRole,
+        isAdmin: isAdminRole,
+        updatedAt: serverTimestamp()
+      }).catch(() => {});
+    }
+
+    if (targetUid) {
+      await updateDoc(doc(db, 'users', targetUid), {
+        role: newRole,
+        isAdmin: isAdminRole,
+        updatedAt: serverTimestamp()
+      }).catch(() => {});
+
+      if (isAdminRole) {
+        await setDoc(doc(db, 'admins', targetUid), {
+          uid: targetUid,
+          profileId: targetProfileId || targetUid,
+          role: newRole,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      } else {
+        await deleteDoc(doc(db, 'admins', targetUid)).catch(() => {});
+      }
+    }
 
     logger.security("User Role Updated", { targetUid, targetProfileId, newRole }); if (addToast) {
       addToast({
@@ -2800,7 +2092,28 @@ export const AddAdminModal = ({ isOpen, onClose, db, addToast, allUsers }: { isO
         }
         await updateUserRole(db, addToast, targetUid, profileId, selectedRole);
       } else if (customEmail.trim()) {
-        addToast({ title: 'Admin Reserved', message: `Role ${selectedRole} assigned for ${customEmail.trim()}`, type: 'success' });
+        const q = query(collection(db, 'profiles'), where('email', '==', customEmail.trim().toLowerCase()), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const matchedDoc = snap.docs[0];
+          const matchedData = matchedDoc.data();
+          const targetUid = getCanonicalUid({ ...matchedData, id: matchedDoc.id });
+          const profileId = matchedDoc.id;
+          if (!targetUid) {
+            addToast({ title: 'Action Aborted', message: "Unable to resolve target account ID.", type: 'warning' });
+            return;
+          }
+          await updateUserRole(db, addToast, targetUid, profileId, selectedRole);
+        } else {
+          const adminId = `admin_${Date.now()}`;
+          await setDoc(doc(db, 'admins', adminId), {
+            email: customEmail.trim().toLowerCase(),
+            role: selectedRole,
+            assignedAt: serverTimestamp(),
+            status: 'PENDING_REGISTRATION'
+          });
+          addToast({ title: 'Admin Reserved', message: `Role ${selectedRole} reserved for ${customEmail.trim()}`, type: 'success' });
+        }
       }
       onClose();
     } catch (e) {
@@ -2969,26 +2282,25 @@ const RolesPermissionsTab = ({ db, addToast, onOpenAddAdmin }: { db: any; addToa
   ]);
 
   useEffect(() => {
-    let isCancelled = false;
-    api.users.search('', 50).then(res => {
-      if (!isCancelled) {
-        const list = (res.users || []).filter((u: any) => u.isAdmin || (u.role && u.role.toLowerCase() !== 'user'));
-        setAdminUsers(list);
-        setLoadingAdmins(false);
-      }
-    }).catch(() => {
-      if (!isCancelled) {
-        setAdminUsers([]);
-        setLoadingAdmins(false);
-      }
+    if (!db) return;
+    const unsub = onSnapshot(collection(db, 'profiles'), (snap) => {
+      const list = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter((u: any) => u.isAdmin || (u.role && u.role.toLowerCase() !== 'user'));
+      setAdminUsers(list);
+      setLoadingAdmins(false);
+    }, (err) => {
+      logger.warn("Admin profiles error:", err);
+      setLoadingAdmins(false);
     });
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+    return () => unsub();
+  }, [db]);
 
   const handleSavePolicy = async (updatedPolicy: any) => {
     setPolicies(policies.map(p => p.id === updatedPolicy.id ? updatedPolicy : p));
+    if (db) {
+      await setDoc(doc(db, 'role_policies', updatedPolicy.id), updatedPolicy, { merge: true }).catch(() => {});
+    }
     addToast({ title: 'Policy Saved', message: `Permissions for ${updatedPolicy.name} updated.`, type: 'success' });
     setEditingPolicy(null);
   };
@@ -3248,23 +2560,17 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   const [isProcessingAction, setIsProcessingAction] = useState(false);
 
   useEffect(() => {
-    let isCancelled = false;
-    api.admin.getTickets().then(res => {
-      if (!isCancelled) {
-        const verifTickets = (res.tickets || []).filter((t: any) => t.type === 'verification');
-        setRequests(verifTickets);
-        setLoading(false);
-      }
-    }).catch(() => {
-      if (!isCancelled) {
-        setRequests([]);
-        setLoading(false);
-      }
+    if (!db) return;
+    const q = query(collection(db, 'verificationApplications'), orderBy('createdAt', 'desc'), limit(50));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setRequests(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, (err) => {
+      logger.warn("Verification requests list error:", err);
+      setLoading(false);
     });
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+    return () => unsub();
+  }, [db]);
 
   const handleQuickApprove = async (r: any) => {
     if (!db) return;
@@ -3274,7 +2580,11 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
     setIsProcessingAction(true);
     try {
       await toggleVerification(targetProfileId, true, plan, 30, targetUid);
-      setRequests(prev => prev.map(item => item.id === r.id ? { ...item, status: 'approved' } : item));
+      await updateDoc(doc(db, 'verificationApplications', r.id), {
+        status: 'approved',
+        approvedPlan: plan,
+        reviewedAt: serverTimestamp()
+      }).catch(() => {});
       addToast({ title: 'Application Approved', message: `@${r.username || 'user'} is now Aeirmist ${plan.toUpperCase()} Verified.`, type: 'success' });
     } catch (e) {
       logger.error("Failed to approve verification:", e);
@@ -3285,21 +2595,46 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   };
 
   const handleConfirmReject = async () => {
-    if (!rejectingRequest) return;
+    if (!rejectingRequest || !db) return;
     const finalReason = customRejectReason.trim() || rejectReason;
+    const targetProfileId = rejectingRequest.profileId || rejectingRequest.userId || rejectingRequest.id;
     const targetUid = rejectingRequest.userId || rejectingRequest.uid || rejectingRequest.id;
     setIsProcessingAction(true);
     try {
-      setRequests(prev => prev.map(item => item.id === rejectingRequest.id ? { ...item, status: 'rejected' } : item));
-      if (targetUid) {
-        await api.notifications.create({
-          recipientId: targetUid,
+      await updateDoc(doc(db, 'verificationApplications', rejectingRequest.id), {
+        status: 'rejected',
+        rejectionReason: finalReason,
+        rejectedAt: serverTimestamp()
+      });
+
+      // Send Meta-style rejection notification to user
+      const targetRecipientIds = Array.from(new Set([targetUid, targetProfileId].filter(Boolean))) as string[];
+      for (const recipientId of targetRecipientIds) {
+        await addDoc(collection(db, 'notifications'), {
+          userId: recipientId,
+          fromUserId: 'aeirmist_system',
+          fromUserUid: 'aeirmist_system',
+          user: {
+            name: 'Aeirmist Official',
+            avatar: '/favicon.png',
+            username: 'aeirmist',
+            isVerified: true
+          },
           type: 'verification',
-          title: 'Verification Status',
-          body: `Your Aeirmist Verification application could not be approved. Reason: ${finalReason}.`,
+          message: `Your Aeirmist Verification application could not be approved at this time. Reason: ${finalReason}. You may update your information and reapply.`,
+          metadata: {
+            status: 'rejected',
+            reason: finalReason,
+            senderName: 'Aeirmist Official',
+            senderUsername: 'aeirmist',
+            senderPhoto: '/favicon.png'
+          },
+          read: false,
+          createdAt: serverTimestamp()
         }).catch(() => {});
       }
-      addToast({ title: 'Application Rejected', message: 'Applicant has been notified with the reason.', type: 'info' });
+
+      addToast({ title: 'Application Rejected', message: `Applicant has been notified with the reason.`, type: 'info' });
       setRejectingRequest(null);
       setCustomRejectReason('');
     } catch (e) {
@@ -3311,17 +2646,18 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   };
 
   const handleRefund = async (r: any) => {
+    if (!db) return;
     try {
-      setRequests(prev => prev.map(item => item.id === r.id ? { ...item, status: 'refunded' } : item));
-      if (r.userId) {
-        await api.notifications.create({
-          recipientId: r.userId,
-          type: 'verification',
-          title: 'Refund Processed',
-          body: `Your payment of $${r.amount || '0'} for Aeirmist Verification has been refunded.`,
-        }).catch(() => {});
-      }
-      addToast({ title: 'Payment Refunded', message: 'Marked application as refunded.', type: 'success' });
+      await updateDoc(doc(db, 'verificationApplications', r.id), { status: 'refunded', refundedAt: serverTimestamp() });
+      await addDoc(collection(db, 'notifications'), {
+        userId: r.userId,
+        type: 'verification',
+        message: `Your payment of $${r.amount} for Aeirmist Verification has been refunded.`,
+        metadata: { status: 'refunded' },
+        read: false,
+        createdAt: serverTimestamp()
+      }).catch(() => {});
+      addToast({ title: 'Payment Refunded', message: `Marked application as refunded.`, type: 'success' });
     } catch (e) {
       addToast({ title: 'Refund Failed', message: 'Could not process refund.', type: 'warning' });
     }
@@ -3554,6 +2890,11 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
           const targetProfileId = modalApplicant.profileId || modalApplicant.userId || modalApplicant.uid || modalApplicant.id;
           const targetUid = modalApplicant.userId || modalApplicant.uid || modalApplicant.id;
           await toggleVerification(targetProfileId, true, plan, durationDays, targetUid);
+          await updateDoc(doc(db, 'verificationApplications', modalApplicant.id), {
+            status: 'approved',
+            approvedPlan: plan,
+            reviewedAt: serverTimestamp()
+          }).catch(() => {});
           setModalApplicant(null);
         }}
         onRevoke={async () => {
@@ -3584,54 +2925,120 @@ export const AdminPanel = () => {
   const [pendingVerificationsCount, setPendingVerificationsCount] = useState<number>(0);
 
   useEffect(() => {
-    let isCancelled = false;
-    api.users.search('', 50).then(res => {
-      if (!isCancelled) {
-        setAllProfiles(res.users || []);
-      }
-    }).catch(() => {});
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+    if (!db || !isAdminUser) return;
+    const q = query(collection(db, 'verificationApplications'), where('status', '==', 'pending'));
+    const unsub = onSnapshot(q, (snap) => {
+      setPendingVerificationsCount(snap.size);
+    }, (err) => logger.warn("Pending verifications count error:", err));
+    return () => unsub();
+  }, [db, isAdminUser]);
+
+  useEffect(() => {
+    if (!db || !isAdminUser) return;
+    const unsub = onSnapshot(collection(db, 'profiles'), (snap) => {
+      setAllProfiles(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => logger.warn("All profiles error:", err));
+    return () => unsub();
+  }, [db, isAdminUser]);
 
   useEffect(() => {
     let isMounted = true;
     const checkAdminAuthorization = async () => {
-      if (authLoading) return;
-      if (!user && !profile) {
+      // 0. If authentication or profile is still loading, stay in loading state
+      if (authLoading) {
+        return;
+      }
+
+      // If no user and no profile after loading, or no db
+      if ((!user && !profile) || !db) {
         if (isMounted) setIsAdminUser(false);
         return;
       }
 
       try {
         const userEmail = (user?.email || profile?.email || '').toLowerCase().trim();
-        const userUid = user?.uid || user?.id || profile?.ownerUid || profile?.uid || profile?.id || '';
+        const userUid = user?.uid || profile?.ownerUid || profile?.uid || profile?.id || '';
         const profileUsername = (profile?.username || '').toLowerCase().trim();
-        const userRole = (user?.role || profile?.role || '').toLowerCase().trim();
+        const profileRole = (profile?.role || '').toLowerCase().trim();
         const isProfileAdmin = 
           profile?.isAdmin === true || 
-          user?.isAdmin === true ||
-          ['admin', 'owner', 'super_admin', 'administrator', 'moderator', 'master'].includes(userRole);
+          ['admin', 'owner', 'super_admin', 'administrator', 'moderator', 'master'].includes(profileRole);
 
+        // 1. Trusted Owner / Super Admin Bootstrap Check (Email, UID, Username, or Admin Role)
         if (
-          userEmail === 'admin.aeirmist@gmail.com' ||
           userEmail === 'junaedislamjim180@gmail.com' ||
           userUid === 'dovifwfmxcooas976z6mo216yng1' ||
           userUid === 'doViFWfMXcOoas976z6MO216YNg1' ||
           profileUsername === 'junaed_islam_jim9' ||
-          profileUsername === 'admin' ||
-          profileUsername === 'admin_aeirmist' ||
           isProfileAdmin
         ) {
+          // Sync owner record in /admins/{uid} collection silently in background
+          if (db && userUid) {
+            setDoc(doc(db, 'admins', userUid), {
+              uid: userUid,
+              email: userEmail || 'junaedislamjim180@gmail.com',
+              role: 'OWNER',
+              status: 'ACTIVE',
+              updatedAt: serverTimestamp()
+            }, { merge: true }).catch(() => {});
+          }
+
           if (isMounted) setIsAdminUser(true);
           return;
         }
 
+        // 2. Verify custom claims on Firebase Authentication ID token (Cryptographically verified)
+        if (user) {
+          const idTokenResult = await user.getIdTokenResult(true).catch(() => null);
+          const claims = idTokenResult?.claims || {};
+          const hasCustomAdminClaim = 
+            claims.admin === true || 
+            ['owner', 'admin', 'super_admin', 'administrator', 'moderator', 'support', 'marketplace_moderator'].includes((claims.role as string || '').toLowerCase());
+
+          if (hasCustomAdminClaim) {
+            if (isMounted) setIsAdminUser(true);
+            return;
+          }
+        }
+
+        // 3. Verify server-secured record in /admins/{uid} collection
+        if (userUid) {
+          const adminDocRef = doc(db, 'admins', userUid);
+          const adminDocSnap = await getDoc(adminDocRef).catch(() => null);
+
+          if (adminDocSnap && adminDocSnap.exists()) {
+            const adminData = adminDocSnap.data();
+            if (adminData && (adminData.status === 'ACTIVE' || adminData.role || adminData.uid === userUid)) {
+              if (isMounted) setIsAdminUser(true);
+              return;
+            }
+          }
+        }
+
+        // Authorization denied - Fail Closed
         if (isMounted) setIsAdminUser(false);
       } catch (error) {
         logger.error("[Security] Admin authorization check error:", error);
-        if (isMounted) setIsAdminUser(false);
+        // Fallback for owner / admin role if error occurs
+        const userEmail = (user?.email || profile?.email || '').toLowerCase().trim();
+        const userUid = user?.uid || profile?.ownerUid || profile?.uid || profile?.id || '';
+        const profileUsername = (profile?.username || '').toLowerCase().trim();
+        const profileRole = (profile?.role || '').toLowerCase().trim();
+        const isProfileAdmin = 
+          profile?.isAdmin === true || 
+          ['admin', 'owner', 'super_admin', 'administrator'].includes(profileRole);
+
+        if (
+          userEmail === 'junaedislamjim180@gmail.com' ||
+          userUid === 'dovifwfmxcooas976z6mo216yng1' ||
+          userUid === 'doViFWfMXcOoas976z6MO216YNg1' ||
+          profileUsername === 'junaed_islam_jim9' ||
+          isProfileAdmin
+        ) {
+          if (isMounted) setIsAdminUser(true);
+        } else {
+          if (isMounted) setIsAdminUser(false);
+        }
       }
     };
 
@@ -3640,7 +3047,7 @@ export const AdminPanel = () => {
     return () => {
       isMounted = false;
     };
-  }, [user, profile, authLoading]);
+  }, [user, profile, authLoading, db]);
 
   if (isAdminUser === null) {
     return (
@@ -3766,14 +3173,7 @@ export const AdminPanel = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={fadeTransition}
         >
-          {activeTab === 'dashboard' && (
-            <DashboardTab 
-              db={db} 
-              setActiveTab={setActiveTab} 
-              addToast={addToast} 
-              onOpenAddAdmin={() => setIsAddAdminOpen(true)} 
-            />
-          )}
+          {activeTab === 'dashboard' && <DashboardTab db={db} setActiveTab={setActiveTab} />}
           {activeTab === 'users' && (
             <UsersTab 
               db={db} 
@@ -3789,8 +3189,8 @@ export const AdminPanel = () => {
           {activeTab === 'reports' && <ReportsManagementTab db={db} addToast={addToast} />}
           {activeTab === 'appeals' && <AppealsTab db={db} addToast={addToast} />}
           {activeTab === 'tickets' && <SupportInboxTab db={db} addToast={addToast} />}
-          {activeTab === 'marketplace' && <MarketplacePaymentsTab db={db} addToast={addToast} />}
-          {activeTab === 'security' && <SecurityCenterTab addToast={addToast} />}
+          {activeTab === 'marketplace' && <MarketplacePaymentsTab db={db} />}
+          {activeTab === 'security' && <SecurityCenterTab />}
           {activeTab === 'roles' && (
             <RolesPermissionsTab 
               db={db} 

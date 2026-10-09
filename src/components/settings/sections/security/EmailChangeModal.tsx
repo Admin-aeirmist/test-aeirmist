@@ -2,8 +2,17 @@ import React, { useState } from 'react';
 import { Mail, Lock, AlertCircle, Loader2, Check, ShieldCheck, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAeirmist } from '../../../../context/AeirmistContext';
-import { api } from '../../../../services/api/client';
+import { 
+  EmailAuthProvider, 
+  reauthenticateWithCredential, 
+  verifyBeforeUpdateEmail, 
+  GoogleAuthProvider, 
+  reauthenticateWithPopup 
+} from 'firebase/auth';
+import { mapAuthError } from '../../../../utils/authErrorMapper';
+import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
+
 
 interface EmailChangeModalProps {
   isOpen: boolean;
@@ -11,7 +20,7 @@ interface EmailChangeModalProps {
 }
 
 export const EmailChangeModal: React.FC<EmailChangeModalProps> = ({ isOpen, onClose }) => {
-  const { user, profile, addToast, updateProfile, logActivity } = useAeirmist();
+  const { user, profile, db, addToast, updateProfile, logActivity } = useAeirmist();
   const [newEmail, setNewEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,7 +29,7 @@ export const EmailChangeModal: React.FC<EmailChangeModalProps> = ({ isOpen, onCl
 
   if (!isOpen) return null;
 
-  const isGoogleUser = user?.providerData?.some((p: any) => p.providerId === 'google.com');
+  const isGoogleUser = user?.providerData.some((p: any) => p.providerId === 'google.com');
 
   const handleUpdateEmail = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,24 +48,49 @@ export const EmailChangeModal: React.FC<EmailChangeModalProps> = ({ isOpen, onCl
     try {
       if (!user) throw new Error("No active user session found.");
 
-      await api.auth.changeEmail({
-        newEmail,
-        currentPassword: currentPassword || undefined,
-      });
+      // Re-authenticate user before email update
+      if (isGoogleUser) {
+        try {
+          const provider = new GoogleAuthProvider();
+          await reauthenticateWithPopup(user, provider);
+        } catch (popupErr) {
+          logger.warn("Google popup reauth failed or blocked, attempting direct verification email...", popupErr);
+        }
+      } else {
+        if (!currentPassword) {
+          setError("Current password is required to verify email change.");
+          setLoading(false);
+          return;
+        }
+        if (user.email) {
+          const credential = EmailAuthProvider.credential(user.email, currentPassword);
+          await reauthenticateWithCredential(user, credential);
+        }
+      }
 
+      // Send verification link to new email address before updating
+      await verifyBeforeUpdateEmail(user, newEmail);
+
+      // Log activity
       await logActivity('email_change_requested', `Requested email update to ${newEmail}`);
-      await updateProfile({ email: newEmail });
+
+      if (db && profile?.id) {
+        await updateDoc(doc(db, 'profiles', profile.id), {
+          pendingEmailUpdate: newEmail,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       setSuccessSent(true);
       addToast({
-        title: "EMAIL UPDATED",
-        message: `Your email address has been updated to ${newEmail}.`,
+        title: "VERIFICATION SENT",
+        message: `Confirmation email dispatched to ${newEmail}. Please click the link to finalize.`,
         type: "success"
       });
 
     } catch (err: any) {
       logger.error("Email update error:", err);
-      setError(err.response?.data?.error || err.message || "Failed to update email.");
+      setError(mapAuthError(err));
     } finally {
       setLoading(false);
     }

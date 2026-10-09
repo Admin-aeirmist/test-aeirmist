@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { 
   Database, 
   Trash2, 
@@ -13,12 +14,11 @@ import {
   Folder,
   FolderCheck,
   CheckCircle2,
-  RotateCcw,
-  Server
+  RotateCcw
 } from 'lucide-react';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { DigitalModule } from '../../ui/DigitalComponents';
-import { api } from '../../../services/api/client';
+import { cloudinaryService } from '../../../services/cloudinaryService';
 import { DownloadManagerService, DownloadMode, DownloadPathConfig } from '../../../services/DownloadManagerService';
 
 
@@ -64,7 +64,11 @@ const StorageSettings = () => {
   };
 
   return (
-    <div className="space-y-12">
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-12"
+    >
       <div className="space-y-1">
         <h2 className="text-3xl font-display font-bold text-white">Data Allocation</h2>
         <p className="text-xs text-white/45 uppercase tracking-widest font-medium">Manage your digital footprint and storage vectors</p>
@@ -123,8 +127,8 @@ const StorageSettings = () => {
       {/* Telegram-Style Download Path Selector */}
       <DownloadPathSection addToast={addToast} />
 
-      {/* Aeirmist Dedicated Server Storage */}
-      <AeirmistServerStorageSection addToast={addToast} />
+      {/* Cloudinary CDN Storage Config */}
+      <CloudinaryConfigSection addToast={addToast} />
 
 
       {/* Cache & Maintenance */}
@@ -186,11 +190,11 @@ const StorageSettings = () => {
           </button>
         </div>
       </section>
-    </div>
+    </motion.div>
   );
 };
 
-const StorageMetric = React.memo(({ label, value, color, icon }: any) => (
+const StorageMetric = ({ label, value, color, icon }: any) => (
   <div className="p-5 rounded-3xl bg-white/[0.02] border border-white/5 space-y-2">
     <div className="flex items-center gap-2 opacity-40">
       {icon}
@@ -198,9 +202,9 @@ const StorageMetric = React.memo(({ label, value, color, icon }: any) => (
     </div>
     <div className={`text-lg font-mono font-bold ${color}`}>{value}</div>
   </div>
-));
+);
 
-const ToggleItem = React.memo(({ icon, title, desc, enabled, onChange }: any) => (
+const ToggleItem = ({ icon, title, desc, enabled, onChange }: any) => (
   <button 
     onClick={() => onChange(!enabled)}
     className="w-full p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all flex items-center justify-between text-left group"
@@ -224,46 +228,33 @@ const ToggleItem = React.memo(({ icon, title, desc, enabled, onChange }: any) =>
       }`} />
     </div>
   </button>
-));
+);
 
-const AeirmistServerStorageSection = React.memo(({ addToast }: { addToast: any }) => {
-  const [testing, setTesting] = React.useState(false);
-  const [latency, setLatency] = React.useState<number | null>(null);
+const CloudinaryConfigSection = ({ addToast }: { addToast: any }) => {
+  const [cloudName, setCloudName] = React.useState(cloudinaryService.getCloudName());
+  const [preset, setPreset] = React.useState(cloudinaryService.getUploadPreset());
+  const [isEditing, setIsEditing] = React.useState(false);
 
-  const handleTestConnection = async () => {
-    setTesting(true);
-    const start = performance.now();
-    try {
-      await api.health.check();
-      const elapsed = Math.round(performance.now() - start);
-      setLatency(elapsed);
-      addToast?.({
-        title: 'STORAGE ENGINE ONLINE',
-        message: `Connected to Aeirmist Server Storage (${elapsed}ms). Ready for high-velocity streaming.`,
-        type: 'success'
-      });
-    } catch (e: any) {
-      addToast?.({
-        title: 'STORAGE WARNING',
-        message: 'Could not reach server storage endpoint: ' + (e?.message || 'Check network'),
-        type: 'warning'
-      });
-    } finally {
-      setTesting(false);
-    }
+  const handleSave = () => {
+    cloudinaryService.setConfig(cloudName.trim(), preset.trim());
+    setIsEditing(false);
+    addToast?.({
+      title: 'STORAGE UPDATED',
+      message: 'Cloudinary CDN Storage configured and enabled!',
+      type: 'success'
+    });
   };
 
   return (
     <section className="space-y-6">
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-8 h-8 rounded-lg bg-aeirmist-cyan/10 flex items-center justify-center text-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.2)]">
-          <Server size={18} />
+        <div className="w-8 h-8 rounded-lg bg-aeirmist-lime/10 flex items-center justify-center text-aeirmist-lime">
+          <Cloud size={18} />
         </div>
         <div>
-          <h3 className="text-sm font-bold uppercase tracking-wider text-white/90">Aeirmist Dedicated Server Storage</h3>
-          <span className="text-[9px] font-bold text-aeirmist-cyan uppercase tracking-widest bg-aeirmist-cyan/10 border border-aeirmist-cyan/20 px-2 py-0.5 rounded-full inline-flex items-center gap-1.5 mt-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-cyan animate-pulse" />
-            Online / Self-Hosted
+          <h3 className="text-sm font-bold uppercase tracking-wider text-white/80">Cloudinary CDN Storage</h3>
+          <span className="text-[9px] font-bold text-aeirmist-lime uppercase tracking-widest bg-aeirmist-lime/10 px-2 py-0.5 rounded-full inline-block mt-0.5">
+            Active / High-Speed Storage
           </span>
         </div>
       </div>
@@ -271,44 +262,69 @@ const AeirmistServerStorageSection = React.memo(({ addToast }: { addToast: any }
       <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h4 className="text-xs font-bold uppercase tracking-widest text-white/90">Zero Third-Party Dependency</h4>
+            <h4 className="text-xs font-bold uppercase tracking-widest text-white/90">Unlimited CDN Media Acceleration</h4>
             <p className="text-[10px] text-white/40 mt-1 leading-relaxed">
-              All videos, reels, photos, avatars, and attachments stream directly through your private Aeirmist PostgreSQL + Media Engine server node with no third-party CDN or external accounts required.
+              Zero-cost image and video storage via Cloudinary CDN with automatic fallback to Firebase.
             </p>
           </div>
           <button
-            onClick={handleTestConnection}
-            disabled={testing}
-            className="px-4 py-2 rounded-xl bg-aeirmist-cyan/10 border border-aeirmist-cyan/30 text-[9px] font-bold uppercase tracking-widest hover:bg-aeirmist-cyan/20 text-aeirmist-cyan transition-all shrink-0 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            onClick={() => setIsEditing(!isEditing)}
+            className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-[9px] font-bold uppercase tracking-widest hover:bg-white/10 text-white/70 transition-all shrink-0"
           >
-            <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
-            {testing ? 'Testing...' : 'Verify Engine'}
+            {isEditing ? 'Cancel' : 'Configure Account'}
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-white/5">
-          <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Storage Engine</span>
-            <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">PostgreSQL + Local FS</span>
+        {isEditing ? (
+          <div className="space-y-4 pt-2 border-t border-white/5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[9px] font-bold uppercase tracking-widest text-white/50 block mb-1.5">Cloud Name</label>
+                <input
+                  type="text"
+                  value={cloudName}
+                  onChange={(e) => setCloudName(e.target.value)}
+                  placeholder="e.g. aeirmist"
+                  className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-aeirmist-cyan"
+                />
+              </div>
+              <div>
+                <label className="text-[9px] font-bold uppercase tracking-widest text-white/50 block mb-1.5">Unsigned Upload Preset</label>
+                <input
+                  type="text"
+                  value={preset}
+                  onChange={(e) => setPreset(e.target.value)}
+                  placeholder="e.g. aeirmist_uploads"
+                  className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-aeirmist-cyan"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={handleSave}
+              className="w-full py-3 rounded-xl bg-aeirmist-cyan/20 border border-aeirmist-cyan/40 text-aeirmist-cyan text-[10px] font-black uppercase tracking-widest hover:bg-aeirmist-cyan hover:text-black transition-all"
+            >
+              Save & Enable Cloudinary Storage
+            </button>
           </div>
-          <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Streaming Route</span>
-            <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">/media/* (Express Node)</span>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-white/5">
+            <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
+              <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Cloud Name</span>
+              <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">{cloudName || 'aeirmist'}</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
+              <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Upload Preset</span>
+              <span className="text-xs font-mono text-aeirmist-cyan font-bold mt-1 block">{preset || 'aeirmist_uploads'}</span>
+            </div>
           </div>
-          <div className="p-4 rounded-2xl bg-white/[0.01] border border-white/5">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-white/40 block">Latency & Status</span>
-            <span className="text-xs font-mono text-aeirmist-lime font-bold mt-1 flex items-center gap-1.5">
-              <CheckCircle2 size={12} />
-              {latency !== null ? `${latency}ms • Operational` : 'Active • Operational'}
-            </span>
-          </div>
-        </div>
+        )}
       </div>
     </section>
   );
-});
+};
 
-const DownloadPathSection = React.memo(({ addToast }: { addToast: any }) => {
+const DownloadPathSection = ({ addToast }: { addToast: any }) => {
   const [config, setConfig] = React.useState<DownloadPathConfig>({
     mode: 'system_downloads',
     displayPath: 'Downloads / Aeirmist',
@@ -462,8 +478,7 @@ const DownloadPathSection = React.memo(({ addToast }: { addToast: any }) => {
               </p>
             </button>
 
-            {/* Mode 3: Custom Folder (SAF) — Android app only */}
-            {config.isNative && (
+            {/* Mode 3: Custom Folder (SAF) */}
             <button
               onClick={() => handleSelectMode('custom')}
               className={`p-4 rounded-2xl border text-left transition-all relative cursor-pointer ${
@@ -480,12 +495,10 @@ const DownloadPathSection = React.memo(({ addToast }: { addToast: any }) => {
                 {config.customName ? `Selected: ${config.customName}` : 'Choose any accessible folder via native Android SAF picker.'}
               </p>
             </button>
-            )}
           </div>
         </div>
 
-        {/* Info footer — Android app only */}
-        {config.isNative && (
+        {/* Info footer */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-white/5 text-[10px] text-white/40">
           <span>Compliant with Android 10+ scoped storage. No broad storage permissions required.</span>
           <button
@@ -497,11 +510,10 @@ const DownloadPathSection = React.memo(({ addToast }: { addToast: any }) => {
             {loading ? 'Opening SAF Picker...' : 'Open Android Folder Picker'}
           </button>
         </div>
-        )}
       </div>
     </section>
   );
-});
+};
 
 export default StorageSettings;
 

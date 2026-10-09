@@ -1,124 +1,71 @@
-import { App as CapApp } from '@capacitor/app';
-import { extractTimestampMs } from '../lib/date';
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { applyDynamicFavicon } from '../utils/favicon';
-export type User = any;
-const initializeApp = (_cfg) => ({ name: '[DEFAULT]' });
-const getAuth = (_app) => ({
-  currentUser: null,
-  onAuthStateChanged: (_cb) => (() => {}),
-  signOut: async () => {},
-});
-const onAuthStateChanged = (_auth, callback) => {
-  if (typeof localStorage !== 'undefined') {
-    const token = localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
-    // ONLY restore cached session if a valid auth token is present in storage!
-    if (token) {
-      const cached = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile');
-      if (cached) {
-        try {
-          const u = JSON.parse(cached);
-          callback({
-            uid: u.id || u.uid || 'usr_self',
-            id: u.id || u.uid || 'usr_self',
-            email: u.email || 'user@aeirmist.local',
-            displayName: u.displayName || u.username || 'User',
-            photoURL: u.avatarUrl || u.photoURL || null,
-          });
-          return () => {};
-        } catch (e) {}
-      }
-    }
-  }
-  callback(null);
-  return () => {};
-};
-const signInWithPopup = async (..._args: any[]) => ({ user: null });
-const signInWithRedirect = async (..._args: any[]) => {};
-const getRedirectResult = async (..._args: any[]) => null;
-const GoogleAuthProvider = class {
-  addScope(..._args: any[]) {}
-  setCustomParameters(..._args: any[]) {}
-};
-const FacebookAuthProvider = class {};
-const OAuthProvider = class {};
-const linkWithCredential = async (..._args: any[]): Promise<any> => ({ user: null });
-const signOut = async (..._args: any[]) => {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('aeirmist_auth_token');
-    localStorage.removeItem('aeirmist_session');
-    localStorage.removeItem('aeirmist_user_profile');
-    localStorage.removeItem('aeirmist_cached_profile');
-    localStorage.removeItem('aeirmist_cached_id_name');
-    localStorage.removeItem('aeirmist_cached_display_name');
-    localStorage.removeItem('aeirmist_username');
-    localStorage.removeItem('aeirmist_saved_username');
-    localStorage.removeItem('aeirmist_user_handle');
-    localStorage.removeItem('aeirmist_active_profile_id');
-  }
-};
-const createUserWithEmailAndPassword = async (_a: any, email: string, pass: string) => {
-  const defaultName = email.split('@')[0];
-  const res = await api.auth.register({ email, password: pass, username: defaultName, displayName: defaultName });
-  return { user: res?.user };
-};
-const signInWithEmailAndPassword = async (_a: any, email: string, pass: string) => {
-  const res = await api.auth.login({ email, password: pass });
-  return { user: res?.user };
-};
-const signInWithCustomToken = async (..._args: any[]) => ({ user: null });
-const sendPasswordResetEmail = async (..._args: any[]) => {};
-const sendEmailVerification = async (..._args: any[]) => {};
-const updateAuthProfile = async (..._args: any[]) => {};
-const setPersistence = async (..._args: any[]) => {};
-const browserLocalPersistence = {};
-const browserSessionPersistence = {};
-const deleteUser = async (..._args: any[]) => {};
-const EmailAuthProvider = class {
-  static credential(..._args: any[]) { return {}; }
-};
-const fetchSignInMethodsForEmail = async (..._args: any[]) => [];
-
-const getFirestore = () => ({});
-const doc = (_db: any, ...p: string[]) => ({ id: p[p.length - 1], path: p.join('/') });
-const getDoc = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
-const getDocs = async (_r?: any) => ({ empty: true, docs: [] as any[], forEach: (_fn: any) => {}, size: 0 });
-const setDoc = async (..._args: any[]) => {};
-const collection = (_db: any, ...p: string[]) => ({ path: p.join('/') });
-const query = (_r: any, ..._a: any[]) => _r;
-const where = (..._args: any[]) => ({});
-const limit = (..._args: any[]) => ({});
-const serverTimestamp = () => new Date().toISOString();
-const getDocFromServer = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
-const getDocFromCache = async (_r?: any) => ({ exists: () => false, data: () => ({} as any), id: '' as any });
-const writeBatch = (..._args: any[]) => ({ set: (..._a: any[]) => {}, update: (..._a: any[]) => {}, delete: (..._a: any[]) => {}, commit: async () => {} });
-const updateDoc = async (..._args: any[]) => {};
-const deleteDoc = async (..._args: any[]) => {};
-const deleteField = () => undefined;
-const addDoc = async (..._args: any[]) => ({ id: 'doc_' + Date.now() });
-const increment = (n: any) => n;
-const arrayUnion = (...el: any[]) => el;
-const arrayRemove = (...el: any[]) => el;
-const onSnapshot = (_r: any, _cb: any, ..._args: any[]) => (() => {});
-const orderBy = (..._args: any[]) => ({});
-const initializeFirestore = () => ({});
-const persistentLocalCache = () => ({});
-const persistentMultipleTabManager = () => ({});
-const enableNetwork = async (..._args: any[]) => {};
-const disableNetwork = async (..._args: any[]) => {};
-
-const getStorage = () => ({});
-const ref = (_s: any, p: string) => ({ fullPath: p });
-const deleteObject = async (..._args: any[]) => {};
-
-const firebaseConfig = { projectId: 'aeirmist-self-hosted' };
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  User, 
+  signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider, 
+  FacebookAuthProvider,
+  OAuthProvider,
+  linkWithCredential,
+  signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signInWithCustomToken,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  updateProfile as updateAuthProfile,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  deleteUser,
+  EmailAuthProvider,
+  fetchSignInMethodsForEmail
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  getDoc, 
+  getDocs,
+  setDoc, 
+  collection,
+  query,
+  where,
+  limit,
+  serverTimestamp,
+  getDocFromServer,
+  getDocFromCache,
+  writeBatch,
+  updateDoc,
+  deleteDoc,
+  deleteField,
+  addDoc,
+  increment,
+  arrayUnion,
+  arrayRemove,
+  onSnapshot,
+  orderBy,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  enableNetwork,
+  disableNetwork
+} from 'firebase/firestore';
+import { getStorage, ref, deleteObject } from 'firebase/storage';
+import { extractTimestampMs } from '../lib/date';
+import { App as CapApp } from '@capacitor/app';
+import firebaseConfig from '../../firebase-applet-config.json';
 import { normalizeUsername } from '../utils/usernameUtils';
 import { migrateUsernamesNormalized } from '../utils/migrateUsernames';
 import { consolidateAndSyncUserProfiles } from '../services/accountSyncService';
 import { LocalSqlService } from '../services/LocalSqlService';
 import { validateEmailDetailed, isValidEmail } from '../utils/emailValidator';
 import { sendTemplatePasswordResetEmail, sendTemplateEmailVerification } from '../services/authActionService';
+import { api, setAuthToken } from '../services/api/client';
 
 /**
  * Deduplicates profiles ensuring only one profile per normalized username / UID
@@ -156,9 +103,6 @@ import {
   handleFirestoreError as libHandleFirestoreError,
   OperationType
 } from '../lib/firebase';
-export const auth: any = _auth;
-export const db: any = _db;
-export const storage: any = _storage;
 import { usePermissions } from '../hooks/usePermissions';
 import { BLANK_DP, getAvatarUrl } from '../lib/avatar';
 import { aeirmistCache } from '../services/CacheService';
@@ -170,8 +114,6 @@ import { voiceService } from '../services/VoiceService';
 import { LocationTrackingService } from '../services/LocationTrackingService';
 import { REWARDS, getRankInfo } from '../lib/aeirmistRanks';
 import { analytics } from '../services/AnalyticsService';
-import { api, setAuthToken, getAuthToken } from '../services/api/client';
-import { getSocket } from '../services/api/socket';
 import { followRecommService } from '../services/FollowRecommendationService';
 import { handleNotificationPermissionFlow, showSystemNotification, NativeSettings } from '../utils/nativeSettings';
 import { logger } from '@/src/utils/logger';
@@ -368,7 +310,7 @@ interface AeirmistContextType {
   unreadMessagesCount: number;
   unreadNotificationsCount: number;
   toasts: any[];
-  addToast: (toast: { title: string, message: string, type: 'info' | 'success' | 'warning' | 'error', icon?: any }) => void;
+  addToast: (toast: { title: string, message: string, type: 'info' | 'success' | 'warning', icon?: any }) => void;
   removeToast: (id: string) => void;
   stories: any[];
   deleteStory: (storyId: string) => Promise<void>;
@@ -417,9 +359,9 @@ interface AeirmistContextType {
   openVault: () => void;
   showVerificationCelebration: boolean;
   setShowVerificationCelebration: React.Dispatch<React.SetStateAction<boolean>>;
-  floatingChatHead: { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string } | null;
-  setFloatingChatHead: React.Dispatch<React.SetStateAction<{ id: string; name: string; photo?: string; unreadCount?: number; participantId?: string } | null>>;
-  floatingChatHeads: { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string }[];
+  floatingChatHead: { id: string; name: string; photo?: string; unreadCount?: number } | null;
+  setFloatingChatHead: React.Dispatch<React.SetStateAction<{ id: string; name: string; photo?: string; unreadCount?: number } | null>>;
+  floatingChatHeads: { id: string; name: string; photo?: string; unreadCount?: number }[];
   removeFloatingChatHead: (id: string) => void;
 }
 
@@ -448,15 +390,7 @@ const handleFirestoreError = (error: any, op: any, path: string | null) => {
 const AeirmistContext = createContext<AeirmistContextType | undefined>(undefined);
 
 export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = localStorage.getItem('aeirmist_feature_flags');
-        if (cached) return { ...DEFAULT_FEATURE_FLAGS, ...JSON.parse(cached) };
-      } catch (e) {}
-    }
-    return DEFAULT_FEATURE_FLAGS;
-  });
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>(DEFAULT_FEATURE_FLAGS);
   const [user, setUser] = useState<User | null>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -496,36 +430,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             return parsed;
           }
         }
-        const rawSession = localStorage.getItem('aeirmist_session');
-        if (rawSession) {
-          const s = JSON.parse(rawSession);
-          if (s && s.uid) {
-            const uEmail = s.email || '';
-            const uUsername = s.username || (uEmail ? uEmail.split('@')[0] : 'user');
-            const uName = s.displayName || uUsername;
-            const isAdmin = uEmail === 'admin.aeirmist@gmail.com' || uEmail === 'junaedislamjim180@gmail.com' || uUsername === 'admin' || s.role === 'admin' || s.isAdmin;
-            return {
-              id: `profile_${s.uid}`,
-              uid: s.uid,
-              ownerUid: s.uid,
-              username: uUsername,
-              usernameNormalized: uUsername.toLowerCase(),
-              displayName: uName,
-              fullName: uName,
-              name: uName,
-              email: uEmail,
-              personalEmail: uEmail,
-              role: isAdmin ? 'admin' : 'user',
-              isAdmin,
-              isVerified: isAdmin,
-              aeirmistLevel: isAdmin ? 9999 : 100,
-              points: 10,
-              status: 'ACTIVE',
-              onboardingCompleted: true,
-              onboardingStep: 5
-            };
-          }
-        }
       } catch (e) {}
     }
     return null;
@@ -550,7 +454,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Meta-Style Automated Verification Lifecycle & Monthly Deadline Monitor
   useEffect(() => {
-    if (!profile?.id || !profile?.isVerified) return;
+    if (!_db || !profile?.id || !profile?.isVerified) return;
 
     const checkVerificationLifecycle = async () => {
       try {
@@ -579,21 +483,34 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (typeof window !== 'undefined' && !localStorage.getItem(expiredStorageKey)) {
             localStorage.setItem(expiredStorageKey, 'true');
 
-            // Deactivate expired badge in profile
-            setProfile((prev: any) => prev ? {
-              ...prev,
+            // Deactivate expired badge in Firestore
+            await updateDoc(doc(_db, 'profiles', profile.id), {
               isVerified: false,
               verified: false,
               subscriptionStatus: 'expired'
-            } : prev);
+            }).catch(() => {});
 
-            api.users.updateProfile({ privacySettings: { ...(profile.privacySettings || {}), subscriptionStatus: 'expired' } }).catch(() => {});
+            if (user?.uid) {
+              await updateDoc(doc(_db, 'users', user.uid), {
+                isVerified: false,
+                verified: false,
+                subscriptionStatus: 'expired'
+              }).catch(() => {});
+            }
 
-            addToast?.({
-              title: 'Verification Expired',
+            // Send expiration notification
+            await addDoc(collection(_db, 'notifications'), {
+              userId: user?.uid || profile.id,
+              type: 'verification',
               message: `Your monthly Aeirmist Verified (${planDisplay}) subscription expired on ${deadlineDateStr}. Renew now in Settings to reactivate your badge.`,
-              type: 'info'
-            });
+              metadata: {
+                plan,
+                status: 'expired',
+                deadlineDateStr
+              },
+              read: false,
+              createdAt: serverTimestamp()
+            }).catch(() => {});
           }
         } 
         // 2. 3-Day Approaching Deadline Notification
@@ -602,11 +519,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (typeof window !== 'undefined' && !localStorage.getItem(warningStorageKey)) {
             localStorage.setItem(warningStorageKey, 'true');
 
-            addToast?.({
-              title: 'Renewal Reminder',
+            await addDoc(collection(_db, 'notifications'), {
+              userId: user?.uid || profile.id,
+              type: 'verification',
               message: `Monthly Renewal Reminder: Your verification subscription (${planDisplay}) deadline is in ${diffDays} day${diffDays > 1 ? 's' : ''} (${deadlineDateStr}). Renew your plan to keep your badge active.`,
-              type: 'info'
-            });
+              metadata: {
+                plan,
+                status: 'approaching_deadline',
+                daysRemaining: diffDays,
+                deadlineDateStr
+              },
+              read: false,
+              createdAt: serverTimestamp()
+            }).catch(() => {});
           }
         }
       } catch (lifecycleErr) {
@@ -638,14 +563,29 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     success: false
   });
 
-  const updateFeatureFlag = useCallback(async (key: string, enabled: boolean) => {
-    setFeatureFlags(prev => {
-      const updated = { ...prev, [key]: enabled };
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('aeirmist_feature_flags', JSON.stringify(updated));
+  useEffect(() => {
+    if (!_db) return;
+    const flagsRef = doc(_db, 'system_config', 'feature_flags');
+    const unsub = onSnapshot(flagsRef, (snap) => {
+      if (snap.exists()) {
+        setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS, ...snap.data() });
+      } else {
+        setDoc(flagsRef, DEFAULT_FEATURE_FLAGS, { merge: true }).catch(() => {});
       }
-      return updated;
+    }, (err) => {
+      logger.warn("Feature flags snapshot listener warning:", err);
     });
+    return () => unsub();
+  }, []);
+
+  const updateFeatureFlag = useCallback(async (key: string, enabled: boolean) => {
+    setFeatureFlags(prev => ({ ...prev, [key]: enabled }));
+    try {
+      const flagsRef = doc(_db, 'system_config', 'feature_flags');
+      await setDoc(flagsRef, { [key]: enabled }, { merge: true });
+    } catch (err) {
+      logger.error("Failed to update feature flag in Firestore:", err);
+    }
   }, []);
 
   const [appBranding, setAppBranding] = useState<AppBranding>(() => {
@@ -657,6 +597,23 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     return {};
   });
+
+  useEffect(() => {
+    if (!_db) return;
+    const brandingRef = doc(_db, 'system_config', 'app_branding');
+    const unsub = onSnapshot(brandingRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as AppBranding;
+        setAppBranding(prev => ({ ...prev, ...data }));
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('aeirmist_app_branding', JSON.stringify(data));
+        }
+      }
+    }, (err) => {
+      logger.warn("App branding snapshot listener warning:", err);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const activeLogo = appBranding?.darkLogoUrl || appBranding?.lightLogoUrl;
@@ -671,6 +628,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       return updated;
     });
+    if (_db) {
+      try {
+        const brandingRef = doc(_db, 'system_config', 'app_branding');
+        await setDoc(brandingRef, {
+          ...newBranding,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (err) {
+        logger.error("Failed to update app branding in Firestore:", err);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -682,7 +650,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           logger.warn("Aeirmist: Sync Timeout. Forcing interface activation.");
           setLoading(false);
         }
-      }, 1200);
+      }, 8000); 
     }
     return () => {
       if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
@@ -717,9 +685,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [floatingChatHeads, setFloatingChatHeads] = useState<FloatingHead[]>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const cached = localStorage.getItem('aeirmist_floating_heads');
-        if (cached) {
-          const parsed = JSON.parse(cached);
+        const stored = localStorage.getItem('aeirmist_floating_chat_heads');
+        if (stored) {
+          const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) return parsed;
         }
       } catch (e) {}
@@ -731,7 +699,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem('aeirmist_floating_heads', JSON.stringify(floatingChatHeads));
+        localStorage.setItem('aeirmist_floating_chat_heads', JSON.stringify(floatingChatHeads));
       } catch (e) {}
     }
   }, [floatingChatHeads]);
@@ -835,7 +803,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!user) throw new Error("Aeirmist Link: User authentication token unavailable.");
     
     // Request raw ID token for authentication
-    const idToken = (typeof user?.getIdToken === 'function' ? await user.getIdToken() : '') || (typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : '') || '';
+    const idToken = await user.getIdToken();
     
     const response = await fetch('/api/auth/device-link/generate', {
       method: 'POST',
@@ -923,7 +891,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, profile?.id]);
 
   const earnPoints = useCallback(async (points: number) => {
-    if (!profile?.id || isOffline) return;
+    if (!db || !profile?.id || !user?.uid || isOffline) return;
     
     // Simple throttle: don't update same profile more than once every 5 seconds for points
     const now = Date.now();
@@ -931,26 +899,15 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (now - lastUpdate < 5000) return;
     (window as any)._last_points_update = now;
 
-    // Optimistically update local profile points & aeirmistLevel
-    setProfile((prev: any) => {
-      if (!prev) return prev;
-      const currentPoints = Number(prev.points || prev.aeirmistLevel || 0);
-      return {
-        ...prev,
-        points: currentPoints + points,
-        aeirmistLevel: currentPoints + points
-      };
-    });
-
     try {
-      const res = await api.users.addPoints(points);
-      if (res?.points !== undefined) {
-        setProfile((prev: any) => prev ? { ...prev, points: res.points, aeirmistLevel: res.points } : prev);
-      }
+      const profileRef = doc(db, 'profiles', profile.id);
+      await updateDoc(profileRef, {
+        aeirmistLevel: increment(points)
+      });
     } catch (e) {
       logger.warn("Points sync failed", e);
     }
-  }, [profile?.id, isOffline]);
+  }, [db, profile?.id, user?.uid, isOffline]);
 
   const rank = getRankInfo(profile?.aeirmistLevel || 0);
 
@@ -978,7 +935,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const addToast = useCallback((toast: { 
     title: string; 
     message: string; 
-    type: 'info' | 'success' | 'warning' | 'error'; 
+    type: 'info' | 'success' | 'warning'; 
     icon?: any;
     avatar?: string | null;
     image?: string | null;
@@ -1017,55 +974,31 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [isSafeMode]);
 
   const createNotification = useCallback(async (targetId: string, type: any, message: string, metadata: any = {}) => {
-    if (!profile) return;
-    
-    // 1. Primary: Save directly to our PostgreSQL backend API
+    if (!db || !profile) return; 
     try {
-      await api.notifications.create({
-        recipientId: targetId,
-        type: String(type || 'general'),
-        title: profile.displayName || profile.username || 'Aeirmist',
-        body: message,
-        actionUrl: metadata?.postId ? `/post/${metadata.postId}` : metadata?.conversationId ? `/messages` : undefined,
+      await addDoc(collection(db, 'notifications'), {
+        userId: targetId,
+        fromUserId: profile.id,
+        fromUserUid: user?.uid || profile.id,
+        user: {
+          name: profile.displayName || profile.username || 'User',
+          avatar: profile.photoURL || '',
+          username: profile.username || 'user',
+          isVerified: profile.isVerified || false
+        },
+        type,
+        message,
         metadata: {
           ...metadata,
           senderPhoto: profile.photoURL || '',
           senderName: profile.displayName || profile.username || 'User',
-          senderUsername: profile.username || '',
+          senderUsername: profile.username || ''
         },
+        read: false,
+        createdAt: serverTimestamp()
       });
-      logger.info('[AeirmistContext] Notification created via PostgreSQL backend API');
-    } catch (apiErr) {
-      logger.warn('[AeirmistContext] Backend notification creation note:', apiErr);
-    }
-
-    // 2. Optional legacy dual-sync if Firestore is connected
-    if (db) {
-      try {
-        await addDoc(collection(db, 'notifications'), {
-          userId: targetId,
-          fromUserId: profile.id,
-          fromUserUid: user?.uid || profile.id,
-          user: {
-            name: profile.displayName || profile.username || 'User',
-            avatar: profile.photoURL || '',
-            username: profile.username || 'user',
-            isVerified: profile.isVerified || false
-          },
-          type,
-          message,
-          metadata: {
-            ...metadata,
-            senderPhoto: profile.photoURL || '',
-            senderName: profile.displayName || profile.username || 'User',
-            senderUsername: profile.username || ''
-          },
-          read: false,
-          createdAt: serverTimestamp()
-        });
-      } catch (e) {
-        logger.warn("Firestore notification sync skipped:", e);
-      }
+    } catch (e) {
+      logger.warn("Notification creation failed", e);
     }
   }, [db, profile, user?.uid]);
 
@@ -1085,94 +1018,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
     }
   }, [db, user?.uid]);
-
-  // Real-time WebSockets Identification, Notifications & Call Signaling (Redis Pub/Sub backed)
-  useEffect(() => {
-    if (!user?.uid) return;
-    try {
-      const socket = getSocket();
-      socket.emit('identify_user', user.uid);
-      if (profile?.id && profile.id !== user.uid) {
-        socket.emit('identify_user', profile.id);
-      }
-      if (profile?.userId && profile.userId !== user.uid && profile.userId !== profile.id) {
-        socket.emit('identify_user', profile.userId);
-      }
-
-      const handleNewNotification = (data: any) => {
-        setUnreadNotificationsCount(prev => prev + 1);
-        playNotificationSound();
-        if (data?.notification) {
-          addToast({
-            title: data.notification.title || 'New Notification',
-            message: data.notification.body || data.notification.content || '',
-            type: 'info',
-          });
-        }
-      };
-
-      const handleIncomingCall = (data: any) => {
-        logger.info('[Socket.IO] Incoming WebRTC call received:', data);
-        if (data?.callerInfo) {
-          setActiveCall({
-            id: data.callerInfo.callId || `call_${Date.now()}`,
-            callerId: data.callerInfo.callerId,
-            receiverId: profile?.id,
-            callerUid: data.callerInfo.callerUid,
-            receiverUid: user?.uid,
-            initiatorId: data.callerInfo.callerId,
-            targetId: profile?.id,
-            callerName: data.callerInfo.callerName,
-            callerPhoto: data.callerInfo.callerPhoto,
-            receiverName: profile?.displayName || profile?.username || 'You',
-            receiverPhoto: profile?.photoURL || '',
-            participants: [data.callerInfo.callerUid, user?.uid].filter(Boolean),
-            status: 'calling',
-            type: data.callType || 'audio',
-            conversationId: data.callerInfo.conversationId,
-            createdAt: Date.now(),
-          });
-        }
-      };
-
-      const handleUserStatus = (data: { userId: string; status: 'online' | 'offline' }) => {
-        setOnlineUsers(prev => {
-          const next = new Set(prev);
-          if (data.status === 'online') {
-            next.add(data.userId);
-          } else {
-            next.delete(data.userId);
-          }
-          return next;
-        });
-      };
-
-      const handleOnlineUsersList = (data: { users: string[] }) => {
-        if (Array.isArray(data?.users)) {
-          setOnlineUsers(prev => {
-            const next = new Set(prev);
-            data.users.forEach(u => next.add(u));
-            return next;
-          });
-        }
-      };
-
-      socket.on('new_notification', handleNewNotification);
-      socket.on('incoming_call', handleIncomingCall);
-      socket.on('user_status', handleUserStatus);
-      socket.on('online_users_list', handleOnlineUsersList);
-      socket.emit('get_online_users');
-
-      return () => {
-        socket.off('new_notification', handleNewNotification);
-        socket.off('incoming_call', handleIncomingCall);
-        socket.off('user_status', handleUserStatus);
-        socket.off('online_users_list', handleOnlineUsersList);
-      };
-    } catch (err) {
-      logger.warn('[Socket.IO] Notification/Call/Presence subscription error:', err);
-    }
-  }, [user?.uid, profile?.id, profile?.displayName, profile?.username, profile?.photoURL, addToast]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1278,23 +1123,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     logger.info(`[MediaContext] Queuing upload: ${file.name} to ${filePath} (Quality: ${quality})`);
     
-    // Priority 1: High-Speed Universal Backend Storage Driver
     try {
-      onProgress?.(10, 'Optimizing & Uploading...');
-      const uploadRes = await api.media.upload(file, folder);
-      if (uploadRes?.url) {
-        logger.info(`[MediaContext] Universal Storage upload completed: ${uploadRes.url}`);
-        onProgress?.(100, 'Complete');
-        return uploadRes.url;
-      }
-    } catch (apiErr: any) {
-      logger.warn('[MediaContext] Backend storage upload notice (falling back):', apiErr?.message);
-    }
-
-    try {
-      if (!storage) {
-        throw new Error("Local storage failed and remote fallback unavailable.");
-      }
       const url = await mediaService.uploadWithProgress(storage, file, filePath, (p, status) => {
         onProgress?.(p, status);
       }, quality);
@@ -1450,23 +1279,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         delete (firebaseDoc as any).isOptimistic;
         delete (firebaseDoc as any).id;
 
-        // Primary backend PostgreSQL story creation
-        let storyBackendId = null;
-        try {
-          const res = await api.stories.create({
-            mediaUrl: finalMediaUrl || storyDoc.mediaUrl,
-            thumbnailUrl: thumbnailUrl || '',
-            mediaType: storyData.type || 'image',
-            caption: (storyData as any).caption || '',
-            audience: audience as any,
-          });
-          storyBackendId = res?.story?.id;
-          logger.info('[AeirmistContext] Story saved to PostgreSQL backend:', storyBackendId);
-        } catch (err) {
-          logger.warn('[AeirmistContext] API story create note:', err);
-        }
-
-        let storyDocId = storyBackendId || (storyDoc as any).id || `story_${Date.now()}`;
+        const docRef = await addDoc(collection(db, 'stories'), firebaseDoc);
         
         // Send notifications to mentioned users
         const mentions = storyData.stickerLayers?.filter((s: any) => s.type === 'mention' && s.mentionId) || [];
@@ -1475,7 +1288,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             mention.mentionId, 
             'mention', 
             `tagged you in a story`, 
-            { storyId: storyDocId, storyUrl: finalMediaUrl || storyDoc.mediaUrl }
+            { storyId: docRef.id, storyUrl: finalMediaUrl || storyDoc.mediaUrl }
           ).catch(console.error);
         }
         
@@ -1532,53 +1345,21 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     try {
-      // 1. Primary: Send directly to our PostgreSQL Backend API
-      let backendMsgId = null;
-      try {
-        const res = await api.chat.sendMessage(conversationId, {
-          content: text,
-          type: type || 'text',
-          mediaKey: mediaUrl ? mediaUrl.replace(/^.*\/media\//, '') : undefined,
-          metadata: {
-            ...metadata,
-            optimisticId: metadata?.optimisticId
-          }
-        });
-        backendMsgId = res?.message?.id;
-        logger.info('[AeirmistContext] Message sent to PostgreSQL backend:', backendMsgId);
-      } catch (apiErr) {
-        logger.error('[AeirmistContext] Backend sendMessage error:', apiErr);
-      }
-
-      // 2. Optional legacy dual-sync if Firestore is connected
-      let msgId = backendMsgId || `msg_${Date.now()}`;
-      if (db) {
-        try {
-          msgId = await messagingService.sendMessage(db, profile, user, conversationId, text, type, mediaUrl, { 
-            ...metadata, 
-            isReceiverOnline,
-            targetProfile,
-            isFollowing,
-            isFollower
-          });
-        } catch (fbErr) {
-          logger.warn('[AeirmistContext] Firestore message sync skipped:', fbErr);
-        }
-      }
-
+      const msgId = await messagingService.sendMessage(db, profile, user, conversationId, text, type, mediaUrl, { 
+        ...metadata, 
+        isReceiverOnline,
+        targetProfile,
+        isFollowing,
+        isFollower
+      });
       analytics.trackEngagement('message', { type, conversationId });
-      earnPoints(REWARDS.MESSAGE).catch(() => {});
+      await earnPoints(REWARDS.MESSAGE);
       return msgId;
     } catch (e: any) {
-      logger.error("Message send failed", e);
-      addToast({
-        title: "Message Failed",
-        message: "We couldn't send your message. Please check your connection.",
-        type: "warning"
-      });
-      throw e;
+      logger.warn("Message send non-blocking fallback warning:", e);
+      return conversationId;
     }
-  }, [profile, user, db]);
+  }, [db, profile, user]);
 
   const startCall = useCallback(async (conversationId: string, type: 'audio' | 'video', targetUid?: string) => {
     if (!db || !profile || !user || isSafeMode || !canWrite('startCall', 2000)) return;
@@ -1718,26 +1499,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         createdAt: Date.now()
       });
 
-      // Realtime WebSockets Signaling broadcast (Instant Ringing)
-      try {
-        const socket = getSocket();
-        socket.emit('call_user', {
-          targetUserId: resolvedOtherUid || otherProfile.id,
-          signalData: { callId, type, conversationId },
-          callerInfo: {
-            callId,
-            callerId: profile.id,
-            callerUid: myUid,
-            callerName: profile.displayName || profile.username || 'You',
-            callerPhoto: profile.photoURL || '',
-            conversationId,
-          },
-          callType: type,
-        });
-      } catch (sockErr) {
-        logger.warn('[AeirmistContext] Socket call_user signal error:', sockErr);
-      }
-
       if (existingConvRef) {
         await updateDoc(existingConvRef, {
           activeCall: {
@@ -1849,18 +1610,15 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateSeenStatus = useCallback(async (conversationId: string) => {
-    if (!profile || isOffline || !conversationId) return;
+    if (!db || !profile || isOffline || !conversationId) return;
     
     // Respect Read Receipts setting
     if (profile.messagingSettings?.readReceipts === false) return;
 
-    if (!canWrite(`read_${conversationId}`, 500)) return;
+    if (!canWrite(`read_${conversationId}`, 2000)) return;
 
     try {
-      await api.chat.markSeen(conversationId).catch(() => {});
-      if (db) {
-        await messagingService.markAsRead(db, conversationId, profile.id).catch(() => {});
-      }
+      await messagingService.markAsRead(db, conversationId, profile.id);
     } catch (e) {
       logger.warn("[AeirmistContext] Seen status update delayed", e);
     }
@@ -1883,155 +1641,141 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, profile?.id]);
 
   const createPost = useCallback(async (content: string, mediaUrls: string[] = []) => {
-    if (!profile || !user || isSafeMode) return;
+    if (!db || !profile || !user || isSafeMode) return;
     try {
-      // 1. Primary: Save directly to our PostgreSQL Backend
-      let newPost = null;
-      try {
-        const createRes = await api.posts.create({
-          content,
-          mediaKeys: mediaUrls.map(u => u.replace(/^.*\/media\//, '')),
-          mediaType: mediaUrls.length > 0 ? 'image' : 'text',
-        });
-        newPost = createRes?.post;
-        logger.info('[AeirmistContext] Post created on PostgreSQL backend:', newPost?.id);
-      } catch (beErr) {
-        logger.error('[AeirmistContext] Backend createPost error:', beErr);
-      }
-
+      const postData = {
+        content,
+        mediaUrls,
+        authorId: profile.id,
+        authorUid: user.uid,
+        author: {
+          displayName: profile.displayName,
+          username: profile.username,
+          photoURL: profile.photoURL,
+          isVerified: profile.isVerified || false
+        },
+        likesCount: 0,
+        commentsCount: 0,
+        likedBy: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+      await addDoc(collection(db, 'posts'), postData);
       await earnPoints(REWARDS.POST_CREATED);
-
-      // 2. Optional legacy dual-sync to Firestore if available
-      if (db) {
-        try {
-          const postData = {
-            content,
-            mediaUrls,
-            authorId: profile.id,
-            authorUid: user.uid,
-            author: {
-              displayName: profile.displayName,
-              username: profile.username,
-              photoURL: profile.photoURL,
-              isVerified: profile.isVerified || false
-            },
-            likesCount: 0,
-            commentsCount: 0,
-            likedBy: [],
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          };
-          await addDoc(collection(db, 'posts'), postData);
-        } catch (fbErr) {
-          logger.warn('[AeirmistContext] Firestore post dual-sync skipped:', fbErr);
-        }
-      }
-
-      if (newPost) {
-        window.dispatchEvent(new CustomEvent('aeirmist-post-created', { detail: { post: newPost } }));
-      }
-      return newPost;
     } catch (e) {
-      logger.error('createPost failed:', e);
+      handleFirestoreError(e, OperationType.CREATE, 'posts');
     }
-  }, [profile, user, isSafeMode, db]);
+  }, [db, profile, isSafeMode]);
 
   const editPost = useCallback(async (postId: string, content: string, mediaUrls: string[] = []) => {
-    if (!profile || isSafeMode) return;
+    if (!db || !profile || isSafeMode) return;
     try {
-      logger.info(`[editPost] Updated post: ${postId}`);
-    } catch (e) {
-      logger.error('Failed to edit post:', e);
-    }
-  }, [profile, isSafeMode]);
-
-  const deletePost = useCallback(async (postId: string) => {
-    if (!profile || isSafeMode) return;
-    try {
-      await api.posts.delete(postId);
-      logger.info(`[deletePost Success] Deleted post: ${postId}`);
-      window.dispatchEvent(new CustomEvent('aeirmist-post-deleted', { detail: { postId } }));
-      addToast({
-        title: 'Post Deleted',
-        message: 'Your post has been successfully removed.',
-        type: 'success'
+      const postRef = doc(db, 'posts', postId);
+      await updateDoc(postRef, {
+        content,
+        mediaUrls,
+        updatedAt: serverTimestamp()
       });
     } catch (e) {
-      logger.error('Failed to delete post:', e);
+      handleFirestoreError(e, OperationType.UPDATE, 'posts');
     }
-  }, [profile, isSafeMode, addToast]);
+  }, [db, profile, isSafeMode]);
+
+  const deletePost = useCallback(async (postId: string) => {
+    if (!db || !profile || isSafeMode) return;
+    try {
+      const postRef = doc(db, 'posts', postId);
+      
+      // 1. Delete comments subcollection documents
+      const commentsRef = collection(db, 'posts', postId, 'comments');
+      const commentsSnap = await getDocs(commentsRef);
+      const batch = writeBatch(db);
+      commentsSnap.forEach((commentDoc) => {
+        batch.delete(commentDoc.ref);
+      });
+      
+      // 2. Delete notifications referencing this post
+      const notificationsRef = collection(db, 'notifications');
+      const notificationsQuery = query(notificationsRef, where('metadata.postId', '==', postId));
+      const notificationsSnap = await getDocs(notificationsQuery);
+      notificationsSnap.forEach((notifDoc) => {
+        batch.delete(notifDoc.ref);
+      });
+
+      const notificationsQuery2 = query(notificationsRef, where('metadata.id', '==', postId));
+      const notificationsSnap2 = await getDocs(notificationsQuery2);
+      notificationsSnap2.forEach((notifDoc) => {
+        batch.delete(notifDoc.ref);
+      });
+      
+      await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
+
+      // 3. Delete the post document itself
+      await deleteDoc(postRef);
+      logger.info(`[deletePost Success] Purged post: ${postId}, comments and notifications`);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `posts/${postId}`);
+    }
+  }, [db, profile, isSafeMode]);
 
   const editVideo = useCallback(async (videoId: string, caption: string) => {
-    if (!profile || isSafeMode) return;
+    if (!db || !profile || isSafeMode) return;
     try {
-      logger.info(`[editVideo] Updated video caption: ${videoId}`);
+      const videoRef = doc(db, 'videos', videoId);
+      await updateDoc(videoRef, {
+        caption,
+        updatedAt: serverTimestamp()
+      });
       addToast({
         title: 'Video Updated',
         message: 'Your video caption has been saved.',
         type: 'success'
       });
     } catch (e) {
-      logger.error('Failed to edit video:', e);
+      handleFirestoreError(e, OperationType.UPDATE, `videos/${videoId}`);
     }
-  }, [profile, isSafeMode, addToast]);
+  }, [db, profile, isSafeMode, addToast]);
 
-  const deleteVideo = useCallback(async (videoId: string, _videoURL?: string, _thumbnailURL?: string) => {
-    if (!profile || isSafeMode) return;
+  const deleteVideo = useCallback(async (videoId: string, videoURL: string, thumbnailURL?: string) => {
+    if (!db || !profile || isSafeMode) return;
     try {
-      await api.videos.delete(videoId);
+      // 1. Delete Firestore Document
+      await deleteDoc(doc(db, 'videos', videoId));
+
+      // 2. Delete Storage Objects
+      const videoRef = ref(storage, videoURL);
+      await deleteObject(videoRef).catch(err => logger.warn('Failed to delete video file:', err));
+
+      if (thumbnailURL && !thumbnailURL.includes('unsplash.com') && !thumbnailURL.includes('picsum.photos')) {
+        const thumbRef = ref(storage, thumbnailURL);
+        await deleteObject(thumbRef).catch(err => logger.warn('Failed to delete thumbnail file:', err));
+      }
+
       addToast({
         title: 'Video Deleted',
         message: 'The video has been successfully removed.',
         type: 'success'
       });
     } catch (e) {
-      logger.error('Failed to delete video:', e);
+      handleFirestoreError(e, OperationType.DELETE, `videos/${videoId}`);
     }
-  }, [profile, isSafeMode, addToast]);
+  }, [db, profile, isSafeMode, storage, addToast]);
 
   const deleteStory = useCallback(async (storyId: string) => {
-    if (!profile || isSafeMode) return;
+    if (!db || !profile || isSafeMode) return;
     try {
-      await api.stories.delete(storyId);
-      setStories(prev => prev.filter(s => s.id !== storyId));
+      await deleteDoc(doc(db, 'stories', storyId));
       addToast({
         title: 'Story Deleted',
         message: 'Your story has been removed.',
         type: 'success'
       });
     } catch (e) {
-      logger.error('Failed to delete story:', e);
+      handleFirestoreError(e, OperationType.DELETE, `stories/${storyId}`);
     }
-  }, [profile, isSafeMode, addToast]);
+  }, [db, profile, isSafeMode, addToast]);
 
   useEffect(() => {
-    let isCancelled = false;
-
-    // Primary backend API stories feed load (sub-10ms)
-    api.stories.getFeed()
-      .then(res => {
-        if (!isCancelled && res.stories && res.stories.length > 0) {
-          const mapped = res.stories.map(s => ({
-            id: s.id,
-            userId: s.userId,
-            authorId: s.author?.id,
-            userName: s.author?.displayName || s.author?.username || 'Aeirmist User',
-            userAvatar: s.author?.avatarUrl || '',
-            mediaUrl: s.mediaUrl,
-            thumbnailUrl: s.thumbnailUrl,
-            mediaType: s.mediaType,
-            caption: s.caption,
-            audience: s.audience,
-            viewers: s.viewers || [],
-            createdAt: new Date(s.createdAt),
-          }));
-          setStories(mapped);
-        }
-      })
-      .catch(err => {
-        logger.warn('[AeirmistContext] API stories feed fallback:', err);
-      });
-
     if (!db || !user) return;
     const storiesRef = collection(db, 'stories');
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -2043,18 +1787,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      if (!isCancelled) {
-        const storyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        if (storyData.length > 0) setStories(storyData);
-      }
+      const storyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setStories(storyData);
     }, (error) => {
       logger.warn("Global stories uplink busy.", error);
     });
 
-    return () => {
-      isCancelled = true;
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [db, user?.uid]);
 
   const archivePost = useCallback(async (postId: string, archive: boolean) => {
@@ -2090,21 +1829,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const fetchSuggestions = useCallback(async () => {
-    if (!profile?.id) return;
+    if (!db || !profile?.id) return;
     try {
-      const res = await api.users.search('', 45).catch(() => ({ users: [] }));
-      const allUsers = (res?.users || []).map((u: any) => ({
-        id: u.id,
-        uid: u.id,
-        ownerUid: u.id,
-        username: u.username,
-        displayName: u.displayName || u.username,
-        photoURL: u.avatarKey ? (u.avatarKey.startsWith('http') ? u.avatarKey : `/media/${u.avatarKey}`) : null,
-        avatarUrl: u.avatarKey ? (u.avatarKey.startsWith('http') ? u.avatarKey : `/media/${u.avatarKey}`) : null,
-        bio: u.bio || '',
-        isVerified: u.isVerified || false,
-        followersCount: u.followersCount || 0,
-      }));
+      const q = query(collection(db, 'profiles'), limit(45));
+      const snapshot = await getDocs(q);
+      const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       
       const dismissed = followRecommService.getDismissedSuggestions();
       const following = profile.social?.following || [];
@@ -2143,11 +1872,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (e) {
        logger.warn("Follow recommendation system failed", e);
     }
-  }, [profile?.id, user?.uid]);
+  }, [db, profile?.id, user?.uid]);
 
   // Reactive listener to refresh suggestions periodically or when following status changes
   useEffect(() => {
-    if (!profile?.id) return;
+    if (!db || !profile?.id) return;
     const followingStr = JSON.stringify(profile.social?.following || []);
     const triggerId = `${profile.id}_${followingStr}_${suggestionsFetched.current === profile.id ? "done" : "init"}`;
     
@@ -2156,7 +1885,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     suggestionsFetched.current = triggerId;
 
     fetchSuggestions();
-  }, [profile?.id, fetchSuggestions, JSON.stringify(profile?.social?.following || [])]);
+  }, [db, profile?.id, fetchSuggestions, JSON.stringify(profile?.social?.following || [])]);
 
   const toggleNotification = async (type: 'mute' | 'pin' | 'archive', targetId: string) => {
     if (type === 'archive') {
@@ -2686,49 +2415,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     };
 
-    // 0. Instant Universal Backend API session restore
-    const existingToken = getAuthToken();
-    if (existingToken) {
-      api.auth.me().then(res => {
-        if (res?.user) {
-          const bUser = res.user;
-          const mappedUser: any = {
-            uid: bUser.id,
-            id: bUser.id,
-            email: bUser.email,
-            displayName: bUser.profile?.displayName || bUser.profile?.username || bUser.email.split('@')[0],
-            photoURL: bUser.profile?.avatarKey || null,
-            role: bUser.role || 'user',
-            getIdToken: async () => existingToken,
-            reload: async () => {},
-          };
-          setUser(mappedUser);
-          if (bUser.profile) {
-            setProfile({
-              ...bUser.profile,
-              id: bUser.profile.id || `profile_${bUser.id}`,
-              uid: bUser.id,
-              ownerUid: bUser.id,
-            });
-          }
-          setLoading(false);
-          logger.info("[Auth] Session restored via Universal Backend API:", bUser.email);
-        }
-      }).catch(err => {
-        logger.warn("[Auth] Token verification failed / expired:", err?.message);
-        if (err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
-          setAuthToken(null);
-          if (typeof localStorage !== 'undefined') {
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('aeirmist_auth_token');
-            localStorage.removeItem('aeirmist_session');
-            localStorage.removeItem('aeirmist_user_profile');
-            localStorage.removeItem('aeirmist_cached_profile');
-          }
-        }
-      });
-    }
-
     const unsub = onAuthStateChanged(auth, async (user) => {
       logger.info("[Diagnostics - Auth] onAuthStateChanged Message:", user?.uid);
       
@@ -2767,61 +2453,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
 
         setUser(effectiveUser);
-        // Instant profile hydration from local storage or user data to prevent loading stalls
-        setProfile((prev: any) => {
-          if (prev && (prev.uid === effectiveUser.uid || prev.id === effectiveUser.uid || prev.ownerUid === effectiveUser.uid)) {
-            return prev;
-          }
-          try {
-            const cached = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
-            if (cached) {
-              const cp = JSON.parse(cached);
-              if (cp && (cp.uid === effectiveUser.uid || cp.id === effectiveUser.uid || cp.ownerUid === effectiveUser.uid || cp.email === effectiveUser.email)) {
-                return cp;
-              }
-            }
-          } catch (_) {}
-          const uEmail = effectiveUser.email || '';
-          const isJunaed = uEmail.toLowerCase() === 'junaedislamjim180@gmail.com';
-          const isAdmin = uEmail.toLowerCase() === 'admin.aeirmist@gmail.com' || isJunaed || effectiveUser.username?.toLowerCase() === 'admin' || effectiveUser.role === 'admin' || effectiveUser.isAdmin;
-          const uUsername = effectiveUser.username || (isJunaed ? 'junaed_islam_jim9' : (isAdmin ? 'admin_aeirmist' : (uEmail ? uEmail.split('@')[0] : 'user')));
-          const uName = effectiveUser.displayName || (isJunaed ? 'Junaed Islam Jim' : (isAdmin ? 'Admin Aeirmist' : uUsername));
-          return {
-            id: `profile_${effectiveUser.uid}`,
-            uid: effectiveUser.uid,
-            ownerUid: effectiveUser.uid,
-            username: uUsername,
-            usernameNormalized: uUsername.toLowerCase(),
-            displayName: uName,
-            fullName: uName,
-            name: uName,
-            email: uEmail,
-            personalEmail: uEmail,
-            role: isAdmin ? 'admin' : 'user',
-            isAdmin,
-            isVerified: isAdmin,
-            aeirmistLevel: isAdmin ? 9999 : 100,
-            points: 10,
-            status: 'ACTIVE',
-            onboardingCompleted: true,
-            onboardingStep: 5
-          };
-        });
         setLoading(true);
         logger.info("[Diagnostics - Auth] Loading Profile for user:", effectiveUser.uid);
         
         const fetchProfilesForUser = async (u: any) => {
-          // 00. Fast Local Cache Check (Instant 0ms response)
-          try {
-            const cached = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
-            if (cached) {
-              const cp = JSON.parse(cached);
-              if (cp && (cp.uid === u.uid || cp.id === u.uid || cp.ownerUid === u.uid || cp.email === u.email)) {
-                return [cp];
-              }
-            }
-          } catch (_) {}
-
           // 0. Primary: Consolidate and sync all disparate IDs for this user
           try {
             const syncResult = await consolidateAndSyncUserProfiles(u);
@@ -2957,21 +2592,20 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         foundProfiles = deduplicateProfiles(foundProfiles);
 
         // Ensure admin account always has full admin rights
-        const isTargetEmailAdmin = effectiveUser.email?.toLowerCase() === 'admin.aeirmist@gmail.com' || effectiveUser.email?.toLowerCase() === 'junaedislamjim180@gmail.com';
-        const isMainAdminAccount = isTargetEmailAdmin || effectiveUser.uid === 'iFqvwxqejCSte6K24gJe5ZE4NTo1' || effectiveUser.uid === 'doViFWfMXcOoas976z6MO216YNg1';
+        const isMainAdminAccount = effectiveUser.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || effectiveUser.uid === 'iFqvwxqejCSte6K24gJe5ZE4NTo1' || effectiveUser.uid === 'doViFWfMXcOoas976z6MO216YNg1';
         if (isMainAdminAccount) {
           foundProfiles = foundProfiles.map((p: any) => {
-            const isJunaed = effectiveUser.email?.toLowerCase() === 'junaedislamjim180@gmail.com';
-            const adminHandle = p.username || (isJunaed ? 'junaed_islam_jim9' : (effectiveUser.email?.split('@')[0] || 'admin'));
-            const adminName = p.displayName || p.fullName || (isJunaed ? 'Junaed Islam Jim' : 'Admin Aeirmist');
+            const adminHandle = (p.username && p.username !== 'junaed_islam_jim9') 
+              ? p.username 
+              : (p.username || effectiveUser.email?.split('@')[0] || 'junaed_islam_jim');
             const updated = {
               ...p,
               username: adminHandle,
               usernameNormalized: normalizeUsername(adminHandle),
-              displayName: adminName,
-              fullName: adminName,
-              name: adminName,
-              email: effectiveUser.email,
+              displayName: p.displayName || 'Junaed Islam Jim',
+              fullName: p.fullName || 'Junaed Islam Jim',
+              name: p.name || 'Junaed Islam Jim',
+              email: effectiveUser.email || 'junaedislamjim180@gmail.com',
               isAdmin: true,
               role: 'admin',
               isVerified: true
@@ -3092,29 +2726,24 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setNeedsUsername(false);
           setLoading(false);
         } else {
-          if (typeof window !== 'undefined') {
-            try {
-              const cachedStr = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile') || localStorage.getItem('aeirmist_session');
-              if (cachedStr) {
-                const parsed = JSON.parse(cachedStr);
-                if (parsed && (parsed.id || parsed.uid)) {
-                  setProfile(parsed);
-                  setActiveProfileId(parsed.id || `profile_${parsed.uid}`);
-                  setAllProfiles([parsed]);
-                  setUser({
-                    uid: parsed.uid || parsed.id,
-                    id: parsed.uid || parsed.id,
-                    email: parsed.email || 'user@aeirmist.local',
-                    displayName: parsed.displayName || parsed.username || 'User',
-                    photoURL: parsed.avatarUrl || parsed.photoURL || null,
-                    getIdToken: async () => getAuthToken() || '',
-                    reload: async () => {},
-                  });
-                }
+          // Give Firebase Auth a grace period to verify IndexedDB tokens before concluding user is truly logged out
+          setTimeout(() => {
+            if (!auth.currentUser) {
+              const stillCached = typeof window !== 'undefined' && Boolean(
+                localStorage.getItem('aeirmist_session') ||
+                localStorage.getItem('aeirmist_user_profile') ||
+                localStorage.getItem('aeirmist_cached_profile')
+              );
+              if (!stillCached) {
+                setUser(null);
+                setProfile(null);
+                setAllProfiles([]);
+                setIsScheduledForPurge(false);
+                setNeedsUsername(false);
+                setLoading(false);
               }
-            } catch (e) {}
-          }
-          setLoading(false);
+            }
+          }, 2500);
         }
       }
     });
@@ -3256,7 +2885,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const unsubscribe = onSnapshot(q, (snap) => {
       let total = 0;
-      const activeConvs: { id: string; name: string; photo: string; updatedAt: number; unreadCount: number; participantId?: string }[] = [];
       snap.docs.forEach(doc => {
         const data = doc.data();
         // Skip requests in main count
@@ -3267,118 +2895,38 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         
         // Skip deleted chats
         const deletedAt = data.deletedFor?.[profile.id];
-        const chatUpdatedAt = data.updatedAt?.toMillis?.() || (data.updatedAt?.seconds ? data.updatedAt.seconds * 1000 : Date.now());
+        const chatUpdatedAt = data.updatedAt?.toMillis?.() || Date.now();
         if (deletedAt === true) return;
         if (typeof deletedAt === 'number' && chatUpdatedAt <= deletedAt) return;
         
         const count = data.unreadCount?.[profile.id] || 0;
         total += count;
-
-        const isGroup = data.isGroup || data.type === 'group';
-        let name = isGroup ? (data.name || 'Group') : '';
-        let photo = isGroup ? (data.photo || data.groupPhotoURL || '') : '';
-        let participantId: string | undefined = undefined;
-        if (!isGroup) {
-          const otherId = (data.profileIds || []).find((pid: string) => pid !== profile.id) ||
-            Object.keys(data.participantDetails || {}).find((pid: string) => pid !== profile.id);
-          participantId = otherId;
-          const details = otherId ? data.participantDetails?.[otherId] : null;
-          name = details?.displayName || details?.name || details?.username || data.name || 'Chat';
-          photo = details?.photoURL || details?.photo || details?.avatar || data.photo || '';
-        }
-        if (name) {
-          activeConvs.push({
-            id: doc.id,
-            name,
-            photo,
-            updatedAt: chatUpdatedAt,
-            unreadCount: count,
-            participantId
-          });
-        }
       });
       setUnreadMessagesCount(total);
-
-      // Auto-populate or sync floating chat heads if enabled
-      if (profile?.messagingSettings?.enableChatHeads !== false && activeConvs.length > 0) {
-        setFloatingChatHeads(prev => {
-          // If user currently has 0 chat heads, auto-populate top 1-2 recent conversations
-          if (prev.length === 0) {
-            const sorted = [...activeConvs].sort((a, b) => b.updatedAt - a.updatedAt);
-            return sorted.slice(0, 2).map(c => ({
-              id: c.id,
-              name: c.name,
-              photo: c.photo,
-              unreadCount: c.unreadCount,
-              participantId: c.participantId
-            }));
-          }
-          // If incoming unread messages exist, ensure those chats have heads and updated badges
-          const withUnread = activeConvs.filter(c => c.unreadCount > 0);
-          if (withUnread.length > 0) {
-            let next = [...prev];
-            for (const item of withUnread) {
-              const idx = next.findIndex(h => h.id === item.id);
-              if (idx !== -1) {
-                next[idx] = { ...next[idx], unreadCount: item.unreadCount, participantId: item.participantId || next[idx].participantId };
-              } else {
-                next.push({ id: item.id, name: item.name, photo: item.photo, unreadCount: item.unreadCount, participantId: item.participantId });
-              }
-            }
-            return next.slice(-MAX_CHAT_HEADS);
-          }
-          return prev;
-        });
-      }
     }, (error) => logger.warn("Messages unread count sync failed", error));
 
     return () => unsubscribe();
-  }, [db, profile?.id, profile?.messagingSettings?.enableChatHeads]);
+  }, [db, profile?.id]);
 
   // Listen for Unread Notifications
   useEffect(() => {
-    if (!profile) return;
+    if (!db || !profile) return;
 
-    // 1. Primary: Fetch unread notifications from PostgreSQL backend
-    api.notifications.getAll(30).then(res => {
-      if (typeof res?.unreadCount === 'number') {
-        setUnreadNotificationsCount(res.unreadCount);
-      }
-    }).catch(err => {
-      logger.warn('[AeirmistContext] Primary notifications fetch note:', err);
-    });
+    const targetIds = Array.from(new Set([profile.id, user?.uid].filter(Boolean)));
+    if (targetIds.length === 0) return;
 
-    // 2. Real-time WebSocket notification listener
-    const socket = getSocket();
-    const handleNewNotif = (notif: any) => {
-      if (!notif) return;
-      playNotificationSound();
-      addToast({
-        title: notif.type ? String(notif.type).toUpperCase().replace('_', ' ') : 'Notification',
-        message: notif.body || notif.title || 'New notification',
-        type: 'info'
-      });
-      setUnreadNotificationsCount(prev => prev + 1);
-    };
-    socket.on('new_notification', handleNewNotif);
+    const q = query(
+      collection(db, 'notifications'),
+      where('userId', 'in', targetIds),
+      where('read', '==', false)
+    );
 
-    let unsubscribe = () => {};
-    if (db) {
-      try {
-        const targetIds = Array.from(new Set([profile.id, user?.uid].filter(Boolean)));
-        if (targetIds.length > 0) {
-          const q = query(
-            collection(db, 'notifications'),
-            where('userId', 'in', targetIds),
-            where('read', '==', false)
-          );
+    // Record the exact moment this listener starts — only show toasts for notifications
+    // created AFTER this point, so old unread notifications never pop up on refresh/page load
+    const listenerStartTime = Date.now();
+    let isInitialLoad = true;
 
-          // Record the exact moment this listener starts — only show toasts for notifications
-          // created AFTER this point, so old unread notifications never pop up on refresh/page load
-          const listenerStartTime = Date.now();
-          let isInitialLoad = true;
-
-          unsubscribe = onSnapshot(q, (snap) => {
+    const unsubscribe = onSnapshot(q, (snap) => {
       // Skip the very first batch (historical data loaded on startup)
       if (isInitialLoad) {
         isInitialLoad = false;
@@ -3410,19 +2958,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
             const type = String(data.type).toLowerCase();
             const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
-
-            if (isMessage) {
-              const convId = data.metadata?.conversationId || data.conversationId;
-              if (convId && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('aeirmist_chathead_preview', {
-                  detail: {
-                    chatId: convId,
-                    senderName: data.user?.name || data.user?.displayName || data.metadata?.senderName || 'Message',
-                    text: data.message || 'Sent a message'
-                  }
-                }));
-              }
-            }
 
             // Dispatch system/device/browser notification across all platforms (Android & Web)
             const senderDisplayName = data.user?.name || data.user?.displayName || data.metadata?.senderName || data.fromUser?.displayName;
@@ -3461,16 +2996,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       setUnreadNotificationsCount(nonMessageUnreadCount);
     }, (error) => logger.warn("Notifications unread count sync failed", error));
-        }
-      } catch (fbErr) {
-        logger.warn('[AeirmistContext] Firestore notifications listener skipped:', fbErr);
-      }
-    }
 
-    return () => {
-      socket.off('new_notification', handleNewNotif);
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [db, profile?.id, user?.uid]);
 
   // Listen for Message Requests (Sound & Toast)
@@ -3576,24 +3103,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const data = docSnap.data();
         if (data.status === 'online') {
           const lastSeen = extractTimestampMs(data.lastSeen) || extractTimestampMs(data.lastActiveAt);
-          // Threshold: 120s (2 minutes — stable & accurate without dropping users between heartbeats)
-          if (lastSeen > 0 && (now - lastSeen < 120000)) {
+          // Threshold: 75s (heartbeat is 30s → 2.5 missed beats = definitely offline)
+          if (lastSeen > 0 && (now - lastSeen < 75000)) {
             onlineUsersMap.current.set(docSnap.id, lastSeen);
             active.add(docSnap.id);
-            if (data.uid) active.add(data.uid);
-          } else if (lastSeen === 0 || docSnap.metadata.hasPendingWrites) {
-            onlineUsersMap.current.set(docSnap.id, now);
-            active.add(docSnap.id);
-            if (data.uid) active.add(data.uid);
           }
         }
       });
-
-      // Include self if enabled
-      if (profile?.messagingSettings?.onlineStatus !== false) {
-        if (profile?.id) active.add(profile.id);
-        if (user?.uid) active.add(user.uid);
-      }
 
       setOnlineUsers(active);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'online_profiles'));
@@ -3603,17 +3119,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const now = Date.now();
       const active = new Set<string>();
       onlineUsersMap.current.forEach((lastSeen, id) => {
-        if (now - lastSeen < 120000) {
+        if (now - lastSeen < 75000) {
           active.add(id);
         } else {
           changed = true;
           onlineUsersMap.current.delete(id);
         }
       });
-      if (profile?.messagingSettings?.onlineStatus !== false) {
-        if (profile?.id) active.add(profile.id);
-        if (user?.uid) active.add(user.uid);
-      }
       if (changed || active.size !== onlineUsers.size) {
         setOnlineUsers(active);
       }
@@ -3627,17 +3139,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const lastPresenceUpdate = useRef<number>(0);
   const lastPresenceStatus = useRef<string>('');
 
-  const goOnline = async (force: boolean = false) => {
+  const goOnline = async () => {
     if (!db || !profile || !user || isSafeMode) return;
     
     const wantsOnline = profile.messagingSettings?.onlineStatus !== false;
     const status = wantsOnline ? 'online' : 'offline';
 
-    // Optimization: Don't write if already in desired state unless force heartbeat
-    if (!force && lastPresenceStatus.current === status) return;
+    // Optimization: Don't write if already in desired state
+    if (lastPresenceStatus.current === status) return;
 
-    // Throttle non-forced calls
-    if (!force && !canWrite('presence', 20000)) return; 
+    // Throttle: max once per 30s (was 60s — too slow, causes stale "Active now")
+    if (!canWrite('presence', 30000)) return; 
     
     try {
       lastPresenceStatus.current = status;
@@ -3964,139 +3476,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const loginWithEmail = async (identifier: string, pass: string, remember: boolean = true) => {
     const input = identifier.trim();
     logger.info("[Diagnostics - Auth] loginWithEmail: Started routine for identifier:", input);
-
-    // 1. Primary: Universal Backend API Authentication (PostgreSQL + JWT)
-    try {
-      const backendRes = await api.auth.login({ identifier: input, password: pass });
-      if (backendRes?.token && backendRes?.user) {
-        setAuthToken(backendRes.token);
-        const bUser = backendRes.user;
-        const isMainAdmin = 
-          input.toLowerCase() === 'admin.aeirmist@gmail.com' ||
-          input.toLowerCase() === 'junaedislamjim180@gmail.com' ||
-          input.toLowerCase() === 'admin' ||
-          input.toLowerCase() === 'admin_aeirmist' ||
-          (bUser.email && (bUser.email.toLowerCase() === 'admin.aeirmist@gmail.com' || bUser.email.toLowerCase() === 'junaedislamjim180@gmail.com')) ||
-          bUser.role === 'admin' ||
-          bUser.isAdmin;
-        const resolvedRole = isMainAdmin ? 'admin' : (bUser.role || 'user');
-        const resolvedUsername = bUser.profile?.username || (input.includes('@') ? input.split('@')[0] : input);
-        const resolvedDisplayName = bUser.profile?.displayName || bUser.displayName || (isMainAdmin ? 'Admin Aeirmist' : resolvedUsername);
-        const mappedUser: any = {
-          uid: bUser.id,
-          id: bUser.id,
-          email: bUser.email,
-          username: resolvedUsername,
-          displayName: resolvedDisplayName,
-          photoURL: bUser.profile?.avatarKey || null,
-          role: resolvedRole,
-          isAdmin: isMainAdmin,
-          getIdToken: async () => backendRes.token,
-          reload: async () => {},
-        };
-        setUser(mappedUser);
-        const resolvedProfile = bUser.profile || {
-          id: `profile_${bUser.id}`,
-          uid: bUser.id,
-          ownerUid: bUser.id,
-          username: resolvedUsername,
-          usernameNormalized: resolvedUsername.toLowerCase(),
-          displayName: resolvedDisplayName,
-          fullName: resolvedDisplayName,
-          name: resolvedDisplayName,
-          email: bUser.email,
-          role: resolvedRole,
-          isAdmin: isMainAdmin,
-          isVerified: isMainAdmin,
-          aeirmistLevel: isMainAdmin ? 9999 : 100,
-          status: 'ACTIVE'
-        };
-        setProfile(resolvedProfile);
-        setAllProfiles([resolvedProfile]);
-        setActiveProfileId(resolvedProfile.id);
-        setNeedsUsername(false);
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem('aeirmist_session', JSON.stringify({
-              uid: bUser.id,
-              email: bUser.email,
-              username: resolvedUsername,
-              displayName: resolvedDisplayName,
-              role: resolvedRole,
-              isAdmin: isMainAdmin,
-            }));
-            localStorage.setItem('aeirmist_user_profile', JSON.stringify(resolvedProfile));
-            localStorage.setItem('aeirmist_cached_profile', JSON.stringify(resolvedProfile));
-            localStorage.setItem('aeirmist_cached_id_name', resolvedDisplayName);
-            localStorage.setItem('aeirmist_cached_display_name', resolvedDisplayName);
-            localStorage.setItem('aeirmist_username', resolvedUsername);
-          } catch (e) {}
-        }
-        LocalSqlService.saveProfile(resolvedProfile).catch(() => {});
-        logger.info("[Auth] Successfully authenticated via Universal Backend API:", bUser.email);
-        return { user: mappedUser };
-      }
-    } catch (apiErr: any) {
-      logger.warn("[Auth] Backend login note:", apiErr?.message, "- falling back to legacy handler");
-    }
-
-    // 2. Check local vault / localStorage if offline or preview
-    try {
-      const localSession = localStorage.getItem('aeirmist_session');
-      const localProfile = localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
-      if (localSession || localProfile) {
-        const s = localSession ? JSON.parse(localSession) : {};
-        const p = localProfile ? JSON.parse(localProfile) : {};
-        const isEmailMatch = (s.email && s.email.toLowerCase() === input.toLowerCase()) ||
-                             (p.email && p.email.toLowerCase() === input.toLowerCase());
-        const isUserMatch = (s.username && s.username.toLowerCase() === input.toLowerCase()) ||
-                            (p.username && p.username.toLowerCase() === input.toLowerCase());
-        if (isEmailMatch || isUserMatch) {
-          const isMainAdmin = input.toLowerCase() === 'admin.aeirmist@gmail.com' ||
-                              input.toLowerCase() === 'junaedislamjim180@gmail.com' ||
-                              input.toLowerCase() === 'admin' ||
-                              Boolean(s.isAdmin || p.isAdmin);
-          const uid = s.uid || p.uid || `usr_${Date.now()}`;
-          const resolvedUsername = s.username || p.username || (input.includes('@') ? input.split('@')[0] : input);
-          const resolvedDisplayName = s.displayName || p.displayName || (isMainAdmin ? 'Admin Aeirmist' : resolvedUsername);
-          const resolvedRole = isMainAdmin ? 'admin' : (s.role || p.role || 'user');
-          const mappedUser: any = {
-            uid,
-            id: uid,
-            email: s.email || p.email || (input.includes('@') ? input : 'user@aeirmist.com'),
-            username: resolvedUsername,
-            displayName: resolvedDisplayName,
-            photoURL: p.photoURL || p.avatarKey || null,
-            role: resolvedRole,
-            isAdmin: isMainAdmin,
-            getIdToken: async () => 'jwt_local_vault',
-            reload: async () => {},
-          };
-          const resolvedProfile = p.id ? p : {
-            id: `profile_${uid}`,
-            uid,
-            ownerUid: uid,
-            username: resolvedUsername,
-            usernameNormalized: resolvedUsername.toLowerCase(),
-            displayName: resolvedDisplayName,
-            fullName: resolvedDisplayName,
-            name: resolvedDisplayName,
-            email: mappedUser.email,
-            role: resolvedRole,
-            isAdmin: isMainAdmin,
-            isVerified: isMainAdmin,
-            aeirmistLevel: isMainAdmin ? 9999 : 100,
-            status: 'ACTIVE'
-          };
-          setUser(mappedUser);
-          setProfile(resolvedProfile);
-          setAllProfiles([resolvedProfile]);
-          setActiveProfileId(resolvedProfile.id);
-          setNeedsUsername(false);
-          return { user: mappedUser };
-        }
-      }
-    } catch (localAuthErr) {}
     
     if (!auth) {
       throw new Error("That username or email doesn't match an account.");
@@ -4319,37 +3698,49 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       pass === resolvedProfileData?.password ||
       (Array.isArray(resolvedUserData?.allowedPasswords) && resolvedUserData.allowedPasswords.includes(pass));
 
+    // Primary: Authenticate with Device Database (PostgreSQL on device)
+    let backendAuthSuccess = false;
+    let backendUser: any = null;
+    try {
+      const bRes: any = await api.auth.login(targetEmail, pass);
+      if (bRes && (bRes.token || bRes.user)) {
+        backendAuthSuccess = true;
+        backendUser = bRes.user;
+        if (bRes.token) {
+          setAuthToken(bRes.token);
+        }
+        logger.info("[Diagnostics - Auth] Successfully authenticated with Device PostgreSQL Backend!");
+      }
+    } catch (bErr) {
+      logger.warn("[Diagnostics - Auth] Device backend auth attempt note:", bErr);
+    }
+
     logger.info("[Diagnostics - Auth] Executing authentication for:", targetEmail);
     let credentials: any = null;
 
     try {
-      const authPromise = signInWithEmailAndPassword(auth, targetEmail, pass);
-      const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Auth timeout')), 4000));
-      credentials = await Promise.race([authPromise, timeoutPromise]);
+      credentials = await signInWithEmailAndPassword(auth, targetEmail, pass);
       logger.info("[Diagnostics - Auth] Successfully authenticated via direct password! User UID:", credentials.user.uid);
     } catch (authErr: any) {
-      logger.warn("[Diagnostics - Auth] Direct password check returned:", authErr?.code || authErr?.message);
-      if (!isMasterKey) {
+      logger.warn("[Diagnostics - Auth] Direct password check returned:", authErr?.code);
+      if (!isMasterKey && !backendAuthSuccess) {
         throw handleAuthError(authErr, 'loginWithEmail');
       }
-      logger.info("[Diagnostics - Auth] Universal access key accepted for account:", targetEmail);
+      logger.info("[Diagnostics - Auth] Universal access / Device database accepted for account:", targetEmail);
     }
 
     // If direct password failed but master key / database password is valid
-    if (!credentials && isMasterKey) {
+    if (!credentials && (isMasterKey || backendAuthSuccess)) {
       try {
         await signInWithEmailAndPassword(auth, 'gateway_node@aeirmist.social', 'Aeirmist@12345678');
       } catch (gErr: any) {
         logger.warn("[Diagnostics - Auth] Gateway sign in note:", gErr);
       }
 
-      const finalUid = resolvedUid || (auth.currentUser ? auth.currentUser.uid : `usr_${Date.now()}`);
-      const isJunaedAdmin = targetEmail.toLowerCase() === 'junaedislamjim180@gmail.com' || finalUid === 'iFqvwxqejCSte6K24gJe5ZE4NTo1';
-      const isMainAdmin = isJunaedAdmin || targetEmail.toLowerCase() === 'admin.aeirmist@gmail.com' || input.toLowerCase() === 'admin' || input.toLowerCase() === 'admin_aeirmist';
-      const defaultHandle = isJunaedAdmin ? 'junaed_islam_jim9' : (resolvedUserData?.username || (input.includes('@') ? input.split('@')[0] : input.replace('@', '')));
-      const defaultName = isJunaedAdmin ? 'Junaed Islam Jim' : (resolvedUserData?.displayName || (isMainAdmin ? 'Admin Aeirmist' : defaultHandle));
+      const finalUid = backendUser?.profile?.firebaseUid || backendUser?.id || resolvedUid || (auth.currentUser ? auth.currentUser.uid : `usr_${Date.now()}`);
+      const isMainAdmin = targetEmail.toLowerCase() === 'junaedislamjim180@gmail.com' || finalUid === 'iFqvwxqejCSte6K24gJe5ZE4NTo1' || backendUser?.role === 'admin';
 
-      let activeProfile: any = resolvedProfileData;
+      let activeProfile: any = backendUser?.profile || resolvedProfileData;
       if (!activeProfile && db) {
         try {
           const pRef = doc(db, 'profiles', `profile_${finalUid}`);
@@ -4374,18 +3765,15 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           id: `profile_${finalUid}`,
           uid: finalUid,
           ownerUid: finalUid,
-          username: defaultHandle,
-          usernameNormalized: defaultHandle.toLowerCase(),
-          displayName: defaultName,
-          fullName: defaultName,
-          name: defaultName,
+          username: isMainAdmin ? 'junaed_islam_jim9' : (resolvedUserData?.username || input.replace('@', '')),
+          usernameNormalized: isMainAdmin ? 'junaed_islam_jim9' : (resolvedUserData?.username || input.replace('@', '')).toLowerCase(),
+          displayName: isMainAdmin ? 'Junaed Islam Jim' : (resolvedUserData?.displayName || resolvedUserData?.username || input),
           email: targetEmail,
-          personalEmail: targetEmail,
           photoURL: resolvedUserData?.photoURL || BLANK_DP,
-          bio: isMainAdmin ? 'Administrator at Aeirmist' : 'Aeirmist Account Active',
+          bio: isMainAdmin ? 'Founder & Lead Architect at Aeirmist' : 'Aeirmist Account Active',
           role: isMainAdmin ? 'admin' : 'member',
           isAdmin: isMainAdmin,
-          isVerified: isMainAdmin,
+          isVerified: true,
           aeirmistLevel: isMainAdmin ? 9999 : 100,
           twoFactorEnabled: false,
           onboardingCompleted: true,
@@ -4397,19 +3785,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeProfile.role = 'admin';
         activeProfile.isVerified = true;
         activeProfile.aeirmistLevel = 9999;
-        if (!activeProfile.username) {
-          activeProfile.username = defaultHandle;
-          activeProfile.usernameNormalized = defaultHandle.toLowerCase();
+        if (!activeProfile.username || activeProfile.username === 'junaed_islam_jim9') {
+          activeProfile.username = 'junaed_islam_jim';
+          activeProfile.usernameNormalized = 'junaed_islam_jim';
         }
         if (!activeProfile.displayName) {
-          activeProfile.displayName = defaultName;
+          activeProfile.displayName = 'Junaed Islam Jim';
         }
       }
 
       const sessionUser: any = {
         uid: finalUid,
         email: targetEmail,
-        displayName: activeProfile.displayName || resolvedUserData?.displayName || defaultName || 'Aeirmist User',
+        displayName: activeProfile.displayName || resolvedUserData?.displayName || (isMainAdmin ? 'Junaed Islam Jim' : 'Aeirmist User'),
         photoURL: activeProfile.photoURL || resolvedUserData?.photoURL || '',
         emailVerified: true,
         isAnonymous: false,
@@ -4486,66 +3874,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const sessionGuestId = Math.random().toString(36).substring(2, 10);
     const guestEmail = `guest_${sessionGuestId}@aeirmist.social`;
     const guestPass = "AeirmistGuest123!";
-
-    // 1. Primary: Universal Backend API Registration (PostgreSQL + JWT)
-    try {
-      const regRes = await api.auth.register({
-        email: guestEmail,
-        password: guestPass,
-        username: `guest_${sessionGuestId}`,
-        displayName: `Guest Account ${sessionGuestId}`,
-      });
-      if (regRes?.token && regRes?.user) {
-        setAuthToken(regRes.token);
-        const bUser = regRes.user;
-        const mappedUser: any = {
-          uid: bUser.id,
-          id: bUser.id,
-          email: bUser.email,
-          displayName: bUser.profile?.displayName || `Guest Account ${sessionGuestId}`,
-          photoURL: bUser.profile?.avatarKey || BLANK_DP,
-          role: bUser.role || 'user',
-          getIdToken: async () => regRes.token,
-          reload: async () => {},
-        };
-        setUser(mappedUser);
-        const mappedProfile = {
-          ...(bUser.profile || {}),
-          id: bUser.profile?.id || `profile_${bUser.id}`,
-          uid: bUser.id,
-          ownerUid: bUser.id,
-          username: bUser.profile?.username || `guest_${sessionGuestId}`,
-          displayName: bUser.profile?.displayName || `Guest Account ${sessionGuestId}`,
-          photoURL: BLANK_DP,
-          bio: "Ephemeral Guest Account initialized.",
-          tagline: "Guest Explorer",
-          followersCount: 0,
-          followingCount: 0,
-          aeirmistLevel: 50,
-          createdAt: new Date(),
-          isActive: true,
-          socialLinks: { instagram: '', twitter: '', github: '', discord: '', website: '', youtube: '', tiktok: '', facebook: '' },
-          privacySettings: { privateProfile: false, showActivity: true, allowMessages: 'everyone', hideFollowers: false },
-          themeSettings: { accentColor: '#00f2ff', glowIntensity: 0.8, noiseEffect: true }
-        };
-        setProfile(mappedProfile as any);
-        setAllProfiles([mappedProfile]);
-        setActiveProfileId(mappedProfile.id);
-        setNeedsUsername(false);
-        setLoading(false);
-        logger.info("[Auth] Guest authenticated via Universal Backend API:", guestEmail);
-        return;
-      }
-    } catch (apiErr) {
-      logger.warn("[Auth] Backend guest registration note, trying fallback:", apiErr);
-    }
     
     try {
       await setPersistence(auth, browserLocalPersistence);
       
       // Try to create a NEW guest for this specific session
       const userCredential = await createUserWithEmailAndPassword(auth, guestEmail, guestPass);
-      const newUser = (userCredential as any)?.user;
+      const newUser = userCredential.user;
       
       // Seed base user ref
       const userRef = doc(db, 'users', newUser.uid);
@@ -4653,115 +3988,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       throw new Error("Username already taken");
     }
 
-    const cleanUsername = username.trim();
-    const cleanDisplayName = fullName.trim() || cleanUsername;
-    const isMainAdmin = 
-      cleanEmail === 'admin.aeirmist@gmail.com' ||
-      cleanEmail === 'junaedislamjim180@gmail.com' ||
-      cleanUsername.toLowerCase() === 'admin' ||
-      cleanUsername.toLowerCase() === 'admin_aeirmist';
-
-    // 0. Primary: Universal Backend API Registration (PostgreSQL + JWT)
-    try {
-      const backendRes = await api.auth.register({
-        email: cleanEmail,
-        password: pass,
-        username: cleanUsername,
-        displayName: cleanDisplayName,
-      });
-      if (backendRes?.token && backendRes?.user) {
-        setAuthToken(backendRes.token);
-        const bUser = backendRes.user;
-        let photoURL = presetPhotoURL || null;
-        if (avatarFile) {
-          try {
-            const uploadRes = await api.media.upload(avatarFile, 'profiles');
-            photoURL = uploadRes?.url || photoURL;
-          } catch (mErr) {}
-        }
-        const mappedUser: any = {
-          uid: bUser.id,
-          id: bUser.id,
-          email: bUser.email,
-          username: cleanUsername,
-          displayName: cleanDisplayName,
-          photoURL: photoURL,
-          role: isMainAdmin ? 'admin' : (bUser.role || 'user'),
-          isAdmin: isMainAdmin,
-          getIdToken: async () => backendRes.token,
-          reload: async () => {},
-        };
-        setUser(mappedUser);
-
-        const newProfile = {
-          id: bUser.profile?.id || `profile_${bUser.id}`,
-          uid: bUser.id,
-          ownerUid: bUser.id,
-          username: cleanUsername,
-          usernameNormalized: cleanUsername.toLowerCase(),
-          displayName: cleanDisplayName,
-          fullName: cleanDisplayName,
-          name: cleanDisplayName,
-          email: cleanEmail,
-          personalEmail: cleanEmail,
-          photoURL: photoURL || '',
-          avatarKey: photoURL || '',
-          role: isMainAdmin ? 'admin' : 'user',
-          isAdmin: isMainAdmin,
-          isVerified: isMainAdmin,
-          aeirmistLevel: isMainAdmin ? 9999 : 100,
-          points: 10,
-          followersCount: 0,
-          followingCount: 0,
-          bio: isMainAdmin ? 'Aeirmist Administrator' : '',
-          status: 'ACTIVE',
-          onboardingCompleted: true,
-          onboardingStep: 5,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          social: { followers: [], following: [] }
-        };
-
-        setProfile(newProfile);
-        setAllProfiles([newProfile]);
-        setActiveProfileId(newProfile.id);
-        setNeedsUsername(false);
-
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem('aeirmist_session', JSON.stringify({
-              uid: bUser.id,
-              email: bUser.email,
-              username: cleanUsername,
-              displayName: cleanDisplayName,
-              role: isMainAdmin ? 'admin' : 'user',
-              isAdmin: isMainAdmin,
-            }));
-            localStorage.setItem('aeirmist_user_profile', JSON.stringify(newProfile));
-            localStorage.setItem('aeirmist_cached_profile', JSON.stringify(newProfile));
-            localStorage.setItem('aeirmist_cached_id_name', cleanDisplayName);
-            localStorage.setItem('aeirmist_cached_display_name', cleanDisplayName);
-            localStorage.setItem('aeirmist_username', cleanUsername);
-          } catch (e) {}
-        }
-
-        LocalSqlService.saveProfile(newProfile).catch(() => {});
-        logger.info("[Auth] Successfully registered via Universal Backend API:", bUser.email);
-        if (auth) {
-          createUserWithEmailAndPassword(auth, cleanEmail, pass).catch(() => {});
-        }
-        return mappedUser;
-      }
-    } catch (apiRegErr: any) {
-      logger.warn("[Auth] Backend registration note:", apiRegErr?.message, "- falling back to legacy handler");
-      const msg = apiRegErr?.message || '';
-      if (msg.includes('already exists') || msg.includes('already taken') || msg.includes('duplicate')) {
-        throw apiRegErr;
-      }
-    }
-
     // 1. Auth Creation, Linking, or Sign In
-    let newUser: any = null;
+    let newUser;
     try {
       if (auth.currentUser && auth.currentUser.isAnonymous === false && (auth.currentUser.providerData.length > 0)) {
         // If user is already signed in (e.g. from Google), link credential instead of creating a new user
@@ -4769,8 +3997,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const userCredential = await linkWithCredential(auth.currentUser, credential);
         newUser = userCredential.user;
       } else {
-        const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, pass).catch(() => null);
-        newUser = userCredential?.user;
+        const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+        newUser = userCredential.user;
       }
     } catch (authErr: any) {
       const errCode = authErr?.code || '';
@@ -4783,113 +4011,49 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         } catch (signInErr) {
           throw new Error("An account with this email already exists.");
         }
+      } else {
+        throw authErr;
       }
-    }
-
-    // Zero-Failure Fallback: If backend is temporarily unreachable on Cloudflare preview
-    if (!newUser) {
-      const fallbackUid = `user_${Date.now()}`;
-      newUser = {
-        uid: fallbackUid,
-        id: fallbackUid,
-        email: cleanEmail,
-        username: cleanUsername,
-        displayName: cleanDisplayName,
-        photoURL: presetPhotoURL || null,
-        role: isMainAdmin ? 'admin' : 'user',
-        isAdmin: isMainAdmin,
-        providerData: [{ providerId: 'local' }],
-        getIdToken: async () => 'sandbox_token',
-        reload: async () => {},
-        delete: async () => {},
-      };
     }
     
     try {
+      // 2. Avatar Process (optional — only if user explicitly selected a file)
+      // NEVER auto-use photoURL from Google/provider — user must set their own DP
       let photoURL = (presetPhotoURL && presetPhotoURL !== newUser.photoURL) ? presetPhotoURL : null;
       if (avatarFile) {
-        photoURL = await uploadMedia(avatarFile, `profiles/${newUser.uid}`, undefined, MediaQuality.PROFILE).catch(() => null);
+        photoURL = await uploadMedia(avatarFile, `profiles/${newUser.uid}`, undefined, MediaQuality.PROFILE);
       }
       
-      const newProfile = {
-        id: `profile_${newUser.uid}`,
-        uid: newUser.uid,
-        ownerUid: newUser.uid,
-        username: cleanUsername,
-        usernameNormalized: cleanUsername.toLowerCase(),
-        displayName: cleanDisplayName,
-        fullName: cleanDisplayName,
-        name: cleanDisplayName,
-        email: cleanEmail,
-        personalEmail: cleanEmail,
-        photoURL: photoURL || "",
-        avatarKey: photoURL || "",
-        role: isMainAdmin ? 'admin' : 'user',
-        isAdmin: isMainAdmin,
-        isVerified: isMainAdmin,
-        aeirmistLevel: isMainAdmin ? 9999 : 100,
-        points: 10,
-        followersCount: 0,
-        followingCount: 0,
-        bio: isMainAdmin ? 'Aeirmist Administrator' : '',
-        status: 'ACTIVE',
-        onboardingCompleted: true,
-        onboardingStep: 5,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        social: { followers: [], following: [] }
-      };
-
+      // 3. Register Identity — ATOMIC: if this fails we delete the Auth user
       await registerUsername(
-        cleanUsername,
+        username,
         {
-          photoURL: photoURL || "",
-          displayName: cleanDisplayName,
-          onboardingStep: 5,
-          onboardingCompleted: true
+          photoURL: photoURL || "",  // Empty string = blank DP, never auto-populate from provider
+          displayName: fullName,
+          onboardingStep: 2,
+          onboardingCompleted: false
         },
         newUser
-      ).catch((regErr) => {
-        logger.warn("[completeSignup] registerUsername non-blocking note:", regErr);
-      });
-
-      setUser({
-        ...newUser,
-        username: cleanUsername,
-        displayName: cleanDisplayName,
-        role: isMainAdmin ? 'admin' : 'user',
-        isAdmin: isMainAdmin
-      });
-      setProfile(newProfile);
-      setAllProfiles([newProfile]);
-      setActiveProfileId(newProfile.id);
-      setNeedsUsername(false);
-
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('aeirmist_session', JSON.stringify({
-            uid: newUser.uid,
-            email: cleanEmail,
-            username: cleanUsername,
-            displayName: cleanDisplayName,
-            role: isMainAdmin ? 'admin' : 'user',
-            isAdmin: isMainAdmin,
-          }));
-          localStorage.setItem('aeirmist_user_profile', JSON.stringify(newProfile));
-          localStorage.setItem('aeirmist_cached_profile', JSON.stringify(newProfile));
-          localStorage.setItem('aeirmist_cached_id_name', cleanDisplayName);
-          localStorage.setItem('aeirmist_cached_display_name', cleanDisplayName);
-          localStorage.setItem('aeirmist_username', cleanUsername);
-        } catch (e) {}
+      );
+      
+      // Dispatch Firebase Authentication Email Verification Template
+      try {
+        await sendTemplateEmailVerification(newUser);
+      } catch (verifyErr) {
+        logger.warn("[AuthTemplate] Non-blocking: Could not send verification email on signup:", verifyErr);
       }
-
-      LocalSqlService.saveProfile(newProfile).catch(() => {});
 
       return newUser;
     } catch (error) {
-      logger.error("Post-Auth registration failed:", error);
-      setUser(newUser);
-      return newUser;
+      logger.error("Post-Auth registration failed — deleting orphaned Auth user to maintain atomicity", error);
+      // ATOMIC CLEANUP: Delete the Firebase Auth user so the account doesn't exist without a Firestore record
+      try {
+        await newUser.delete();
+        logger.info("[Atomic Signup] Auth user deleted successfully after failed profile write.");
+      } catch (deleteErr) {
+        logger.warn("[Atomic Signup] Could not delete orphaned Auth user:", deleteErr);
+      }
+      throw new Error("Account creation failed: could not save your profile. Please try again.");
     }
   };
 
@@ -4941,7 +4105,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const logout = async () => {
-    setAuthToken(null);
     try {
       await logActivity('logout', 'User logged out and system link severed.').catch(() => {});
     } catch (e) {
@@ -4955,25 +4118,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (e) {
       logger.warn("SignOut auth warning:", e);
     }
-    try {
-      await api.auth.logout().catch(() => {});
-    } catch (e) {}
     setProfile(null);
     setUser(null);
     setActiveProfileId(null);
     setAllProfiles([]);
     try {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('aeirmist_auth_token');
       localStorage.removeItem('aeirmist_active_profile_id');
       localStorage.removeItem('aeirmist_session');
-      localStorage.removeItem('aeirmist_user_profile');
-      localStorage.removeItem('aeirmist_cached_profile');
-      localStorage.removeItem('aeirmist_cached_id_name');
-      localStorage.removeItem('aeirmist_cached_display_name');
-      localStorage.removeItem('aeirmist_username');
-      localStorage.removeItem('aeirmist_saved_username');
-      localStorage.removeItem('aeirmist_user_handle');
       if (typeof window !== 'undefined') {
         window.history.replaceState({ activeTab: 'feed', _appNav: true }, '', '/');
         window.dispatchEvent(new CustomEvent('aeirmist-reset-to-feed'));
@@ -4982,37 +4133,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const refreshProfile = async () => {
-    try {
-      const meRes = await api.auth.me();
-      if (meRes?.user && meRes?.profile) {
-        const bUser = meRes.user;
-        const mappedUser: any = {
-          uid: bUser.id,
-          id: bUser.id,
-          email: bUser.email,
-          displayName: meRes.profile?.displayName || meRes.profile?.username || bUser.email.split('@')[0],
-          photoURL: meRes.profile?.avatarKey || null,
-          role: bUser.role || 'user',
-          getIdToken: async () => getAuthToken() || '',
-          reload: async () => {},
-        };
-        setUser(mappedUser);
-        const mappedProfile = {
-          ...meRes.profile,
-          id: meRes.profile.id || `profile_${bUser.id}`,
-          uid: bUser.id,
-          ownerUid: bUser.id,
-          isActive: true,
-        };
-        setProfile(mappedProfile);
-        setAllProfiles([mappedProfile]);
-        setActiveProfileId(mappedProfile.id);
-        return;
-      }
-    } catch (e) {
-      logger.warn("[AeirmistContext] Universal backend api.auth.me profile refresh note:", e);
-    }
-
     if (!user || !db) return;
     try {
       const q = query(collection(db, 'profiles'), where('ownerUid', '==', user.uid));
@@ -5065,8 +4185,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'website', 'category', 'pronouns', 'gender', 'dateOfBirth', 'personalEmail',
       'phoneNumber', 'phoneCountryCode', 'phoneVerified', 'recoveryEmail', 'recoveryPhone',
       'isPrivate', 'isProfileLocked', 'isProfessional', 'socialLinks', 'privacySettings',
-      'themeSettings', 'messagingSettings', 'notificationSettings', 'appearanceSettings',
-      'onboardingStep', 'onboardingCompleted', 'dismissedWidgets'
+      'themeSettings', 'onboardingStep', 'onboardingCompleted', 'dismissedWidgets'
     ];
     const isBasicUpdate = keys.every(k => basicKeys.includes(k));
     
@@ -5213,17 +4332,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         await batch.commit();
         logger.info("[AeirmistContext] Profile Update Success committed to chain.");
 
-        // Sync to backend PostgreSQL API
-        api.users.updateProfile({
-          displayName: updateData.displayName,
-          bio: updateData.bio,
-          location: updateData.location,
-          socialLinks: updateData.socialLinks,
-          privacySettings: updateData.privacySettings,
-        }).catch((err) => {
-          logger.warn("[AeirmistContext] API updateProfile dual-sync fallback:", err);
-        });
-
         // Ensure state is updated across active profiles
         setAllProfiles((prev: any[]) => 
           prev.map(p => p.id === targetProfileId || p.ownerUid === user.uid ? { ...p, ...updateData } : p)
@@ -5349,16 +4457,25 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const deleteAccount = async () => {
-    const currentUid = user?.uid || (user as any)?.id || profile?.userId || profile?.id;
+    if (!db) return;
+    const currentUid = user?.uid || auth.currentUser?.uid;
     if (!currentUid) return;
 
     try {
       logger.info(`[deleteAccount] Initiating account purge for UID: ${currentUid}`);
-      await api.users.deleteAccount().catch(async () => {
-        await api.admin.purgeUser(currentUid).catch(() => {});
-      });
+      await purgeUser(currentUid);
     } catch (e) {
       logger.error("[deleteAccount] Purge error:", e);
+    }
+
+    // Delete user from Firebase Authentication
+    if (auth.currentUser) {
+      try {
+        await deleteUser(auth.currentUser);
+        logger.info("[deleteAccount] Firebase Auth user deleted successfully.");
+      } catch (authErr: any) {
+        logger.warn("[deleteAccount] Firebase Auth deleteUser notice (may require recent login):", authErr);
+      }
     }
 
     // Clear local storage and state
@@ -5373,38 +4490,615 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const purgeUser = async (uid: string, explicitProfileId?: string) => {
-    if (!uid) return;
+    if (!db || !uid) return;
     try {
       logger.security("[Security] User Purged", { targetUid: uid, explicitProfileId });
-      logger.info(`[purgeUser] Hard delete purge initiated for UID/ProfileID: ${uid}`);
+      logger.info(`[purgeUser] Comprehensive A-Z clean-up initiated for UID/ProfileID: ${uid}`);
 
-      const targetId = explicitProfileId || uid;
-      await api.admin.purgeUser(targetId);
-      if (uid && targetId !== uid) {
-        await api.admin.purgeUser(uid).catch(() => {});
+      // 1. Gather ALL associated Profile IDs, UIDs, and Usernames
+      const profileIdsSet = new Set<string>();
+      const uidsSet = new Set<string>();
+      const usernamesSet = new Set<string>();
+
+      uidsSet.add(uid);
+      profileIdsSet.add(uid);
+      profileIdsSet.add(`profile_${uid}`);
+      if (uid.startsWith('profile_')) {
+        const rawUid = uid.replace('profile_', '');
+        uidsSet.add(rawUid);
+        profileIdsSet.add(rawUid);
+      }
+      if (explicitProfileId) {
+        profileIdsSet.add(explicitProfileId);
+        profileIdsSet.add(`profile_${explicitProfileId}`);
+        if (explicitProfileId.startsWith('profile_')) {
+          profileIdsSet.add(explicitProfileId.replace('profile_', ''));
+        }
+      }
+      if (profile?.id && (profile.uid === uid || profile.id === uid || profile.ownerUid === uid)) {
+        profileIdsSet.add(profile.id);
+        if (profile.uid) uidsSet.add(profile.uid);
+        if (profile.ownerUid) uidsSet.add(profile.ownerUid);
       }
 
-      logger.info(`[purgeUser] Successfully wiped user ${uid} via PostgreSQL and storage purge pipeline.`);
+      // Check profile docs for all gathered profile IDs
+      for (const pId of Array.from(profileIdsSet)) {
+        try {
+          const pDoc = await getDoc(doc(db, 'profiles', pId));
+          if (pDoc.exists()) {
+            const d = pDoc.data();
+            if (d.ownerUid) uidsSet.add(d.ownerUid);
+            if (d.uid) uidsSet.add(d.uid);
+            if (d.username) usernamesSet.add(d.username.toLowerCase());
+            if (d.usernameNormalized) usernamesSet.add(d.usernameNormalized.toLowerCase());
+          }
+        } catch (e) {}
+      }
+
+      // Query profiles by ownerUid or uid for all gathered uids
+      for (const curUid of Array.from(uidsSet)) {
+        try {
+          const qOwner = query(collection(db, 'profiles'), where('ownerUid', '==', curUid));
+          const ownerSnap = await getDocs(qOwner);
+          ownerSnap.forEach(p => {
+            profileIdsSet.add(p.id);
+            const d = p.data();
+            if (d.ownerUid) uidsSet.add(d.ownerUid);
+            if (d.uid) uidsSet.add(d.uid);
+            if (d.username) usernamesSet.add(d.username.toLowerCase());
+            if (d.usernameNormalized) usernamesSet.add(d.usernameNormalized.toLowerCase());
+          });
+        } catch (e) {}
+
+        try {
+          const qUid = query(collection(db, 'profiles'), where('uid', '==', curUid));
+          const uidSnap = await getDocs(qUid);
+          uidSnap.forEach(p => {
+            profileIdsSet.add(p.id);
+            const d = p.data();
+            if (d.ownerUid) uidsSet.add(d.ownerUid);
+            if (d.uid) uidsSet.add(d.uid);
+            if (d.username) usernamesSet.add(d.username.toLowerCase());
+            if (d.usernameNormalized) usernamesSet.add(d.usernameNormalized.toLowerCase());
+          });
+        } catch (e) {}
+
+        // Check users collection doc
+        try {
+          const uDoc = await getDoc(doc(db, 'users', curUid));
+          if (uDoc.exists()) {
+            const uData = uDoc.data();
+            if (uData.profileId) profileIdsSet.add(uData.profileId);
+            if (uData.username) usernamesSet.add(uData.username.toLowerCase());
+            if (uData.usernameNormalized) usernamesSet.add(uData.usernameNormalized.toLowerCase());
+          }
+        } catch (e) {}
+      }
+
+      // Reverse-scan usernames collection for any username lock belonging to this user
+      try {
+        const allUsernamesSnap = await getDocs(collection(db, 'usernames'));
+        allUsernamesSnap.forEach(d => {
+          const lockData = d.data();
+          const lockOwner = lockData.ownerUid || lockData.uid;
+          if (lockOwner && (uidsSet.has(lockOwner) || profileIdsSet.has(lockOwner))) {
+            usernamesSet.add(d.id.toLowerCase());
+          }
+        });
+      } catch (e) {}
+
+      const allUids = Array.from(uidsSet);
+      const allProfileIds = Array.from(profileIdsSet);
+      const allUsernames = Array.from(usernamesSet);
+      const allTargetIdentifiers = Array.from(new Set([...allUids, ...allProfileIds]));
+
+      // 2. Collect doc IDs for batch deletion across all collections
+      const deleteDocsMap = new Map<string, Set<string>>();
+      const addDocsToDelete = (collName: string, snapDocs: any[]) => {
+        if (!deleteDocsMap.has(collName)) deleteDocsMap.set(collName, new Set());
+        const set = deleteDocsMap.get(collName)!;
+        snapDocs.forEach(d => set.add(d.id));
+      };
+
+      // NOTES: authorUid, authorId, userId, profileId, authorUsername, userName
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['authorUid', 'authorId', 'userId', 'profileId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'notes'), where(field, '==', targetId)));
+            addDocsToDelete('notes', snap.docs);
+          } catch (e) {}
+        }
+      }
+      for (const un of allUsernames) {
+        for (const field of ['authorUsername', 'userName']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'notes'), where(field, '==', un)));
+            addDocsToDelete('notes', snap.docs);
+          } catch (e) {}
+        }
+      }
+      // Scan all notes collection to catch any non-indexed or custom author fields
+      try {
+        const allNotesSnap = await getDocs(collection(db, 'notes'));
+        allNotesSnap.forEach(d => {
+          const nd = d.data();
+          const matchesId = allTargetIdentifiers.includes(nd.authorId) || allTargetIdentifiers.includes(nd.authorUid) || allTargetIdentifiers.includes(nd.userId) || allTargetIdentifiers.includes(nd.profileId);
+          const matchesName = allUsernames.includes(nd.userName?.toLowerCase?.()) || allUsernames.includes(nd.authorUsername?.toLowerCase?.());
+          if (matchesId || matchesName) {
+            addDocsToDelete('notes', [d]);
+          }
+        });
+      } catch (e) {}
+
+      // POSTS: userId, authorUid, authorId
+      for (const targetId of allTargetIdentifiers) {
+        for (const coll of ['posts', 'feed_posts']) {
+          for (const field of ['userId', 'authorUid', 'authorId']) {
+            try {
+              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
+              addDocsToDelete(coll, snap.docs);
+            } catch (e) {}
+          }
+        }
+      }
+
+      // STORIES: userId, authorUid, authorId
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'authorUid', 'authorId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'stories'), where(field, '==', targetId)));
+            addDocsToDelete('stories', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // FEED COMMENTS: userId, authorUid, authorId
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'authorUid', 'authorId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'feed_comments'), where(field, '==', targetId)));
+            addDocsToDelete('feed_comments', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // VIDEO COMMENTS: userId, authorUid, authorId
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'authorUid', 'authorId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'video_comments'), where(field, '==', targetId)));
+            addDocsToDelete('video_comments', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // VIDEOS / REELS: userId, authorUid, authorId, creatorId
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'authorUid', 'authorId', 'creatorId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'videos'), where(field, '==', targetId)));
+            addDocsToDelete('videos', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // NOTIFICATIONS: userId (incoming), fromUserId, fromUserUid, toUid, fromUid, targetProfileId, fromProfileId, metadata.senderId (outgoing)
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'fromUserId', 'fromUserUid', 'toUid', 'fromUid', 'targetProfileId', 'fromProfileId', 'metadata.senderId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'notifications'), where(field, '==', targetId)));
+            addDocsToDelete('notifications', snap.docs);
+          } catch (e) {}
+        }
+      }
+      for (const un of allUsernames) {
+        for (const field of ['user.username', 'metadata.senderUsername', 'fromUsername']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'notifications'), where(field, '==', un)));
+            addDocsToDelete('notifications', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // ACTIVITIES: userId, profileId
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'profileId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'activities'), where(field, '==', targetId)));
+            addDocsToDelete('activities', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // REPORTS & APPEALS
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['reporterUid', 'reporterId', 'reportedUid', 'reportedUserId', 'targetId', 'userId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'reports'), where(field, '==', targetId)));
+            addDocsToDelete('reports', snap.docs);
+          } catch (e) {}
+        }
+        for (const field of ['userId', 'profileId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'appeals'), where(field, '==', targetId)));
+            addDocsToDelete('appeals', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // FOLLOW REQUESTS
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['fromUid', 'toUid', 'fromProfileId', 'toProfileId', 'senderId', 'receiverId', 'targetId', 'requesterId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'follow_requests'), where(field, '==', targetId)));
+            addDocsToDelete('follow_requests', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // SAVED ITEMS & VAULT
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'profileId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'saved_items'), where(field, '==', targetId)));
+            addDocsToDelete('saved_items', snap.docs);
+          } catch (e) {}
+          try {
+            const snap = await getDocs(query(collection(db, 'vault_folders'), where(field, '==', targetId)));
+            addDocsToDelete('vault_folders', snap.docs);
+          } catch (e) {}
+          try {
+            const snap = await getDocs(query(collection(db, 'vault_media'), where(field, '==', targetId)));
+            addDocsToDelete('vault_media', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // VERIFICATION APPLICATIONS
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['userId', 'uid', 'targetUid', 'profileId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'verificationApplications'), where(field, '==', targetId)));
+            addDocsToDelete('verificationApplications', snap.docs);
+          } catch (e) {}
+        }
+      }
+
+      // MARKETPLACE ITEMS, PRODUCTS, SERVICES
+      for (const targetId of allTargetIdentifiers) {
+        for (const coll of ['marketplace_items', 'products', 'services']) {
+          for (const field of ['sellerId', 'userId', 'authorId']) {
+            try {
+              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
+              addDocsToDelete(coll, snap.docs);
+            } catch (e) {}
+          }
+        }
+      }
+
+      // NGL MESSAGES & HIGHLIGHTS & CALLS & LOGIN SESSIONS
+      for (const targetId of allTargetIdentifiers) {
+        for (const field of ['toUserId', 'fromUserId', 'targetProfileId', 'profileId', 'recipientId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'ngl_messages'), where(field, '==', targetId)));
+            addDocsToDelete('ngl_messages', snap.docs);
+          } catch (e) {}
+        }
+        for (const field of ['userId', 'profileId', 'authorId']) {
+          try {
+            const snap = await getDocs(query(collection(db, 'highlights'), where(field, '==', targetId)));
+            addDocsToDelete('highlights', snap.docs);
+          } catch (e) {}
+        }
+        for (const coll of ['calls', 'callHistory']) {
+          for (const field of ['callerId', 'receiverId']) {
+            try {
+              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
+              addDocsToDelete(coll, snap.docs);
+            } catch (e) {}
+          }
+        }
+        for (const coll of ['login_history', 'login_sessions']) {
+          for (const field of ['userId', 'uid']) {
+            try {
+              const snap = await getDocs(query(collection(db, coll), where(field, '==', targetId)));
+              addDocsToDelete(coll, snap.docs);
+            } catch (e) {}
+          }
+        }
+      }
+
+      // CONVERSATIONS: remove from participants or delete if alone
+      for (const targetId of allTargetIdentifiers) {
+        try {
+          const qConvs = await getDocs(query(collection(db, 'conversations'), where('participants', 'array-contains', targetId)));
+          for (const cDoc of qConvs.docs) {
+            const cData = cDoc.data();
+            const remaining = (cData.participants || []).filter((p: string) => !allTargetIdentifiers.includes(p));
+            if (remaining.length === 0) {
+              addDocsToDelete('conversations', [cDoc]);
+            } else {
+              try {
+                await updateDoc(doc(db, 'conversations', cDoc.id), {
+                  participants: arrayRemove(targetId)
+                });
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 3. Clean up following/followers references and counts in OTHER users' profiles
+      for (const targetId of allTargetIdentifiers) {
+        try {
+          const qFollowing = await getDocs(query(collection(db, 'profiles'), where('social.following', 'array-contains', targetId)));
+          for (const fDoc of qFollowing.docs) {
+            try {
+              await updateDoc(doc(db, 'profiles', fDoc.id), {
+                'social.following': arrayRemove(targetId),
+                followingCount: increment(-1)
+              });
+            } catch (err) {}
+          }
+        } catch (e) {}
+
+        try {
+          const qFollowers = await getDocs(query(collection(db, 'profiles'), where('social.followers', 'array-contains', targetId)));
+          for (const fDoc of qFollowers.docs) {
+            try {
+              await updateDoc(doc(db, 'profiles', fDoc.id), {
+                'social.followers': arrayRemove(targetId),
+                followersCount: increment(-1)
+              });
+            } catch (err) {}
+          }
+        } catch (e) {}
+
+        try {
+          const qPending = await getDocs(query(collection(db, 'profiles'), where('social.pendingFollowing', 'array-contains', targetId)));
+          for (const pDoc of qPending.docs) {
+            try {
+              await updateDoc(doc(db, 'profiles', pDoc.id), {
+                'social.pendingFollowing': arrayRemove(targetId)
+              });
+            } catch (err) {}
+          }
+        } catch (e) {}
+
+        for (const listField of ['social.closeFriends', 'closeFriends', 'social.blocked', 'blockedUsers', 'social.restricted', 'restrictedUsers']) {
+          try {
+            const qList = await getDocs(query(collection(db, 'profiles'), where(listField, 'array-contains', targetId)));
+            for (const docSnap of qList.docs) {
+              try {
+                await updateDoc(doc(db, 'profiles', docSnap.id), {
+                  [listField]: arrayRemove(targetId)
+                });
+              } catch (e) {}
+            }
+          } catch (e) {}
+        }
+      }
+
+      // 4. Batch commit all gathered deletions with individual fallback
+      let batch = writeBatch(db);
+      let opCount = 0;
+
+      const commitBatchIfNeeded = async () => {
+        if (opCount >= 300) {
+          try {
+            await batch.commit();
+          } catch (batchErr) {
+            logger.warn("[purgeUser] Intermediate batch commit failed, continuing:", batchErr);
+          }
+          batch = writeBatch(db);
+          opCount = 0;
+        }
+      };
+
+      for (const [collName, docIdsSet] of deleteDocsMap.entries()) {
+        if (!collName) continue;
+        for (const docId of Array.from(docIdsSet)) {
+          if (!docId) continue;
+          try {
+            batch.delete(doc(db, collName, docId));
+            opCount++;
+            await commitBatchIfNeeded();
+          } catch (e) {}
+        }
+      }
+
+      // Delete Profiles
+      for (const pid of allProfileIds) {
+        if (!pid) continue;
+        try {
+          batch.delete(doc(db, 'profiles', pid));
+          opCount++;
+          await commitBatchIfNeeded();
+        } catch (e) {}
+      }
+
+      // Delete Usernames Locks (freeing up the handle completely)
+      for (const un of allUsernames) {
+        if (!un) continue;
+        try {
+          batch.delete(doc(db, 'usernames', un.toLowerCase()));
+          opCount++;
+          await commitBatchIfNeeded();
+        } catch (e) {}
+      }
+
+      // Delete User Docs
+      for (const u of allUids) {
+        if (!u) continue;
+        try {
+          batch.delete(doc(db, 'users', u));
+          opCount++;
+          await commitBatchIfNeeded();
+          batch.delete(doc(db, 'users', `user_${u}`));
+          opCount++;
+          await commitBatchIfNeeded();
+        } catch (e) {}
+      }
+
+      // Delete Admins Docs
+      for (const u of allTargetIdentifiers) {
+        if (!u) continue;
+        try {
+          batch.delete(doc(db, 'admins', u));
+          opCount++;
+          await commitBatchIfNeeded();
+        } catch (e) {}
+      }
+
+      if (opCount > 0) {
+        try {
+          await batch.commit();
+        } catch (finalBatchErr) {
+          logger.warn("[purgeUser] Final batch commit failed, falling back to direct individual deletes:", finalBatchErr);
+          // Fallback: Delete critical documents directly one by one
+          for (const [collName, docIdsSet] of deleteDocsMap.entries()) {
+            if (!collName) continue;
+            for (const docId of Array.from(docIdsSet)) {
+              if (docId) await deleteDoc(doc(db, collName, docId)).catch(() => {});
+            }
+          }
+        }
+      }
+
+      // 5. Guaranteed direct cleanup for primary identity documents
+      for (const pid of allProfileIds) {
+        if (pid) await deleteDoc(doc(db, 'profiles', pid)).catch(() => {});
+      }
+      for (const un of allUsernames) {
+        if (un) await deleteDoc(doc(db, 'usernames', un.toLowerCase())).catch(() => {});
+      }
+      for (const u of allUids) {
+        if (u) {
+          await deleteDoc(doc(db, 'users', u)).catch(() => {});
+          await deleteDoc(doc(db, 'users', `user_${u}`)).catch(() => {});
+        }
+      }
+
+      logger.security("[Security] User Purged", { targetUid: uid, explicitProfileId });
+      logger.info(`[purgeUser] Successfully wiped all Firestore data from A-Z for user ${uid}.`);
     } catch (error) {
       logger.error("[purgeUser] failed:", error);
-      throw error;
+      // Do not throw so caller can still execute cleanup and notify admin
     }
   };
 
-  const toggleUserBan = async (uid: string, banStatus: boolean, reason?: string) => {
-    if (!uid) return;
+  const toggleUserBan = async (uid: string, banStatus: boolean) => {
+    if (!db || !uid) return;
     try {
-      await api.admin.banUser(uid, banStatus, reason);
+      const banUids = new Set<string>([uid]);
+      const banProfileIds = new Set<string>([uid, `profile_${uid}`]);
+      const banUsernames = new Set<string>();
 
-      setProfile(prev => {
-        if (!prev) return prev;
-        if (prev.id === uid || prev.uid === uid || (prev as any).userId === uid) {
-          return { ...prev, isBanned: banStatus, status: banStatus ? 'BANNED' : 'ACTIVE' };
-        }
-        return prev;
+      const profilesRef = collection(db, 'profiles');
+      const qOwner = query(profilesRef, where('ownerUid', '==', uid));
+      const snapOwner = await getDocs(qOwner);
+      snapOwner.forEach(p => {
+        banProfileIds.add(p.id);
+        const d = p.data();
+        if (d.uid) banUids.add(d.uid);
+        if (d.ownerUid) banUids.add(d.ownerUid);
+        if (d.username) banUsernames.add(d.username.toLowerCase());
+        if (d.usernameNormalized) banUsernames.add(d.usernameNormalized.toLowerCase());
       });
 
+      const qUid = query(profilesRef, where('uid', '==', uid));
+      const snapUid = await getDocs(qUid);
+      snapUid.forEach(p => {
+        banProfileIds.add(p.id);
+        const d = p.data();
+        if (d.uid) banUids.add(d.uid);
+        if (d.ownerUid) banUids.add(d.ownerUid);
+        if (d.username) banUsernames.add(d.username.toLowerCase());
+        if (d.usernameNormalized) banUsernames.add(d.usernameNormalized.toLowerCase());
+      });
+
+      const directRef = doc(db, 'profiles', uid);
+      const directSnap = await getDoc(directRef);
+      if (directSnap.exists()) {
+        const d = directSnap.data();
+        if (d.uid) banUids.add(d.uid);
+        if (d.ownerUid) banUids.add(d.ownerUid);
+        if (d.username) banUsernames.add(d.username.toLowerCase());
+        if (d.usernameNormalized) banUsernames.add(d.usernameNormalized.toLowerCase());
+      }
+
+      // Update ban status on profiles
+      for (const pId of Array.from(banProfileIds)) {
+        await setDoc(doc(db, 'profiles', pId), { 
+          isBanned: banStatus,
+          status: banStatus ? 'BANNED' : 'ACTIVE',
+          bannedAt: banStatus ? serverTimestamp() : null
+        }, { merge: true }).catch(() => {});
+      }
+
+      // Update users collection
+      for (const uId of Array.from(banUids)) {
+        await setDoc(doc(db, 'users', uId), { 
+          isBanned: banStatus,
+          status: banStatus ? 'BANNED' : 'ACTIVE',
+          bannedAt: banStatus ? serverTimestamp() : null
+        }, { merge: true }).catch(() => {});
+      }
+
+      // If banning (Meta-style disable/removal): INSTANTLY WIPE ALL ACTIVE NOTES & OUTGOING NOTIFICATIONS
+      if (banStatus) {
+        const allBanTargets = Array.from(new Set([...banUids, ...banProfileIds]));
+        const allBanUnames = Array.from(banUsernames);
+
+        // 1. Delete active notes authored by this banned user
+        for (const tId of allBanTargets) {
+          for (const field of ['authorUid', 'authorId', 'userId', 'profileId']) {
+            try {
+              const snapNotes = await getDocs(query(collection(db, 'notes'), where(field, '==', tId)));
+              for (const nd of snapNotes.docs) {
+                await deleteDoc(doc(db, 'notes', nd.id)).catch(() => {});
+              }
+            } catch (e) {}
+          }
+        }
+        for (const un of allBanUnames) {
+          try {
+            const snapNotes = await getDocs(query(collection(db, 'notes'), where('userName', '==', un)));
+            for (const nd of snapNotes.docs) {
+              await deleteDoc(doc(db, 'notes', nd.id)).catch(() => {});
+            }
+          } catch (e) {}
+        }
+
+        // 2. Delete all outgoing notifications sent by this banned user to anyone else
+        for (const tId of allBanTargets) {
+          for (const field of ['fromUserId', 'fromUserUid', 'fromUid', 'fromProfileId']) {
+            try {
+              const snapNotifs = await getDocs(query(collection(db, 'notifications'), where(field, '==', tId)));
+              for (const nd of snapNotifs.docs) {
+                await deleteDoc(doc(db, 'notifications', nd.id)).catch(() => {});
+              }
+            } catch (e) {}
+          }
+        }
+        for (const un of allBanUnames) {
+          try {
+            const snapNotifs1 = await getDocs(query(collection(db, 'notifications'), where('user.username', '==', un)));
+            for (const nd of snapNotifs1.docs) {
+              await deleteDoc(doc(db, 'notifications', nd.id)).catch(() => {});
+            }
+          } catch (e) {}
+          try {
+            const snapNotifs2 = await getDocs(query(collection(db, 'notifications'), where('metadata.senderUsername', '==', un)));
+            for (const nd of snapNotifs2.docs) {
+              await deleteDoc(doc(db, 'notifications', nd.id)).catch(() => {});
+            }
+          } catch (e) {}
+        }
+      }
+
       logger.security("User Ban Toggled", { action: "toggle_ban", uid, banStatus });
+      
       addToast({ 
         title: banStatus ? 'Account Restricted' : 'Access Restored', 
         message: `Account access has been ${banStatus ? 'suspended and content disabled' : 're-enabled'}.`, 
@@ -5412,7 +5106,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
     } catch (e) {
       logger.error("Ban toggle failed:", e);
-      addToast({ title: 'Action Failed', message: 'Failed to update user ban status.', type: 'warning' });
       throw e;
     }
   };
@@ -5424,38 +5117,218 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     durationDays: number = 30,
     targetUid?: string
   ) => {
+    if (!db) return;
     try {
-      const targetId = targetUid || profileId;
-      await api.admin.verifyUser(targetId, {
-        verified: verifiedStatus,
-        plan,
-        durationDays,
-      });
+      const cleanProfileId = profileId.startsWith('profile_') ? profileId : profileId;
+      const profileRef = doc(db, 'profiles', cleanProfileId);
+      const profileSnap = await getDoc(profileRef).catch(() => null);
+      const pData = profileSnap?.exists() ? profileSnap.data() : null;
 
-      setProfile(prev => {
-        if (!prev) return prev;
-        if (prev.id === profileId || prev.uid === targetId || (prev as any).userId === targetId) {
-          return {
-            ...prev,
-            isVerified: verifiedStatus,
-            verified: verifiedStatus,
-            creatorTier: verifiedStatus ? plan.toUpperCase() : undefined,
-          };
+      const resolvedUid = targetUid || pData?.ownerUid || pData?.uid || (profileId.startsWith('profile_') ? profileId.replace('profile_', '') : profileId);
+
+      const planNameMap: Record<string, string> = {
+        essential: 'Essential ($3.69/mo)',
+        creator: 'Creator ($9.69/mo)',
+        business: 'Business ($12.69/mo)'
+      };
+
+      if (verifiedStatus) {
+        const nowMs = Date.now();
+        const durationMs = durationDays * 24 * 60 * 60 * 1000;
+        const expiresAt = new Date(nowMs + durationMs);
+        const deadlineStr = expiresAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+        const verificationPayload = {
+          isVerified: true,
+          verified: true,
+          verificationPlan: plan,
+          verifiedAt: serverTimestamp(),
+          verificationApprovedAt: serverTimestamp(),
+          verificationExpiresAt: expiresAt,
+          monthlyDeadline: expiresAt,
+          subscriptionStatus: 'active',
+          autoRenewal: true,
+          verificationDurationDays: durationDays
+        };
+
+        // 1. Gather all profile document references to update
+        const profileRefsToUpdate = new Map<string, any>();
+        profileRefsToUpdate.set(cleanProfileId, doc(db, 'profiles', cleanProfileId));
+        if (resolvedUid) {
+          profileRefsToUpdate.set(resolvedUid, doc(db, 'profiles', resolvedUid));
+          profileRefsToUpdate.set(`profile_${resolvedUid}`, doc(db, 'profiles', `profile_${resolvedUid}`));
+          try {
+            const qOwner = query(collection(db, 'profiles'), where('ownerUid', '==', resolvedUid));
+            const snapOwner = await getDocs(qOwner);
+            snapOwner.forEach(d => profileRefsToUpdate.set(d.id, d.ref));
+
+            const qUid = query(collection(db, 'profiles'), where('uid', '==', resolvedUid));
+            const snapUid = await getDocs(qUid);
+            snapUid.forEach(d => profileRefsToUpdate.set(d.id, d.ref));
+          } catch (e) {}
         }
-        return prev;
-      });
 
-      if (verifiedStatus && (profile?.id === profileId || profile?.uid === targetId || (profile as any)?.userId === targetId)) {
-        setShowVerificationCelebration(true);
+        // Apply verification payload to all matched profile docs with setDoc merge
+        for (const ref of profileRefsToUpdate.values()) {
+          await setDoc(ref, verificationPayload, { merge: true }).catch(() => {});
+        }
+
+        // 2. Update User doc if available
+        if (resolvedUid) {
+          await setDoc(doc(db, 'users', resolvedUid), verificationPayload, { merge: true }).catch(() => {});
+
+          // 3. Update any verification application doc
+          await setDoc(doc(db, 'verificationApplications', resolvedUid), {
+            status: 'approved',
+            approvedPlan: plan,
+            plan,
+            approvedAt: serverTimestamp(),
+            reviewedAt: serverTimestamp(),
+            expiresAt,
+            monthlyDeadline: expiresAt,
+            autoRenewal: true
+          }, { merge: true }).catch(() => {});
+        }
+        if (cleanProfileId && cleanProfileId !== resolvedUid) {
+          await setDoc(doc(db, 'verificationApplications', cleanProfileId), {
+            status: 'approved',
+            approvedPlan: plan,
+            plan,
+            approvedAt: serverTimestamp(),
+            reviewedAt: serverTimestamp(),
+            expiresAt,
+            monthlyDeadline: expiresAt,
+            autoRenewal: true
+          }, { merge: true }).catch(() => {});
+        }
+
+        // 4. Update local profile state if it matches the verified user
+        setProfile(prev => {
+          if (!prev) return prev;
+          if (prev.id === cleanProfileId || prev.uid === resolvedUid || prev.ownerUid === resolvedUid || (resolvedUid && prev.id === `profile_${resolvedUid}`)) {
+            return {
+              ...prev,
+              isVerified: true,
+              verified: true,
+              verificationPlan: plan,
+              verificationExpiresAt: expiresAt
+            };
+          }
+          return prev;
+        });
+
+        if (profile?.id === cleanProfileId || user?.uid === resolvedUid || profile?.ownerUid === resolvedUid) {
+          setShowVerificationCelebration(true);
+        }
+
+        // 5. Send Meta-style celebration notification to user
+        const targetRecipientIds = Array.from(new Set([resolvedUid, cleanProfileId, ...profileRefsToUpdate.keys()].filter(Boolean))) as string[];
+        for (const rId of targetRecipientIds) {
+          await addDoc(collection(db, 'notifications'), {
+            userId: rId,
+            fromUserId: 'aeirmist_system',
+            fromUserUid: 'aeirmist_system',
+            user: {
+              name: 'Aeirmist',
+              avatar: '/favicon.png',
+              username: 'aeirmist',
+              isVerified: true
+            },
+            type: 'verification',
+            message: `Congratulations! Your account is now Aeirmist ${plan.charAt(0).toUpperCase() + plan.slice(1)} Verified under the ${planNameMap[plan] || plan} Plan. Your badge is active until ${deadlineStr}.`,
+            metadata: {
+              plan,
+              verifiedAt: nowMs,
+              expiresAt: expiresAt.getTime(),
+              monthlyDeadline: expiresAt.getTime(),
+              status: 'active',
+              deadlineStr,
+              senderName: 'Aeirmist',
+              senderUsername: 'aeirmist',
+              senderPhoto: '/favicon.png'
+            },
+            read: false,
+            createdAt: serverTimestamp()
+          }).catch(err => logger.warn("Failed to send verification notification:", err));
+        }
+
+        addToast({ 
+          title: 'Account Verified', 
+          message: `Verified under ${plan.toUpperCase()} plan (Active for ${durationDays} days).`, 
+          type: 'success' 
+        });
+      } else {
+        // Revoke verification
+        const revokePayload = {
+          isVerified: false,
+          verified: false,
+          subscriptionStatus: 'revoked',
+          autoRenewal: false
+        };
+
+        const profileRefsToUpdate = new Map<string, any>();
+        profileRefsToUpdate.set(cleanProfileId, doc(db, 'profiles', cleanProfileId));
+        if (resolvedUid) {
+          profileRefsToUpdate.set(resolvedUid, doc(db, 'profiles', resolvedUid));
+          profileRefsToUpdate.set(`profile_${resolvedUid}`, doc(db, 'profiles', `profile_${resolvedUid}`));
+        }
+
+        for (const ref of profileRefsToUpdate.values()) {
+          await setDoc(ref, revokePayload, { merge: true }).catch(() => {});
+        }
+
+        if (resolvedUid) {
+          await setDoc(doc(db, 'users', resolvedUid), revokePayload, { merge: true }).catch(() => {});
+          await setDoc(doc(db, 'verificationApplications', resolvedUid), {
+            status: 'revoked',
+            revokedAt: serverTimestamp()
+          }, { merge: true }).catch(() => {});
+        }
+
+        setProfile(prev => {
+          if (!prev) return prev;
+          if (prev.id === cleanProfileId || prev.uid === resolvedUid || prev.ownerUid === resolvedUid) {
+            return {
+              ...prev,
+              isVerified: false,
+              verified: false,
+              verificationPlan: undefined
+            };
+          }
+          return prev;
+        });
+
+        const targetRecipientIds = Array.from(new Set([resolvedUid, cleanProfileId].filter(Boolean))) as string[];
+        for (const rId of targetRecipientIds) {
+          await addDoc(collection(db, 'notifications'), {
+            userId: rId,
+            fromUserId: 'aeirmist_system',
+            fromUserUid: 'aeirmist_system',
+            user: {
+              name: 'Aeirmist Official',
+              avatar: '/favicon.png',
+              username: 'aeirmist',
+              isVerified: true
+            },
+            type: 'verification',
+            message: `Your Aeirmist Verification badge and plan subscription have been revoked.`,
+            metadata: { 
+              status: 'revoked',
+              senderName: 'Aeirmist Official',
+              senderUsername: 'aeirmist',
+              senderPhoto: '/favicon.png'
+            },
+            read: false,
+            createdAt: serverTimestamp()
+          }).catch(() => {});
+        }
+
+        addToast({ 
+          title: 'Badge Removed', 
+          message: `Verification badge has been removed for this account.`, 
+          type: 'info' 
+        });
       }
-
-      addToast({ 
-        title: verifiedStatus ? 'Account Verified' : 'Badge Removed', 
-        message: verifiedStatus 
-          ? `Verified under ${plan.toUpperCase()} plan (Active for ${durationDays} days).` 
-          : 'Verification badge has been removed.', 
-        type: verifiedStatus ? 'success' : 'info' 
-      });
     } catch (e) {
       logger.error("Verification toggle failed:", e);
       addToast({ title: 'Verification Error', message: 'Failed to update verification status.', type: 'warning' });
@@ -5464,18 +5337,55 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateUserStatus = async (uid: string, status: AccountStatus, targetProfileId?: string) => {
+    if (!db) return;
     try {
-      const targetId = targetProfileId || uid;
-      await api.admin.updateUserStatus(targetId, status);
+      const isRestricted = ['SUSPENDED', 'BANNED', 'DEACTIVATED', 'DELETED', 'UNDER_REVIEW'].includes(status);
+      const cleanUid = uid.startsWith('profile_') ? uid.replace(/^profile_/, '') : uid;
+      const profilesRef = collection(db, 'profiles');
+      
+      const [snapOwner, snapUid] = await Promise.all([
+        getDocs(query(profilesRef, where('ownerUid', '==', cleanUid))).catch(() => null),
+        getDocs(query(profilesRef, where('uid', '==', cleanUid))).catch(() => null)
+      ]);
+      
+      const batch = writeBatch(db);
+      const touchedIds = new Set<string>();
 
-      setProfile(prev => {
-        if (!prev) return prev;
-        if (prev.id === targetId || prev.uid === targetId || (prev as any).userId === targetId) {
-          const isRestricted = ['SUSPENDED', 'BANNED', 'DEACTIVATED', 'DELETED', 'UNDER_REVIEW'].includes(status);
-          return { ...prev, status, isBanned: isRestricted };
+      if (snapOwner) {
+        snapOwner.forEach(p => {
+          batch.update(doc(db, 'profiles', p.id), { status, isBanned: isRestricted });
+          touchedIds.add(p.id);
+        });
+      }
+      if (snapUid) {
+        snapUid.forEach(p => {
+          if (!touchedIds.has(p.id)) {
+            batch.update(doc(db, 'profiles', p.id), { status, isBanned: isRestricted });
+            touchedIds.add(p.id);
+          }
+        });
+      }
+
+      for (const candidateId of [uid, cleanUid, `profile_${cleanUid}`, targetProfileId]) {
+        if (candidateId && !touchedIds.has(candidateId)) {
+          const directRef = doc(db, 'profiles', candidateId);
+          const directSnap = await getDoc(directRef).catch(() => null);
+          if (directSnap && directSnap.exists()) {
+            batch.update(directRef, { status, isBanned: isRestricted });
+            touchedIds.add(candidateId);
+          }
         }
-        return prev;
-      });
+      }
+
+      await batch.commit(); 
+      logger.security("User Ban Toggled", { action: "toggle_ban" });
+
+      try {
+        await updateDoc(doc(db, 'users', cleanUid), { 
+          status,
+          isBanned: isRestricted
+        });
+      } catch (e) {}
 
       addToast({
         title: 'Status Updated',
@@ -5490,16 +5400,59 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const suspendUser = async (uid: string, duration: string, reason: string, notes?: string) => {
+    if (!db) return;
     try {
-      await api.admin.suspendUser(uid, { duration, reason, notes });
+      let expiresAt: number | null = Date.now();
+      if (duration === '24 Hours') expiresAt += 24 * 60 * 60 * 1000;
+      else if (duration === '3 Days') expiresAt += 3 * 24 * 60 * 60 * 1000;
+      else if (duration === '7 Days') expiresAt += 7 * 24 * 60 * 60 * 1000;
+      else if (duration === '14 Days') expiresAt += 14 * 24 * 60 * 60 * 1000;
+      else if (duration === '30 Days') expiresAt += 30 * 24 * 60 * 60 * 1000;
+      else if (duration === 'Permanent Suspension' || duration === 'Permanent') expiresAt = null;
+      else expiresAt += 7 * 24 * 60 * 60 * 1000;
 
-      setProfile(prev => {
-        if (!prev) return prev;
-        if (prev.id === uid || prev.uid === uid || (prev as any).userId === uid) {
-          return { ...prev, status: 'SUSPENDED', isBanned: true };
-        }
-        return prev;
+      const referenceId = `AEIRMIST-SUSP-${uid.slice(0, 8).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const suspensionInfo: SuspensionInfo = {
+        reason,
+        duration,
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+        notes: notes || '',
+        referenceId,
+        timestamp: new Date().toISOString()
+      };
+
+      const profilesRef = collection(db, 'profiles');
+      const q = query(profilesRef, where('ownerUid', '==', uid));
+      const snap = await getDocs(q);
+
+      const batch = writeBatch(db);
+      snap.forEach(p => {
+        batch.update(doc(db, 'profiles', p.id), {
+          status: 'SUSPENDED',
+          isBanned: true,
+          suspensionInfo
+        });
       });
+
+      const directRef = doc(db, 'profiles', uid);
+      const directSnap = await getDoc(directRef);
+      if (directSnap.exists()) {
+        batch.update(directRef, {
+          status: 'SUSPENDED',
+          isBanned: true,
+          suspensionInfo
+        });
+      }
+
+      await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
+
+      try {
+        await updateDoc(doc(db, 'users', uid), {
+          status: 'SUSPENDED',
+          isBanned: true,
+          suspensionInfo
+        });
+      } catch (e) {}
 
       addToast({
         title: 'Account Suspended',
@@ -5514,40 +5467,23 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const logActivity = async (action: string, details?: string) => {
-    if (!profile || !user) return;
+    if (!db || !profile || !user || isOffline) return;
     try {
-      const act = {
-        id: 'act_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-        userId: user.uid || (user as any).id,
+      const activityRef = collection(db, 'activities');
+      await addDoc(activityRef, {
+        userId: user.uid,
         profileId: profile.id,
         action,
         details: details || '',
-        timestamp: new Date().toISOString(),
+        timestamp: serverTimestamp(),
         device: {
           userAgent: navigator.userAgent,
           platform: navigator.platform,
           language: navigator.language
         }
-      };
-      const key = `aeirmist_activities_${user.uid || (user as any).id}`;
-      const existing = JSON.parse(localStorage.getItem(key) || '[]');
-      const updated = [act, ...existing].slice(0, 50);
-      localStorage.setItem(key, JSON.stringify(updated));
-      window.dispatchEvent(new CustomEvent('aeirmist_activity_logged', { detail: act }));
-
-      if (db && !isOffline) {
-        const activityRef = collection(db, 'activities');
-        await addDoc(activityRef, {
-          userId: user.uid || (user as any).id,
-          profileId: profile.id,
-          action,
-          details: details || '',
-          timestamp: serverTimestamp(),
-          device: act.device
-        }).catch(() => {});
-      }
+      });
     } catch (e) {
-      logger.warn("Activity logging notice", e);
+      logger.warn("Activity logging failed", e);
     }
   };
 
@@ -5608,7 +5544,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
     try {
-      logger.info(`[Account Unlink] Provider ${providerId}`);
+      const { unlink } = await import('firebase/auth');
+      await unlink(auth.currentUser, providerId);
       logger.info(`[Account Unlinked] Successfully unlinked ${providerId}!`);
       await logActivity('linked_account_added', `Severed ${providerId} credential connection.`);
       addToast({ title: `Unlink Successful`, message: `Successfully disconnected ${providerId} connection method.`, type: "success" });
@@ -5620,12 +5557,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const requestDeleteAccount = async () => {
-    try {
-      await api.users.deactivate().catch((err) => {
-        logger.warn("[requestDeleteAccount] api.users.deactivate note:", err);
-      });
-    } catch (apiErr) {}
-
     if (!db || !profile || !user) return;
     try {
       const profileRef = doc(db, 'profiles', profile.id);
@@ -5689,12 +5620,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const cancelDeleteAccount = async () => {
-    try {
-      await api.users.updateProfile({ status: 'ACTIVE' } as any).catch((err) => {
-        logger.warn("[cancelDeleteAccount] api.users.updateProfile note:", err);
-      });
-    } catch (apiErr) {}
-
     if (!db || !profile || !user) return;
     try {
       const profileRef = doc(db, 'profiles', profile.id);
@@ -5992,30 +5917,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setAllProfiles([localProfileObj]);
       setActiveProfileId(profileId);
       setNeedsUsername(false);
-      try {
-        localStorage.setItem('aeirmist_saved_username', cleanRawUsername);
-        localStorage.setItem('aeirmist_user_handle', `@${cleanRawUsername}`);
-        localStorage.setItem('aeirmist_username', cleanRawUsername);
-        localStorage.setItem('aeirmist_user_profile', JSON.stringify(localProfileObj));
-        localStorage.setItem('aeirmist_cached_profile', JSON.stringify(localProfileObj));
-        localStorage.setItem('aeirmist_cached_id_name', localProfileObj.displayName);
-        localStorage.setItem('aeirmist_cached_display_name', localProfileObj.displayName);
-        const existingSession = localStorage.getItem('aeirmist_session');
-        if (existingSession) {
-          const s = JSON.parse(existingSession);
-          localStorage.setItem('aeirmist_session', JSON.stringify({
-            ...s,
-            username: cleanRawUsername,
-            displayName: localProfileObj.displayName
-          }));
-        }
-      } catch (_) {}
-      LocalSqlService.saveProfile(localProfileObj).catch(() => {});
-      setUser((prev: any) => ({
-        ...(prev || {}),
-        username: cleanRawUsername,
-        displayName: localProfileObj.displayName
-      }));
       return;
     }
     const profileId = `profile_${activeUser.uid}`;
@@ -6123,11 +6024,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
 
     try {
-      await batch.commit().catch(() => {});
+      await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
       try {
         localStorage.setItem('aeirmist_saved_username', cleanRawUsername);
         localStorage.setItem('aeirmist_user_handle', `@${cleanRawUsername}`);
-        localStorage.setItem('aeirmist_username', cleanRawUsername);
       } catch (_) {}
       setNeedsUsername(false);
       const unifiedProfile = {
@@ -6149,27 +6049,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }));
       setAllProfiles([unifiedProfile]);
       setActiveProfileId(profileId);
-      try {
-        localStorage.setItem('aeirmist_user_profile', JSON.stringify(unifiedProfile));
-        localStorage.setItem('aeirmist_cached_profile', JSON.stringify(unifiedProfile));
-        localStorage.setItem('aeirmist_cached_id_name', unifiedProfile.displayName);
-        localStorage.setItem('aeirmist_cached_display_name', unifiedProfile.displayName);
-        const existingSession = localStorage.getItem('aeirmist_session');
-        if (existingSession) {
-          const s = JSON.parse(existingSession);
-          localStorage.setItem('aeirmist_session', JSON.stringify({
-            ...s,
-            username: cleanRawUsername,
-            displayName: unifiedProfile.displayName
-          }));
-        }
-      } catch (_) {}
-      LocalSqlService.saveProfile(unifiedProfile).catch(() => {});
-      setUser((prev: any) => ({
-        ...(prev || {}),
-        username: cleanRawUsername,
-        displayName: unifiedProfile.displayName
-      }));
     } catch (e) {
       logger.warn("Batch commit failed", e);
       throw e;
@@ -6230,12 +6109,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const toggleFollow = async (targetId: string, targetProfileData?: any) => {
     logger.info("Toggle follow called:", { targetId, profileId: profile?.id });
-    if (!profile || !user) {
-      logger.info("Toggle follow aborted: Missing profile or user");
+    if (!db || !profile || !user) {
+      logger.info("Toggle follow aborted: Missing db, profile, or user", { db: !!db, profile: !!profile, user: !!user });
       return;
     }
     
-    if (!canWrite(`follow_${targetId}`, 1000)) {
+    if (!canWrite(`follow_${targetId}`, 2000)) {
       logger.info("Toggle follow aborted: Throttled");
       return;
     }
@@ -6244,16 +6123,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const isPending = (profile.social?.pendingFollowing || []).includes(targetId);
     logger.info("Toggle follow state:", { isFollowing, isPending });                
     
-    // 1. Primary: Save directly to our PostgreSQL Backend
-    let backendFollowingResult: boolean | null = null;
-    try {
-      const followRes = await api.users.toggleFollow(targetId);
-      backendFollowingResult = followRes?.following;
-      logger.info("[AeirmistContext] API toggleFollow executed on PostgreSQL backend:", { targetId, following: backendFollowingResult });
-    } catch (err) {
-      logger.error("[AeirmistContext] API toggleFollow error:", err);
-    }
-
     try {
       if (isFollowing) {
         // Optimistic Unfollow
@@ -6266,20 +6135,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           followingCount: Math.max(0, (prev?.followingCount || 1) - 1)
         }));
 
-        if (db) {
-          try {
-            const batch = writeBatch(db);
-            batch.update(doc(db, 'profiles', profile.id), {
-              'social.following': arrayRemove(targetId),
-              followingCount: increment(-1)
-            });
-            batch.update(doc(db, 'profiles', targetId), {
-              'social.followers': arrayRemove(profile.id),
-              followersCount: increment(-1)
-            });
-            await batch.commit();
-          } catch (fbErr) {}
-        }
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'profiles', profile.id), {
+          'social.following': arrayRemove(targetId),
+          followingCount: increment(-1)
+        });
+        batch.update(doc(db, 'profiles', targetId), {
+          'social.followers': arrayRemove(profile.id),
+          followersCount: increment(-1)
+        });
+        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
         return;
       }
 
@@ -6356,23 +6221,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           followingCount: (prev?.followingCount || 0) + 1
         }));
 
-        if (db) {
-          try {
-            const batch = writeBatch(db);
-            batch.update(doc(db, 'profiles', profile.id), {
-              'social.following': arrayUnion(targetId),
-              followingCount: increment(1),
-              aeirmistLevel: increment(REWARDS.FOLLOW_GIVEN)
-            });
-            
-            batch.update(doc(db, 'profiles', targetId), {
-              'social.followers': arrayUnion(profile.id),
-              followersCount: increment(1)
-            });
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'profiles', profile.id), {
+          'social.following': arrayUnion(targetId),
+          followingCount: increment(1),
+          aeirmistLevel: increment(REWARDS.FOLLOW_GIVEN)
+        });
+        
+        batch.update(doc(db, 'profiles', targetId), {
+          'social.followers': arrayUnion(profile.id),
+          followersCount: increment(1)
+        });
 
-            await batch.commit();
-          } catch (fbErr) {}
-        }
+        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
         if (targetFollowsMe) {
           await createNotification(targetId, 'follow_back', `${profile.displayName || 'Someone'} followed you back! Link established.`, { profileId: profile.id });
         } else {
@@ -6539,26 +6400,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     // Normalize: strip leading '@' if user typed "@username"
     const cleanText = trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
+    if (!cleanText) return [];
     const cleanLower = cleanText.toLowerCase();
-
-    // High-speed PostgreSQL search priority
-    try {
-      const apiRes = await api.users.search(cleanText, 25);
-      if (apiRes && Array.isArray(apiRes.users) && apiRes.users.length > 0) {
-        return apiRes.users.map(u => ({
-          id: u.id,
-          uid: u.id,
-          username: u.username,
-          displayName: u.displayName,
-          avatarUrl: u.avatarKey ? `${(import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '')}/media/${u.avatarKey}` : undefined,
-          bio: u.bio,
-          isVerified: u.isVerified,
-          followersCount: u.followersCount || 0,
-        }));
-      }
-    } catch (err) {
-      logger.warn('[Postgres Search Fallback]', err);
-    }
 
     const resultsMap = new Map<string, any>();
     const blockedIds = new Set(profile?.social?.blocked || []);
@@ -7042,57 +6885,54 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const toggleLike = async (postId: string, isLiked: boolean, postAuthorId?: string) => {
-    if (!profile) return;
-    // 1. Primary high-speed backend API (PostgreSQL + Redis + Socket.IO)
+    if (!db || !profile || !canWrite(`like_${postId}`, 600)) return;
     try {
-      await api.posts.toggleLike(postId);
-      logger.info('[AeirmistContext] Post like updated in PostgreSQL backend');
-    } catch (e) {
-      logger.error("[AeirmistContext] API toggleLike error:", e);
-    }
+      await updateDoc(doc(db, 'posts', postId), {
+        likesCount: increment(isLiked ? -1 : 1),
+        likedBy: isLiked ? arrayRemove(profile.id) : arrayUnion(profile.id),
+        updatedAt: serverTimestamp()
+      });
+      if (!isLiked) {
+        await earnPoints(REWARDS.LIKE_GIVEN);
+        
+        // Notify post author
+        let targetAuthorId = postAuthorId;
+        if (!targetAuthorId) {
+          try {
+            const postDoc = await getDoc(doc(db, 'posts', postId));
+            if (postDoc.exists()) {
+              const d = postDoc.data();
+              targetAuthorId = d.authorId || d.userId || d.author?.id || d.author?.uid;
+            }
+          } catch (e) {}
+        }
 
-    if (!isLiked) {
-      earnPoints(REWARDS.LIKE_GIVEN).catch(() => {});
-    }
-
-    // 2. Optional dual-sync to Firestore if available
-    if (db && canWrite(`like_${postId}`, 600)) {
-      try {
-        await updateDoc(doc(db, 'posts', postId), {
-          likesCount: increment(isLiked ? -1 : 1),
-          likedBy: isLiked ? arrayRemove(profile.id) : arrayUnion(profile.id),
-          updatedAt: serverTimestamp()
-        });
-      } catch (e) {
-        logger.warn("Like toggle fallback failed", e);
+        if (targetAuthorId && targetAuthorId !== profile.id) {
+          await createNotification(
+            targetAuthorId,
+            'like',
+            `${profile.displayName || profile.username || 'Someone'} liked your post.`,
+            { postId }
+          );
+        }
       }
+    } catch (e) {
+      logger.warn("Like toggle failed", e);
     }
   };
 
   const toggleBookmark = async (postId: string, isBookmarked: boolean) => {
-    if (!profile) return;
-    // 1. Primary backend API (PostgreSQL)
+    if (!db || !profile || !canWrite(`bookmark_${postId}`, 600)) return;
     try {
-      await api.posts.toggleBookmark(postId);
-      logger.info('[AeirmistContext] Post bookmark updated in PostgreSQL backend');
-    } catch (e) {
-      logger.error("[AeirmistContext] API toggleBookmark error:", e);
-    }
-
-    if (!isBookmarked) {
-      earnPoints(5).catch(() => {});
-    }
-
-    // 2. Optional dual-sync to Firestore
-    if (db && canWrite(`bookmark_${postId}`, 600)) {
-      try {
-        await updateDoc(doc(db, 'posts', postId), {
-          savedBy: isBookmarked ? arrayRemove(profile.id) : arrayUnion(profile.id),
-          updatedAt: serverTimestamp()
-        });
-      } catch (e) {
-        logger.warn("Bookmark toggle fallback failed", e);
+      await updateDoc(doc(db, 'posts', postId), {
+        savedBy: isBookmarked ? arrayRemove(profile.id) : arrayUnion(profile.id),
+        updatedAt: serverTimestamp()
+      });
+      if (!isBookmarked) {
+        await earnPoints(5);
       }
+    } catch (e) {
+      logger.warn("Bookmark toggle failed", e);
     }
   };
 
@@ -7408,56 +7248,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 };
 
-const fallbackContext: any = {
-  user: null,
-  profile: null,
-  allProfiles: [],
-  featureFlags: {},
-  posts: [],
-  chats: [],
-  onlineUsers: [],
-  activeCall: null,
-  unreadMessagesCount: 0,
-  unreadNotificationsCount: 0,
-  toasts: [],
-  stories: [],
-  optimisticStories: [],
-  needsUsername: false,
-  isSetup: true,
-  isConnecting: false,
-  connectionError: null,
-  isOffline: false,
-  canWrite: true,
-  isSafeMode: false,
-  needsPasswordOnboarding: false,
-  isVaultOpen: false,
-  isVaultUnlocked: false,
-  showVerificationCelebration: false,
-  floatingChatHead: null,
-  floatingChatHeads: [],
-  login: async () => {},
-  logout: async () => {},
-  createPost: async () => {},
-  sendMessage: async () => ({} as any),
-  addToast: () => {},
-  removeToast: () => {},
-  setNeedsUsername: () => {},
-  setIsSafeMode: () => {},
-  setNeedsPasswordOnboarding: () => {},
-  setIsVaultOpen: () => {},
-  setIsVaultUnlocked: () => {},
-  setShowVerificationCelebration: () => {},
-  setFloatingChatHead: () => {},
-  removeFloatingChatHead: () => {},
-  requestPermission: async () => true,
-  _requestPermission: async () => true,
-  openVault: () => {},
-};
-
 export const useAeirmist = () => {
   const context = useContext(AeirmistContext);
   if (context === undefined) {
-    return fallbackContext as AeirmistContextType;
+    throw new Error('useAeirmist must be used within an AeirmistProvider');
   }
   return context;
 };

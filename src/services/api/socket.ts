@@ -1,12 +1,34 @@
 import { io, Socket } from 'socket.io-client';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+function resolveSocketBase(): string {
+  if (typeof window !== 'undefined') {
+    const customApi = localStorage.getItem('aeirmist_backend_url');
+    if (customApi) return customApi.replace(/\/+$/, '');
+
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || 
+                    hostname === '127.0.0.1' ||
+                    hostname.startsWith('192.168.') ||
+                    hostname.startsWith('10.') ||
+                    hostname.endsWith('.local');
+    if (isLocal) {
+      if (window.location.port === '4000') return window.location.origin;
+      return `${window.location.protocol}//${hostname}:4000`;
+    }
+
+    if (window.location.protocol === 'https:') {
+      return window.location.origin;
+    }
+  }
+  return (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+}
 
 let socketInstance: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socketInstance) {
-    socketInstance = io(API_BASE, {
+    const endpoint = resolveSocketBase();
+    socketInstance = io(endpoint, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
       reconnection: true,

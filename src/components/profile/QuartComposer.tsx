@@ -3,30 +3,45 @@ import { motion } from 'motion/react';
 import { Send, Sparkles, Smile, MessageSquare, Zap } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
-import { api } from '../../services/api/client';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 export const QuartComposer = () => {
-  const { user, profile, earnPoints, localAvatarURL, addToast } = useAeirmist();
+  const { db, user, profile, earnPoints, localAvatarURL, addToast } = useAeirmist();
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async () => {
-    if (!content.trim() || !user || isSubmitting) return;
+    if (!content.trim() || !user || !db || isSubmitting) return;
 
     setIsSubmitting(true);
     try {
-      await api.posts.create({
+      const postPayload = {
+        userId: user.uid,
+        authorId: profile?.id || user.uid,
+        userName: profile?.displayName || user.displayName || 'Aeirmist User',
+        authorPhoto: localAvatarURL || profile?.photoURL || user.photoURL || '',
+        authorName: profile?.displayName || user.displayName || 'Aeirmist User',
+        author: {
+          displayName: profile?.displayName || user.displayName || 'Aeirmist User',
+          username: profile?.username || user.displayName?.toLowerCase().replace(/\s+/g, '_') || 'voyager',
+          photoURL: localAvatarURL || profile?.photoURL || user.photoURL || '',
+          isVerified: profile?.isVerified || false
+        },
         content: content.trim(),
+        mediaUrls: [],
         mediaType: 'text',
-      });
+        likesCount: 0,
+        likedBy: [],
+        auraCount: 0,
+        timestamp: 'Just now',
+        createdAt: serverTimestamp(),
+      };
+
+      await addDoc(collection(db, 'posts'), postPayload);
       setContent('');
-      if (earnPoints) {
-        await earnPoints(10); // Reward for contributing to the Networkwork
-      }
-      addToast?.({ title: 'Quart Broadcasted', message: 'Your transmission is live.', type: 'success' });
+      await earnPoints(10); // Reward for contributing to the Networkwork
     } catch (error) {
       console.error('Error posting quart:', error);
-      addToast?.({ title: 'Error', message: 'Failed to broadcast quart.', type: 'warning' });
     } finally {
       setIsSubmitting(false);
     }

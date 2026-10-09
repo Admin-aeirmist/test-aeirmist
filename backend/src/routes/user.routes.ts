@@ -107,22 +107,25 @@ router.post('/points', authenticateToken, async (req: AuthenticatedRequest, res:
 // Follow / Unfollow User
 router.post('/:id/follow', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const targetUserId = req.params.id;
-    if (targetUserId === req.user!.userId) {
+    const resolvedTargetId = await UserDAL.resolveToUserId(req.params.id);
+    if (!resolvedTargetId) {
+      return res.status(404).json({ error: 'Target user not found' });
+    }
+    if (resolvedTargetId === req.user!.userId) {
       return res.status(400).json({ error: 'Cannot follow yourself' });
     }
 
-    const isFollowing = await UserDAL.isFollowing(req.user!.userId, targetUserId);
+    const isFollowing = await UserDAL.isFollowing(req.user!.userId, resolvedTargetId);
     if (isFollowing) {
-      await UserDAL.unfollowUser(req.user!.userId, targetUserId);
+      await UserDAL.unfollowUser(req.user!.userId, resolvedTargetId);
       return res.json({ following: false });
     } else {
-      await UserDAL.followUser(req.user!.userId, targetUserId);
+      await UserDAL.followUser(req.user!.userId, resolvedTargetId);
 
       // Create notification
       const myProfile = await UserDAL.getProfileByUserId(req.user!.userId);
       const notif = await NotificationDAL.create({
-        recipientId: targetUserId,
+        recipientId: resolvedTargetId,
         actorId: req.user!.userId,
         type: 'follow',
         title: 'New Follower',
@@ -131,7 +134,7 @@ router.post('/:id/follow', authenticateToken, async (req: AuthenticatedRequest, 
       });
 
       // Realtime push notification via WebSockets
-      io.to(`user:${targetUserId}`).emit('new_notification', { notification: notif });
+      io.to(`user:${resolvedTargetId}`).emit('new_notification', { notification: notif });
 
       return res.json({ following: true });
     }

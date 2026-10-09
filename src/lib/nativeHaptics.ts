@@ -5,7 +5,7 @@ export type HapticType = 'light' | 'medium' | 'heavy' | 'selection' | 'success' 
 export const triggerNativeHaptic = (type: HapticType = 'light'): void => {
   try {
     if (Capacitor.isNativePlatform()) {
-      const plugin = ((Capacitor as any).Plugins)?.NativeSettings;
+      const plugin = (Capacitor.Plugins as any)?.NativeSettings;
       if (plugin?.performHaptics) {
         plugin.performHaptics({ type }).catch(() => {});
         return;

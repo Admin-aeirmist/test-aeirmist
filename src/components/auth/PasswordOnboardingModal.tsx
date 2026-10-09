@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Lock, Eye, EyeOff, ShieldCheck, Loader2, Sparkles, Check, AlertCircle } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useTheme } from '../../context/ThemeContext';
-import { api } from '../../services/api/client';
+import { getAuth, updatePassword, EmailAuthProvider, linkWithCredential } from 'firebase/auth';
 
 const OnboardingRuleIndicator = ({ active, label }: { active: boolean; label: string }) => (
   <div className="flex items-center gap-2 text-[11px] font-semibold">
@@ -62,13 +62,41 @@ export const PasswordOnboardingModal: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      await api.auth.changePassword({ newPassword: password });
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("No active user session detected.");
       
+      if (currentUser.email) {
+        const credential = EmailAuthProvider.credential(currentUser.email, password);
+        try {
+          await linkWithCredential(currentUser, credential);
+        } catch (linkErr: any) {
+          if (
+            linkErr.code === 'auth/provider-already-linked' ||
+            linkErr.code === 'auth/credential-already-in-use' ||
+            linkErr.code === 'auth/email-already-in-use'
+          ) {
+            await updatePassword(currentUser, password);
+          } else {
+            throw linkErr;
+          }
+        }
+      } else {
+        await updatePassword(currentUser, password);
+      }
+      
+      // Update hasPassword flag in Firestore via server API
       try {
-        await api.users.updateProfile({
-          privacySettings: { hasPassword: true }
+        const idToken = await currentUser.getIdToken();
+        await fetch('/api/auth/set-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ hasPassword: true })
         });
-      } catch (_) {}
+      } catch {}
       
       setIsSuccess(true);
       addToast({ title: 'SUCCESS', message: 'Password secured successfully.', type: 'success' });

@@ -34,15 +34,14 @@ import {
   ExternalLink,
   Users,
   UserCheck,
-  Heart,
-  MapPin
+  Heart
 } from 'lucide-react';
 import { getAvatarUrl } from '../../lib/avatar';
 import { Avatar } from '../ui/Avatar';
 import { AeirmistRankBadge } from './AeirmistRankBadge';
 import { getRankInfo } from '../../lib/aeirmistRanks';
 import { CreatorTier } from '../../types/economy';
-import { api } from '../../services/api/client';
+import { collection, query, where, limit, orderBy, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { QuartCard } from './QuartCard';
 import { ProfileCompletionCard } from './ProfileCompletionCard';
 import { Skeleton } from '../ui/Skeleton';
@@ -88,7 +87,7 @@ interface DesktopProfileLayoutProps {
   addToast?: any;
   updateProfile: any;
   setSelectedPost: (post: any) => void;
-  db?: any;
+  db: any;
   uploadMedia: any;
   handleCoverUpload: (file: File) => Promise<void>;
   PostCard: any;
@@ -189,33 +188,31 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
 
   // Load right panel recommendations
   useEffect(() => {
-    let isMounted = true;
+    if (!db) return;
     const loadRightPanelData = async () => {
       try {
-        const res = await api.users.search('', 20);
-        const usersList = (res.users || []).map((u: any) => ({
-          id: u.id,
-          displayName: u.displayName || u.username,
-          username: u.username,
-          avatarUrl: u.avatarUrl,
-          aeirmistLevel: u.level || u.aeirmistLevel || 0,
-          verified: u.verified,
-          ...u
-        }));
+        const profilesRef = collection(db, 'profiles');
+        const suggestQuery = query(profilesRef, limit(8));
+        const snap = await getDocs(suggestQuery);
+        const list = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(p => p.id !== profile?.id && p.id !== displayUser?.id);
+        
+        setRightPanelSuggestions(list.slice(0, 3));
 
-        const list = usersList.filter((p: any) => p.id !== profile?.id && p.id !== displayUser?.id);
-        if (isMounted) {
-          setRightPanelSuggestions(list.slice(0, 3));
-          const trendList = [...list].sort((a: any, b: any) => (b.aeirmistLevel || 0) - (a.aeirmistLevel || 0));
-          setRightPanelTrending(trendList.slice(0, 3));
-        }
+        // Get trending based on AP levels
+        const trendingQuery = query(profilesRef, orderBy('aeirmistLevel', 'desc'), limit(6));
+        const trendSnap = await getDocs(trendingQuery);
+        const trendList = trendSnap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(p => p.id !== displayUser?.id);
+        setRightPanelTrending(trendList.slice(0, 3));
       } catch (err) {
         logger.error("Failed to load right panel profile directories:", err);
       }
     };
     loadRightPanelData();
-    return () => { isMounted = false; };
-  }, [profile?.id, displayUser?.id]);
+  }, [db, profile?.id, displayUser?.id]);
 
   const purchaseMarketplaceItem = async (itemId: string, cost: number) => {
     if (!isOwnProfile) return;
@@ -255,8 +252,13 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
 
   const handleNGLReplySubmit = async (msgId: string) => {
     const text = nglReplyInputs[msgId]?.trim();
-    if (!text) return;
+    if (!db || !text) return;
     try {
+      await updateDoc(doc(db, 'ngl_messages', msgId), {
+        status: 'replied',
+        replyContent: text,
+        repliedAt: serverTimestamp()
+      });
       setNglReplyInputs(prev => ({ ...prev, [msgId]: '' }));
       setReplyingMessageId(null);
       addToast?.({
@@ -417,14 +419,14 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
             <div>
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3">
                 <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-white truncate max-w-sm">
-                  {displayUser?.displayName || displayUser?.fullName || displayUser?.name || "Aeirmist User"}
+                  {displayUser?.displayName || "Junaed Islam"}
                 </h1>
                 {isVerified && (
                   <ShieldCheck size={20} className="text-aeirmist-cyan shrink-0" />
                 )}
               </div>
               <p className="text-[11px] font-mono font-bold text-aeirmist-cyan tracking-widest mt-1">
-                @{displayUser?.username || displayUser?.handle || (displayUser?.email ? displayUser.email.split('@')[0] : "user")}
+                @{displayUser?.username || "junaed"}
               </p>
 
               {/* Relationship Status Badge */}

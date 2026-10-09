@@ -26,7 +26,7 @@ import { getAvatarUrl } from '../../lib/avatar';
 import { formatAeirmistTimestamp } from '../../lib/date';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getPlaybackProgressMap, addToWatchHistory, getLocalPlaylists, saveLocalPlaylists } from '../../utils/videoStorage';
-import { api } from '../../services/api/client';
+import { collection, query, where, onSnapshot, doc, updateDoc, increment, arrayUnion, arrayRemove, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
 
@@ -90,7 +90,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
         detail: {
           name: video.creatorName || (video as any).authorName || 'Aeirmist Creator',
           username: (video as any).creatorUsername || (video as any).username,
-          avatar: video.creatorAvatar || (video as any).creatorPhoto || (video as any).authorPhoto
+          avatar: video.creatorPhoto || (video as any).authorPhoto
         }
       }));
     }
@@ -105,51 +105,43 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
     }
   }, [profile?.id, video]);
 
-  // Load comments
-  const loadComments = async () => {
-    if (!video?.id) return;
-    try {
-      const res = await api.videos.getComments(video.id);
-      if (res && res.comments) {
-        const list = res.comments.map((c: any) => ({
-          id: c.id,
-          videoId: c.videoId,
-          userId: c.userId,
-          authorUid: c.userId,
-          profileId: c.author?.id || c.userId,
-          userName: c.author?.displayName || c.author?.username || 'Aeirmist User',
-          userAvatar: c.author?.avatarKey || '',
-          text: c.content,
-          createdAt: c.createdAt,
-          likeCount: c.likesCount || 0,
-        }));
-        setComments(list);
-      }
-    } catch (err) {
-      logger.warn('[VideoWatchPage] Comments load warning:', err);
-    }
-  };
-
+  // Realtime comments listener
   useEffect(() => {
-    loadComments();
-  }, [video?.id]);
+    if (!db || !video.id) return;
+    const q = query(
+      collection(db, 'video_comments'),
+      where('videoId', '==', video.id)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as VideoComment);
+      if (commentSort === 'newest') {
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      } else {
+        list.sort((a, b) => (b.likeCount || 0) - (a.likeCount || 0));
+      }
+      setComments(list);
+    }, (err) => logger.error('[VideoWatchPage] Comments error:', err));
+
+    return () => unsubscribe();
+  }, [db, video.id, commentSort]);
 
   // Like Toggle
   const handleToggleLike = async () => {
-    if (!profile?.id) {
+    if (!profile?.id || !user) {
       window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
       return;
     }
+    if (!db) return;
     const nextLiked = !isLiked;
     setIsLiked(nextLiked);
     setLikeCount(prev => prev + (nextLiked ? 1 : -1));
 
     try {
-      if (nextLiked) {
-        await api.videos.like(video.id);
-      } else {
-        await api.videos.unlike(video.id);
-      }
+      const vRef = doc(db, 'videos', video.id);
+      await updateDoc(vRef, {
+        likedBy: nextLiked ? arrayUnion(profile.id) : arrayRemove(profile.id),
+        likeCount: increment(nextLiked ? 1 : -1)
+      });
     } catch (err) {
       logger.error(err);
       setIsLiked(!nextLiked);
@@ -159,30 +151,46 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   // Save Toggle
   const handleToggleSave = async () => {
-    if (!profile?.id) {
+    if (!profile?.id || !user) {
       window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
       return;
     }
+    if (!db) return;
     const nextSaved = !isSaved;
     setIsSaved(nextSaved);
-    addToast({
-      title: nextSaved ? 'SAVED TO LIBRARY' : 'REMOVED FROM LIBRARY',
-      message: nextSaved ? 'Added to your Saved Videos' : 'Removed from your Saved Videos',
-      type: 'info'
-    });
+
+    try {
+      const vRef = doc(db, 'videos', video.id);
+      await updateDoc(vRef, {
+        savedBy: nextSaved ? arrayUnion(profile.id) : arrayRemove(profile.id),
+        saveCount: increment(nextSaved ? 1 : -1)
+      });
+      addToast({
+        title: nextSaved ? 'SAVED TO LIBRARY' : 'REMOVED FROM LIBRARY',
+        message: nextSaved ? 'Added to your Saved Videos' : 'Removed from your Saved Videos',
+        type: 'info'
+      });
+    } catch (err) {
+      logger.error(err);
+      setIsSaved(!nextSaved);
+    }
   };
 
   // Follow Toggle
   const handleToggleFollow = async () => {
-    if (!profile?.id) {
+    if (!profile?.id || !user) {
       window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
       return;
     }
+    if (!db) return;
     const nextFollowing = !isFollowing;
     setIsFollowing(nextFollowing);
 
     try {
-      await api.users.toggleFollow(video.creatorId);
+      const pRef = doc(db, 'profiles', `profile_${profile.id}`);
+      await updateDoc(pRef, {
+        'social.following': nextFollowing ? arrayUnion(video.creatorId) : arrayRemove(video.creatorId)
+      });
       addToast({
         title: nextFollowing ? `FOLLOWING ${video.creatorName}` : `UNFOLLOWED`,
         message: nextFollowing ? `You will now see videos from ${video.creatorName}` : `Unfollowed ${video.creatorName}`,
@@ -197,18 +205,36 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
   // Submit Comment
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile) {
+    if (!profile || !user) {
       window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
       return;
     }
-    if (!commentInput.trim()) return;
+    if (!commentInput.trim() || !db) return;
     setIsSubmittingComment(true);
 
     try {
-      await api.videos.addComment(video.id, commentInput.trim());
+      const authorUid = user?.uid || profile.uid || profile.ownerUid || profile.id;
+      await addDoc(collection(db, 'video_comments'), {
+        videoId: video.id,
+        userId: authorUid,
+        authorUid: authorUid,
+        profileId: profile.id,
+        userName: profile.name || profile.displayName || profile.username || 'Aeirmist User',
+        userAvatar: profile.avatar || profile.photoURL || '',
+        isVerified: profile.isVerified || false,
+        text: commentInput.trim(),
+        createdAt: new Date().toISOString(),
+        likeCount: 0,
+        likedBy: []
+      });
+
+      // Update video comment count
+      await updateDoc(doc(db, 'videos', video.id), {
+        commentCount: increment(1)
+      });
+
       setCommentInput('');
       addToast({ title: 'COMMENT POSTED', message: 'Your comment has been added.', type: 'success' });
-      loadComments();
     } catch (err) {
       logger.error(err);
       addToast({ title: 'ERROR', message: 'Could not post comment.', type: 'info' });
@@ -219,7 +245,13 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   // Delete Own Comment
   const handleDeleteComment = async (commentId: string) => {
-    setComments(prev => prev.filter(c => c.id !== commentId));
+    if (!db) return;
+    try {
+      await deleteDoc(doc(db, 'video_comments', commentId));
+      await updateDoc(doc(db, 'videos', video.id), { commentCount: increment(-1) });
+    } catch (err) {
+      logger.error(err);
+    }
   };
 
   // Playlist Management
@@ -273,24 +305,35 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   // Report Submission
   const handleSubmitReport = async () => {
-    if (!profile) return;
+    if (!db || !profile) return;
     try {
-      await api.support.createReport({
+      const refId = `RPT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
+      await addDoc(collection(db, 'reports'), {
+        reportId: refId,
+        reporterUid: profile.uid || profile.id,
+        reporterUsername: profile.username || 'Unknown',
         reportedUid: video.creatorId || 'unknown',
         targetType: 'video',
         targetId: video.id,
         reason: reportReason,
-        description: reportNotes || undefined,
-      }).catch(err => {
-        logger.warn('[VideoWatchPage] API report warning:', err);
+        description: reportNotes || '',
+        attachments: [],
+        status: 'pending',
+        priority: 'medium',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        meta: { targetTitle: video.title || video.caption }
       });
       setIsReportModalOpen(false);
-      setReportReason('');
       setReportNotes('');
-      addToast({ title: 'Report Submitted', message: 'Thank you for keeping Aeirmist safe.', type: 'success' });
-    } catch (e) {
-      logger.error('Failed to submit report:', e);
-      addToast({ title: 'Report Failed', message: 'Could not send report. Please try again.', type: 'warning' });
+      addToast({
+        title: 'REPORT SUBMITTED',
+        message: 'Thank you for keeping Aeirmist safe. Our team will review this video.',
+        type: 'success'
+      });
+    } catch (err) {
+      logger.error(err);
+      addToast({ title: 'ERROR', message: 'Could not submit report.', type: 'info' });
     }
   };
 

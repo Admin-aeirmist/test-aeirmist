@@ -5,14 +5,21 @@
 
 function resolveApiBase(): string {
   if (typeof window !== 'undefined') {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (!isLocal) {
-      // Remote domain (e.g. Cloudflare Pages aeirmist-f0m.pages.dev or custom domain)
-      const customApi = localStorage.getItem('aeirmist_backend_url');
-      if (customApi) return customApi.replace(/\/+$/, '');
-      // On HTTPS remote domain, use relative '' to call Pages Functions or proxy
-      return '';
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || 
+                    hostname === '127.0.0.1' ||
+                    hostname.startsWith('192.168.') ||
+                    hostname.startsWith('10.') ||
+                    hostname.endsWith('.local');
+    if (isLocal) {
+      if (window.location.port === '4000') return '';
+      return `${window.location.protocol}//${hostname}:4000`;
     }
+    // Remote domain (e.g. Cloudflare Pages aeirmist-f0m.pages.dev or custom domain)
+    const customApi = localStorage.getItem('aeirmist_backend_url');
+    if (customApi) return customApi.replace(/\/+$/, '');
+    // On HTTPS remote domain, use relative '' to call Pages Functions or proxy
+    return '';
   }
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL.replace(/\/+$/, '');
@@ -22,7 +29,17 @@ function resolveApiBase(): string {
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
+  const token = localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
+  if (token) return token;
+  try {
+    const s = localStorage.getItem('aeirmist_session');
+    if (s) {
+      const parsed = JSON.parse(s);
+      if (parsed.token) return parsed.token;
+      if (parsed.id || parsed.uid) return parsed.id || parsed.uid;
+    }
+  } catch {}
+  return null;
 }
 
 export function setAuthToken(token: string | null): void {
@@ -44,6 +61,24 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const token = getAuthToken();
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  // Resilient user ID / Profile ID headers for universal authentication across PostgreSQL DAL
+  if (typeof window !== 'undefined') {
+    try {
+      const s = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
+      if (s) {
+        const parsed = JSON.parse(s);
+        const uid = parsed.id || parsed.uid || parsed.userId;
+        if (uid && !headers.has('X-User-Id')) {
+          headers.set('X-User-Id', uid);
+        }
+        const pid = parsed.profileId || (parsed.profile ? parsed.profile.id : null);
+        if (pid && !headers.has('X-Profile-Id')) {
+          headers.set('X-Profile-Id', pid);
+        }
+      }
+    } catch {}
   }
 
   if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -173,77 +208,39 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       } catch (fallbackErr) {}
     }
 
-    // Posts Feed Fallback
+    // Posts Feed Fallback (100% Authentic User Posts Only)
     if (path === '/api/v1/posts' && (!options.method || options.method === 'GET')) {
       const cached = localStorage.getItem('aeirmist_home_feed_cache');
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return { posts: parsed } as any;
+            const authenticOnly = parsed.filter((p: any) => p && p.id && !p.id.includes('welcome') && !p.id.includes('post_edge_'));
+            if (authenticOnly.length > 0) {
+              return { posts: authenticOnly } as any;
+            }
           }
         } catch (e) {}
       }
-      return {
-        posts: [
-          {
-            id: 'post_welcome_1',
-            userId: 'system_aeirmist',
-            authorId: 'system_aeirmist',
-            content: '✨ Welcome to Aeirmist! The next-generation social network and creator studio is live. Connect with friends, create stories, share videos, and explore.',
-            mediaType: 'none',
-            mediaKeys: [],
-            author: {
-              id: 'system_aeirmist',
-              name: 'Aeirmist Official',
-              username: 'aeirmist',
-              isVerified: true,
-              avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150'
-            },
-            likesCount: 128,
-            commentsCount: 14,
-            sharesCount: 32,
-            likedBy: [],
-            savedBy: [],
-            createdAt: new Date().toISOString()
-          },
-          {
-            id: 'post_welcome_2',
-            userId: 'aeirmist_creator',
-            authorId: 'aeirmist_creator',
-            content: '🚀 Full database synchronization and edge network active. Check out the Creator Studio, Marketplace, and Cyberpunk Themes in Settings!',
-            mediaType: 'none',
-            mediaKeys: [],
-            author: {
-              id: 'aeirmist_creator',
-              name: 'Aeirmist Studio',
-              username: 'aeirmist_studio',
-              isVerified: true,
-              avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'
-            },
-            likesCount: 94,
-            commentsCount: 8,
-            sharesCount: 19,
-            likedBy: [],
-            savedBy: [],
-            createdAt: new Date(Date.now() - 3600000).toISOString()
-          }
-        ]
-      } as any;
+      return { posts: [] } as any;
     }
 
     // Admin Stats Fallback
     if (path === '/api/v1/admin/stats') {
       return {
         stats: {
-          totalUsers: 1420,
-          activeUsers: 890,
-          totalPosts: 3560,
-          totalVideos: 420,
-          totalTransactions: 154,
-          marketplaceOrders: 86,
+          totalUsers: 0,
+          activeUsers: 0,
+          totalPosts: 0,
+          totalVideos: 0,
+          totalTransactions: 0,
+          marketplaceOrders: 0,
           serverHealth: 'OPTIMAL',
-          uptime: '99.98%'
+          uptime: '99.99%',
+          revenue: '$0.00',
+          subscribers: 0,
+          onlineNow: '0 active',
+          edgeLatency: '< 15ms'
         }
       } as any;
     }
@@ -279,6 +276,22 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       return {
         users: [
           {
+            id: 'doViFWfMXcOoas976z6MO216YNg1',
+            uid: 'doViFWfMXcOoas976z6MO216YNg1',
+            email: 'junaedislamjim180@gmail.com',
+            username: 'junaed_islam_jim9',
+            displayName: 'Junaed Islam Jim',
+            role: 'admin',
+            isAdmin: true,
+            isVerified: true,
+            points: 1000,
+            status: 'ACTIVE',
+            location: 'Dhaka, Bangladesh',
+            createdLocation: 'Dhaka, Bangladesh',
+            signupLocation: 'Dhaka, Bangladesh',
+            createdAt: '2026-01-15T10:30:00.000Z'
+          },
+          {
             id: 'usr_admin_aeirmist',
             uid: 'usr_admin_aeirmist',
             email: 'admin.aeirmist@gmail.com',
@@ -288,7 +301,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
             isAdmin: true,
             isVerified: true,
             points: 1000,
-            status: 'ACTIVE'
+            status: 'ACTIVE',
+            location: 'Dhaka, Bangladesh',
+            createdLocation: 'Dhaka, Bangladesh',
+            signupLocation: 'Dhaka, Bangladesh',
+            createdAt: '2026-01-01T00:00:00.000Z'
           },
           {
             id: 'system_aeirmist',
@@ -300,7 +317,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
             isAdmin: true,
             isVerified: true,
             points: 5000,
-            status: 'ACTIVE'
+            status: 'ACTIVE',
+            location: 'Core Node, Cloudflare',
+            createdLocation: 'Aeirmist HQ Core Node',
+            signupLocation: 'Aeirmist HQ Core Node',
+            createdAt: '2026-01-01T00:00:00.000Z'
           }
         ]
       } as any;
@@ -323,19 +344,50 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 export const api = {
   // Health
   checkHealth: () => request<{ status: string; services: Record<string, string> }>('/health'),
+  health: {
+    check: () => request<{ status: string; services?: Record<string, string> }>('/health'),
+  },
 
   // Auth
   auth: {
-    register: (data: { email: string; password: string; username: string; displayName: string }) =>
-      request<{ token: string; user: any }>('/api/v1/auth/register', {
+    register: (data: {
+      email: string;
+      password: string;
+      username: string;
+      displayName: string;
+      location?: string;
+      latitude?: number;
+      longitude?: number;
+      deviceInfo?: string;
+    }) =>
+      request<{ token: string; user: any; profile?: any }>('/api/v1/auth/register', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    login: (dataOrEmail: { email?: string; identifier?: string; password?: string } | string, maybePass?: string) => {
+    login: (
+      dataOrEmail: {
+        email?: string;
+        identifier?: string;
+        password?: string;
+        location?: string;
+        latitude?: number;
+        longitude?: number;
+        deviceInfo?: string;
+      } | string,
+      maybePass?: string
+    ) => {
       const payload = typeof dataOrEmail === 'string'
         ? { email: dataOrEmail, identifier: dataOrEmail, password: maybePass || '' }
-        : { email: dataOrEmail.email || dataOrEmail.identifier, identifier: dataOrEmail.identifier || dataOrEmail.email, password: dataOrEmail.password || '' };
-      return request<{ token: string; user: any }>('/api/v1/auth/login', {
+        : {
+            email: dataOrEmail.email || dataOrEmail.identifier,
+            identifier: dataOrEmail.identifier || dataOrEmail.email,
+            password: dataOrEmail.password || '',
+            location: dataOrEmail.location,
+            latitude: dataOrEmail.latitude,
+            longitude: dataOrEmail.longitude,
+            deviceInfo: dataOrEmail.deviceInfo,
+          };
+      return request<{ token: string; user: any; profile?: any }>('/api/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
@@ -393,6 +445,10 @@ export const api = {
       }),
     getUserPosts: (userId: string, limit = 50, offset = 0) =>
       request<{ posts: any[] }>(`/api/v1/posts/user/${encodeURIComponent(userId)}?limit=${limit}&offset=${offset}`),
+    recordView: (id: string) =>
+      request<{ viewsCount: number }>(`/api/v1/posts/${id}/view`, { method: 'POST' }),
+    share: (id: string) =>
+      request<{ sharesCount: number }>(`/api/v1/posts/${id}/share`, { method: 'POST' }),
     votePoll: (postId: string, optionIndex: number) =>
       request<{ success?: boolean; alreadyVoted?: boolean; pollData: any }>(`/api/v1/posts/${postId}/poll/vote`, {
         method: 'POST',

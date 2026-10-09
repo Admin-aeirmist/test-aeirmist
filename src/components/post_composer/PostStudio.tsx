@@ -9,7 +9,8 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
-import { api } from '../../services/api/client';
+import { db } from '../../lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { MediaEditor } from './MediaEditor';
 import { PollComposer } from './PollComposer';
 import { LocationSearch } from './LocationSearch';
@@ -351,8 +352,8 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
         likesCount: 0,
         commentsCount: 0,
         likedBy: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         audience,
         allowComments,
         hideLikes,
@@ -377,20 +378,7 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
         }
       }
 
-      // Primary: Save directly to our PostgreSQL Backend
-      let backendPost = null;
-      try {
-        const createRes = await api.posts.create({
-          content: payload.content || caption || '',
-          mediaKeys: uploadedUrls.map(u => u.replace(/^.*\/media\//, '')),
-          mediaType: selectedType || 'image',
-          tags: taggedPeople.map((p: any) => p.username || p.id).filter(Boolean) || [],
-        });
-        backendPost = createRes?.post;
-        logger.info('[PostStudio] Post saved successfully to PostgreSQL backend');
-      } catch (apiErr: any) {
-        logger.error('[PostStudio] Backend post error:', apiErr);
-      }
+      await addDoc(collection(db, 'posts'), payload);
 
       setUploadProgress(100);
       setUploadStatus('Published successfully!');

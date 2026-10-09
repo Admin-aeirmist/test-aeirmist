@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, AlertTriangle, ChevronRight, Loader2, CheckCircle, Upload, Shield } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
+import { db, storage } from '../../lib/firebase';
+import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
-import { api } from '../../services/api/client';
 
 
 interface ReportModalProps {
@@ -50,12 +52,33 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (isSubmitting) return;
+    if (!user || !db || isSubmitting) return;
     setIsSubmitting(true);
 
     try {
-      let uploadedAttachmentUrl: string | null = null;
-      if (file) {
+      // Check for duplicate recent reports from this user for this target
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const q = query(
+        collection(db, 'reports'),
+        where('reporterUid', '==', user.uid),
+        where('targetId', '==', targetId)
+      );
+      const snapshot = await getDocs(q);
+      const recentReports = snapshot.docs.filter(doc => {
+        const data = doc.data();
+        if (!data.createdAt) return false;
+        return data.createdAt.toDate() > oneHourAgo;
+      });
+
+      if (recentReports.length > 0) {
+        addToast({ title: 'Already Reported', message: 'You have already reported this content recently.', type: 'warning' });
+        setIsSubmitting(false);
+        onClose();
+        return;
+      }
+
+      let attachmentObj = null;
+      if (file && storage) {
         if (!file.type || !file.type.startsWith('image/')) {
           addToast({ title: 'Invalid File', message: 'Only image files are supported.', type: 'warning' });
           setIsSubmitting(false);
@@ -67,29 +90,42 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           return;
         }
 
-        try {
-          const mediaRes = await api.media.upload(file, 'reports');
-          if (mediaRes && mediaRes.url) {
-            uploadedAttachmentUrl = mediaRes.url;
-          }
-        } catch (mediaErr) {
-          logger.warn('[ReportModal] Media upload fallback error:', mediaErr);
-        }
+        const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+        const base = file.name.split('.').slice(0, -1).join('.').toLowerCase().replace(/[^a-z0-9_-]/g, '_').substring(0, 30);
+        const rand = Math.random().toString(36).substring(2, 8);
+        const safeName = `${base || 'screenshot'}_${Date.now()}_${rand}.${ext}`;
+
+        const fileRef = ref(storage, `reports/${user.uid}/${safeName}`);
+        await uploadBytes(fileRef, file, { contentType: file.type || 'image/png' });
+        const downloadUrl = await getDownloadURL(fileRef);
+
+        attachmentObj = {
+          url: downloadUrl,
+          name: file.name,
+          contentType: file.type || 'image/png',
+          size: file.size,
+          uploadedAt: new Date().toISOString()
+        };
       }
 
-      let refId = `RPT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
+      const priority = AUTO_PRIORITIES[selectedReason] || 'low';
+      const refId = `RPT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
       
-      const reportRes = await api.support.createReport({
+      await addDoc(collection(db, 'reports'), {
+        reportId: refId,
+        reporterUid: user.uid,
+        reporterUsername: profile?.username || 'Unknown',
         reportedUid,
         targetType,
         targetId,
         reason: selectedReason,
         description,
-        attachmentUrl: uploadedAttachmentUrl,
+        attachments: attachmentObj ? [attachmentObj] : [],
+        status: 'pending',
+        priority,
+        createdAt: serverTimestamp(),
+        meta: meta || {}
       });
-      if (reportRes && reportRes.report) {
-        refId = reportRes.report.reportRef || refId;
-      }
 
       setReportId(refId);
       setStep('success');

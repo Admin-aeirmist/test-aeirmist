@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ShieldAlert, Loader2, Search, UserX } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { api } from '../../services/api/client';
+import { doc, getDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
 
 interface UserInfo {
   uid: string;
@@ -13,7 +13,7 @@ interface UserInfo {
 }
 
 export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, onUserClick?: (user: any) => void }) => {
-  const { profile, toggleBlockUser, allProfiles = [], addToast } = useAeirmist();
+  const { profile, toggleBlockUser, db, allProfiles = [], addToast } = useAeirmist();
   const rawBlockedIds: string[] = profile?.social?.blocked || [];
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,7 +23,7 @@ export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, on
   // Load and resolve all blocked users
   useEffect(() => {
     let isMounted = true;
-    if (rawBlockedIds.length === 0) {
+    if (!db || rawBlockedIds.length === 0) {
       setUsers([]);
       setLoading(false);
       return;
@@ -61,27 +61,101 @@ export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, on
           continue;
         }
 
-        // 2. API lookup via PostgreSQL backend
+        // 2. Direct Firestore profile doc lookup
+        let resolved = false;
         try {
-          const res = await api.users.getProfile(targetId);
-          if (res?.profile) {
-            const d = res.profile;
-            const key = d.username || d.id;
+          const pSnap = await getDoc(doc(db, 'profiles', targetId));
+          if (pSnap.exists()) {
+            const d = pSnap.data();
+            const key = d.username || pSnap.id;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              resolvedList.push({
+                uid: targetId,
+                profileId: pSnap.id,
+                photoURL: d.photoURL,
+                displayName: d.displayName || d.name || d.username || 'Blocked User',
+                username: d.username,
+              });
+            }
+            resolved = true;
+          }
+        } catch {}
+
+        if (resolved) continue;
+
+        // 3. Try with 'profile_' prefix
+        try {
+          const normId = targetId.startsWith('profile_') ? targetId : `profile_${targetId}`;
+          const pSnap = await getDoc(doc(db, 'profiles', normId));
+          if (pSnap.exists()) {
+            const d = pSnap.data();
+            const key = d.username || pSnap.id;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              resolvedList.push({
+                uid: targetId,
+                profileId: pSnap.id,
+                photoURL: d.photoURL,
+                displayName: d.displayName || d.name || d.username || 'Blocked User',
+                username: d.username,
+              });
+            }
+            resolved = true;
+          }
+        } catch {}
+
+        if (resolved) continue;
+
+        // 4. Query by ownerUid
+        try {
+          const q = query(collection(db, 'profiles'), where('ownerUid', '==', targetId), limit(1));
+          const qSnap = await getDocs(q);
+          if (!qSnap.empty) {
+            const d = qSnap.docs[0];
+            const data = d.data();
+            const key = data.username || d.id;
             if (!seenKeys.has(key)) {
               seenKeys.add(key);
               resolvedList.push({
                 uid: targetId,
                 profileId: d.id,
-                photoURL: d.photoURL || d.avatar,
-                displayName: d.displayName || d.name || d.username || 'Blocked User',
-                username: d.username,
+                photoURL: data.photoURL,
+                displayName: data.displayName || data.name || data.username || 'Blocked User',
+                username: data.username,
               });
             }
-            continue;
+            resolved = true;
           }
         } catch {}
 
-        // 3. Fallback if profile not found
+        if (resolved) continue;
+
+        // 5. Query by uid
+        try {
+          const q = query(collection(db, 'profiles'), where('uid', '==', targetId), limit(1));
+          const qSnap = await getDocs(q);
+          if (!qSnap.empty) {
+            const d = qSnap.docs[0];
+            const data = d.data();
+            const key = data.username || d.id;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              resolvedList.push({
+                uid: targetId,
+                profileId: d.id,
+                photoURL: data.photoURL,
+                displayName: data.displayName || data.name || data.username || 'Blocked User',
+                username: data.username,
+              });
+            }
+            resolved = true;
+          }
+        } catch {}
+
+        if (resolved) continue;
+
+        // 6. Fallback if profile not found
         if (!seenKeys.has(targetId)) {
           seenKeys.add(targetId);
           resolvedList.push({
@@ -100,7 +174,7 @@ export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, on
 
     fetchAll();
     return () => { isMounted = false; };
-  }, [JSON.stringify(rawBlockedIds), allProfiles.length]);
+  }, [db, JSON.stringify(rawBlockedIds), allProfiles.length]);
 
   const handleUnblock = async (u: UserInfo) => {
     setUnblockingId(u.uid);

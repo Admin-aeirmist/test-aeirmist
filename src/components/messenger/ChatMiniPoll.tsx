@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { BarChart3, CheckCircle2, Lock } from 'lucide-react';
+import { doc, updateDoc } from 'firebase/firestore';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { logger } from '@/src/utils/logger';
@@ -26,13 +27,12 @@ interface ChatMiniPollProps {
 }
 
 export const ChatMiniPoll: React.FC<ChatMiniPollProps> = ({ chatId, messageId, poll, isMe }) => {
-  const { profile, addToast } = useAeirmist();
+  const { db, profile, addToast } = useAeirmist();
   const [voting, setVoting] = useState(false);
-  const [localVotes, setLocalVotes] = useState<{ [key: string]: string[] }>(poll.votes || {});
 
   // Normalize options into consistent structure
   const rawOptions = poll.options || [];
-  const pollVotes: { [key: string]: string[] } = Object.keys(localVotes).length > 0 ? localVotes : (poll.votes || {});
+  const pollVotes: { [key: string]: string[] } = poll.votes || {};
 
   const options: { text: string; voterIds: string[] }[] = rawOptions.map(opt => {
     if (typeof opt === 'string') {
@@ -55,15 +55,17 @@ export const ChatMiniPoll: React.FC<ChatMiniPollProps> = ({ chatId, messageId, p
     : undefined;
 
   const handleVote = async (optionText: string) => {
-    if (!profile || !chatId || !messageId || voting || poll.isClosed) return;
+    if (!db || !profile || !chatId || !messageId || voting || poll.isClosed) return;
     setVoting(true);
     triggerNativeHaptic('light');
 
     try {
       const updatedVotes: { [key: string]: string[] } = {};
       options.forEach(opt => {
+        // filter out profile.id from other options
         const filtered = opt.voterIds.filter(id => id !== profile.id);
         if (opt.text === optionText) {
+          // If already selected, toggle off; otherwise add
           if (!opt.voterIds.includes(profile.id)) {
             filtered.push(profile.id);
           }
@@ -71,7 +73,10 @@ export const ChatMiniPoll: React.FC<ChatMiniPollProps> = ({ chatId, messageId, p
         updatedVotes[opt.text] = filtered;
       });
 
-      setLocalVotes(updatedVotes);
+      const msgRef = doc(db, 'conversations', chatId, 'messages', messageId);
+      await updateDoc(msgRef, {
+        'metadata.poll.votes': updatedVotes
+      });
     } catch (e) {
       logger.error('Failed to vote in chat poll:', e);
       addToast?.({

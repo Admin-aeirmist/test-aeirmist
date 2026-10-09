@@ -3,7 +3,7 @@ import { normalizeUsername } from './usernameUtils';
 /**
  * AEIRMIST CANONICAL IDENTITY RESOLUTION UTILITY
  * 
- * Rules for resolving an account UID:
+ * Rules for resolving a Firebase account UID:
  * Priority:
  * 1. record.uid (if valid non-empty string and does NOT start with 'profile_')
  * 2. record.ownerUid (if valid non-empty string and does NOT start with 'profile_')
@@ -126,7 +126,7 @@ export interface NormalizedAdminUser {
 }
 
 /**
- * Normalizes a raw profile or user document into a canonical Admin user structure.
+ * Normalizes a raw Firestore profile or user document into a canonical Admin user structure.
  */
 export function normalizeAdminUser(record: any): NormalizedAdminUser {
   if (!record) {

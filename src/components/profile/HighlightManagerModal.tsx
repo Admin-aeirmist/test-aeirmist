@@ -1,7 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { api } from '../../services/api/client';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  serverTimestamp 
+} from 'firebase/firestore';
 import { 
   X, Check, Loader2, AlertTriangle, Plus, Upload, 
   ChevronLeft, Camera, Image as ImageIcon, Film, Trash2, Edit3 
@@ -57,20 +67,40 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
 
   // Fetch the current user's own stories (archived or active)
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!db || !user?.uid) return;
 
     setLoadingStories(true);
-    api.stories.getArchive()
-      .then((res) => {
-        const fetched = res.stories || [];
-        setUserStories(fetched);
-        setLoadingStories(false);
-      })
-      .catch((error) => {
-        logger.error("Error fetching stories in HighlightManagerModal", error);
-        setLoadingStories(false);
+    const storiesRef = collection(db, 'stories');
+    const q = query(storiesRef, where('userId', '==', user.uid));
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const fetched = snapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+
+      // Sort client-side by createdAt descending
+      fetched.sort((a: any, b: any) => {
+        const getMs = (val: any) => {
+          if (!val) return 0;
+          if (typeof val.toMillis === 'function') return val.toMillis();
+          if (val instanceof Date) return val.getTime();
+          if (typeof val === 'number') return val;
+          if (val.seconds) return val.seconds * 1000;
+          return 0;
+        };
+        return getMs(b.createdAt) - getMs(a.createdAt);
       });
-  }, [user?.uid]);
+
+      setUserStories(fetched);
+      setLoadingStories(false);
+    }, (error) => {
+      logger.error("Error fetching stories in HighlightManagerModal", error);
+      setLoadingStories(false);
+    });
+
+    return () => unsub();
+  }, [db, user?.uid]);
 
   // Set initial cover
   useEffect(() => {
@@ -258,13 +288,17 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
           });
         }
 
-        const storyRes = await api.stories.create({
+        const storyDoc = await addDoc(collection(db, 'stories'), {
+          userId: user.uid,
+          userName: user.displayName || 'Aeirmist User',
+          userPhoto: user.photoURL || '',
           mediaUrl: uploadedUrl,
           mediaType: item.type,
-          caption: 'Highlight',
+          isHighlight: true,
+          createdAt: serverTimestamp()
         });
 
-        finalStoryIds.push(storyRes.story.id);
+        finalStoryIds.push(storyDoc.id);
 
         // If this was chosen as cover
         if (coverStoryId === item.id) {
@@ -276,13 +310,17 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
       for (const postItem of selectedPostItems) {
         if (!selectedStoryIds.includes(postItem.id)) continue;
 
-        const storyRes = await api.stories.create({
+        const storyDoc = await addDoc(collection(db, 'stories'), {
+          userId: user.uid,
+          userName: user.displayName || 'Aeirmist User',
+          userPhoto: user.photoURL || '',
           mediaUrl: postItem.url,
           mediaType: postItem.type,
-          caption: 'Highlight post',
+          isHighlight: true,
+          createdAt: serverTimestamp()
         });
 
-        finalStoryIds.push(storyRes.story.id);
+        finalStoryIds.push(storyDoc.id);
 
         if (coverStoryId === postItem.id) {
           setCustomCoverUrl(postItem.url);
@@ -291,11 +329,10 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
 
       // 4. Upload custom cover file if provided
       let finalCoverUrl = customCoverUrl;
-      if (customCoverFile) {
+      if (customCoverFile && uploadMedia) {
         setSavingProgress('Saving cover photo...');
         try {
-          const coverRes = await api.media.upload(customCoverFile, 'highlights/covers');
-          finalCoverUrl = coverRes.url;
+          finalCoverUrl = await uploadMedia(customCoverFile, `users/${user.uid}/highlights/covers`);
         } catch (e) {
           logger.warn("Cover upload failed, falling back:", e);
         }
@@ -313,16 +350,26 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
 
       // 5. Save or update highlight document
       setSavingProgress('Finalizing highlight...');
-      await api.stories.createHighlight({
-        title: highlightTitle,
-        coverUrl: finalCoverUrl,
-        storyIds: finalStoryIds,
-      });
-      addToast?.({ 
-        title: mode === 'create' ? "Highlight Published" : "Highlight Updated", 
-        message: `"${highlightTitle}" saved to your profile highlights.`, 
-        type: "success" 
-      });
+      if (mode === 'create') {
+        await addDoc(collection(db, 'highlights'), {
+          userId: user.uid,
+          label: highlightTitle,
+          coverUrl: finalCoverUrl,
+          stories: finalStoryIds,
+          isHighlight: true,
+          createdAt: serverTimestamp()
+        });
+        addToast?.({ title: "Highlight Published", message: `"${highlightTitle}" added to your profile highlights.`, type: "success" });
+      } else {
+        if (!existingHighlight?.id) throw new Error("Missing highlight ID");
+        await updateDoc(doc(db, 'highlights', existingHighlight.id), {
+          label: highlightTitle,
+          coverUrl: finalCoverUrl,
+          stories: finalStoryIds,
+          updatedAt: serverTimestamp()
+        });
+        addToast?.({ title: "Highlight Updated", message: "Changes saved successfully.", type: "success" });
+      }
 
       onSaved();
       onClose();
@@ -337,10 +384,10 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
 
   // Delete Highlight Handler
   const handleDelete = async () => {
-    if (!existingHighlight?.id) return;
+    if (!db || !existingHighlight?.id) return;
     setIsDeleting(true);
     try {
-      await api.stories.deleteHighlight(existingHighlight.id);
+      await deleteDoc(doc(db, 'highlights', existingHighlight.id));
       addToast?.({ title: "Highlight Deleted", message: "Highlight removed from profile.", type: "success" });
       onSaved();
       onClose();
@@ -525,7 +572,7 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
                         return (
                           <div 
                             key={story.id}
-                            onClick={() => toggleSelection(story.id)}
+                            onClick={() => toggleStory(story.id)}
                             className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer border transition-all group select-none ${
                               isSelected ? 'border-[#0095F6] ring-2 ring-[#0095F6]' : 'border-white/10 hover:border-white/30'
                             }`}

@@ -20,6 +20,7 @@ import { formatAeirmistTimestamp } from '../../lib/date';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useReport } from '../reporting/ReportContext';
 import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
+import { doc, updateDoc, increment, getDoc, collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, deleteDoc, getDocs, where } from 'firebase/firestore';
 import { Collage, MediaItem } from './Collage';
 import { PostMenu } from '../PostMenu';
 import { WhyAmISeeingThisModal } from './WhyAmISeeingThisModal';
@@ -34,7 +35,6 @@ import { ModerationWarningModal } from '../common/ModerationWarningModal';
 import { MessengerShare } from './MessengerShare';
 import { PostMusicPlayer, getPostMusicData } from './PostMusicPlayer';
 import { logger } from '@/src/utils/logger';
-import { api } from '../../services/api/client';
 
 const InsightsDashboard = React.lazy(() => import('../analytics/InsightsDashboard').then(m => ({ default: m.InsightsDashboard })));
 
@@ -120,6 +120,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   const { openReportModal } = useReport();
   const { 
+    db, 
     user, 
     profile, 
     toggleLike, 
@@ -162,29 +163,37 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   const [author, setAuthor] = useState<any>(initialAuthor);
 
-  // Profile status check for post author
+  // Live profile status check for post author
   useEffect(() => {
-    if (!postAuthorId || isDeletedAuthor) return;
-    let isCancelled = false;
-    api.users.getProfile(postAuthorId).then(res => {
-      if (isCancelled || !res?.profile) return;
-      const pData = res.profile;
-      if (pData.isDeleted === true || pData.status === 'deleted') {
+    if (!db || !postAuthorId || isDeletedAuthor) return;
+    const unsub = onSnapshot(doc(db, 'profiles', postAuthorId), (snap) => {
+      if (snap.exists()) {
+        const pData = snap.data();
+        if (pData.isDeleted === true || pData.status === 'deleted') {
+          setAuthor({
+            name: 'Aeirmist User',
+            avatar: BLANK_DP,
+            isVerified: false
+          });
+        } else {
+          setAuthor({
+            name: pData.displayName || pData.username || 'Aeirmist User',
+            avatar: getAvatarUrl(pData.photoURL),
+            isVerified: pData.isVerified || false
+          });
+        }
+      } else {
         setAuthor({
           name: 'Aeirmist User',
           avatar: BLANK_DP,
           isVerified: false
         });
-      } else {
-        setAuthor({
-          name: pData.displayName || pData.username || 'Aeirmist User',
-          avatar: getAvatarUrl(pData.avatarKey || pData.photoURL),
-          isVerified: pData.isVerified || false
-        });
       }
-    }).catch(() => {});
-    return () => { isCancelled = true; };
-  }, [postAuthorId, isDeletedAuthor]);
+    }, (err) => {
+      // Ignored
+    });
+    return () => unsub();
+  }, [db, postAuthorId, isDeletedAuthor]);
 
   const [liveComments, setLiveComments] = useState<any[]>([]);
   const [commentText, setCommentText] = useState('');
@@ -203,17 +212,27 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   const handleToggleHideLikes = async () => {
     const nextState = !isLikesHidden;
     setIsLikesHidden(nextState);
-    addToast?.({
-      title: nextState ? 'Like Count Hidden' : 'Like Count Visible',
-      message: nextState ? 'Others will see "Likes" instead of exact total.' : 'Like count is now visible to everyone.',
-      type: 'info'
-    });
+    try {
+      if (db && post.id) {
+        await updateDoc(doc(db, 'posts', post.id), {
+          hideLikes: nextState
+        });
+      }
+      addToast?.({
+        title: nextState ? 'Like Count Hidden' : 'Like Count Visible',
+        message: nextState ? 'Others will see "Likes" instead of exact total.' : 'Like count is now visible to everyone.',
+        type: 'info'
+      });
+    } catch (e) {
+      logger.error('Failed to toggle like count visibility:', e);
+      setIsLikesHidden(!nextState);
+    }
   };
 
   const shouldHideSensitive = (post as any).sensitiveWarning && !isSensitiveRevealed && !isOwnPost;
 
   const handlePin = async () => {
-    if (!profile) return;
+    if (!profile || !db) return;
     const isOwner = postAuthorId === profile.id;
     if (!isOwner) {
       if (addToast) {
@@ -225,13 +244,18 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
       }
       return;
     }
-    const newPinState = !(post as any).isPinned;
-    (post as any).isPinned = newPinState;
-    addToast?.({
-      title: newPinState ? 'Post Pinned' : 'Post Unpinned',
-      message: newPinState ? 'Post has been pinned to the top of your profile.' : 'Post has been unpinned.',
-      type: 'success'
-    });
+    try {
+      const postRef = doc(db, 'posts', post.id);
+      const newPinState = !(post as any).isPinned;
+      await updateDoc(postRef, { isPinned: newPinState });
+          addToast({
+            title: newPinState ? 'Post Pinned' : 'Post Unpinned',
+            message: newPinState ? 'Post has been pinned to the top of your profile.' : 'Post has been unpinned.',
+            type: 'success'
+          });
+    } catch (e) {
+      logger.error(e);
+    }
   };
 
   const handleEdit = () => {
@@ -251,15 +275,27 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   };
 
   const handleSaveEdit = async () => {
-    if (!profile) return;
-    post.content = editedContent;
-    setIsEditing(false);
-    if (addToast) {
-      addToast({
-        title: 'Post Updated',
-        message: 'Your post has been successfully updated.',
-        type: 'success'
-      });
+    if (!profile || !db) return;
+    try {
+      const postRef = doc(db, 'posts', post.id);
+      await updateDoc(postRef, { content: editedContent });
+      setIsEditing(false);
+      if (addToast) {
+        addToast({
+          title: 'Post Updated',
+          message: 'Your post has been successfully updated.',
+          type: 'success'
+        });
+      }
+    } catch (e) {
+      logger.error(e);
+      if (addToast) {
+        addToast({
+          title: 'SYNC ERROR',
+          message: 'Could not save edits.',
+          type: 'warning'
+        });
+      }
     }
   };
 
@@ -433,11 +469,13 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   // Exact profile lookup for mapping text mentions
   const lookupProfileByUsername = async (username: string) => {
+    if (!db) return null;
     try {
-      const res = await api.users.getProfile(username.toLowerCase());
-      if (res?.profile) return res.profile;
-      const searchRes = await api.users.search(username.toLowerCase(), 1);
-      if (searchRes?.users?.length) return searchRes.users[0];
+      const q = query(collection(db, 'profiles'), where('username', '==', username.toLowerCase()));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return { id: snap.docs[0].id, ...snap.docs[0].data() };
+      }
     } catch (e) {
       logger.error(e);
     }
@@ -446,7 +484,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   // Recursive mentions alert notifier helper
   const parseAndNotifyMentions = async (contentStr: string) => {
-    if (!profile || !createNotification) return;
+    if (!profile || !db || !createNotification) return;
     const mentionRegex = /@([a-zA-Z0-9_\-]+)/g;
     let match;
     const usernames: string[] = [];
@@ -468,34 +506,63 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     }
   };
 
-  // Like commentary node in local state
+  // Like commentary node in Firestore subcollection
   const handleLikeComment = async (commentId: string, currentLikedBy: string[] = []) => {
-    if (!profile) return;
-    const isAlreadyLiked = currentLikedBy.includes(profile.id);
-    const newLikedBy = isAlreadyLiked
-      ? currentLikedBy.filter(id => id !== profile.id)
-      : [...currentLikedBy, profile.id];
-
-    // Optimistic local update
-    setLiveComments(prev => prev.map(c => c.id === commentId ? { ...c, likedBy: newLikedBy } : c));
+    if (!profile || !db) return;
+    try {
+      const commentDocRef = doc(db, 'posts', post.id, 'comments', commentId);
+      const isAlreadyLiked = currentLikedBy.includes(profile.id);
+      let newLikedBy = [...currentLikedBy];
+      if (isAlreadyLiked) {
+        newLikedBy = newLikedBy.filter(id => id !== profile.id);
+      } else {
+        newLikedBy.push(profile.id);
+        
+        // Send like notification to comment author (unless self)
+        const commentDoc = liveComments.find(c => c.id === commentId);
+        if (commentDoc && commentDoc.authorId !== profile.id && createNotification) {
+          await createNotification(
+            commentDoc.authorId,
+            'comment_like',
+            `${profile.displayName || profile.username} liked your comment.`,
+            { postId: post.id, commentId }
+          );
+        }
+      }
+      await updateDoc(commentDocRef, { likedBy: newLikedBy });
+    } catch (err) {
+      logger.error("Like comment failed:", err);
+    }
   };
 
   // Purge owned commentary node
   const handleDeleteComment = async (commentId: string) => {
-    setLiveComments(prev => prev.filter(c => c.id !== commentId));
-    if (addToast) {
-      addToast({
-        title: 'COMMENT DELETED',
-        message: 'Comment deleted.',
-        type: 'success'
+    if (!db) return;
+    try {
+      const commentDocRef = doc(db, 'posts', post.id, 'comments', commentId);
+      await deleteDoc(commentDocRef);
+      
+      const postRef = doc(db, 'posts', post.id);
+      await updateDoc(postRef, {
+        commentsCount: increment(-1)
       });
+      
+      if (addToast) {
+        addToast({
+          title: 'COMMENT DELETED',
+          message: 'Comment deleted.',
+          type: 'success'
+        });
+      }
+    } catch (e) {
+      logger.error("Delete comment failed:", e);
     }
   };
 
   // Submit nested inline replies
   const handleInlineReplySubmit = async (e?: React.FormEvent, bypassModCheck = false) => {
     if (e) e.preventDefault();
-    if (!profile || !replyText.trim() || !replyingTo || submittingComment) return;
+    if (!db || !profile || !replyText.trim() || !replyingTo || submittingComment) return;
     const txt = replyText.trim();
     setReplyText('');
     const replyTarget = replyingTo;
@@ -503,33 +570,28 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     setSubmittingComment(true);
     
     try {
+      const commentsRef = collection(db, 'posts', post.id, 'comments');
       const activeParentId = replyTarget.parentId || replyTarget.id;
-
-      // 1. Primary: Save directly to our PostgreSQL Backend
-      let createdReply = null;
-      try {
-        const res = await api.posts.addComment(post.id, txt, activeParentId);
-        createdReply = res?.comment;
-        logger.info('[PremiumPostCard] Reply saved to PostgreSQL backend');
-      } catch (err) {
-        logger.error('[PremiumPostCard] Backend addComment reply error:', err);
-      }
-
-      // Optimistic update
-      const newReplyNode = {
-        id: createdReply?.id || `reply_${Date.now()}`,
+      
+      const newCommentData = {
         authorId: profile.id,
         authorName: profile.displayName || profile.username,
         authorPhoto: profile.photoURL || '',
         isVerified: profile.isVerified || false,
         content: txt,
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
         likedBy: [],
-        parentId: activeParentId,
-        replyToId: replyTarget.id,
-        replyToUsername: replyTarget.authorName
+        parentId: activeParentId,       // Grouped by top-level commentary node
+        replyToId: replyTarget.id,      // Replied directly to this node's ID
+        replyToUsername: replyTarget.authorName // Username of target
       };
-      setLiveComments(prev => [...prev, newReplyNode]);
+
+      await addDoc(commentsRef, newCommentData);
+
+      const postRef = doc(db, 'posts', post.id);
+      await updateDoc(postRef, {
+        commentsCount: increment(1)
+      });
 
       // Expand main thread automatically to view the active reply
       setExpandedComments(prev => ({ ...prev, [activeParentId]: true }));
@@ -586,40 +648,22 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     }
   };
 
-  // Auto-load Comments from PostgreSQL API
+  // Auto-load Comments
   useEffect(() => {
-    if (!post.id || !showComments) return;
-    let isCancelled = false;
-
-    api.posts.getComments(post.id)
-      .then(res => {
-        if (!isCancelled && res.comments && res.comments.length > 0) {
-          const mapped = res.comments.map(c => ({
-            id: c.id,
-            authorId: c.userId || c.authorId,
-            authorName: c.author?.displayName || c.author?.username || 'Aeirmist User',
-            authorPhoto: c.author?.avatarUrl || '',
-            isVerified: c.author?.isVerified || false,
-            content: c.content,
-            parentId: c.parentId || null,
-            createdAt: c.createdAt ? new Date(c.createdAt) : new Date(),
-          }));
-          setLiveComments(mapped);
-        }
-      })
-      .catch(err => {
-        logger.warn('[PremiumPostCard] API getComments fallback:', err);
-      });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [post.id, showComments]);
+    if (!db || !post.id || !showComments) return;
+    const commentsRef = collection(db, 'posts', post.id, 'comments');
+    const q = query(commentsRef, orderBy('createdAt', 'asc'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLiveComments(docs);
+    });
+    return () => unsub();
+  }, [db, post.id, showComments]);
 
   // Submit main comment
   const handleCommentSubmit = async (e?: React.FormEvent, bypassModCheck = false) => {
     if (e) e.preventDefault();
-    if (!profile || !commentText.trim() || submittingComment) return;
+    if (!db || !profile || !commentText.trim() || submittingComment) return;
     const txt = commentText.trim();
 
     if (!bypassModCheck) {
@@ -649,29 +693,22 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     setCommentText('');
     setSubmittingComment(true);
     try {
-      // 1. Primary: Save directly to our PostgreSQL Backend
-      let createdComment = null;
-      try {
-        const res = await api.posts.addComment(post.id, txt);
-        createdComment = res?.comment;
-        logger.info('[PremiumPostCard] Comment saved to PostgreSQL backend');
-      } catch (err) {
-        logger.error('[PremiumPostCard] Backend addComment error:', err);
-      }
-
-      // Optimistic update
-      const newCommentObj = {
-        id: createdComment?.id || `comment_${Date.now()}`,
+      const commentsRef = collection(db, 'posts', post.id, 'comments');
+      await addDoc(commentsRef, {
         authorId: profile.id,
         authorName: profile.displayName || profile.username,
         authorPhoto: profile.photoURL || '',
         isVerified: profile.isVerified || false,
         content: txt,
         likedBy: [],
-        parentId: null,
-        createdAt: new Date().toISOString()
-      };
-      setLiveComments(prev => [...prev, newCommentObj]);
+        parentId: null, // Top-level commentary wave
+        createdAt: serverTimestamp()
+      });
+
+      const postRef = doc(db, 'posts', post.id);
+      await updateDoc(postRef, {
+        commentsCount: increment(1)
+      });
 
       // Notify post author (unless self)
       if (postAuthorId && postAuthorId !== profile.id && createNotification) {
@@ -705,21 +742,22 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   // Fetch Author profile (including photo/avatar) dynamically
   useEffect(() => {
-    if (!postAuthorId) return;
+    if (!db || !postAuthorId) return;
     
-    api.users.getProfile(postAuthorId).then((res) => {
-      if (res?.profile) {
-        const data = res.profile;
+    // Use one-time getDoc fetch to avoid listener quota exhaustion in high-traffic feed
+    getDoc(doc(db, 'profiles', postAuthorId)).then((docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
         setAuthor({
           name: data.displayName || data.username || 'Aeirmist User',
-          avatar: getAvatarUrl(data.avatarKey || data.photoURL),
+          avatar: getAvatarUrl(data.photoURL),
           isVerified: !!data.isVerified
         });
       }
     }).catch((err) => {
-      logger.warn("Author profile fetch note:", err);
+      logger.warn("Author profile fetch failed:", err);
     });
-  }, [postAuthorId]);
+  }, [postAuthorId, db]);
 
   // Sync like and bookmark indicators
   useEffect(() => {
@@ -734,7 +772,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   }, [profile, post.likedBy, post.savedBy]);
 
   const handleLike = async () => {
-    if (!profile) return;
+    if (!profile || !db) return;
     triggerNativeHaptic('medium');
     const newLikedState = !isLiked;
     setIsLiked(newLikedState);
@@ -747,7 +785,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   };
 
   const handleBookmarkToggle = async () => {
-    if (!profile) return;
+    if (!profile || !db) return;
     triggerNativeHaptic('selection');
     const newBookmarkState = !isBookmarked;
     setIsBookmarked(newBookmarkState);
@@ -767,7 +805,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   };
 
   const handleDeletePost = async () => {
-    if (!profile) return;
+    if (!profile || !db) return;
     const isOwner = postAuthorId === profile.id;
     if (!isOwner) {
       if (addToast) {
@@ -802,7 +840,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   };
 
   const handleArchivePost = async () => {
-    if (!profile) return;
+    if (!profile || !db) return;
     const isOwner = postAuthorId === profile.id;
     if (!isOwner) return;
     const newArchiveState = !post.isArchived;
@@ -823,7 +861,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   };
 
   const handleMoveToVaultAction = async () => {
-    if (!profile || !isOwnPost) {
+    if (!db || !profile || !isOwnPost) {
       if (addToast && !isOwnPost) {
         addToast({ title: 'ACCESS DENIED', message: 'You can only vault your own content.', type: 'warning' });
       }
@@ -831,25 +869,31 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     }
     try {
       if (collageItems && collageItems.length > 0) {
-        // Move each media item to vault with post text content attached
+        // Move each media item to vault_media with post text content attached
         for (const item of collageItems) {
-          await api.vault.addItem({
-            type: item.type === 'video' ? 'video' : 'photo',
-            title: `Vaulted Post from @${post.authorName || post.userName || 'User'}`,
+          await addDoc(collection(db, 'vault_media'), {
+            userId: profile.id,
+            url: item.url,
+            type: item.type || 'image',
+            name: `Vaulted Post from @${post.authorName || post.userName || 'User'}`,
             content: post.content || '',
-            mediaUrl: item.url,
+            createdAt: serverTimestamp(),
+            isFavorite: false
           });
         }
       } else {
         // Text-only post or single media fallback
         const mediaUrl = post.mediaUrl || (post as any).mediaURL || (post.mediaUrls && post.mediaUrls[0]) || '';
-        const mediaType = (post as any).mediaType === 'video' ? 'video' : mediaUrl ? 'photo' : 'note';
+        const mediaType = (post as any).mediaType || (mediaUrl ? 'image' : 'text');
         
-        await api.vault.addItem({
-          type: mediaType as any,
-          mediaUrl: mediaUrl || undefined,
+        await addDoc(collection(db, 'vault_media'), {
+          userId: profile.id,
+          url: mediaUrl,
+          type: mediaType,
           content: post.content || '',
-          title: post.content ? (post.content.length > 30 ? post.content.slice(0, 30) + '...' : post.content) : `Vaulted Post from @${post.authorName || post.userName || 'User'}`,
+          name: post.content ? (post.content.length > 30 ? post.content.slice(0, 30) + '...' : post.content) : `Vaulted Post from @${post.authorName || post.userName || 'User'}`,
+          createdAt: serverTimestamp(),
+          isFavorite: false
         });
       }
 
@@ -1931,6 +1975,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
           isOpen={isMessengerShareOpen}
           onClose={() => setIsMessengerShareOpen(false)}
           onShare={handleShareToMessenger}
+          db={db}
           profile={profile}
         />
 

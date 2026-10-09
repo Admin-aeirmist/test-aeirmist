@@ -1,4 +1,7 @@
-import { logger } from '../utils/logger';
+import admin from 'firebase-admin';
+import { getFirestoreAdmin } from './FirebaseAdminService';
+import { logger } from '@/src/utils/logger';
+
 
 export interface AuditLog {
   timestamp: any;
@@ -11,11 +14,33 @@ export interface AuditLog {
 
 class TransactionAuditService {
   public async logPaymentActivity(userId: string, action: string, details: any, severity: AuditLog['severity'] = 'info') {
-    logger.info(`[AUDIT] [${severity.toUpperCase()}] ${action} for user ${userId}`, details);
+    const db = getFirestoreAdmin();
+    try {
+      await db.collection('audit_logs').add({
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        userId,
+        action,
+        details,
+        severity,
+        service: 'payment'
+      });
+      logger.info(`[AUDIT] ${action} logged for user ${userId}`);
+    } catch (e) {
+      logger.error('Audit Logging failed:', e);
+    }
   }
 
-  public async getTransactionHistory(_userId: string) {
-    return [];
+  public async getTransactionHistory(userId: string) {
+    const db = getFirestoreAdmin();
+    const snap = await db.collection('transactions')
+      .where('userId', '==', userId)
+      .orderBy('timestamp', 'desc')
+      .get();
+    
+    return snap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
   }
 }
 

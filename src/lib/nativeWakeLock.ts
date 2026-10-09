@@ -3,7 +3,7 @@ import { Capacitor } from '@capacitor/core';
 export const setNativeScreenKeepOn = async (enabled: boolean): Promise<void> => {
   try {
     if (Capacitor.isNativePlatform()) {
-      const plugin = ((Capacitor as any).Plugins)?.NativeSettings;
+      const plugin = (Capacitor.Plugins as any)?.NativeSettings;
       if (plugin?.setKeepScreenOn) {
         await plugin.setKeepScreenOn({ enabled });
         return;

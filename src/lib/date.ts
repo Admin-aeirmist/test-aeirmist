@@ -1,3 +1,5 @@
+import { Timestamp } from 'firebase/firestore';
+
 export const extractTimestampMs = (val: any): number => {
   if (!val) return 0;
   if (typeof val === 'number' && !isNaN(val) && val > 0) {
@@ -7,7 +9,11 @@ export const extractTimestampMs = (val: any): number => {
   if (val instanceof Date && !isNaN(val.getTime())) {
     return val.getTime();
   }
-
+  if (val instanceof Timestamp) {
+    try {
+      return val.toMillis();
+    } catch (e) {}
+  }
   if (typeof val?.toMillis === 'function') {
     try {
       const ms = val.toMillis();
@@ -184,52 +190,18 @@ export const formatTimeOnly = (timestamp: any): string => {
 };
 
 /**
- * Formatter for active status (e.g. "Active now", "Active 2m ago", "Active yesterday")
+ * Formatter for active status (e.g. "Active now", "Active 2m ago")
  */
 export const formatActiveStatus = (isOnline: boolean, lastSeen: any, hideExactTime: boolean = false): string => {
   if (isOnline && !hideExactTime) return 'Active now';
-  if (hideExactTime) return 'Active recently';
+  if (hideExactTime) return 'Last seen recently';
   if (!lastSeen) return 'Offline';
   
-  const date = toDateSafe(lastSeen);
-  if (!date) return 'Offline';
-
-  const now = new Date();
-  const diffInSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
-
-  if (diffInSeconds < 60) {
-    return 'Active 1m ago';
+  const formattedTime = formatAeirmistTimestamp(lastSeen);
+  if (formattedTime === 'Just now' || formattedTime.includes('ago')) {
+    return `Active ${formattedTime}`;
   }
-  if (diffInSeconds < 3600) {
-    const minutes = Math.floor(diffInSeconds / 60);
-    return `Active ${minutes}m ago`;
-  }
-  if (diffInSeconds < 86400) {
-    const hours = Math.floor(diffInSeconds / 3600);
-    return `Active ${hours}h ago`;
-  }
-
-  // Check if yesterday
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) {
-    return 'Active yesterday';
-  }
-
-  // Check if within 6 days
-  const diffInDays = Math.floor(diffInSeconds / 86400);
-  if (diffInDays < 7) {
-    const weekday = date.toLocaleDateString([], { weekday: 'long' });
-    return `Active ${weekday}`;
-  }
-
-  // Older: e.g. "Active 12 Mar"
-  const day = date.getDate();
-  const month = date.toLocaleDateString([], { month: 'short' });
-  if (date.getFullYear() === now.getFullYear()) {
-    return `Active ${day} ${month}`;
-  }
-  return `Active ${day} ${month} ${date.getFullYear()}`;
+  return `Last seen ${formattedTime}`;
 };
 
 /**
@@ -247,7 +219,7 @@ export const formatConversationTime = (timestamp: any): string => {
   if (
     typeof timestamp === 'object' &&
     !(timestamp instanceof Date) &&
-    timestamp?.constructor?.name !== 'Timestamp' &&
+    !(timestamp instanceof Timestamp) &&
     typeof timestamp.toMillis !== 'function' &&
     typeof timestamp.toDate !== 'function'
   ) {

@@ -31,11 +31,24 @@ import {
   FolderLock,
   Image as ImageLucide
 } from 'lucide-react';
-import { api } from '../../services/api/client';
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  updateDoc,
+  serverTimestamp,
+  query,
+  collection,
+  where,
+  onSnapshot,
+  addDoc,
+  deleteDoc
+} from 'firebase/firestore';
 import { getAvatarUrl } from '../../lib/avatar';
 import { PrivacyFolderLayout } from './vault/PrivacyFolderLayout';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
+import { auth } from '../../lib/firebase';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { checkDeviceBiometrics, authenticateWithBiometrics } from '../../lib/nativeBiometrics';
 
@@ -295,11 +308,12 @@ export const Vault: React.FC<VaultProps> = ({
   // Load configuration on mount or auth change
   useEffect(() => {
     const loadVaultConfig = async () => {
-      if (!profile?.id) return;
+      if (!db || !profile?.id) return;
       try {
-        const saved = localStorage.getItem(`vault_config_${profile.id}`);
-        if (saved) {
-          const data = JSON.parse(saved);
+        const docRef = doc(db, 'profiles', profile.id, 'vault', 'config');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() || profile.vaultConfigured === true) {
+          const data = docSnap.data() || {};
           setPasscodeHash(data.passcodeHash || '');
           setSelectedQuestions(data.questionIds || [0, 1, 2]);
           setRecoveryAnswersHashes(data.answersHashes || []);
@@ -317,14 +331,12 @@ export const Vault: React.FC<VaultProps> = ({
           setVaultConfigured(false);
           setView('welcome');
         }
-      } catch (err: any) {
-        logger.error("Failed to load secure Vault settings:", err);
-      } finally {
+      } catch (err: any) { logger.error("Failed to load secure Hidden Chats Settings:", err); addToast({ title: "Failed", message: "Failed to load Vault settings", type: "warning" }); } finally {
         setLoading(false);
       }
     };
     loadVaultConfig();
-  }, [profile?.id, isUnlocked]);
+  }, [db, profile?.id, isUnlocked, profile?.vaultConfigured]);
 
   // Read lockout state from localStorage to protect against reload escapes
   useEffect(() => {
@@ -469,7 +481,9 @@ export const Vault: React.FC<VaultProps> = ({
       const hashedAns3 = await hashString(recoveryAnswers[2], '_aurareCOVERY_salt');
       const ansHashes = [hashedAns1, hashedAns2, hashedAns3];
 
-      const configData = {
+      // Save inside vault/config subcollection of profiles
+      const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
+      await setDoc(configRef, {
         passcodeType,
         passcodeHash: hashedPasscode,
         questionIds: selectedQuestions,
@@ -478,8 +492,13 @@ export const Vault: React.FC<VaultProps> = ({
         autoLockDuration,
         silentNotifications,
         createdAt: new Date().toISOString()
-      };
-      localStorage.setItem(`vault_config_${profile.id}`, JSON.stringify(configData));
+      });
+
+      // Update parent profile document for quick queries
+      const profileRef = doc(db, 'profiles', profile.id);
+      await updateDoc(profileRef, {
+        vaultConfigured: true
+      });
 
       setPasscodeHash(hashedPasscode);
       setRecoveryAnswersHashes(ansHashes);
@@ -649,9 +668,13 @@ export const Vault: React.FC<VaultProps> = ({
     setLoading(true);
     try {
       const hashedPasscode = await hashString(resetPasscodeVal, '_aurasecret_salt');
-      if (profile?.id) {
-        localStorage.setItem(`vault_config_${profile.id}`, JSON.stringify({ passcodeHash: hashedPasscode, passcodeType }));
-      }
+
+      const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
+      await updateDoc(configRef, {
+        passcodeHash: hashedPasscode,
+        passcodeType
+      });
+
       setPasscodeHash(hashedPasscode);
       setView('forgot_reset_success');
     } catch (e) {
@@ -665,42 +688,46 @@ export const Vault: React.FC<VaultProps> = ({
   // Theme & Media State
   const [privacyMedia, setPrivacyMedia] = useState<any[]>([]);
 
-  const loadVaultMedia = async () => {
-    if (!profile?.id) return;
-    try {
-      const res = await api.vault.getItems();
-      if (res && res.items) {
-        setPrivacyMedia(res.items.map((it: any) => ({
-          id: it.id,
-          url: it.mediaUrl,
-          name: it.title,
-          type: it.type === 'video' ? 'video' : 'image',
-          createdAt: it.createdAt,
-          folder: it.folder,
-        })));
-      }
-    } catch (err) {
-      logger.warn('[Vault] Error loading items:', err);
-    }
-  };
-
+  // Load Vault Media from Firestore
   useEffect(() => {
-    if (isUnlocked) {
-      loadVaultMedia();
-    }
-  }, [profile?.id, isUnlocked]);
+    if (!db || !profile?.id || !isUnlocked) return;
+    
+    const userKeys = Array.from(new Set([
+      profile.id, 
+      profile.uid, 
+      profile.ownerUid, 
+      user?.uid, 
+      auth?.currentUser?.uid,
+      `profile_${auth?.currentUser?.uid}`,
+      `profile_${user?.uid}`
+    ].filter(Boolean)));
+    const q = query(
+      collection(db, 'vault_media'), 
+      where('userId', 'in', userKeys)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const media = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setPrivacyMedia(media);
+    }, (err) => {
+      logger.warn('[Vault] vault_media subscription fallback:', err);
+    });
+
+    return () => unsubscribe();
+  }, [db, profile?.id, profile?.uid, profile?.ownerUid, user?.uid, isUnlocked]);
 
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files || files.length === 0 || !profile?.id) return;
+    if (!files || files.length === 0 || !db || !profile?.id) return;
 
+    const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile.id;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
         let mediaUrl = '';
         try {
           if (uploadMedia) {
-            mediaUrl = await uploadMedia(file, `vault/${profile.id}`);
+            mediaUrl = await uploadMedia(file, `vault/${currentAuthUid}`);
           }
         } catch (uploadErr) {
           logger.warn("[Vault] Storage upload failed, falling back to data URL:", uploadErr);
@@ -715,11 +742,16 @@ export const Vault: React.FC<VaultProps> = ({
           });
         }
 
-        await api.vault.addItem({
-          type: file.type.startsWith('video') ? 'video' : 'photo',
-          title: file.name,
-          mediaUrl,
-          folder: 'General',
+        await addDoc(collection(db, 'vault_media'), {
+          userId: currentAuthUid,
+          ownerUid: currentAuthUid,
+          profileId: profile.id,
+          url: mediaUrl,
+          type: file.type.startsWith('video') ? 'video' : 'image',
+          name: file.name,
+          createdAt: serverTimestamp(),
+          isFavorite: false,
+          folderId: null
         });
 
         addToast({
@@ -736,39 +768,54 @@ export const Vault: React.FC<VaultProps> = ({
         });
       }
     }
-    loadVaultMedia();
+    // Reset file input target value so subsequent uploads of same file trigger onChange
     try {
       e.target.value = '';
     } catch {}
   };
 
   const handleVaultDelete = async (id: string) => {
+    if (!db) return;
     try {
-      await api.vault.deleteItem(id);
-      loadVaultMedia();
+      await deleteDoc(doc(db, 'vault_media', id));
       addToast({ title: "Deleted", message: "Item removed from Vault.", type: "info" });
-    } catch (e: any) {
-      logger.error("Delete failed:", e);
-      addToast({ title: "Failed", message: "Failed to delete vault item", type: "warning" });
-    }
+    } catch (e: any) { logger.error("Delete failed:", e); addToast({ title: "Failed", message: "Failed to delete vault item", type: "warning" }); }
   };
 
   const handleRestoreMedia = async (id: string) => {
-    if (!profile?.id) return;
+    if (!db || !profile?.id) return;
     const item = privacyMedia.find(m => m.id === id);
     if (!item) return;
 
     try {
       const restoredContent = item.content || (item.name ? `Restored from Vault: ${item.name}` : 'Restored Post');
-      await api.posts.create({
-        content: restoredContent,
-        mediaKeys: item.url ? [item.url.replace(/^.*\/media\//, '')] : undefined,
-        mediaType: item.type === 'video' ? 'video' : item.url ? 'image' : 'none',
-      }).catch(() => {});
+      const hasMediaUrl = !!item.url;
 
-      await api.vault.deleteItem(id).catch(() => {});
-      setPrivacyMedia(prev => prev.filter(m => m.id !== id));
-      addToast({ title: 'Restored', message: 'Item moved to your posts.', type: 'success' });
+      await addDoc(collection(db, 'posts'), {
+        userId: user?.uid || profile.id,
+        authorUid: user?.uid || profile.id,
+        authorId: profile.id,
+        userDisplayName: profile.displayName || profile.username,
+        userPhoto: profile.photoURL || '',
+        userRank: profile.aeirmistRank || 'IRON',
+        content: restoredContent,
+        media: hasMediaUrl ? [{
+          url: item.url,
+          type: item.type || 'image'
+        }] : [],
+        mediaUrls: hasMediaUrl ? [item.url] : [],
+        mediaType: hasMediaUrl ? (item.type || 'image') : 'text',
+        type: 'post',
+        createdAt: serverTimestamp(),
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        isPrivate: true
+      });
+
+      // Remove from vault
+      await deleteDoc(doc(db, 'vault_media', id));
+      addToast({ title: 'Restored', message: 'Item moved to your private posts.', type: 'success' });
     } catch (e: any) { 
       logger.error("Restore failed:", e); 
       addToast({ title: "Failed", message: "Failed to restore item", type: "warning" }); 
@@ -776,9 +823,14 @@ export const Vault: React.FC<VaultProps> = ({
   };
 
   const handleVaultFavorite = async (id: string) => {
+    if (!db) return;
     const item = privacyMedia.find(m => m.id === id);
     if (!item) return;
-    setPrivacyMedia(prev => prev.map(m => m.id === id ? { ...m, isFavorite: !m.isFavorite } : m));
+    try {
+      await updateDoc(doc(db, 'vault_media', id), {
+        isFavorite: !item.isFavorite
+      });
+    } catch (e: any) { logger.error("Favorite failed:", e); addToast({ title: "Failed", message: "Failed to favorite", type: "warning" }); }
   };
 
   // Adjust options while fully unlocked inside settings panel
@@ -786,13 +838,12 @@ export const Vault: React.FC<VaultProps> = ({
     setErrorText('');
     setSuccessText('');
     try {
-      if (profile?.id) {
-        localStorage.setItem(`vault_settings_${profile.id}`, JSON.stringify({
-          autoLockDuration,
-          silentNotifications,
-          biometricEnabled
-        }));
-      }
+      const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
+      await updateDoc(configRef, {
+        autoLockDuration,
+        silentNotifications,
+        biometricEnabled
+      });
       setSuccessText("Security profile saved.");
       setTimeout(() => setSuccessText(''), 3000);
     } catch (err) {
@@ -831,24 +882,21 @@ export const Vault: React.FC<VaultProps> = ({
 
   const handleMoveToVault = async (chatId: string) => {
     try {
-      if (profile?.id) {
-        const key = `vaulted_chats_${profile.id}`;
-        const stored = JSON.parse(localStorage.getItem(key) || '[]');
-        if (!stored.includes(chatId)) {
-          localStorage.setItem(key, JSON.stringify([...stored, chatId]));
-        }
-      }
+      const convRef = doc(db, 'conversations', chatId);
+      await updateDoc(convRef, {
+        [`isVaulted.${profile.id}`]: true,
+        [`isMuted.${profile.id}`]: true
+      });
       onSelectChat(chatId);
     } catch (err: any) { logger.error("Failed to vault conversation:", err); }
   };
 
   const handleRestoreChat = async (chatId: string) => {
     try {
-      if (profile?.id) {
-        const key = `vaulted_chats_${profile.id}`;
-        const stored = JSON.parse(localStorage.getItem(key) || '[]');
-        localStorage.setItem(key, JSON.stringify(stored.filter((id: string) => id !== chatId)));
-      }
+      const convRef = doc(db, 'conversations', chatId);
+      await updateDoc(convRef, {
+        [`isVaulted.${profile.id}`]: false
+      });
       addToast({ title: 'Restored', message: 'Conversation moved back to public list.', type: 'success' });
     } catch (err: any) { logger.error("Failed to restore conversation:", err); addToast({ title: "Failed", message: "Failed to restore conversation", type: "warning" }); }
   };
@@ -859,22 +907,59 @@ export const Vault: React.FC<VaultProps> = ({
       const otherProfileId = chatId.split('_').find(id => id !== profile.id);
       if (!otherProfileId) throw new Error("Invalid profile ID matching sequence");
 
-      let directConvId = chatId;
-      try {
-        const convRes = await api.chat.startDirect(otherProfileId);
-        if (convRes?.conversationId) directConvId = convRes.conversationId;
-      } catch (e) {}
+      // Retrieve public target node details
+      const otherProfSnap = await getDoc(doc(db, 'profiles', otherProfileId));
+      if (!otherProfSnap.exists()) throw new Error("Profile not found");
+      const otherData = otherProfSnap.data();
+      const otherUid = otherData.ownerUid || otherData.uid;
 
-      if (profile?.id) {
-        const key = `vaulted_chats_${profile.id}`;
-        const stored = JSON.parse(localStorage.getItem(key) || '[]');
-        if (!stored.includes(directConvId)) {
-          localStorage.setItem(key, JSON.stringify([...stored, directConvId]));
-        }
+      const convRef = doc(db, 'conversations', chatId);
+      const convSnap = await getDoc(convRef);
+
+      const participants = [profile.ownerUid || profile.uid, otherUid].filter(Boolean).sort();
+      const profileIds = [profile.id, otherProfileId].sort();
+
+      const convData = {
+        participants,
+        profileIds,
+        status: 'active',
+        [`isVaulted.${profile.id}`]: true,
+        [`isMuted.${profile.id}`]: true,
+        lastMessage: {
+          text: "Secure metadata established.",
+          senderId: profile.id,
+          timestamp: serverTimestamp(),
+          type: 'text'
+        },
+        participantDetails: {
+          [profile.id]: {
+            displayName: profile.displayName || profile.username,
+            photoURL: profile.photoURL || '',
+            username: profile.username || '',
+            uid: profile.ownerUid || profile.uid
+          },
+          [otherProfileId]: {
+            displayName: otherData.displayName || otherData.username,
+            photoURL: otherData.photoURL || '',
+            username: otherData.username || '',
+            uid: otherUid
+          }
+        },
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      if (!convSnap.exists()) {
+        await setDoc(convRef, convData);
+      } else {
+        await updateDoc(convRef, {
+          [`isVaulted.${profile.id}`]: true,
+          [`isMuted.${profile.id}`]: true
+        });
       }
 
-      onSelectChat(directConvId);
-    } catch (err: any) {
+      onSelectChat(chatId);
+    } catch (err) {
       logger.error("Failed to initialize encryption:", err);
       setErrorText("Unable to start private chat. Please try again.");
       setTimeout(() => setErrorText(""), 3000);

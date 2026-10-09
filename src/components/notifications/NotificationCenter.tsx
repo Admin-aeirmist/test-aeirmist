@@ -27,11 +27,28 @@ import {
 import { NotificationItem } from './NotificationItem';
 import type { Notification } from '../../types/notifications';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
+import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
-import { api } from '../../services/api/client';
 
-
+import { 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  getDocs,
+  getDoc,
+  updateDoc, 
+  doc, 
+  writeBatch, 
+  limit, 
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+  deleteDoc,
+  setDoc,
+  arrayUnion,
+  arrayRemove
+} from 'firebase/firestore';
 
 interface NotificationCenterProps {
   onClose: () => void;
@@ -114,14 +131,19 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   const [showAllRequests, setShowAllRequests] = useState(false);
 
   useEffect(() => {
-    if (!profile?.id) return;
-    try {
-      const saved = localStorage.getItem(`aeirmist_muted_users_${profile.id}`);
-      if (saved) setMutedUsernames(JSON.parse(saved));
-    } catch (err) {
-      logger.warn("Mute sync unavailable", err);
-    }
-  }, [profile?.id]);
+    if (!db || !profile?.id) return;
+    const fetchMuted = async () => {
+      try {
+        const d = await getDoc(doc(db, 'profiles', profile.id, 'settings', 'mutedUsers'));
+        if (d.exists()) {
+          setMutedUsernames(d.data().mutedUsernames || []);
+        }
+      } catch (err) {
+        logger.warn("Mute sync unavailable", err);
+      }
+    };
+    fetchMuted();
+  }, [db, profile?.id]);
 
   const [hiddenTypes, setHiddenTypes] = useState<string[]>(() => {
     try {
@@ -198,78 +220,152 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     }
   };
 
-  // Real-time Postgres API sync listener with Meta-style ban/deletion filter
+  const senderStatusCache = useRef<Map<string, { exists: boolean; isBanned: boolean }>>(new Map());
+
+  // Real-time Firestore sync listener with Meta-style ban/deletion filter
   useEffect(() => {
-    let isCancelled = false;
+    if (!db || !user) return;
     
-    const fetchNotifications = async () => {
-      try {
-        const res = await api.notifications.get(60).catch(() => ({ notifications: [], unreadCount: 0 }));
-        if (isCancelled) return;
-        const rawList = res?.notifications || [];
+    let isCancelled = false;
+    let fallbackUnsub: (() => void) | null = null;
+    const targetUserIds = Array.from(new Set([profile?.id, user.uid].filter(Boolean)));
+    if (targetUserIds.length === 0) return;
 
-        const mapped = rawList
-          .map((d: any) => {
-            const type = String(d.type || '').toLowerCase();
-            const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
-            if (isMessage) return null;
+    const processDocs = (docsList: any[]) => {
+      // 1. Immediately map and render notifications (0 latency!)
+      const mapped = docsList
+        .map(docSnap => {
+          const d = docSnap.data();
+          const type = String(d.type).toLowerCase();
+          const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
+          
+          if (isMessage) return null;
 
-            const isSecurityAlert = type.includes('security') || type.includes('device') || type.includes('login');
-            const isSystem = ['verification', 'system', 'system_verification', 'security'].some(t => type.includes(t)) ||
-                             d.fromUserId === 'aeirmist_system' ||
-                             d.user?.username === 'aeirmist' ||
-                             d.user?.username === 'security' ||
-                             isSecurityAlert;
+          const isSecurityAlert = String(d.type || '').toLowerCase().includes('security') || 
+                                  String(d.type || '').toLowerCase().includes('device') ||
+                                  String(d.type || '').toLowerCase().includes('login');
 
-            return {
-              id: d.id,
-              ...d,
-              isRead: Boolean(d.read || d.isRead),
-              timestampMs: d.createdAt ? new Date(d.createdAt).getTime() : Date.now(),
-              user: isSecurityAlert ? {
-                name: 'Security Alert',
-                avatar: null,
-                username: 'security',
-                isVerified: true
-              } : type.includes('verification') ? {
-                name: 'Aeirmist',
-                avatar: '/favicon.png',
-                username: 'aeirmist',
-                isVerified: true
-              } : {
-                name: d.user?.name || d.user?.displayName || d.fromUser?.displayName || d.metadata?.senderName || 'Aeirmist User',
-                avatar: d.user?.avatar || d.user?.avatarKey || d.fromUser?.photoURL || d.metadata?.senderPhoto || null,
-                username: d.user?.username || (d.fromUser?.displayName ? d.fromUser.displayName.toLowerCase().replace(/\s+/g, '') : (d.metadata?.senderUsername || 'user')),
-                isVerified: Boolean(d.user?.isVerified || d.user?.verified || d.fromUser?.isVerified)
+          const isSystem = ['verification', 'system', 'system_verification', 'security'].some(t => type.includes(t)) ||
+                           d.fromUserId === 'aeirmist_system' ||
+                           d.user?.username === 'aeirmist' ||
+                           d.user?.username === 'security' ||
+                           isSecurityAlert;
+
+          // Check if sender is banned
+          if (!isSystem) {
+            const senderId = d.fromUserId || d.fromUserUid || d.metadata?.senderId;
+            if (senderId && senderStatusCache.current.has(senderId)) {
+              const status = senderStatusCache.current.get(senderId)!;
+              if (status.isBanned) {
+                return null;
               }
-            };
-          })
-          .filter(Boolean) as any[];
+            }
+            if (d.user?.isBanned || d.metadata?.isBanned || d.fromUser?.isBanned) {
+              return null;
+            }
+          }
 
-        mapped.sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0));
+          return {
+            id: docSnap.id,
+            ...d,
+            isRead: d.read,
+            timestampMs: d.createdAt?.toMillis ? d.createdAt.toMillis() : (d.createdAt ? new Date(d.createdAt).getTime() : Date.now()),
+            user: isSecurityAlert ? {
+              name: 'Security Alert',
+              avatar: null,
+              username: 'security',
+              isVerified: true
+            } : type.includes('verification') ? {
+              name: 'Aeirmist',
+              avatar: '/favicon.png',
+              username: 'aeirmist',
+              isVerified: true
+            } : {
+              name: d.user?.name || d.fromUser?.displayName || d.metadata?.senderName || 'Aeirmist User',
+              avatar: d.user?.avatar || d.fromUser?.photoURL || d.metadata?.senderPhoto || null,
+              username: d.user?.username || (d.fromUser?.displayName ? d.fromUser.displayName.toLowerCase().replace(/\s+/g, '') : (d.metadata?.senderUsername || 'user')),
+              isVerified: Boolean(d.user?.isVerified || d.user?.verified || d.fromUser?.isVerified)
+            }
+          };
+        })
+        .filter(Boolean) as any[];
 
-        if (!isCancelled) {
-          setNotifications(mapped);
-          setIsLoading(false);
-          memoryNotificationCache = mapped.slice(0, 50);
-          try {
-            localStorage.setItem('aeirmist_cached_notifications', JSON.stringify(memoryNotificationCache));
-          } catch (e) {}
+      // Sort in-memory to guarantee correct descending timeline instantly
+      mapped.sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0));
+
+      if (!isCancelled) {
+        setNotifications(mapped);
+        setIsLoading(false);
+        memoryNotificationCache = mapped.slice(0, 50);
+        try {
+          localStorage.setItem('aeirmist_cached_notifications', JSON.stringify(memoryNotificationCache));
+        } catch (e) {}
+      }
+
+      // 2. Resolve unknown sender statuses asynchronously in background without blocking
+      const pendingSenderIds = new Set<string>();
+      docsList.forEach(docSnap => {
+        const d = docSnap.data();
+        const senderId = d.fromUserId || d.fromUserUid || d.metadata?.senderId;
+        if (senderId && !senderStatusCache.current.has(senderId)) {
+          pendingSenderIds.add(senderId);
         }
-      } catch (err) {
-        logger.warn('[NotificationCenter] Sync error:', err);
-        if (!isCancelled) setIsLoading(false);
+      });
+
+      if (pendingSenderIds.size > 0 && db) {
+        Promise.all(
+          Array.from(pendingSenderIds).map(async (sId) => {
+            try {
+              const pSnap = await getDoc(doc(db, 'profiles', sId));
+              if (pSnap.exists()) {
+                const pData = pSnap.data();
+                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
+                senderStatusCache.current.set(sId, { exists: true, isBanned });
+                return;
+              }
+              const pAltSnap = await getDoc(doc(db, 'profiles', `profile_${sId}`));
+              if (pAltSnap.exists()) {
+                const pData = pAltSnap.data();
+                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
+                senderStatusCache.current.set(sId, { exists: true, isBanned });
+                return;
+              }
+              senderStatusCache.current.set(sId, { exists: true, isBanned: false });
+            } catch (e) {
+              senderStatusCache.current.set(sId, { exists: true, isBanned: false });
+            }
+          })
+        ).then(() => {
+          if (!isCancelled) {
+            setNotifications(prev => prev.filter(n => {
+              const sId = n.fromUserId || n.fromUserUid || n.metadata?.senderId;
+              if (sId && senderStatusCache.current.get(sId)?.isBanned) return false;
+              return true;
+            }));
+          }
+        });
       }
     };
 
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 15000);
+    // Query notifications directly without requiring a composite index
+    const qNotifications = query(
+      collection(db, 'notifications'),
+      where('userId', 'in', targetUserIds),
+      limit(60)
+    );
+
+    const unsubscribe = onSnapshot(qNotifications, (snapshot) => {
+      processDocs(snapshot.docs);
+    }, (error: any) => {
+      logger.warn("Notification center query failed:", error);
+      setIsLoading(false);
+    });
 
     return () => {
       isCancelled = true;
-      clearInterval(interval);
+      unsubscribe();
     };
-  }, [user?.uid, profile?.id]);
+  }, [db, user?.uid, profile?.id]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -396,32 +492,48 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true, isRead: true })));
+    if (!db || !user || !canWrite('mark_all_read', 5000)) return;
     try {
-      await api.notifications.markAllRead();
-    } catch (err) {
-      logger.warn('[NotificationCenter] API markAllRead fallback:', err);
+      const batch = writeBatch(db);
+      notifications.forEach(n => {
+        if (!n.read && !n.isRead) {
+          batch.update(doc(db, 'notifications', n.id), { read: true });
+        }
+      });
+      await batch.commit();
+    } catch (e) {
+      logger.error("Mark all read failed:", e);
     }
   };
 
   const markRead = async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true, isRead: true } : n));
+    if (!db || !canWrite(`mark_read_${id}`, 2000)) return;
     try {
-      await api.notifications.markRead(id);
-    } catch (err) {
-      logger.warn('[NotificationCenter] API markRead fallback:', err);
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (e) {
+      logger.error("Mark read failed:", e);
     }
   };
 
   const deleteNotification = async (id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
+    if (!db) return;
+    try {
+      await deleteDoc(doc(db, 'notifications', id));
+    } catch (e) {
+      logger.error("Delete notification failed:", e);
+    }
   };
 
   const handleMuteUser = async (username: string) => {
-    if (!profile?.id) return;
+    if (!db || !profile?.id) return;
     const list = [...mutedUsernames, username];
     setMutedUsernames(list);
     try {
-      localStorage.setItem(`aeirmist_muted_users_${profile.id}`, JSON.stringify(list));
+      await setDoc(doc(db, 'profiles', profile.id, 'settings', 'mutedUsers'), {
+        mutedUsernames: arrayUnion(username)
+      }, { merge: true });
     } catch (err) {
       logger.error(err);
     }

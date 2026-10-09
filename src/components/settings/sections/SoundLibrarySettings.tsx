@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAeirmist } from '../../../context/AeirmistContext';
-import { api } from '../../../services/api/client';
+import { 
+  collection, 
+  addDoc, 
+  deleteDoc, 
+  doc, 
+  onSnapshot, 
+  query, 
+  orderBy 
+} from 'firebase/firestore';
 import { 
   Music, 
   Upload, 
@@ -54,17 +62,22 @@ export const SoundLibrarySettings = () => {
 
   // Fetch Tracks
   useEffect(() => {
-    try {
-      const savedRaw = localStorage.getItem('aeirmist_sound_library');
-      if (savedRaw) {
-        setTracks(JSON.parse(savedRaw));
-      }
-    } catch (e) {
-      logger.error('Error fetching sound library:', e);
-    } finally {
+    if (!db) return;
+    const q = query(collection(db, 'sound_library'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      setTracks(list);
       setLoading(false);
-    }
-  }, []);
+    }, (error) => {
+      logger.error('Error fetching sound library:', error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [db]);
 
   const handlePlayPause = (track: any) => {
     if (playingTrackId === track.id) {
@@ -118,20 +131,29 @@ export const SoundLibrarySettings = () => {
     setCoverProgress(0);
 
     try {
-      const audioRes = await api.media.upload(audioFile, 'sound-library');
-      const audioURL = audioRes.url;
+      // 1. Upload Audio file
+      const trackId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const audioPath = `sound-library/${user?.uid}/${trackId}`;
+      
+      const audioURL = await uploadMedia(
+        audioFile, 
+        audioPath, 
+        (progress) => setAudioProgress(progress)
+      );
 
       // 2. Upload Cover Image or use fallback
-      let coverArtURL = 'https://images.unsplash.com/photo-1614149162883-504ce4d13909?q=80&w=200&auto=format&fit=crop';
+      let coverArtURL = 'https://images.unsplash.com/photo-1614149162883-504ce4d13909?q=80&w=200&auto=format&fit=crop'; // fallback gradient cover
       if (coverFile) {
-        try {
-          const coverRes = await api.media.upload(coverFile, 'sound-library-art');
-          coverArtURL = coverRes.url;
-        } catch (e) {}
+        const coverPath = `sound-library-art/${user?.uid}/${trackId}`;
+        coverArtURL = await uploadMedia(
+          coverFile,
+          coverPath,
+          (progress) => setCoverProgress(progress)
+        );
       }
 
+      // 3. Save Doc to Firestore
       const trackDoc = {
-        id: `track_${Date.now()}`,
         title: title.trim(),
         artist: artist.trim(),
         audioURL,
@@ -142,11 +164,7 @@ export const SoundLibrarySettings = () => {
         createdAt: new Date().toISOString()
       };
 
-      const updatedTracks = [trackDoc, ...tracks];
-      setTracks(updatedTracks);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('aeirmist_sound_library', JSON.stringify(updatedTracks));
-      }
+      await addDoc(collection(db, 'sound_library'), trackDoc);
 
       addToast?.({
         title: 'SONIC SEQUENCE SYNCED',
@@ -187,11 +205,7 @@ export const SoundLibrarySettings = () => {
     }
 
     try {
-      const updatedTracks = tracks.filter(t => t.id !== track.id);
-      setTracks(updatedTracks);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('aeirmist_sound_library', JSON.stringify(updatedTracks));
-      }
+      await deleteDoc(doc(db, 'sound_library', track.id));
       if (playingTrackId === track.id) {
         if (audioRef.current) {
           audioRef.current.pause();

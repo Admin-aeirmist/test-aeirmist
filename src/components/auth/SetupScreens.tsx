@@ -19,7 +19,7 @@ export const SetupRequiredScreen = ({ connectionError, isConnecting }: { connect
       </div>
       <h2 className="text-2xl font-display font-bold mb-4 uppercase tracking-widest text-white">Setup Required</h2>
       <p className="text-white/40 text-sm mb-8 leading-relaxed">
-        {connectionError || "The Link hasn't been established. Please complete the setup in the panel to activate the Aeirmist."}
+        {connectionError || "The Link hasn't been established. Please complete the Firebase setup in the AI Studio panel to activate the Aeirmist."}
       </p>
       
       <div className="space-y-4">

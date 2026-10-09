@@ -1,4 +1,3 @@
-import { useAeirmist } from '../../context/AeirmistContext';
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppearance } from '../../context/AppearanceContext';
@@ -17,8 +16,8 @@ import {
   Users,
   Compass
 } from 'lucide-react';
-import { api } from '../../services/api/client';
-import { getSocket } from '../../services/api/socket';
+import { useAeirmist } from '../../context/AeirmistContext';
+import { collection, query, orderBy, onSnapshot, limit, where } from 'firebase/firestore';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
 import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
 import { Skeleton } from '../ui/Skeleton';
@@ -46,7 +45,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
   const [feedMode, setFeedMode] = useState<FeedMode>(() => feedRankingService.getFeedMode());
   const [feedbackEpoch, setFeedbackEpoch] = useState(0);
   const isInitialLoad = React.useRef(true);
-  const { user, profile, permissions, requestPermission, setCameraConfig, addToast, unreadNotificationsCount } = useAeirmist();
+  const { db, user, profile, permissions, requestPermission, setCameraConfig, addToast, unreadNotificationsCount } = useAeirmist();
   const { settings } = useAppearance(); 
   const isGlobalBgActive = settings.globalBgType !== 'none' && !!settings.globalBgValue;
 
@@ -155,198 +154,236 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
   };
 
   useEffect(() => {
-    if (!user || !profile) return;
+    if (!db || !user || !profile) return;
     
     const uidsToQuery: string[] = JSON.parse(uidsToQueryString);
     if (!isInitialLoad.current) setIsRefreshing(true);
-    let isCancelled = false;
 
-    const fetchFeed = async () => {
-      try {
-        const res = await api.posts.getFeed(postLimit * 2, 0);
-        if (isCancelled) return;
+    const resultsByBatch = new Map<string, any[]>();
+    let commitTimer: any = null;
 
-        const mediaBase = (import.meta.env.VITE_MEDIA_URL || 'http://localhost:4000/media').replace(/\/+$/, '');
-        const rawPosts = res?.posts || [];
+    const scheduleCommit = () => {
+      if (commitTimer) clearTimeout(commitTimer);
+      commitTimer = setTimeout(() => {
+        applyFilterAndCommit();
+      }, 16);
+    };
 
-        const mapped = rawPosts.map((p: any) => {
-          const authorObj = p.author || {};
-          const authorId = p.userId || p.authorId || authorObj.id;
-          return {
-            id: p.id,
-            userId: p.userId || authorId,
-            authorId: authorId,
-            content: p.content || '',
-            caption: p.content || '',
-            mediaKeys: p.mediaKeys || [],
-            mediaType: p.mediaType || 'none',
-            mediaUrl: p.mediaKeys?.[0] ? `${mediaBase}/${p.mediaKeys[0]}` : (p.mediaUrl || ''),
-            mediaUrls: p.mediaKeys?.length ? p.mediaKeys.map((k: string) => `${mediaBase}/${k}`) : (p.mediaUrls || (p.mediaUrl ? [p.mediaUrl] : [])),
-            mediaItems: p.mediaItems || (p.mediaKeys?.length ? p.mediaKeys.map((k: string) => ({ url: `${mediaBase}/${k}`, type: p.mediaType === 'video' ? 'video' : 'image' })) : undefined),
-            author: {
-              id: authorObj.id || authorId || 'user',
-              name: authorObj.displayName || authorObj.username || p.authorName || p.userName || 'User',
-              username: authorObj.username || 'user',
-              avatar: getAvatarUrl(authorObj.avatarKey || authorObj.photoURL || p.userAvatar || p.authorAvatar),
-              isVerified: authorObj.isVerified || false,
-            },
-            likesCount: p.likesCount || 0,
-            commentsCount: p.commentsCount || 0,
-            sharesCount: p.sharesCount || 0,
-            likedBy: p.likedBy || [],
-            savedBy: p.savedBy || [],
-            poll: p.pollData || p.poll,
-            createdAt: p.createdAt,
-            timestamp: p.createdAt ? new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now',
-            __sortTime: p.createdAt ? new Date(p.createdAt).getTime() : Date.now(),
-            ...p
-          };
+    const applyFilterAndCommit = () => {
+      const merged = Array.from(resultsByBatch.values()).flat();
+      const seen = new Set<string>();
+      const deduped = merged.filter(p => {
+        if (!p || !p.id || seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      });
+
+      // SORT IN JAVASCRIPT: This removes the need for composite indices in Firestore
+      deduped.sort((a, b) => (b.__sortTime || 0) - (a.__sortTime || 0));
+
+      const following = (profile.social?.following || []).filter(Boolean);
+      const followers = (profile.social?.followers || []).filter(Boolean);
+      const closeFriends = (profile.closeFriends || []).filter(Boolean);
+
+      const filtered = deduped.slice(0, postLimit * 2).filter(p => {
+        if (!p || p.isArchived) return false;
+        // Strictly exclude posts from deleted, banned, or scheduled-for-purge accounts
+        if (
+          p.isBanned ||
+          p.author?.isBanned ||
+          p.authorIsBanned ||
+          p.status === 'BANNED' ||
+          p.authorStatus === 'BANNED' ||
+          p.isDeletedAuthor || 
+          p.scheduledForPurge || 
+          p.isDeleted ||
+          p.hidden ||
+          p.authorName === 'Aeirmist User' || 
+          p.userName === 'Aeirmist User' || 
+          p.author?.name === 'Aeirmist User' ||
+          p.author?.displayName === 'Aeirmist User' ||
+          p.author?.username === 'aeirmist_user' ||
+          p.author?.username === 'deleted_user'
+        ) {
+          return false;
+        }
+
+        const authorId = p.authorId || p.authorUid || p.author?.id || '';
+        const authorUid = p.authorUid || p.author?.uid || '';
+        const isOwn = authorId === profile.id || authorUid === user.uid;
+
+        // Feed Mode specific filtering: strictly posts from users in following list
+        if (feedMode === 'following') {
+          const authorCandidates = [
+            p.authorId,
+            p.authorUid,
+            p.userId,
+            p.author?.id,
+            p.author?.uid,
+            authorId,
+            authorUid
+          ].filter(Boolean);
+
+          const followingSet = new Set([
+            ...following,
+            ...following.map((id: string) => id.replace(/^profile_/, '')),
+            ...following.map((id: string) => 'profile_' + id.replace(/^profile_/, ''))
+          ]);
+
+          return authorCandidates.some(id => followingSet.has(id));
+        }
+
+        if (feedMode === 'friends') {
+          const isMutual = (following.includes(authorId) && followers.includes(authorId)) ||
+                           (following.includes(authorUid) && followers.includes(authorUid));
+          const isClose = closeFriends.includes(authorId) || closeFriends.includes(authorUid);
+          return isMutual || isClose;
+        }
+
+        if (feedMode === 'saved') {
+          return p.savedBy?.includes(profile.id) || p.savedBy?.includes(user.uid) || p.isSaved;
+        }
+
+        // 'smart' and 'latest' modes
+        if (isOwn) return true;
+        if (p.audience === 'only_me') return false;
+        if (p.audience === 'close_friends') {
+          return (p.closeFriends || []).includes(profile.id);
+        }
+        return true;
+      });
+
+      setPosts(filtered);
+      setLoading(false);
+      setIsRefreshing(false);
+      setError(null);
+      isInitialLoad.current = false;
+    };
+
+    const handleError = (err: any) => {
+      logger.error("Feed listener error:", err);
+      LocalSqlService.getFeedPosts(30).then(cached => {
+        if (cached && cached.length > 0) {
+          setPosts(prev => prev.length === 0 ? cached.map(c => c.raw || c) : prev);
+        }
+      }).catch(() => {});
+      setLoading(false);
+      setIsRefreshing(false);
+
+      if (err.message?.includes('index') || err.code === 'failed-precondition') {
+        const indexLink = err.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/)?.[0];
+        setError({
+          message: 'QUERY OPTIMIZATION REQUIRED',
+          details: 'This feed view requires a composite index in Firestore to save correctly.',
+          link: indexLink
         });
-
-        // Deduplicate
-        const seen = new Set<string>();
-        const deduped = mapped.filter((p: any) => {
-          if (!p || !p.id || seen.has(p.id)) return false;
-          seen.add(p.id);
-          return true;
+      } else {
+        setError({
+          message: 'Sync INTERRUPTED',
+          details: err.message || 'The Feed could not be established.'
         });
-
-        deduped.sort((a: any, b: any) => (b.__sortTime || 0) - (a.__sortTime || 0));
-
-        const following = (profile.social?.following || []).filter(Boolean);
-        const followers = (profile.social?.followers || []).filter(Boolean);
-        const closeFriends = (profile.closeFriends || []).filter(Boolean);
-
-        const filtered = deduped.slice(0, postLimit * 2).filter((p: any) => {
-          if (!p || p.isArchived) return false;
-          // Strictly exclude posts from deleted, banned, or scheduled-for-purge accounts
-          if (
-            p.isBanned ||
-            p.author?.isBanned ||
-            p.authorIsBanned ||
-            p.status === 'BANNED' ||
-            p.authorStatus === 'BANNED' ||
-            p.isDeletedAuthor || 
-            p.scheduledForPurge || 
-            p.isDeleted ||
-            p.hidden ||
-            p.authorName === 'Aeirmist User' || 
-            p.userName === 'Aeirmist User' || 
-            p.author?.name === 'Aeirmist User' ||
-            p.author?.displayName === 'Aeirmist User' ||
-            p.author?.username === 'aeirmist_user' ||
-            p.author?.username === 'deleted_user'
-          ) {
-            return false;
-          }
-
-          const authorId = p.authorId || p.authorUid || p.author?.id || p.userId || '';
-          const authorUid = p.authorUid || p.author?.uid || '';
-          const isOwn = authorId === profile.id || authorUid === user.uid;
-
-          // Feed Mode specific filtering
-          if (feedMode === 'following') {
-            const authorCandidates = [
-              p.authorId,
-              p.authorUid,
-              p.userId,
-              p.author?.id,
-              p.author?.uid,
-              authorId,
-              authorUid
-            ].filter(Boolean);
-
-            const followingSet = new Set([
-              ...following,
-              ...following.map((id: string) => id.replace(/^profile_/, '')),
-              ...following.map((id: string) => 'profile_' + id.replace(/^profile_/, ''))
-            ]);
-
-            return authorCandidates.some((id: string) => followingSet.has(id));
-          }
-
-          if (feedMode === 'friends') {
-            const isMutual = (following.includes(authorId) && followers.includes(authorId)) ||
-                             (following.includes(authorUid) && followers.includes(authorUid));
-            const isClose = closeFriends.includes(authorId) || closeFriends.includes(authorUid);
-            return isMutual || isClose;
-          }
-
-          if (feedMode === 'saved') {
-            return p.savedBy?.includes(profile.id) || p.savedBy?.includes(user.uid) || p.isSaved || p.isBookmarked;
-          }
-
-          // 'smart' and 'latest' modes
-          if (isOwn) return true;
-          if (p.audience === 'only_me') return false;
-          if (p.audience === 'close_friends') {
-            return (p.closeFriends || []).includes(profile.id);
-          }
-          return true;
-        });
-
-        setPosts(filtered);
-        setLoading(false);
-        setIsRefreshing(false);
-        setError(null);
-        isInitialLoad.current = false;
-        try {
-          localStorage.setItem('aeirmist_home_feed_cache', JSON.stringify(filtered.slice(0, 20)));
-        } catch (e) {}
-      } catch (err: any) {
-        if (isCancelled) return;
-        logger.error('[Feed] API timeline sync error:', err);
-        try {
-          const rawLocal = localStorage.getItem('aeirmist_home_feed_cache');
-          if (rawLocal) {
-            const parsed = JSON.parse(rawLocal);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setPosts(parsed);
-              setError(null);
-              setLoading(false);
-              setIsRefreshing(false);
-              return;
-            }
-          }
-        } catch (_) {}
-        LocalSqlService.getFeedPosts(30).then(cached => {
-          if (cached && cached.length > 0) {
-            setPosts(cached.map(c => c.raw || c));
-            setError(null);
-          }
-        }).catch(() => {});
-        setLoading(false);
-        setIsRefreshing(false);
       }
     };
 
-    fetchFeed();
+    const processSnapshot = (snapshot: any, key: string) => {
+      const dbPosts = snapshot.docs.map((doc: any) => {
+        const data = doc.data() as any;
+        const isDeleted = Boolean(
+          data.isDeletedAuthor === true || 
+          data.scheduledForPurge === true ||
+          data.isDeleted === true || 
+          data.hidden === true ||
+          data.author?.isDeleted === true ||
+          data.author?.scheduledForPurge === true ||
+          data.authorName === 'Aeirmist User' || 
+          data.userName === 'Aeirmist User' ||
+          data.author?.name === 'Aeirmist User' ||
+          data.author?.displayName === 'Aeirmist User' ||
+          data.author?.username === 'aeirmist_user' ||
+          data.author?.username === 'deleted_user'
+        );
 
-    // Real-time post updates
-    const handlePostCreated = () => {
-      fetchFeed();
+        if (isDeleted) return null;
+
+        return {
+          id: doc.id,
+          ...data,
+          author: {
+            name: data.author?.displayName || data.author?.username || data.authorName || data.userName || 'User',
+            avatar: getAvatarUrl(data.author?.photoURL || data.userAvatar || data.authorAvatar),
+            isVerified: data.author?.isVerified || false
+          },
+          likesCount: data.likesCount || 0,
+          commentsCount: data.commentsCount || 0,
+          timestamp: data.createdAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'Just now',
+          __sortTime: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || 0,
+        };
+      }).filter(Boolean);
+      resultsByBatch.set(key, dbPosts);
+      scheduleCommit();
     };
-    window.addEventListener('aeirmist-post-created', handlePostCreated);
-    let socket: any = null;
-    try {
-      socket = getSocket();
-      socket.on('new_post', handlePostCreated);
-    } catch (e) {}
 
-    // Freshness poll interval
-    const pollInterval = setInterval(() => {
-      fetchFeed();
-    }, 15000);
+    // Subscriptions container
+    const unsubscribes: (() => void)[] = [];
+
+    // Mode: Saved
+    if (feedMode === 'saved') {
+      const qSaved = query(
+        collection(db, 'posts'),
+        where('savedBy', 'array-contains', profile.id),
+        limit(postLimit)
+      );
+      unsubscribes.push(onSnapshot(qSaved, (s) => processSnapshot(s, 'saved_posts'), handleError));
+      return () => {
+        if (commitTimer) clearTimeout(commitTimer);
+        unsubscribes.forEach(unsub => unsub());
+      };
+    }
+
+    // Modes: Following or Friends with 0 contacts
+    if ((feedMode === 'following' || feedMode === 'friends') && uidsToQuery.length === 0) {
+      setPosts([]);
+      setLoading(false);
+      setIsRefreshing(false);
+      return;
+    }
+
+    // Author batches for following / network
+    const BATCH_SIZE = 30;
+    const batches: string[][] = [];
+    for (let i = 0; i < uidsToQuery.length; i += BATCH_SIZE) {
+      batches.push(uidsToQuery.slice(i, i + BATCH_SIZE));
+    }
+
+    batches.forEach((batch, batchIndex) => {
+      const q1 = query(
+        collection(db, 'posts'),
+        where('authorId', 'in', batch),
+        limit(postLimit)
+      );
+      const q2 = query(
+        collection(db, 'posts'),
+        where('authorUid', 'in', batch),
+        limit(postLimit)
+      );
+      unsubscribes.push(onSnapshot(q1, (s) => processSnapshot(s, `batch_${batchIndex}_id`), handleError));
+      unsubscribes.push(onSnapshot(q2, (s) => processSnapshot(s, `batch_${batchIndex}_uid`), handleError));
+    });
+
+    // In smart and latest modes, also stream general platform posts directly (deduped and ranked client-side)
+    if (feedMode === 'smart' || feedMode === 'latest') {
+      const qGeneral = query(
+        collection(db, 'posts'),
+        limit(postLimit)
+      );
+      unsubscribes.push(onSnapshot(qGeneral, (s) => processSnapshot(s, 'general_discovery'), handleError));
+    }
 
     return () => {
-      isCancelled = true;
-      clearInterval(pollInterval);
-      window.removeEventListener('aeirmist-post-created', handlePostCreated);
-      if (socket) {
-        socket.off('new_post', handlePostCreated);
-      }
+      if (commitTimer) clearTimeout(commitTimer);
+      unsubscribes.forEach(unsub => unsub());
     };
-  }, [user?.uid, profile?.id, uidsToQueryString, feedMode, retryCount, postLimit]);
+  }, [db, user?.uid, profile?.id, uidsToQueryString, feedMode, retryCount, postLimit]);
 
   // Infinite Scroll Trigger
   useEffect(() => {
@@ -487,7 +524,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
                             <ArrowUpRight size={16} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                           </a>
                           <p className="text-[9px] text-white/20 max-w-[280px] leading-relaxed">
-                            Database optimization recommended. Click the button above to retry the synchronization.
+                            Firestore requires a composite index for this saved view. Click the button above to authorize the Index creation.
                           </p>
                         </div>
                       ) : (

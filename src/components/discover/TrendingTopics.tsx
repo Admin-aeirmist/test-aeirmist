@@ -1,27 +1,29 @@
-import { useAeirmist } from '../../context/AeirmistContext';
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { TrendingUp, Hash, ArrowUpRight, Zap, Target, Loader2 } from 'lucide-react';
-import { api } from '../../services/api/client';
+import { useAeirmist } from '../../context/AeirmistContext';
+import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
 
 export const TrendingTopics: React.FC = () => {
-  const { addToast } = useAeirmist();
+  const { db, addToast } = useAeirmist();
   const [trends, setTrends] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    let isMounted = true;
     const fetchTrends = async () => {
+      if (!db) return;
       setLoading(true);
       try {
-        const res = await api.posts.getFeed(50);
-        const posts = res?.posts || [];
+        const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(50));
+        const snap = await getDocs(q);
         const hashCounts: Record<string, number> = {};
         
-        posts.forEach((d: any) => {
-          if (d.isDeleted || d.hidden) return;
+        snap.forEach(doc => {
+          const d = doc.data();
+          if (d.isDeletedAuthor || d.scheduledForPurge || d.isDeleted || d.hidden || d.authorName === 'Aeirmist User' || d.userName === 'Aeirmist User') return;
           const content = d.content || '';
           const foundHashes = content.match(/#[\w\d]+/g) || [];
           foundHashes.forEach((h: string) => {
@@ -30,40 +32,49 @@ export const TrendingTopics: React.FC = () => {
           });
         });
 
-        // Add standard fallback hashtags if empty
-        if (Object.keys(hashCounts).length === 0) {
-          hashCounts['aeirmist'] = 14;
-          hashCounts['cyberpunk'] = 9;
-          hashCounts['future'] = 7;
-          hashCounts['frequency'] = 5;
-        }
-
         const sortedTrends = Object.entries(hashCounts)
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
           .map(([topic, count]) => ({
             topic,
-            volume: `${count} Post${count > 1 ? 's' : ''}`,
+            volume: `${count} Message${count > 1 ? 's' : ''}`,
             type: 'hashtag'
           }));
 
-        if (isMounted) {
-          setTrends(sortedTrends);
-          setLoading(false);
-        }
+        setTrends(sortedTrends);
       } catch (e) {
         logger.error("Trends fetch failed:", e);
-        if (isMounted) setLoading(false);
+        addToast({
+          title: "Trends Offline",
+          message: "Failed to load global velocity trends. Retrying connection...",
+          type: "warning"
+        });
+        if (retryCount < 5) {
+          setTimeout(() => {
+            setRetryCount(prev => prev + 1);
+          }, 5000);
+        }
+      } finally {
+        setLoading(false);
       }
     };
     fetchTrends();
-    return () => { isMounted = false; };
-  }, []);
-  const [suggestedClusters, setSuggestedClusters] = useState<any[]>([
-    { id: 'cl_1', name: 'Cyber Synthesis', membersCount: 142 },
-    { id: 'cl_2', name: 'Digital Nomads', membersCount: 98 },
-    { id: 'cl_3', name: 'Aeir Collective', membersCount: 254 },
-  ]);
+  }, [db, retryCount]);
+  const [suggestedClusters, setSuggestedClusters] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!db) return;
+    const fetchClusters = async () => {
+      try {
+        const q = query(collection(db, 'groups'), limit(3));
+        const snap = await getDocs(q);
+        setSuggestedClusters(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      } catch (e) {
+        logger.error("Clusters fetch failed:", e);
+      }
+    };
+    fetchClusters();
+  }, [db]);
 
   const [joinedClusters, setJoinedClusters] = useState<string[]>([]);
 

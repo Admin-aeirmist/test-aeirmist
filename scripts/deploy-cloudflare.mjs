@@ -22,7 +22,9 @@ const env = {
   ...process.env,
   CLOUDFLARE_API_KEY: apiKey,
   CLOUDFLARE_EMAIL: email,
-  CLOUDFLARE_ACCOUNT_ID: accountId
+  CLOUDFLARE_ACCOUNT_ID: accountId,
+  CI: 'true',
+  WRANGLER_SEND_METRICS: 'false'
 };
 
 import fs from 'fs';
@@ -48,7 +50,7 @@ const child = spawn(npxCmd, args, {
 child.on('close', (code) => {
   if (code === 0) {
     console.log('\n✅ Deployment to Cloudflare Pages completed successfully!');
-    console.log('🌐 Live Custom Domain: https://aeirmist.com');
+    console.log('🌐 Live Pages URL: https://aeirmist-f0m.pages.dev');
   } else {
     console.error(`\n❌ Cloudflare deployment failed with exit code ${code}`);
     process.exit(code);
