@@ -66,6 +66,7 @@ import { LocalSqlService } from '../services/LocalSqlService';
 import { validateEmailDetailed, isValidEmail } from '../utils/emailValidator';
 import { sendTemplatePasswordResetEmail, sendTemplateEmailVerification } from '../services/authActionService';
 import { api, setAuthToken } from '../services/api/client';
+import { identifyUserSocket } from '../services/api/socket';
 
 /**
  * Deduplicates profiles ensuring only one profile per normalized username / UID
@@ -541,6 +542,20 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     checkVerificationLifecycle();
   }, [profile?.id, profile?.isVerified, profile?.verificationExpiresAt, profile?.monthlyDeadline, user?.uid]);
+
+  // Keep WebSocket gateway registered with current user & profile identifiers for instant real-time events
+  useEffect(() => {
+    if (user?.uid) {
+      identifyUserSocket(user.uid);
+    }
+    if (profile?.id) {
+      identifyUserSocket(profile.id);
+    }
+    if ((profile as any)?.userId) {
+      identifyUserSocket((profile as any).userId);
+    }
+  }, [user?.uid, profile?.id, (profile as any)?.userId]);
+
   const [allProfiles, setAllProfiles] = useState<any[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

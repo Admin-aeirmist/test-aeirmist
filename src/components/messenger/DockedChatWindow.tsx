@@ -392,20 +392,21 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
               (user as any)?.userId,
               (user as any)?.dbId,
               profile?.username
-            ].filter(Boolean) as string[];
+            ].filter(Boolean).map(id => String(id).toLowerCase());
 
-            const isDirectMatch = myIds.some(id =>
-              (m.senderId && (m.senderId === id || m.senderId.toLowerCase() === id.toLowerCase())) ||
-              (m.senderUid && (m.senderUid === id || m.senderUid.toLowerCase() === id.toLowerCase()))
-            );
+            const senderCandidates = [
+              m.senderId,
+              m.senderId ? m.senderId.replace(/^profile_/, '') : null,
+              m.senderUid,
+              (m as any).senderDbId,
+              (m as any).senderProfileId,
+              (m as any).sender?.id,
+              (m as any).sender?.firebaseUid,
+              (m as any).sender?.profileId,
+              (m as any).sender?.username
+            ].filter(Boolean).map(s => String(s).toLowerCase());
 
-            const isOther = participantId && (
-              m.senderId === participantId || 
-              m.senderUid === participantId ||
-              (m.senderId && m.senderId.replace(/^profile_/, '') === participantId.replace(/^profile_/, ''))
-            );
-
-            const isMe = isDirectMatch || (!isOther && !!participantId);
+            const isMe = senderCandidates.some(cand => myIds.includes(cand));
 
             // Render native app-wise Call History Card (audio/video call logs)
             const isCallHistory = m.type === 'call_history' || m.metadata?.type === 'call_history' || /^(?:Audio|Voice|Video)\s+call/i.test(m.text || '');

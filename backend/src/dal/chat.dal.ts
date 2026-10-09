@@ -170,6 +170,8 @@ export class ChatDAL {
         message: messages,
         sender: {
           id: users.id,
+          firebaseUid: users.firebaseUid,
+          profileId: profiles.id,
           username: profiles.username,
           displayName: profiles.displayName,
           avatarKey: profiles.avatarKey,
@@ -186,8 +188,10 @@ export class ChatDAL {
     return rows.reverse().map((r) => ({
       ...r.message,
       sender: r.sender,
-      senderId: r.message.senderId,
-      senderUid: r.sender?.id || r.message.senderId,
+      senderId: r.sender?.profileId || r.sender?.id || r.message.senderId,
+      senderUid: r.sender?.firebaseUid || r.sender?.id || r.message.senderId,
+      senderProfileId: r.sender?.profileId,
+      senderDbId: r.sender?.id,
     }));
   }
 
@@ -244,6 +248,7 @@ export class ChatDAL {
       .select({
         id: users.id,
         firebaseUid: users.firebaseUid,
+        profileId: profiles.id,
         username: profiles.username,
         displayName: profiles.displayName,
         avatarKey: profiles.avatarKey,
@@ -257,8 +262,10 @@ export class ChatDAL {
     return {
       ...msg,
       sender: senderUser || null,
-      senderId: msg.senderId,
-      senderUid: senderUser?.firebaseUid || msg.senderId,
+      senderId: senderUser?.profileId || senderUser?.id || msg.senderId,
+      senderUid: senderUser?.firebaseUid || senderUser?.id || msg.senderId,
+      senderProfileId: senderUser?.profileId,
+      senderDbId: senderUser?.id,
     };
   }
 
@@ -287,8 +294,14 @@ export class ChatDAL {
 
   static async getConversationMembers(conversationId: string) {
     return db
-      .select({ userId: conversationMembers.userId })
+      .select({
+        userId: conversationMembers.userId,
+        firebaseUid: users.firebaseUid,
+        profileId: profiles.id,
+      })
       .from(conversationMembers)
+      .innerJoin(users, eq(conversationMembers.userId, users.id))
+      .leftJoin(profiles, eq(users.id, profiles.userId))
       .where(eq(conversationMembers.conversationId, conversationId));
   }
 

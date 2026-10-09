@@ -202,7 +202,12 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
     for (const m of members) {
       io.to(`user:${m.userId}`).emit('new_message', broadcastPayload);
       io.to(`user:profile_${m.userId}`).emit('new_message', broadcastPayload);
+      if (m.firebaseUid) io.to(`user:${m.firebaseUid}`).emit('new_message', broadcastPayload);
+      if (m.profileId) io.to(`user:${m.profileId}`).emit('new_message', broadcastPayload);
     }
+
+    // Universal broadcast with conversationId matching in client
+    io.emit('new_message', broadcastPayload);
 
     // Asynchronously dispatch in-app notifications for message recipients
     (async () => {
@@ -277,6 +282,7 @@ router.patch('/messages/:messageId', authenticateToken, async (req: Authenticate
     const msg = await ChatDAL.editMessage(req.params.messageId, req.user!.userId, content);
     if (!msg) return res.status(404).json({ error: 'Message not found or unauthorized' });
     io.to(`conv:${msg.conversationId}`).emit('message_edited', { message: msg });
+    io.emit('message_edited', { message: msg });
     res.json({ message: msg });
   } catch (err) {
     console.error('[Edit Message Error]', err);
@@ -290,6 +296,7 @@ router.delete('/messages/:messageId', authenticateToken, async (req: Authenticat
     const msg = await ChatDAL.deleteMessage(req.params.messageId, req.user!.userId);
     if (!msg) return res.status(404).json({ error: 'Message not found or unauthorized' });
     io.to(`conv:${msg.conversationId}`).emit('message_deleted', { messageId: req.params.messageId, conversationId: msg.conversationId });
+    io.emit('message_deleted', { messageId: req.params.messageId, conversationId: msg.conversationId });
     res.json({ success: true });
   } catch (err) {
     console.error('[Delete Message Error]', err);

@@ -27,7 +27,7 @@ import { logger } from '@/src/utils/logger';
 import { getAvatarUrl } from '../../lib/avatar';
 import { extractTimestampMs } from '../../lib/date';
 import { api } from '../../services/api/client';
-import { getSocket } from '../../services/api/socket';
+import { getSocket, joinChatRoom, leaveChatRoom, identifyUserSocket } from '../../services/api/socket';
 
 function cleanUndefined(obj: any): any {
   if (obj === null || typeof obj !== 'object') {
@@ -422,6 +422,15 @@ class MessagingService {
     let isCancelled = false;
     let localCurrentMessages: Message[] = [];
 
+    // Identify current user and join conversation rooms for instant real-time events
+    if (currentProfileId) {
+      identifyUserSocket(currentProfileId);
+    }
+    joinChatRoom(conversationId);
+    if (chatData?.id && chatData.id !== conversationId) {
+      joinChatRoom(chatData.id);
+    }
+
     // Helper: Normalize any server/API/cache message to unified Message schema
     const normalizeMsg = (m: any): Message => {
       const timestampMs = (typeof m.timestampMs === 'number' && m.timestampMs > 0)
@@ -432,8 +441,10 @@ class MessagingService {
         ...m,
         id: m.id || `msg_${timestampMs}`,
         conversationId: m.conversationId || conversationId,
-        senderId: m.senderId || m.sender?.id || m.senderUid,
-        senderUid: m.senderUid || m.senderId,
+        senderId: m.senderId || m.sender?.profileId || m.sender?.id || m.senderUid,
+        senderUid: m.senderUid || m.sender?.firebaseUid || m.sender?.id || m.senderId,
+        senderProfileId: m.senderProfileId || m.sender?.profileId,
+        senderDbId: m.senderDbId || m.sender?.id,
         text: m.text !== undefined ? m.text : (m.content || ''),
         content: m.content !== undefined ? m.content : (m.text || ''),
         type: m.type || 'text',
@@ -527,15 +538,48 @@ class MessagingService {
     const handleSocketMessage = (payload: any) => {
       if (isCancelled || !payload) return;
       const rawMsg = payload.message || payload;
-      const targetConvId = payload.conversationId || payload.rawConversationId;
-      const isMatch = targetConvId === conversationId || 
-                      payload.rawConversationId === conversationId ||
-                      (conversationId.includes('_') && targetConvId && conversationId.split('_').every((p: string) => targetConvId.includes(p)));
+      const targetConvId = String(payload.conversationId || payload.rawConversationId || '');
+      const rawConvId = String(payload.rawConversationId || payload.conversationId || '');
+      const currentConv = String(conversationId || '');
 
-      const otherId = chatData?.otherParticipantId || (conversationId.startsWith('new_') ? conversationId.replace('new_', '') : null);
-      const isFromOther = otherId && (rawMsg.senderId === otherId || rawMsg.senderUid === otherId || `profile_${rawMsg.senderId}` === otherId || rawMsg.senderId?.replace(/^profile_/, '') === otherId.replace(/^profile_/, ''));
+      const normConv = currentConv.includes('_') ? currentConv.split('_').sort().join('_') : currentConv;
+      const normTarget = targetConvId.includes('_') ? targetConvId.split('_').sort().join('_') : targetConvId;
+      const normRaw = rawConvId.includes('_') ? rawConvId.split('_').sort().join('_') : rawConvId;
 
-      if (isMatch || isFromOther) {
+      const isConvMatch = targetConvId === currentConv || 
+                          rawConvId === currentConv ||
+                          (Boolean(normConv) && (normConv === normTarget || normConv === normRaw)) ||
+                          (Boolean(chatData?.id) && (chatData.id === targetConvId || chatData.id === rawConvId));
+
+      const otherIds = [
+        chatData?.otherParticipantId,
+        chatData?.otherParticipantId ? chatData.otherParticipantId.replace(/^profile_/, '') : null,
+        chatData?.otherParticipantUid,
+        chatData?.otherProfile?.id,
+        chatData?.otherProfile?.id ? chatData.otherProfile.id.replace(/^profile_/, '') : null,
+        chatData?.otherProfile?.userId,
+        chatData?.otherProfile?.firebaseUid,
+        chatData?.otherProfile?.username,
+        conversationId.startsWith('new_') ? conversationId.replace('new_', '') : null,
+      ].filter(Boolean) as string[];
+
+      const incomingSenderIds = [
+        rawMsg.senderId,
+        rawMsg.senderId ? rawMsg.senderId.replace(/^profile_/, '') : null,
+        rawMsg.senderUid,
+        rawMsg.senderDbId,
+        rawMsg.senderProfileId,
+        rawMsg.sender?.id,
+        rawMsg.sender?.firebaseUid,
+        rawMsg.sender?.profileId,
+        rawMsg.sender?.username
+      ].filter(Boolean) as string[];
+
+      const isFromOther = otherIds.some(oid => 
+        incomingSenderIds.some(sid => sid === oid || sid.toLowerCase() === oid.toLowerCase())
+      );
+
+      if (isConvMatch || isFromOther) {
         const normalized = normalizeMsg(rawMsg);
         mergeAndEmit([normalized]);
       }
@@ -570,6 +614,10 @@ class MessagingService {
     const cleanup = () => {
       isCancelled = true;
       clearInterval(pollInterval);
+      leaveChatRoom(conversationId);
+      if (chatData?.id && chatData.id !== conversationId) {
+        leaveChatRoom(chatData.id);
+      }
       socket.off('new_message', handleSocketMessage);
       if (firestoreUnsubscribe) firestoreUnsubscribe();
       if (this.listeners.get(key) === cleanup) {
@@ -585,6 +633,9 @@ class MessagingService {
     logger.info(`[MessagingService] Subscribing to inbox for UID: ${userUid}`);
     let isCancelled = false;
     let localCurrentChats: Chat[] = [];
+
+    if (userUid) identifyUserSocket(userUid);
+    if (profileId) identifyUserSocket(profileId);
 
     // Helper: Normalize chat
     const normalizeChat = (c: any): Chat => {
@@ -621,6 +672,7 @@ class MessagingService {
         otherProfile: other ? {
           id: other.profileId,
           userId: other.userId,
+          firebaseUid: other.firebaseUid,
           displayName: other.displayName,
           username: other.username,
           avatarKey: other.avatarKey,

@@ -24,6 +24,15 @@ function resolveSocketBase(): string {
 }
 
 let socketInstance: Socket | null = null;
+const identifiedUserIds = new Set<string>();
+
+export function identifyUserSocket(userId: string): void {
+  if (!userId) return;
+  identifiedUserIds.add(userId);
+  if (socketInstance && socketInstance.connected) {
+    socketInstance.emit('identify_user', userId);
+  }
+}
 
 export function getSocket(): Socket {
   if (!socketInstance) {
@@ -37,6 +46,9 @@ export function getSocket(): Socket {
 
     socketInstance.on('connect', () => {
       console.log('🔌 [Socket.IO] Connected to backend gateway:', socketInstance?.id);
+      identifiedUserIds.forEach((id) => {
+        socketInstance?.emit('identify_user', id);
+      });
     });
 
     socketInstance.on('disconnect', (reason) => {
