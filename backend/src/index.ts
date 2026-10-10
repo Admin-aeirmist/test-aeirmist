@@ -146,17 +146,14 @@ io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token || 
                   (socket.handshake.headers['authorization']?.startsWith('Bearer ') ? socket.handshake.headers['authorization'].slice(7).trim() : null) ||
                   (socket.handshake.query?.token as string);
-    const headerUid = (socket.handshake.headers['x-user-id'] as string) || 
-                      (socket.handshake.auth?.userId as string) || 
-                      (socket.handshake.query?.userId as string);
 
-    if (!token && !headerUid) {
-      return next(new Error('Authentication failed: Missing credentials'));
+    if (!token || token === 'null' || token === 'undefined') {
+      return next(new Error('Authentication failed: Missing token'));
     }
 
-    const resolved = await resolveUserFromCredentials(token || null, headerUid || null);
+    const resolved = await resolveUserFromCredentials(token);
     if (!resolved || !resolved.userId) {
-      return next(new Error('Authentication failed: Invalid credentials'));
+      return next(new Error('Authentication failed: Invalid or expired token'));
     }
 
     (socket as any).userId = resolved.userId;

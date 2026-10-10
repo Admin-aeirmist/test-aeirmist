@@ -27,47 +27,15 @@ async function loadValidUser(candidate: string | null | undefined): Promise<Toke
   return null;
 }
 
-export async function resolveUserFromCredentials(token: string | null, headerUid: string | null): Promise<TokenPayload | null> {
-  // 1. Sandbox and local vault fallback tokens
-  if (token && (token === 'sandbox_token' || token.startsWith('sandbox_') || token.startsWith('jwt_local_vault_'))) {
-    const user = await loadValidUser(headerUid) || await loadValidUser('demo@aeirmist.com');
-    if (user) return user;
-    const anyUser = await db.select().from(users).limit(1);
-    if (anyUser[0] && !anyUser[0].isBanned && anyUser[0].status !== 'BANNED' && anyUser[0].status !== 'DELETED') {
-      return { userId: anyUser[0].id, role: anyUser[0].role as any, email: anyUser[0].email };
-    }
-  }
+export async function resolveUserFromCredentials(token: string | null): Promise<TokenPayload | null> {
+  if (!token || typeof token !== 'string') return null;
+  const cleanToken = token.trim();
+  if (!cleanToken || cleanToken === 'null' || cleanToken === 'undefined') return null;
 
-  // 2. Cloudflare Edge token format: jwt_aeirmist_{uid}_{payloadB64}
-  if (token && token.startsWith('jwt_aeirmist_')) {
-    const rawRest = token.slice('jwt_aeirmist_'.length);
-    let targetId = rawRest;
-    let targetEmail = '';
-
-    const lastUnderscore = rawRest.lastIndexOf('_');
-    if (lastUnderscore > 0) {
-      const candidateB64 = rawRest.slice(lastUnderscore + 1);
-      try {
-        const jsonStr = Buffer.from(candidateB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-        const decoded = JSON.parse(jsonStr);
-        if (decoded && (decoded.id || decoded.uid || decoded.email)) {
-          targetId = decoded.id || decoded.uid || rawRest.slice(0, lastUnderscore);
-          targetEmail = decoded.email || '';
-        }
-      } catch {}
-    }
-
-    const edgeUser = await loadValidUser(targetId) ||
-                     await loadValidUser(rawRest) ||
-                     await loadValidUser(targetEmail) ||
-                     await loadValidUser(headerUid);
-    if (edgeUser) return edgeUser;
-  }
-
-  // 3. Standard JWT verification (Backend secret)
-  if (token) {
-    try {
-      const payload = verifyAccessToken(token);
+  // 1. Standard Server JWT verification (Backend secret)
+  try {
+    const payload = verifyAccessToken(cleanToken);
+    if (payload && payload.userId) {
       const [u] = await db
         .select({ id: users.id, role: users.role, email: users.email, isBanned: users.isBanned, status: users.status })
         .from(users)
@@ -76,36 +44,27 @@ export async function resolveUserFromCredentials(token: string | null, headerUid
       if (u && !u.isBanned && u.status !== 'BANNED' && u.status !== 'DELETED') {
         return { userId: u.id, role: u.role as any, email: u.email };
       }
-    } catch {
-      // Failed local secret verification, check Firebase/OAuth decode below
     }
-
-    // 4. Firebase Auth ID Token or Third-Party JWT decode
-    try {
-      const decoded = jwt.decode(token) as any;
-      if (decoded && typeof decoded === 'object') {
-        const uid = decoded.user_id || decoded.sub || decoded.uid || decoded.userId;
-        const email = decoded.email;
-        if (uid) {
-          const user = await loadValidUser(uid);
-          if (user) return user;
-        }
-        if (email) {
-          const user = await loadValidUser(email);
-          if (user) return user;
-        }
-      }
-    } catch {}
-
-    // 5. Direct UUID, Firebase UID, or Profile ID as token string
-    const directUser = await loadValidUser(token);
-    if (directUser) return directUser;
+  } catch {
+    // Secret verification failed
   }
 
-  // 6. Fallback to custom Header credentials (x-user-id / x-profile-id / x-firebase-uid)
-  if (headerUid) {
-    const headerUser = await loadValidUser(headerUid);
-    if (headerUser) return headerUser;
+  // 2. Cloudflare Edge signed token format: jwt_aeirmist_{uid}_{payloadB64}
+  if (cleanToken.startsWith('jwt_aeirmist_')) {
+    const rawRest = cleanToken.slice('jwt_aeirmist_'.length);
+    const lastUnderscore = rawRest.lastIndexOf('_');
+    if (lastUnderscore > 0) {
+      const candidateB64 = rawRest.slice(lastUnderscore + 1);
+      try {
+        const jsonStr = Buffer.from(candidateB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+        const decoded = JSON.parse(jsonStr);
+        if (decoded && (decoded.userId || decoded.id || decoded.uid)) {
+          const targetId = decoded.userId || decoded.id || decoded.uid;
+          const edgeUser = await loadValidUser(targetId);
+          if (edgeUser) return edgeUser;
+        }
+      } catch {}
+    }
   }
 
   return null;
@@ -116,22 +75,15 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
   let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
   if (token === 'null' || token === 'undefined' || token === '') token = null;
 
-  const headerUid = (req.headers['x-user-id'] as string) || 
-                    (req.headers['x-profile-id'] as string) || 
-                    (req.headers['x-firebase-uid'] as string) ||
-                    (req.headers['x-account-id'] as string) ||
-                    (req.query.userId as string) ||
-                    (req.query.profileId as string) ||
-                    null;
   const queryToken = (req.query.token as string) || (req.query.auth as string) || null;
   const candidateToken = token || (queryToken && queryToken !== 'null' && queryToken !== 'undefined' ? queryToken : null);
 
-  if (!candidateToken && !headerUid) {
+  if (!candidateToken) {
     return res.status(401).json({ error: 'Authentication required: missing token' });
   }
 
   try {
-    const payload = await resolveUserFromCredentials(candidateToken, headerUid);
+    const payload = await resolveUserFromCredentials(candidateToken);
     if (!payload) {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
@@ -163,15 +115,14 @@ export const requireModerator = requireRole('moderator', 'admin', 'super_admin',
 export async function optionalAuthToken(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string) || null;
 
-  if (!token && !headerUid) return next();
-
-  try {
-    const payload = await resolveUserFromCredentials(token, headerUid);
-    if (payload) {
-      req.user = payload;
-    }
-  } catch {}
+  if (token && token !== 'null' && token !== 'undefined') {
+    try {
+      const payload = await resolveUserFromCredentials(token);
+      if (payload) {
+        req.user = payload;
+      }
+    } catch {}
+  }
   next();
 }

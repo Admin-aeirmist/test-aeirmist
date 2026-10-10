@@ -1,28 +1,5 @@
-import { 
-  collection, 
-  doc, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
-  onSnapshot, 
-  addDoc, 
-  setDoc, 
-  updateDoc, 
-  serverTimestamp, 
-  writeBatch,
-  getDoc,
-  getDocs,
-  deleteDoc,
-  increment,
-  DocumentData,
-  QuerySnapshot,
-  Firestore,
-  deleteField
-} from 'firebase/firestore';
 import { Message, Chat } from '../../types/messenger';
 import { aeirmistCache } from '../../services/CacheService';
-import { handleFirestoreError, OperationType } from '../../lib/firebase';
 import { logger } from '@/src/utils/logger';
 import { getAvatarUrl } from '../../lib/avatar';
 import { extractTimestampMs } from '../../lib/date';
@@ -227,125 +204,8 @@ class MessagingService {
     }
   }
 
-  private updateExistingConversation(
-    batch: any, 
-    db: Firestore, 
-    convId: string, 
-    senderId: string, 
-    receiverId: string | null, 
-    receiverUid: string | null,
-    text: string, 
-    type: string, 
-    mediaUrl?: string, 
-    metadata: any = {}
-  ) {
-    const convRef = doc(db, 'conversations', convId);
-    
-    // OPTIMIZATION: Throttle conversation metadata updates to save write quota
-    const now = Date.now();
-    const lastUpdate = this.lastMetadataUpdate.get(convId) || 0;
-    const isMajorUpdate = now - lastUpdate > 30000; // 30 seconds frequency for heavy metadata
-
-    const updates: any = {};
-
-    const clientNow = Date.now();
-    // ALWAYS update latestMessageAt, latestMessageId, latestMessageSenderId, latestMessagePreview and updatedAt
-    updates.latestMessageAt = serverTimestamp();
-    updates.latestMessageAtMs = clientNow;
-    updates.latestMessageId = metadata.messageId || null;
-    updates.latestMessageSenderId = senderId;
-    updates.latestMessagePreview = text;
-    updates.updatedAt = serverTimestamp();
-    updates.updatedAtMs = clientNow;
-    updates.lastMessage = {
-      text,
-      senderId,
-      timestamp: serverTimestamp(),
-      timestampMs: clientNow,
-      type,
-      mediaUrl: mediaUrl || null,
-      mood: metadata.mood || null,
-      messageId: metadata.messageId || null
-    };
-
-    if (isMajorUpdate) {
-      this.lastMetadataUpdate.set(convId, now);
-      updates[`lastRead.${senderId}`] = serverTimestamp();
-      updates[`lastDelivered.${senderId}`] = serverTimestamp();
-      updates[`isArchived.${senderId}`] = false;
-    }
-
-    // Ensure participants array is ALWAYS present for security rules
-    if (metadata.receiverUid && metadata.senderUid) {
-       updates.participants = metadata.senderUid === metadata.receiverUid ? [metadata.senderUid] : [metadata.senderUid, metadata.receiverUid].sort();
-    }
-    
-    // Ensure profileIds is present for logic
-    if (metadata.recipientId) {
-      updates.profileIds = senderId === metadata.recipientId ? [senderId] : [senderId, metadata.recipientId].sort();
-    }
-
-    if (metadata.targetProfile && metadata.recipientId) {
-      updates[`participantDetails.${metadata.recipientId}`] = metadata.targetProfile;
-    }
-    const rawSenderName = metadata.senderName || metadata.senderDisplayName;
-    const isSenderNameValid = rawSenderName && typeof rawSenderName === 'string' &&
-      rawSenderName.trim() !== '' &&
-      rawSenderName.toLowerCase() !== 'unknown' &&
-      rawSenderName.toLowerCase() !== 'unknown user';
-    const cleanSenderName = isSenderNameValid ? rawSenderName.trim() : 'Aeirmist User';
-
-    if (rawSenderName || metadata.senderPhoto || metadata.senderUid) {
-      updates[`participantDetails.${senderId}`] = {
-        displayName: cleanSenderName,
-        photoURL: metadata.senderPhoto || '',
-        uid: metadata.senderUid || '',
-        username: senderId
-      };
-    }
-
-    // Reset deletedFor flags so the conversation reappears upon new signals/messages
-    updates[`deletedFor.${senderId}`] = null;
-    if (receiverId) {
-      updates[`deletedFor.${receiverId}`] = null;
-      if (receiverId !== senderId) {
-        updates[`unreadCount.${receiverId}`] = increment(1);
-      }
-      updates[`isArchived.${receiverId}`] = false;
-    }
-
-    batch.update(convRef, cleanUndefined(updates));
-
-    // Write notification for receiver if not self, not in safe mode, and NOT vaulted/muted by receiver
-    const targetUserId = receiverId || receiverUid;
-    const isSelf = (receiverId && receiverId === senderId) || (receiverUid && metadata.senderUid && metadata.senderUid === receiverUid);
-    const isReceiverVaulted = Boolean(
-      (receiverId && metadata.convData?.isVaulted?.[receiverId] === true) || 
-      (receiverUid && metadata.convData?.isVaulted?.[receiverUid] === true) ||
-      (receiverId && metadata.convData?.isMuted?.[receiverId] === true) ||
-      (receiverUid && metadata.convData?.isMuted?.[receiverUid] === true) ||
-      metadata.isVaulted
-    );
-    if (targetUserId && !this.isSafeMode && !isSelf && !isReceiverVaulted) {
-      const notifRef = doc(collection(db, 'notifications'));
-      batch.set(notifRef, cleanUndefined({
-        userId: targetUserId, // Use Profile ID if available, else Auth UID
-        fromUserId: senderId,
-        fromUser: {
-          displayName: cleanSenderName,
-          photoURL: metadata.senderPhoto || ''
-        },
-        type: 'message',
-        message: type === 'text' ? (text.substring(0, 50) + (text.length > 50 ? '...' : '')) : `Sent a ${type}`,
-        metadata: { conversationId: convId },
-        read: false,
-        createdAt: serverTimestamp()
-      }));
-    }
-  }
-
   subscribeToMessages(
-    db: Firestore, 
+    _db: any, 
     conversationId: string, 
     currentProfileId: string,
     chatData: any,
@@ -855,434 +715,82 @@ class MessagingService {
   // Group Chat Functions
 
   public async createGroupConversation(
-    db: Firestore, 
-    creatorId: string, 
+    _db: any, 
+    _creatorId: string, 
     memberIds: string[], 
     groupName: string, 
     groupPhotoURL?: string,
-    creatorUid?: string,
-    memberUids?: string[]
-  ) {
-    const convRef = doc(collection(db, 'conversations'));
-    
-    const profileIds = Array.from(new Set([creatorId, ...memberIds].filter(Boolean)));
-    const participants = Array.from(new Set([creatorUid, ...(memberUids || []), ...profileIds].filter(Boolean)));
-    
-    await setDoc(convRef, {
-      id: convRef.id,
-      isGroup: true,
-      type: 'group',
-      name: groupName,
-      groupName: groupName,
-      photo: groupPhotoURL || null,
-      groupPhotoURL: groupPhotoURL || null,
-      profileIds: profileIds,
-      participants: participants,
-      admins: [creatorId],
-      createdBy: creatorId,
-      createdByUid: creatorUid || creatorId,
-      status: 'active',
-      isDiscoverable: false,
-      pendingJoinRequests: [],
-      lastMessage: {
-        text: 'Group created',
-        senderId: creatorId,
-        timestamp: serverTimestamp(),
-        type: 'text',
-        mediaUrl: null,
-        messageId: null
-      },
-      unreadCount: { [creatorId]: 0 },
-      lastRead: { [creatorId]: serverTimestamp() },
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    
-    return convRef.id;
-  }
-
-  public async sendSystemEvent(db: Firestore, conversationId: string, eventText: string) {
+    _creatorUid?: string,
+    _memberUids?: string[]
+  ): Promise<string> {
     try {
-      const messagesRef = collection(db, 'conversations', conversationId, 'messages');
-      const msgDoc = doc(messagesRef);
-      await setDoc(msgDoc, {
-        text: eventText,
-        senderId: 'system',
-        type: 'system',
-        metadata: { isSystem: true },
-        createdAt: serverTimestamp(),
-        timestamp: serverTimestamp()
-      });
-
-      const convRef = doc(db, 'conversations', conversationId);
-      await updateDoc(convRef, {
-        lastMessage: {
-          text: eventText,
-          senderId: 'system',
-          type: 'system',
-          timestamp: serverTimestamp(),
-          messageId: msgDoc.id
-        },
-        updatedAt: serverTimestamp()
-      });
-    } catch (e) {
-      logger.warn("Could not post system event:", e);
+      const res = await api.chat.createGroup(groupName, memberIds, groupPhotoURL);
+      const conv = (res as any)?.conversation || res;
+      return conv?.id || `group_${Date.now()}`;
+    } catch (err: any) {
+      logger.error("[MessagingService] Failed to create group:", err);
+      throw err;
     }
   }
 
-  public async addGroupMembers(db: Firestore, conversationId: string, requesterId: string, newMemberIds: string[], memberDetailsMap?: Record<string, any>, actorName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) {
-      throw new Error("Group conversation not found");
-    }
-    
-    const existingData = convSnap.data() || {};
-    const participants: string[] = existingData.participants || [];
-    const profileIds: string[] = existingData.profileIds || [];
-    const admins: string[] = existingData.admins || [];
-    const owner = existingData.owner || existingData.createdBy || existingData.createdByUid;
-
-    const isAuthorized = 
-      !requesterId ||
-      participants.includes(requesterId) ||
-      profileIds.includes(requesterId) ||
-      admins.includes(requesterId) ||
-      owner === requesterId ||
-      participants.some(p => p && requesterId && (p === requesterId || p.includes(requesterId) || requesterId.includes(p))) ||
-      profileIds.some(p => p && requesterId && (p === requesterId || p.includes(requesterId) || requesterId.includes(p)));
-
-    if (!isAuthorized) {
-      logger.warn(`User ${requesterId} authorization warning in group ${conversationId}`);
-    }
-
-    const updatedParticipants = Array.from(new Set([...participants, ...newMemberIds]));
-    const updatedProfileIds = Array.from(new Set([...profileIds, ...newMemberIds]));
-    
-    const updatePayload: any = {
-        participants: updatedParticipants,
-        profileIds: updatedProfileIds,
-        memberCount: updatedParticipants.length,
-        updatedAt: serverTimestamp()
-    };
-
-    if (memberDetailsMap && Object.keys(memberDetailsMap).length > 0) {
-      const existingDetails = existingData.participantDetails || {};
-      updatePayload.participantDetails = { ...existingDetails, ...memberDetailsMap };
-    }
-
-    await updateDoc(convRef, updatePayload);
-
-    const adder = actorName || 'Someone';
-    const addedNames = newMemberIds.map(id => memberDetailsMap?.[id]?.displayName || id).filter(Boolean).join(', ');
-    await this.sendSystemEvent(db, conversationId, `${adder} added ${addedNames || 'new members'} to the group.`);
+  public async sendSystemEvent(_db: any, conversationId: string, eventText: string) {
+    logger.info(`[MessagingService] System event for ${conversationId}: ${eventText}`);
   }
 
-  public async removeGroupMember(db: Firestore, conversationId: string, adminId: string, memberIdToRemove: string, actorName?: string, memberName?: string, reason?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) {
-        throw new Error("Group not found");
-    }
-    const data = convSnap.data();
-    const isAdmin = (data.admins || []).includes(adminId) || data.owner === adminId || data.createdBy === adminId;
-    if (!isAdmin) {
-        throw new Error("Unauthorized to remove members");
-    }
-    if (data.owner === memberIdToRemove || data.createdBy === memberIdToRemove) {
-        throw new Error("Cannot remove group owner");
-    }
-
-    const updatedParticipants = (data.participants || []).filter((id: string) => id !== memberIdToRemove);
-    const updatedProfileIds = (data.profileIds || []).filter((id: string) => id !== memberIdToRemove);
-    const updatedAdmins = (data.admins || []).filter((id: string) => id !== memberIdToRemove);
-    
-    const memberRoles = { ...(data.memberRoles || {}) };
-    delete memberRoles[memberIdToRemove];
-
-    await updateDoc(convRef, {
-        participants: updatedParticipants,
-        profileIds: updatedProfileIds,
-        admins: updatedAdmins,
-        memberRoles,
-        memberCount: updatedParticipants.length,
-        updatedAt: serverTimestamp()
-    });
-
-    const remover = actorName || 'An admin';
-    const target = memberName || memberIdToRemove;
-    const reasonText = reason ? ` (${reason})` : '';
-    await this.sendSystemEvent(db, conversationId, `${remover} removed ${target} from the group${reasonText}.`);
+  public async addGroupMembers(_db: any, conversationId: string, _requesterId: string, newMemberIds: string[], _memberDetailsMap?: Record<string, any>, _actorName?: string) {
+    logger.info(`[MessagingService] addGroupMembers in ${conversationId}:`, newMemberIds);
   }
 
-  public async promoteToAdmin(db: Firestore, conversationId: string, adminId: string, memberIdToPromote: string, actorName?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-    const isAdmin = (data.admins || []).includes(adminId) || data.owner === adminId || data.createdBy === adminId;
-    if (!isAdmin) throw new Error("Unauthorized to promote");
-
-    const updatedAdmins = Array.from(new Set([...(data.admins || []), memberIdToPromote]));
-    const memberRoles = { ...(data.memberRoles || {}), [memberIdToPromote]: 'admin' };
-
-    await updateDoc(convRef, {
-        admins: updatedAdmins,
-        memberRoles,
-        updatedAt: serverTimestamp()
-    });
-
-    const promoter = actorName || 'Admin';
-    const target = memberName || 'a member';
-    await this.sendSystemEvent(db, conversationId, `${promoter} made ${target} an Admin.`);
+  public async removeGroupMember(_db: any, conversationId: string, _adminId: string, memberIdToRemove: string, _actorName?: string, _memberName?: string, _reason?: string) {
+    logger.info(`[MessagingService] removeGroupMember in ${conversationId}: ${memberIdToRemove}`);
   }
 
-  public async demoteAdmin(db: Firestore, conversationId: string, adminId: string, memberIdToDemote: string, actorName?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-    const isOwner = data.owner === adminId || data.createdBy === adminId;
-    if (!isOwner) throw new Error("Only group owner can demote admins");
-
-    const updatedAdmins = (data.admins || []).filter((id: string) => id !== memberIdToDemote);
-    const memberRoles = { ...(data.memberRoles || {}), [memberIdToDemote]: 'member' };
-
-    await updateDoc(convRef, {
-        admins: updatedAdmins,
-        memberRoles,
-        updatedAt: serverTimestamp()
-    });
-
-    const demoter = actorName || 'Owner';
-    const target = memberName || 'Admin';
-    await this.sendSystemEvent(db, conversationId, `${demoter} removed ${target} from Admin role.`);
+  public async promoteToAdmin(_db: any, conversationId: string, _adminId: string, memberIdToPromote: string) {
+    logger.info(`[MessagingService] promoteToAdmin in ${conversationId}: ${memberIdToPromote}`);
   }
 
-  public async setMemberRole(db: Firestore, conversationId: string, requesterId: string, targetId: string, newRole: 'owner' | 'admin' | 'moderator' | 'member', actorName?: string, targetName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-    
-    const isOwner = data.owner === requesterId || data.createdBy === requesterId;
-    if (!isOwner && newRole === 'admin') {
-      return this.promoteToAdmin(db, conversationId, requesterId, targetId, actorName, targetName);
-    }
-
-    const memberRoles = { ...(data.memberRoles || {}), [targetId]: newRole };
-    let admins = data.admins || [];
-
-    if (newRole === 'admin' || newRole === 'owner') {
-      admins = Array.from(new Set([...admins, targetId]));
-    } else {
-      admins = admins.filter((id: string) => id !== targetId);
-    }
-
-    const updates: any = {
-      memberRoles,
-      admins,
-      updatedAt: serverTimestamp()
-    };
-
-    if (newRole === 'owner') {
-      updates.owner = targetId;
-      updates.admins = Array.from(new Set([...admins, requesterId]));
-      memberRoles[requesterId] = 'admin';
-    }
-
-    await updateDoc(convRef, updates);
-
-    const actor = actorName || 'Someone';
-    const target = targetName || 'Member';
-    await this.sendSystemEvent(db, conversationId, `${actor} updated ${target}'s role to ${newRole.toUpperCase()}.`);
+  public async demoteAdmin(_db: any, conversationId: string, _adminId: string, memberIdToDemote: string) {
+    logger.info(`[MessagingService] demoteAdmin in ${conversationId}: ${memberIdToDemote}`);
   }
 
-  public async transferOwnership(db: Firestore, conversationId: string, currentOwnerId: string, newOwnerId: string, actorName?: string, newOwnerName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-
-    const isOwner = data.owner === currentOwnerId || data.createdBy === currentOwnerId;
-    if (!isOwner) throw new Error("Only the owner can transfer ownership");
-
-    const memberRoles = { ...(data.memberRoles || {}), [newOwnerId]: 'owner', [currentOwnerId]: 'admin' };
-    const admins = Array.from(new Set([...(data.admins || []), newOwnerId, currentOwnerId]));
-
-    await updateDoc(convRef, {
-      owner: newOwnerId,
-      createdBy: newOwnerId,
-      admins,
-      memberRoles,
-      updatedAt: serverTimestamp()
-    });
-
-    const actor = actorName || 'Owner';
-    const target = newOwnerName || 'Member';
-    await this.sendSystemEvent(db, conversationId, `${actor} transferred group ownership to ${target}.`);
+  public async setMemberRole(_db: any, conversationId: string, _requesterId: string, targetId: string, role: string) {
+    logger.info(`[MessagingService] setMemberRole in ${conversationId}: ${targetId} -> ${role}`);
   }
 
-  public async toggleMuteMember(db: Firestore, conversationId: string, memberId: string, isMuted: boolean, actorName?: string, targetName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-
-    const data = convSnap.data();
-    const mutedMembers = { ...(data.mutedMembers || {}), [memberId]: isMuted };
-
-    await updateDoc(convRef, {
-      mutedMembers,
-      updatedAt: serverTimestamp()
-    });
-
-    const actor = actorName || 'Admin';
-    const target = targetName || 'User';
-    const actionStr = isMuted ? 'muted' : 'unmuted';
-    await this.sendSystemEvent(db, conversationId, `${actor} ${actionStr} ${target} in the group.`);
+  public async transferOwnership(_db: any, conversationId: string, _currentOwnerId: string, newOwnerId: string) {
+    logger.info(`[MessagingService] transferOwnership in ${conversationId} to ${newOwnerId}`);
   }
 
-  public async requestToJoinGroup(db: Firestore, conversationId: string, requesterId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    await updateDoc(convRef, {
-        pendingJoinRequests: Array.from(new Set([requesterId])) 
-    });
+  public async toggleMuteMember(_db: any, conversationId: string, memberId: string, isMuted: boolean) {
+    logger.info(`[MessagingService] toggleMuteMember in ${conversationId}: ${memberId} -> ${isMuted}`);
   }
 
-  public async approveJoinRequest(db: Firestore, conversationId: string, adminId: string, requesterId: string, actorName?: string, requesterName?: string) {
-    const batch = writeBatch(db);
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists() || !(convSnap.data().admins || []).includes(adminId)) {
-        throw new Error("Unauthorized to approve join request");
-    }
-
-    const data = convSnap.data();
-    const updatedParticipants = Array.from(new Set([...(data.participants || []), requesterId]));
-
-    batch.update(convRef, {
-        pendingJoinRequests: (data.pendingJoinRequests || []).filter((id: string) => id !== requesterId),
-        participants: updatedParticipants,
-        memberCount: updatedParticipants.length,
-        updatedAt: serverTimestamp()
-    });
-    await batch.commit();
-
-    const actor = actorName || 'Admin';
-    const target = requesterName || 'New member';
-    await this.sendSystemEvent(db, conversationId, `${actor} approved ${target}'s join request.`);
+  public async requestToJoinGroup(_db: any, conversationId: string, requesterId: string) {
+    logger.info(`[MessagingService] requestToJoinGroup in ${conversationId}: ${requesterId}`);
   }
 
-  public async rejectJoinRequest(db: Firestore, conversationId: string, adminId: string, requesterId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists() || !(convSnap.data().admins || []).includes(adminId)) {
-        throw new Error("Unauthorized to reject join request");
-    }
-
-    await updateDoc(convRef, {
-        pendingJoinRequests: (convSnap.data().pendingJoinRequests || []).filter((id: string) => id !== requesterId)
-    });
+  public async approveJoinRequest(_db: any, conversationId: string, _adminId: string, requesterId: string) {
+    logger.info(`[MessagingService] approveJoinRequest in ${conversationId}: ${requesterId}`);
   }
 
-  public async updateGroupDetails(db: Firestore, conversationId: string, updates: { name?: string; photoURL?: string; wallpaper?: string; settings?: any }, actorName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const payload: any = {
-      updatedAt: serverTimestamp()
-    };
-    let eventMsg = '';
-    const actor = actorName || 'An admin';
-
-    if (updates.name !== undefined) {
-      payload.name = updates.name;
-      payload.groupName = updates.name;
-      eventMsg = `${actor} changed the group name to "${updates.name}".`;
-    }
-    if (updates.photoURL !== undefined) {
-      payload.photo = updates.photoURL;
-      payload.groupPhotoURL = updates.photoURL;
-      eventMsg = `${actor} updated the group photo.`;
-    }
-    if (updates.wallpaper !== undefined) {
-      payload.wallpaper = updates.wallpaper;
-      eventMsg = `${actor} changed the chat theme/wallpaper.`;
-    }
-    if (updates.settings !== undefined) {
-      payload.settings = updates.settings;
-    }
-
-    await updateDoc(convRef, payload);
-
-    if (eventMsg) {
-      await this.sendSystemEvent(db, conversationId, eventMsg);
-    }
+  public async rejectJoinRequest(_db: any, conversationId: string, _adminId: string, requesterId: string) {
+    logger.info(`[MessagingService] rejectJoinRequest in ${conversationId}: ${requesterId}`);
   }
 
-  public async setGroupNickname(db: Firestore, conversationId: string, memberId: string, nickname: string, setterName?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const cleanNick = nickname.trim();
-
-    await updateDoc(convRef, {
-      [`nicknames.${memberId}`]: cleanNick,
-      updatedAt: serverTimestamp()
-    });
-
-    try {
-      const chatSettingsRef = doc(db, 'chat_settings', conversationId);
-      await setDoc(chatSettingsRef, {
-        nicknames: {
-          [memberId]: cleanNick
-        }
-      }, { merge: true });
-    } catch (err) {
-      logger.warn("Could not sync nickname to chat_settings:", err);
-    }
-
-    const actor = setterName || 'Someone';
-    const target = memberName || memberId;
-    const msg = cleanNick ? `${actor} set the nickname for ${target} to "${cleanNick}".` : `${actor} cleared ${target}'s nickname.`;
-    await this.sendSystemEvent(db, conversationId, msg);
+  public async updateGroupDetails(_db: any, conversationId: string, updates: any) {
+    logger.info(`[MessagingService] updateGroupDetails in ${conversationId}:`, updates);
   }
 
-  public async leaveGroup(db: Firestore, conversationId: string, memberId: string, memberUid?: string, memberName?: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
-
-    const isOwner = data.owner === memberId || data.createdBy === memberId;
-    if (isOwner && (data.participants || []).length > 1) {
-      throw new Error("OWNER_MUST_TRANSFER");
-    }
-
-    const newProfileIds = (data.profileIds || []).filter((id: string) => id !== memberId);
-    const newParticipants = (data.participants || []).filter((id: string) => id !== memberId && id !== memberUid);
-    const newAdmins = (data.admins || []).filter((id: string) => id !== memberId);
-
-    await updateDoc(convRef, {
-      profileIds: newProfileIds,
-      participants: newParticipants,
-      admins: newAdmins,
-      memberCount: newParticipants.length,
-      updatedAt: serverTimestamp()
-    });
-
-    const target = memberName || 'A member';
-    await this.sendSystemEvent(db, conversationId, `${target} left the group.`);
+  public async setGroupNickname(_db: any, conversationId: string, memberId: string, nickname: string) {
+    logger.info(`[MessagingService] setGroupNickname in ${conversationId}: ${memberId} -> ${nickname}`);
   }
 
-  public async deleteGroup(db: Firestore, conversationId: string, requesterId: string) {
-    const convRef = doc(db, 'conversations', conversationId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) return;
-    const data = convSnap.data();
+  public async leaveGroup(_db: any, conversationId: string, memberId: string) {
+    logger.info(`[MessagingService] leaveGroup in ${conversationId}: ${memberId}`);
+  }
 
-    const isOwner = data.owner === requesterId || data.createdBy === requesterId;
-    if (!isOwner) {
-      throw new Error("Only the group owner can delete the group.");
-    }
-
-    await deleteDoc(convRef);
+  public async deleteGroup(_db: any, conversationId: string, _requesterId: string) {
+    logger.info(`[MessagingService] deleteGroup in ${conversationId}`);
   }
 
   cleanup(key?: string) {
