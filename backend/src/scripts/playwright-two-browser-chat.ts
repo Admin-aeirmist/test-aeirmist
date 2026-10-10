@@ -453,9 +453,91 @@ async function runRealBrowserRegression() {
   }
   console.log('   [PASS] Test 7 Passed: Rapid double-submit created exactly one database row and one visible message.');
 
+  // =========================================================================
+  // TEST 8: Ambiguous network failure simulation
+  // Server persists message -> HTTP response is lost -> User retries -> Reconciled to exact 1 row
+  // =========================================================================
+  console.log('\n----------------------------------------------------------------');
+  console.log('TEST 8: Ambiguous send failure after server persistence + retry reconciliation');
+  console.log('----------------------------------------------------------------');
+  const ambiguousText = `AMBIGUOUS_SEND_${Date.now()}`;
+  let simulateDrop = true;
+  let resolvePersisted: () => void = () => {};
+  const persistedPromise = new Promise<void>(resolve => { resolvePersisted = resolve; });
+
+  // Intercept the POST request: forward to backend so server persists it, then abort response to browser
+  await pageA.route('**/api/v1/chat/conversations/*/messages', async (route) => {
+    if (simulateDrop && route.request().method() === 'POST') {
+      simulateDrop = false; // Only drop the first attempt
+      console.log('   [Network Interceptor] Forwarding send to PostgreSQL server...');
+      const response = await route.fetch(); // Reaches backend, gets inserted into DB!
+      console.log(`   [Network Interceptor] Server persisted message (HTTP ${response.status()}). Aborting client HTTP response to simulate lost network ACK...`);
+      resolvePersisted();
+      await route.abort('failed'); // Client receives network error!
+    } else {
+      await route.continue();
+    }
+  });
+
+  // Disconnect Browser A's socket so socket broadcast doesn't auto-reconcile before user retries
+  console.log('Action: Disconnecting Browser A socket to simulate network partition during send...');
+  await pageA.evaluate(() => {
+    const s = (window as any).__aeirmistSocket;
+    if (s) s.disconnect();
+  });
+  await pageA.waitForTimeout(500);
+
+  console.log(`Action: User A sends "${ambiguousText}" with network drop on response...`);
+  await pageA.fill(textareaSelector, ambiguousText);
+  await pageA.press(textareaSelector, 'Enter');
+
+  // Wait for the server to finish persisting the message
+  await persistedPromise;
+  await pageA.waitForTimeout(500);
+
+  // Wait for Browser A and B to settle after self-healing / auto-retry reconciliation
+  console.log('   Waiting for message to settle across browsers and backend...');
+  await pageA.unroute('**/api/v1/chat/conversations/*/messages');
+
+  // Verify that the server DID persist the message in PostgreSQL
+  const dbRowsPreRetry = await countInDB(ambiguousText);
+  console.log(`   Initial Database row count: ${dbRowsPreRetry.length} (Canonical ID: ${dbRowsPreRetry[0]?.id})`);
+  if (dbRowsPreRetry.length !== 1) {
+    throw new Error(`TEST 8 FAILED: Message was not persisted by server prior to response abort!`);
+  }
+
+  // Reconnect Browser A socket
+  await pageA.evaluate(() => {
+    const s = (window as any).__aeirmistSocket;
+    if (s && !s.connected) s.connect();
+  });
+
+  // Wait for retry/reconciliation to settle in both browsers
+  await waitForMsgInDOM(pageA, ambiguousText, 10000);
+  await waitForMsgInDOM(pageB, ambiguousText, 10000);
+  await pageA.waitForTimeout(1500);
+  await pageB.waitForTimeout(1500);
+
+  const uiCountA8 = await countInDOM(pageA, ambiguousText);
+  const uiCountB8 = await countInDOM(pageB, ambiguousText);
+  const dbRows8 = await countInDB(ambiguousText);
+
+  console.log(`Metrics for Test 8 (Post-Retry):`);
+  console.log(`   User A UI count:       ${uiCountA8} (Expected: 1)`);
+  console.log(`   User B UI count:       ${uiCountB8} (Expected: 1)`);
+  console.log(`   Database row count:    ${dbRows8.length} (Expected: 1, ID: ${dbRows8[0]?.id})`);
+
+  if (uiCountA8 !== 1 || uiCountB8 !== 1 || dbRows8.length !== 1) {
+    throw new Error(`TEST 8 FAILED: Ambiguous send retry resulted in duplicate: UI_A=${uiCountA8}, UI_B=${uiCountB8}, DB=${dbRows8.length}`);
+  }
+  if (dbRows8[0].id !== dbRowsPreRetry[0].id) {
+    throw new Error(`TEST 8 FAILED: Retry generated a new DB row instead of reconciling with canonical ID!`);
+  }
+  console.log('   [PASS] Test 8 Passed: Ambiguous network failure successfully reconciled with existing server row. No duplicate bubble, no duplicate DB row.');
+
   await browser.close();
   console.log('\n================================================================');
-  console.log('🎉 ALL 7 REAL BROWSER UI REGRESSION TESTS PASSED (100% PROVEN)');
+  console.log('🎉 ALL 8 REAL BROWSER UI REGRESSION TESTS PASSED (100% PROVEN)');
   console.log('================================================================');
   process.exit(0);
 }

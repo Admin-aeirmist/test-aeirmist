@@ -223,46 +223,49 @@ export class ChatDAL {
 
       const executionPromise = (async () => {
         try {
-          const existing = await db
-            .select()
-            .from(messages)
-            .where(
-              and(
-                eq(messages.conversationId, data.conversationId),
-                eq(messages.senderId, data.senderId),
-                sql`(${messages.metadata}->>'optimisticId' = ${optId} OR ${messages.metadata}->>'clientMessageId' = ${optId})`
+          return await db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+            const existing = await tx
+              .select()
+              .from(messages)
+              .where(
+                and(
+                  eq(messages.conversationId, data.conversationId),
+                  eq(messages.senderId, data.senderId),
+                  sql`(${messages.metadata}->>'optimisticId' = ${optId} OR ${messages.metadata}->>'clientMessageId' = ${optId})`
+                )
               )
-            )
-            .limit(1);
-
-          if (existing.length > 0) {
-            const msg = existing[0];
-            const [senderUser] = await db
-              .select({
-                id: users.id,
-                firebaseUid: users.firebaseUid,
-                profileId: profiles.id,
-                username: profiles.username,
-                displayName: profiles.displayName,
-                avatarKey: profiles.avatarKey,
-                isVerified: profiles.isVerified,
-              })
-              .from(users)
-              .leftJoin(profiles, eq(users.id, profiles.userId))
-              .where(eq(users.id, data.senderId))
               .limit(1);
 
-            return {
-              ...msg,
-              sender: senderUser || null,
-              senderId: data.senderId,
-              senderUid: senderUser?.firebaseUid || data.senderId,
-              senderProfileId: senderUser?.profileId,
-              senderDbId: senderUser?.id || data.senderId,
-            };
-          }
+            if (existing.length > 0) {
+              const msg = existing[0];
+              const [senderUser] = await tx
+                .select({
+                  id: users.id,
+                  firebaseUid: users.firebaseUid,
+                  profileId: profiles.id,
+                  username: profiles.username,
+                  displayName: profiles.displayName,
+                  avatarKey: profiles.avatarKey,
+                  isVerified: profiles.isVerified,
+                })
+                .from(users)
+                .leftJoin(profiles, eq(users.id, profiles.userId))
+                .where(eq(users.id, data.senderId))
+                .limit(1);
 
-          return await this.executeSendMessageInsert(data, optId);
+              return {
+                ...msg,
+                sender: senderUser || null,
+                senderId: data.senderId,
+                senderUid: senderUser?.firebaseUid || data.senderId,
+                senderProfileId: senderUser?.profileId,
+                senderDbId: senderUser?.id || data.senderId,
+              };
+            }
+
+            return await this.executeSendMessageInsert(data, optId, tx);
+          });
         } finally {
           this.inFlightSends.delete(lockKey);
         }
@@ -272,7 +275,7 @@ export class ChatDAL {
       return executionPromise;
     }
 
-    return this.executeSendMessageInsert(data, undefined);
+    return this.executeSendMessageInsert(data, undefined, db);
   }
 
   private static async executeSendMessageInsert(data: {
@@ -287,13 +290,13 @@ export class ChatDAL {
     replyToId?: string;
     metadata?: any;
     clientMessageId?: string;
-  }, optId?: string) {
+  }, optId?: string, executor: any = db) {
     const mergedMetadata = {
       ...(data.metadata || {}),
       ...(optId ? { optimisticId: optId, clientMessageId: optId } : {})
     };
 
-    const [msg] = await db
+    const [msg] = await executor
       .insert(messages)
       .values({
         conversationId: data.conversationId,
@@ -310,7 +313,7 @@ export class ChatDAL {
       .returning();
 
     // Update conversation preview and timestamp
-    await db
+    await executor
       .update(conversations)
       .set({
         lastMessagePreview: data.content || (data.type ? `[${data.type}]` : ''),
@@ -320,7 +323,7 @@ export class ChatDAL {
       .where(eq(conversations.id, data.conversationId));
 
     // Increment unread count for other members
-    await db
+    await executor
       .update(conversationMembers)
       .set({ unreadCount: sql`${conversationMembers.unreadCount} + 1` })
       .where(
@@ -330,7 +333,7 @@ export class ChatDAL {
         )
       );
 
-    const [senderUser] = await db
+    const [senderUser] = await executor
       .select({
         id: users.id,
         firebaseUid: users.firebaseUid,
