@@ -77,8 +77,10 @@ export function setAuthToken(token: string | null): void {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const path = normalizedEndpoint.split('?')[0];
   const base = resolveApiBase();
-  const url = `${base}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const url = `${base}${normalizedEndpoint}`;
   const headers = new Headers(options.headers || {});
 
   const token = getAuthToken();
@@ -481,6 +483,7 @@ export const api = {
         duration?: number;
         replyToId?: string;
         metadata?: any;
+        clientMessageId?: string;
       }
     ) =>
       request<{ message: any; conversationId: string }>(`/api/v1/chat/conversations/${conversationId}/messages`, {

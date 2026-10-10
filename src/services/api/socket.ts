@@ -27,6 +27,7 @@ function resolveSocketBase(): string {
 let socketInstance: Socket | null = null;
 const identifiedUserIds = new Set<string>();
 const activeRooms = new Set<string>();
+const roomRefCounts = new Map<string, number>();
 let isRefreshingSocketToken = false;
 
 export function identifyUserSocket(userId: string): void {
@@ -136,16 +137,30 @@ export function getSocket(): Socket {
 
 export function joinChatRoom(roomId: string): void {
   if (!roomId) return;
-  activeRooms.add(roomId);
-  const socket = getSocket();
-  socket.emit('join_room', roomId);
+  const current = roomRefCounts.get(roomId) || 0;
+  roomRefCounts.set(roomId, current + 1);
+  if (current === 0) {
+    activeRooms.add(roomId);
+    const socket = getSocket();
+    if (socket && socket.connected) {
+      socket.emit('join_room', roomId);
+    }
+  }
 }
 
 export function leaveChatRoom(roomId: string): void {
   if (!roomId) return;
-  activeRooms.delete(roomId);
-  const socket = getSocket();
-  socket.emit('leave_room', roomId);
+  const current = roomRefCounts.get(roomId) || 0;
+  if (current <= 1) {
+    roomRefCounts.delete(roomId);
+    activeRooms.delete(roomId);
+    const socket = getSocket();
+    if (socket && socket.connected) {
+      socket.emit('leave_room', roomId);
+    }
+  } else {
+    roomRefCounts.set(roomId, current - 1);
+  }
 }
 
 export function sendTypingStart(conversationId: string, userId: string, username?: string): void {

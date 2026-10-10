@@ -2899,6 +2899,35 @@ const ChatWindow = ({
       }
     }));
   }, [messages, optimistic, chat.lastRead, chat.lastDelivered, chat.id, profile?.id, failedMessages, otherParticipantId, isSenderMe]);
+
+  // Reconcile pending optimistic messages and failed messages when canonical server messages arrive
+  useEffect(() => {
+    if (messages.length > 0 && (failedMessages.size > 0 || optimistic.length > 0)) {
+      const serverOptIds = new Set<string>();
+      messages.forEach(m => {
+        if (m.metadata?.optimisticId) serverOptIds.add(m.metadata.optimisticId);
+        if (m.metadata?.clientMessageId) serverOptIds.add(m.metadata.clientMessageId);
+        if ((m as any).optimisticId) serverOptIds.add((m as any).optimisticId);
+      });
+      if (serverOptIds.size > 0) {
+        setFailedMessages(prev => {
+          let changed = false;
+          const next = new Set(prev);
+          for (const optId of serverOptIds) {
+            if (next.has(optId)) {
+              next.delete(optId);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+        setOptimistic(prev => {
+          const filtered = prev.filter(m => !serverOptIds.has(m.id));
+          return filtered.length !== prev.length ? filtered : prev;
+        });
+      }
+    }
+  }, [messages, failedMessages.size, optimistic.length]);
   
   // Group consecutive media messages (sent within 120s by same sender with no caption) into Telegram albums
   const groupedDisplayItems = useMemo(() => {
@@ -3054,19 +3083,19 @@ const ChatWindow = ({
     messageOutboxService.remove(chat.id, msg.id);
 
     if (msg.type === 'text') {
-      handleSendMessage(msg.text || '', (msg as any).mood);
+      handleSendMessage(msg.text || '', (msg as any).mood, msg.id);
     } else {
       // Re-send media if we have it locally, otherwise we try sending the URL
       if (msg.mediaUrl) {
-         handleSendMediaUrl(msg.mediaUrl, msg.type as any);
+         handleSendMediaUrl(msg.mediaUrl, msg.type as any, msg.id);
       }
     }
   };
 
-  const handleSendMediaUrl = async (mediaUrl: string, type: 'image' | 'video' | 'voice' | 'media' | 'text') => {
+  const handleSendMediaUrl = async (mediaUrl: string, type: 'image' | 'video' | 'voice' | 'media' | 'text', existingOptimisticId?: string) => {
     if (!profile || !user || !chat.id) return;
 
-    const optimisticId = `opt_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const optimisticId = existingOptimisticId || `opt_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const optimisticMsg: Message = {
       id: optimisticId,
       text: `Sent a ${type}`,
@@ -3138,13 +3167,13 @@ const ChatWindow = ({
     }
   };
 
-  const handleSendMessage = async (text: string, mood?: string) => {
+  const handleSendMessage = async (text: string, mood?: string, existingOptimisticId?: string) => {
     if (!profile || !user || !chat.id) return;
 
-    // Prevent duplicate sends caused by rapid double-clicks while request is pending
+    // Prevent duplicate sends caused by rapid double-clicks while request is pending (unless it's an explicit retry)
     const now = Date.now();
     const cleanText = text.trim();
-    if (cleanText && lastSendTextRef.current === cleanText && (now - lastSendTimeRef.current) < 400) {
+    if (!existingOptimisticId && cleanText && lastSendTextRef.current === cleanText && (now - lastSendTimeRef.current) < 400) {
       logger.warn('[Messenger] Rapid duplicate send suppressed:', cleanText);
       return;
     }
@@ -3152,7 +3181,7 @@ const ChatWindow = ({
     lastSendTimeRef.current = now;
     
     // Deterministic deduplication ID for instant UI feedback
-    const optimisticId = `opt_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const optimisticId = existingOptimisticId || `opt_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const optimisticMsg = {
       id: optimisticId,
       text,
@@ -3232,8 +3261,6 @@ const ChatWindow = ({
           id: newId,
           isTemporary: false
         };
-        setActiveChatId(newId);
-        setTempChat(realChat);
         onChatUpdate(realChat);
       }
     } catch (e: any) {

@@ -42,6 +42,10 @@ class MessagingService {
   private lastMetadataUpdate: Map<string, number> = new Map();
   private lastDeliveryUpdate: Map<string, number> = new Map();
   private recentOptimisticIds: Map<string, number> = new Map();
+  private inFlightMessageSends: Map<string, Promise<string>> = new Map();
+  private isSocketInitialized: boolean = false;
+  private messageIntervals: Map<string, any> = new Map();
+  private isVisibilityListenerAttached: boolean = false;
   private isSafeMode: boolean = false;
   private messageMemoryCache: Map<string, Message[]> = new Map();
 
@@ -207,7 +211,7 @@ class MessagingService {
   }
 
   async sendMessage(
-    db: Firestore,
+    _db: any,
     profile: any,
     user: any,
     conversationId: string, 
@@ -220,87 +224,188 @@ class MessagingService {
       throw new Error("Authentication required to send messages.");
     }
 
-    if (metadata.optimisticId) {
-      const lastSent = this.recentOptimisticIds.get(metadata.optimisticId);
-      if (lastSent && Date.now() - lastSent < 15000) {
-        logger.warn(`[MessagingService] Duplicate send intercepted for ${metadata.optimisticId}`);
-        return conversationId.startsWith('new_') ? conversationId : conversationId;
-      }
-      this.recentOptimisticIds.set(metadata.optimisticId, Date.now());
-      if (this.recentOptimisticIds.size > 200) {
-        const now = Date.now();
-        for (const [id, time] of this.recentOptimisticIds.entries()) {
-          if (now - time > 60000) this.recentOptimisticIds.delete(id);
-        }
+    const optId = metadata.optimisticId || metadata.clientMessageId;
+    if (optId) {
+      const inFlight = this.inFlightMessageSends.get(optId);
+      if (inFlight) {
+        logger.warn(`[MessagingService] Concurrent send already in flight for ${optId}`);
+        return inFlight;
       }
     }
 
     logger.info(`[MessagingService] sending message to ${conversationId}...`);
-    let finalConvId = conversationId;
-    
-    try {
-      logger.info(`[MessagingService] Sending message to ${finalConvId}. Sender: ${profile.id}, User: ${user.uid}`);
-      const messageId = metadata.optimisticId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const finalConvId = conversationId;
 
-      // 3. Primary Persistence: PostgreSQL Backend via REST API
-      const apiRes = await api.chat.sendMessage(finalConvId, {
-        content: text,
-        type,
-        mediaKey: metadata.mediaKey || (mediaUrl ? mediaUrl : undefined),
-        fileName: metadata.fileName,
-        fileSize: metadata.fileSize,
-        duration: metadata.duration,
-        replyToId: metadata.replyTo?.id || metadata.replyToId,
-        metadata: {
-          ...metadata,
-          optimisticId: metadata.optimisticId || null,
-          clientMessageId: metadata.optimisticId || null,
-        },
-        clientMessageId: metadata.optimisticId || undefined,
-      });
+    const sendExecution = (async () => {
+      try {
+        logger.info(`[MessagingService] Sending message to ${finalConvId}. Sender: ${profile.id}, User: ${user.uid}`);
+        const messageId = optId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      const serverMsg = apiRes.message;
-      const resolvedConvId = apiRes.conversationId || finalConvId;
+        // 3. Primary Persistence: PostgreSQL Backend via REST API
+        const apiRes = await api.chat.sendMessage(finalConvId, {
+          content: text,
+          type,
+          mediaKey: metadata.mediaKey || (mediaUrl ? mediaUrl : undefined),
+          fileName: metadata.fileName,
+          fileSize: metadata.fileSize,
+          duration: metadata.duration,
+          replyToId: metadata.replyTo?.id || metadata.replyToId,
+          metadata: {
+            ...metadata,
+            optimisticId: optId || null,
+            clientMessageId: optId || null,
+          },
+          clientMessageId: optId || undefined,
+        });
 
-      // 4. Update instant memory cache so sender sees bubble immediately with canonical server data
-      const existingMem = this.getCachedMessages(resolvedConvId) || this.getCachedMessages(finalConvId) || [];
-      const canonicalLocalMsg: Message = this.normalizeMsg({
-        ...(serverMsg || {}),
-        id: serverMsg?.id || messageId,
-        conversationId: resolvedConvId,
-        senderId: serverMsg?.senderId || user.userId || user.id || user.uid,
-        senderUid: serverMsg?.senderUid || user.uid,
-        senderDbId: serverMsg?.senderDbId || user.userId || user.id,
-        senderProfileId: serverMsg?.senderProfileId || profile.id,
-        text,
-        content: text,
-        type,
-        mediaUrl: mediaUrl || null,
-        status: 'sent',
-        isDelivered: true,
-        isSeen: false,
-        timestampMs: Date.now(),
-        metadata: {
-          ...metadata,
-          optimisticId: metadata.optimisticId || null,
-          clientMessageId: metadata.optimisticId || null
+        const serverMsg = apiRes.message;
+        const resolvedConvId = apiRes.conversationId || finalConvId;
+
+        // 4. Update instant memory cache so sender sees bubble immediately with canonical server data
+        const existingMem = this.getCachedMessages(resolvedConvId) || this.getCachedMessages(finalConvId) || [];
+        const canonicalLocalMsg: Message = this.normalizeMsg({
+          ...(serverMsg || {}),
+          id: serverMsg?.id || messageId,
+          conversationId: resolvedConvId,
+          senderId: serverMsg?.senderId || user.userId || user.id || user.uid,
+          senderUid: serverMsg?.senderUid || user.uid,
+          senderDbId: serverMsg?.senderDbId || user.userId || user.id,
+          senderProfileId: serverMsg?.senderProfileId || profile.id,
+          text,
+          content: text,
+          type,
+          mediaUrl: mediaUrl || null,
+          status: 'sent',
+          isDelivered: true,
+          isSeen: false,
+          timestampMs: Date.now(),
+          metadata: {
+            ...metadata,
+            optimisticId: optId || null,
+            clientMessageId: optId || null
+          }
+        }, resolvedConvId);
+
+        const updatedMem = this.upsertMessages(existingMem, [canonicalLocalMsg]);
+        this.setCachedMessages(resolvedConvId, updatedMem);
+        if (resolvedConvId !== finalConvId) {
+          this.setCachedMessages(finalConvId, updatedMem);
         }
-      }, resolvedConvId);
+        this.notifySubscribers(resolvedConvId, updatedMem);
+        if (resolvedConvId !== finalConvId) {
+          this.notifySubscribers(finalConvId, updatedMem);
+        }
 
-      const updatedMem = this.upsertMessages(existingMem, [canonicalLocalMsg]);
-      this.setCachedMessages(resolvedConvId, updatedMem);
-      if (resolvedConvId !== finalConvId) {
-        this.setCachedMessages(finalConvId, updatedMem);
+        return resolvedConvId;
+      } catch (e: any) {
+        logger.error("[MessagingService] Send message failed:", e);
+        throw e;
+      } finally {
+        if (optId) {
+          this.inFlightMessageSends.delete(optId);
+        }
       }
-      this.notifySubscribers(resolvedConvId, updatedMem);
-      if (resolvedConvId !== finalConvId) {
-        this.notifySubscribers(finalConvId, updatedMem);
-      }
+    })();
 
-      return resolvedConvId;
-    } catch (e: any) {
-      logger.error("[MessagingService] Send message failed:", e);
-      throw e;
+    if (optId) {
+      this.inFlightMessageSends.set(optId, sendExecution);
+    }
+    return sendExecution;
+  }
+
+  private initGlobalSocketListeners() {
+    if (this.isSocketInitialized) return;
+    this.isSocketInitialized = true;
+    const socket = getSocket();
+
+    socket.on('connect', () => {
+      for (const convId of this.activeMessageSubscribers.keys()) {
+        this.fetchAndEmitApiMessages(convId);
+      }
+    });
+
+    socket.on('new_message', (payload: any) => {
+      if (!payload) return;
+      const rawMsg = payload.message || payload;
+      const targetConvId = String(payload.conversationId || rawMsg?.conversationId || '');
+      const rawConvId = String(payload.rawConversationId || '');
+
+      for (const convId of this.activeMessageSubscribers.keys()) {
+        if (convId === targetConvId || convId === rawConvId) {
+          const normalized = this.normalizeMsg(rawMsg, convId);
+          const current = this.getCachedMessages(convId) || [];
+          const merged = this.upsertMessages(current, [normalized]);
+          this.notifySubscribers(convId, merged);
+        }
+      }
+    });
+
+    socket.on('seen_update', (payload: any) => {
+      if (!payload) return;
+      const targetConvId = String(payload.conversationId || payload.rawConversationId || '');
+      for (const convId of this.activeMessageSubscribers.keys()) {
+        if (convId === targetConvId) {
+          const current = this.getCachedMessages(convId) || [];
+          const updated = current.map(m => {
+            if (m.senderId !== payload.userId) {
+              return { ...m, isSeen: true };
+            }
+            return m;
+          });
+          this.notifySubscribers(convId, updated);
+        }
+      }
+    });
+
+    socket.on('message_edited', (payload: any) => {
+      if (!payload?.message) return;
+      const targetConvId = String(payload.conversationId || payload.message?.conversationId || '');
+      for (const convId of this.activeMessageSubscribers.keys()) {
+        if (convId === targetConvId) {
+          const edited = this.normalizeMsg(payload.message, convId);
+          const current = this.getCachedMessages(convId) || [];
+          const merged = this.upsertMessages(current, [edited]);
+          this.notifySubscribers(convId, merged);
+        }
+      }
+    });
+
+    socket.on('message_deleted', (payload: any) => {
+      if (!payload?.messageId) return;
+      const targetConvId = String(payload.conversationId || '');
+      for (const convId of this.activeMessageSubscribers.keys()) {
+        if (!targetConvId || convId === targetConvId) {
+          const current = this.getCachedMessages(convId) || [];
+          const filtered = current.filter(m => m.id !== payload.messageId);
+          this.notifySubscribers(convId, filtered);
+        }
+      }
+    });
+
+    if (!this.isVisibilityListenerAttached && typeof document !== 'undefined') {
+      this.isVisibilityListenerAttached = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          for (const convId of this.activeMessageSubscribers.keys()) {
+            this.fetchAndEmitApiMessages(convId);
+          }
+        }
+      });
+    }
+  }
+
+  public async fetchAndEmitApiMessages(conversationId: string, limitCount: number = 50) {
+    if (!conversationId) return;
+    try {
+      const res = await api.chat.getMessages(conversationId, limitCount);
+      if (res && Array.isArray(res.messages)) {
+        const normalized = res.messages.map(m => this.normalizeMsg(m, conversationId));
+        const current = this.getCachedMessages(conversationId) || [];
+        const merged = this.upsertMessages(current, normalized);
+        this.notifySubscribers(conversationId, merged);
+      }
+    } catch (err) {
+      // silent polling catch
     }
   }
 
@@ -315,7 +420,7 @@ class MessagingService {
     logger.info(`[MessagingService] Subscribed to messages for ${conversationId}`);
     
     let isCancelled = false;
-    let localCurrentMessages: Message[] = [];
+    this.initGlobalSocketListeners();
 
     // Identify current user and join conversation rooms for instant real-time events
     if (currentProfileId) {
@@ -328,7 +433,6 @@ class MessagingService {
 
     const subDispatcher = (incoming: Message[]) => {
       if (isCancelled) return;
-      localCurrentMessages = incoming;
       callback(incoming);
     };
 
@@ -337,158 +441,62 @@ class MessagingService {
     }
     this.activeMessageSubscribers.get(conversationId)!.add(subDispatcher);
 
-    // Centralized merge & dispatch
-    const mergeAndEmit = (incoming: Message[]) => {
-      if (isCancelled) return;
-      const current = this.getCachedMessages(conversationId) || localCurrentMessages;
-      const merged = this.upsertMessages(current, incoming);
-      localCurrentMessages = merged;
-      this.notifySubscribers(conversationId, merged);
-    };
-
     // 1. Instant Cache Check (0ms frame-0 latency)
     const syncCached = this.getCachedMessages(conversationId);
     if (syncCached && syncCached.length > 0) {
-      localCurrentMessages = syncCached;
       callback(syncCached);
     } else {
       aeirmistCache.getMessages(conversationId).then(cached => {
         if (isCancelled) return;
-        if (cached && cached.length > 0 && localCurrentMessages.length === 0) {
-          const formatted = cached.map(m => this.normalizeMsg(m, conversationId));
-          mergeAndEmit(formatted);
+        if (cached && cached.length > 0) {
+          const current = this.getCachedMessages(conversationId) || [];
+          if (current.length === 0) {
+            const formatted = cached.map(m => this.normalizeMsg(m, conversationId));
+            const merged = this.upsertMessages(current, formatted);
+            this.notifySubscribers(conversationId, merged);
+          }
         }
       }).catch(() => {});
     }
 
-    const key = `messages_${conversationId}`;
-    if (this.listeners.has(key)) {
-      this.listeners.get(key)!();
-    }
-
     // 2. Fetch directly from Device API (PostgreSQL DAL / Edge)
-    const fetchApiMessages = async () => {
-      if (isCancelled) return;
-      try {
-        const res = await api.chat.getMessages(conversationId, limitCount);
-        if (res && Array.isArray(res.messages) && res.messages.length > 0) {
-          const normalized = res.messages.map(m => this.normalizeMsg(m, conversationId));
-          mergeAndEmit(normalized);
+    this.fetchAndEmitApiMessages(conversationId, limitCount);
+
+    // 3. Relaxed Offline Fallback interval (if not already running for this room)
+    if (!this.messageIntervals.has(conversationId)) {
+      const socket = getSocket();
+      const interval = setInterval(() => {
+        if (!socket.connected && this.activeMessageSubscribers.has(conversationId)) {
+          this.fetchAndEmitApiMessages(conversationId, limitCount);
         }
-      } catch (err) {
-        // silent polling catch
-      }
-    };
-
-    fetchApiMessages();
-
-    // 3. Socket.io Real-Time Listener & Reconnect Reconciliation
-    const socket = getSocket();
-
-    const handleReconnect = () => {
-      if (!isCancelled) fetchApiMessages();
-    };
-    socket.on('connect', handleReconnect);
-
-    const handleVisibilityChange = () => {
-      if (!isCancelled && typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        fetchApiMessages();
-      }
-    };
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityChange);
+      }, 30000);
+      this.messageIntervals.set(conversationId, interval);
     }
-
-    // 4. Relaxed Offline Fallback (Only runs if socket is disconnected)
-    const fallbackInterval = setInterval(() => {
-      if (!isCancelled && !socket.connected) {
-        fetchApiMessages();
-      }
-    }, 30000);
-
-    const handleSocketMessage = (payload: any) => {
-      if (isCancelled || !payload) return;
-      const rawMsg = payload.message || payload;
-      const targetConvId = String(payload.conversationId || rawMsg?.conversationId || '');
-      const rawConvId = String(payload.rawConversationId || '');
-      const currentConv = String(conversationId || '');
-
-      const isConvMatch = targetConvId === currentConv || 
-                          rawConvId === currentConv ||
-                          (Boolean(chatData?.id) && (chatData.id === targetConvId || chatData.id === rawConvId));
-
-      if (isConvMatch) {
-        const normalized = this.normalizeMsg(rawMsg, conversationId);
-        mergeAndEmit([normalized]);
-      }
-    };
-    socket.on('new_message', handleSocketMessage);
-
-    const handleSeenUpdate = (payload: any) => {
-      if (isCancelled || !payload) return;
-      const targetConvId = String(payload.conversationId || payload.rawConversationId || '');
-      if (targetConvId === conversationId || targetConvId === chatData?.id) {
-        const current = this.getCachedMessages(conversationId) || localCurrentMessages;
-        const updated = current.map(m => {
-          if (m.senderId !== payload.userId) {
-            return { ...m, isSeen: true };
-          }
-          return m;
-        });
-        localCurrentMessages = updated;
-        this.notifySubscribers(conversationId, updated);
-      }
-    };
-    socket.on('seen_update', handleSeenUpdate);
-
-    const handleMessageEdited = (payload: any) => {
-      if (isCancelled || !payload?.message) return;
-      const edited = this.normalizeMsg(payload.message, conversationId);
-      const current = this.getCachedMessages(conversationId) || localCurrentMessages;
-      const merged = this.upsertMessages(current, [edited]);
-      localCurrentMessages = merged;
-      this.notifySubscribers(conversationId, merged);
-    };
-    socket.on('message_edited', handleMessageEdited);
-
-    const handleMessageDeleted = (payload: any) => {
-      if (isCancelled || !payload?.messageId) return;
-      const current = this.getCachedMessages(conversationId) || localCurrentMessages;
-      const filtered = current.filter(m => m.id !== payload.messageId);
-      localCurrentMessages = filtered;
-      this.notifySubscribers(conversationId, filtered);
-    };
-    socket.on('message_deleted', handleMessageDeleted);
 
     const cleanup = () => {
       isCancelled = true;
-      clearInterval(fallbackInterval);
       leaveChatRoom(conversationId);
       if (chatData?.id && chatData.id !== conversationId) {
         leaveChatRoom(chatData.id);
       }
-      this.activeMessageSubscribers.get(conversationId)?.delete(subDispatcher);
-      if (this.activeMessageSubscribers.get(conversationId)?.size === 0) {
-        this.activeMessageSubscribers.delete(conversationId);
-      }
-      socket.off('connect', handleReconnect);
-      socket.off('new_message', handleSocketMessage);
-      socket.off('seen_update', handleSeenUpdate);
-      socket.off('message_edited', handleMessageEdited);
-      socket.off('message_deleted', handleMessageDeleted);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }
-      if (this.listeners.get(key) === cleanup) {
-        this.listeners.delete(key);
+      const subs = this.activeMessageSubscribers.get(conversationId);
+      if (subs) {
+        subs.delete(subDispatcher);
+        if (subs.size === 0) {
+          this.activeMessageSubscribers.delete(conversationId);
+          const interval = this.messageIntervals.get(conversationId);
+          if (interval) {
+            clearInterval(interval);
+            this.messageIntervals.delete(conversationId);
+          }
+        }
       }
     };
 
-    this.listeners.set(key, cleanup);
     return cleanup;
   }
 
-  subscribeToChats(db: Firestore, userUid: string, profileId: string, callback: (chats: Chat[]) => void) {
+  subscribeToChats(_db: any, userUid: string, profileId: string, callback: (chats: Chat[]) => void) {
     logger.info(`[MessagingService] Subscribing to inbox for UID: ${userUid}`);
     let isCancelled = false;
     let localCurrentChats: Chat[] = [];

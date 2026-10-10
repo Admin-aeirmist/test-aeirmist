@@ -26,6 +26,12 @@ export interface Message {
   progress?: number;
   uploadStatus?: string;
   conversationId?: string;
+  senderUid?: string;
+  senderProfileId?: string;
+  senderDbId?: string;
+  content?: string;
+  attachmentUrl?: string;
+  createdAt?: string;
 }
 
 export interface Chat {
@@ -83,4 +89,6 @@ export interface Chat {
   hasPendingWrites?: boolean;
   rawLastMessage?: any;
   messagingSettings?: any;
+  otherProfile?: any;
+  lastMessageAt?: any;
 }

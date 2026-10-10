@@ -198,6 +198,8 @@ export class ChatDAL {
     }));
   }
 
+  private static inFlightSends = new Map<string, Promise<any>>();
+
   static async sendMessage(data: {
     conversationId: string;
     senderId: string;
@@ -213,46 +215,79 @@ export class ChatDAL {
   }) {
     const optId = data.metadata?.optimisticId || data.metadata?.clientMessageId || data.clientMessageId;
     if (optId && typeof optId === 'string') {
-      const existing = await db
-        .select()
-        .from(messages)
-        .where(
-          and(
-            eq(messages.conversationId, data.conversationId),
-            eq(messages.senderId, data.senderId),
-            sql`(${messages.metadata}->>'optimisticId' = ${optId} OR ${messages.metadata}->>'clientMessageId' = ${optId})`
-          )
-        )
-        .limit(1);
-
-      if (existing.length > 0) {
-        const msg = existing[0];
-        const [senderUser] = await db
-          .select({
-            id: users.id,
-            firebaseUid: users.firebaseUid,
-            profileId: profiles.id,
-            username: profiles.username,
-            displayName: profiles.displayName,
-            avatarKey: profiles.avatarKey,
-            isVerified: profiles.isVerified,
-          })
-          .from(users)
-          .leftJoin(profiles, eq(users.id, profiles.userId))
-          .where(eq(users.id, data.senderId))
-          .limit(1);
-
-        return {
-          ...msg,
-          sender: senderUser || null,
-          senderId: data.senderId,
-          senderUid: senderUser?.firebaseUid || data.senderId,
-          senderProfileId: senderUser?.profileId,
-          senderDbId: senderUser?.id || data.senderId,
-        };
+      const lockKey = `${data.conversationId}:${data.senderId}:${optId}`;
+      const inFlight = this.inFlightSends.get(lockKey);
+      if (inFlight) {
+        return inFlight;
       }
+
+      const executionPromise = (async () => {
+        try {
+          const existing = await db
+            .select()
+            .from(messages)
+            .where(
+              and(
+                eq(messages.conversationId, data.conversationId),
+                eq(messages.senderId, data.senderId),
+                sql`(${messages.metadata}->>'optimisticId' = ${optId} OR ${messages.metadata}->>'clientMessageId' = ${optId})`
+              )
+            )
+            .limit(1);
+
+          if (existing.length > 0) {
+            const msg = existing[0];
+            const [senderUser] = await db
+              .select({
+                id: users.id,
+                firebaseUid: users.firebaseUid,
+                profileId: profiles.id,
+                username: profiles.username,
+                displayName: profiles.displayName,
+                avatarKey: profiles.avatarKey,
+                isVerified: profiles.isVerified,
+              })
+              .from(users)
+              .leftJoin(profiles, eq(users.id, profiles.userId))
+              .where(eq(users.id, data.senderId))
+              .limit(1);
+
+            return {
+              ...msg,
+              sender: senderUser || null,
+              senderId: data.senderId,
+              senderUid: senderUser?.firebaseUid || data.senderId,
+              senderProfileId: senderUser?.profileId,
+              senderDbId: senderUser?.id || data.senderId,
+            };
+          }
+
+          return await this.executeSendMessageInsert(data, optId);
+        } finally {
+          this.inFlightSends.delete(lockKey);
+        }
+      })();
+
+      this.inFlightSends.set(lockKey, executionPromise);
+      return executionPromise;
     }
 
+    return this.executeSendMessageInsert(data, undefined);
+  }
+
+  private static async executeSendMessageInsert(data: {
+    conversationId: string;
+    senderId: string;
+    type?: string;
+    content?: string;
+    mediaKey?: string;
+    fileName?: string;
+    fileSize?: number;
+    duration?: number;
+    replyToId?: string;
+    metadata?: any;
+    clientMessageId?: string;
+  }, optId?: string) {
     const mergedMetadata = {
       ...(data.metadata || {}),
       ...(optId ? { optimisticId: optId, clientMessageId: optId } : {})
