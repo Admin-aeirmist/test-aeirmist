@@ -26,6 +26,7 @@ function resolveSocketBase(): string {
 
 let socketInstance: Socket | null = null;
 const identifiedUserIds = new Set<string>();
+const activeRooms = new Set<string>();
 let isRefreshingSocketToken = false;
 
 export function identifyUserSocket(userId: string): void {
@@ -37,16 +38,21 @@ export function identifyUserSocket(userId: string): void {
 }
 
 export function updateSocketAuth(token?: string): void {
-  const authToken = token || getAuthToken();
+  const authToken = token !== undefined ? token : getAuthToken();
   if (socketInstance) {
     socketInstance.auth = { token: authToken };
     if (!socketInstance.connected) {
       socketInstance.connect();
+    } else {
+      socketInstance.disconnect().connect();
     }
   }
 }
 
 if (typeof window !== 'undefined') {
+  window.addEventListener('aeirmist_auth_changed', (e: any) => {
+    updateSocketAuth(e?.detail?.token);
+  });
   window.addEventListener('storage', (e) => {
     if (e.key === 'aeirmist_auth_token' || e.key === 'auth_token') {
       updateSocketAuth();
@@ -57,7 +63,6 @@ if (typeof window !== 'undefined') {
 export function getSocket(): Socket {
   if (!socketInstance) {
     const endpoint = resolveSocketBase();
-    const token = getAuthToken();
     socketInstance = io(endpoint, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
@@ -65,13 +70,18 @@ export function getSocket(): Socket {
       reconnectionAttempts: 8,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      auth: { token },
+      auth: (cb) => {
+        cb({ token: getAuthToken() });
+      },
     });
 
     socketInstance.on('connect', () => {
       console.log('🔌 [Socket.IO] Connected to backend gateway at', endpoint, '| socketId:', socketInstance?.id);
       identifiedUserIds.forEach((id) => {
         socketInstance?.emit('identify_user', id);
+      });
+      activeRooms.forEach((room) => {
+        socketInstance?.emit('join_room', room);
       });
     });
 
@@ -118,15 +128,22 @@ export function getSocket(): Socket {
       console.log('🔌 [Socket.IO Diagnostics] Disconnected from endpoint:', endpoint, '| reason:', reason);
     });
   }
+  if (typeof window !== 'undefined') {
+    (window as any).__aeirmistSocket = socketInstance;
+  }
   return socketInstance;
 }
 
 export function joinChatRoom(roomId: string): void {
+  if (!roomId) return;
+  activeRooms.add(roomId);
   const socket = getSocket();
   socket.emit('join_room', roomId);
 }
 
 export function leaveChatRoom(roomId: string): void {
+  if (!roomId) return;
+  activeRooms.delete(roomId);
   const socket = getSocket();
   socket.emit('leave_room', roomId);
 }

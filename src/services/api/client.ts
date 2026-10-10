@@ -60,6 +60,7 @@ export function setAuthToken(token: string | null): void {
         localStorage.setItem('aeirmist_session', JSON.stringify(parsed));
       }
     } catch {}
+    window.dispatchEvent(new CustomEvent('aeirmist_auth_changed', { detail: { token: cleanToken } }));
   } else {
     localStorage.removeItem('aeirmist_auth_token');
     localStorage.removeItem('auth_token');
@@ -71,6 +72,7 @@ export function setAuthToken(token: string | null): void {
         localStorage.setItem('aeirmist_session', JSON.stringify(parsed));
       }
     } catch {}
+    window.dispatchEvent(new CustomEvent('aeirmist_auth_changed', { detail: { token: null } }));
   }
 }
 

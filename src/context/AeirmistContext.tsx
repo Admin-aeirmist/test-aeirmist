@@ -2457,6 +2457,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 effectiveUser = {
                   ...freshUser,
                   uid: saved.uid,
+                  id: saved.id || saved.userId || saved.uid,
+                  userId: saved.userId || saved.id || saved.uid,
                   email: saved.email || freshUser.email,
                   displayName: saved.displayName || saved.username || freshUser.displayName,
                   getIdToken: () => freshUser.getIdToken(),
@@ -3825,8 +3827,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       }
 
+      const canonicalUserId = bRes?.user?.id || bRes?.user?.userId || resolvedUserData?.userId || resolvedUserData?.id || null;
       const sessionUser: any = {
         uid: finalUid,
+        id: canonicalUserId || finalUid,
+        userId: canonicalUserId || finalUid,
         email: targetEmail,
         displayName: activeProfile.displayName || resolvedUserData?.displayName || (isMainAdmin ? 'Junaed Islam Jim' : 'Aeirmist User'),
         photoURL: activeProfile.photoURL || resolvedUserData?.photoURL || '',
@@ -3848,6 +3853,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const effectiveToken = bRes?.token || getAuthToken() || null;
         const sessionPayload = {
           uid: finalUid,
+          id: canonicalUserId || finalUid,
+          userId: canonicalUserId || finalUid,
           email: targetEmail,
           username: activeProfile.username || input,
           displayName: activeProfile.displayName,

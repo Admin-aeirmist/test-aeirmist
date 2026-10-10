@@ -352,7 +352,7 @@ class MessagingService {
     const handleSocketMessage = (payload: any) => {
       if (isCancelled || !payload) return;
       const rawMsg = payload.message || payload;
-      const targetConvId = String(payload.conversationId || '');
+      const targetConvId = String(payload.conversationId || rawMsg?.conversationId || '');
       const rawConvId = String(payload.rawConversationId || '');
       const currentConv = String(conversationId || '');
 

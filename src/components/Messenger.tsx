@@ -702,41 +702,48 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         if (deletedAt === true) return null; // Legacy support
         if (typeof deletedAt === 'number' && chatUpdatedAt <= deletedAt) return null;
 
-        // If this chat explicitly belongs to other profiles of this user, 
-        // we might still want to show it depending on product requirements, 
-        // but typically we only show chats where the active profile is a participant.
-        const isParticipant = (data.profileIds || []).includes(profile.id) || 
-                             (data.participants || []).includes(user.uid);
-        
-        if (!isParticipant) return null;
-
-        // Note: The filtering for requests is now done in mainChats useMemo
-        // to handle live changes in follow status without re-subscribing.
+        const myUserId = (user as any)?.userId || user?.id || (profile as any)?.userId;
+        const myAuthUid = user?.uid;
+        const myProfileId = profile?.id;
+        const myUsername = profile?.username;
 
         const myIds = new Set([
-          profile.id,
-          user.uid,
-          `profile_${user.uid}`,
-          profile.id ? profile.id.replace(/^profile_/, '') : '',
-          user.uid ? `profile_${user.uid}` : ''
-        ].filter(Boolean));
+          myProfileId,
+          myAuthUid,
+          myUserId,
+          myUsername,
+          myProfileId ? myProfileId.replace(/^profile_/, '') : '',
+          myAuthUid ? `profile_${myAuthUid}` : '',
+          myUserId ? `profile_${myUserId}` : '',
+        ].filter(Boolean).map(id => String(id).toLowerCase()));
 
         const isSelfId = (id: string) => {
           if (!id) return true;
-          return myIds.has(id) || myIds.has(`profile_${id}`) || myIds.has(id.replace(/^profile_/, ''));
+          const lower = String(id).toLowerCase();
+          return myIds.has(lower) || myIds.has(`profile_${lower}`) || myIds.has(lower.replace(/^profile_/, ''));
         };
 
-        let otherParticipantId = '';
-        let otherParticipantUid = '';
+        const isParticipant = (data.profileIds || []).some((id: string) => isSelfId(id)) || 
+                             (data.participants || []).some((id: string) => isSelfId(id));
+        
+        if (!isParticipant) return null;
 
-        if (data.profileIds && Array.isArray(data.profileIds)) {
+        // Preserve accurately resolved other participant identities from MessagingService
+        let otherParticipantId = (data.otherParticipantId && !isSelfId(data.otherParticipantId))
+          ? data.otherParticipantId
+          : '';
+        let otherParticipantUid = (data.otherParticipantUid && !isSelfId(data.otherParticipantUid))
+          ? data.otherParticipantUid
+          : '';
+
+        if (!otherParticipantId && data.profileIds && Array.isArray(data.profileIds)) {
           otherParticipantId = data.profileIds.find((id: string) => !isSelfId(id)) || '';
           if (!otherParticipantId && data.profileIds.length === 1 && isSelfId(data.profileIds[0])) {
             otherParticipantId = profile.id;
           }
         }
         
-        if (data.participants && Array.isArray(data.participants)) {
+        if (!otherParticipantUid && data.participants && Array.isArray(data.participants)) {
           otherParticipantUid = data.participants.find((uid: string) => !isSelfId(uid)) || '';
           if (!otherParticipantUid && data.participants.length === 1 && isSelfId(data.participants[0])) {
             otherParticipantUid = user.uid;
@@ -748,15 +755,15 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         }
 
         // Deep resolution for profile photos and details
-        let details = data.participantDetails?.[otherParticipantId];
+        let details = data.otherProfile || data.participantDetails?.[otherParticipantId] || {};
         
-        if (!details && data.participantDetails) {
+        if (!details.displayName && data.participantDetails) {
            const otherKey = Object.keys(data.participantDetails).find(k => !isSelfId(k));
            if (otherKey) {
-             details = data.participantDetails[otherKey];
+             details = { ...details, ...data.participantDetails[otherKey] };
              if (!otherParticipantId) otherParticipantId = otherKey;
            } else if (data.participantDetails[profile.id] || data.participantDetails[user.uid]) {
-             details = data.participantDetails[profile.id] || data.participantDetails[user.uid];
+             details = { ...details, ...(data.participantDetails[profile.id] || data.participantDetails[user.uid]) };
            }
         }
         
@@ -786,13 +793,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           ? rawLastMsg 
           : (data.latestMessagePreview || rawLastMsg?.text || ((data as any).lastMessageText || 'No messages yet'));
         const lastSenderId = data.latestMessageSenderId || rawLastMsg?.senderId || (data as any).lastSenderId;
-        const isSentByMe = !!(lastSenderId && (
-          lastSenderId === profile.id || 
-          lastSenderId === user.uid || 
-          lastSenderId === user.id ||
-          lastSenderId.replace(/^profile_/, '') === profile.id.replace(/^profile_/, '') ||
-          lastSenderId.replace(/^profile_/, '') === (user.uid || '').replace(/^profile_/, '')
-        ));
+        const isSentByMe = !!(lastSenderId && isSelfId(lastSenderId));
 
         let displayLastMsg = rawLastText;
         if (isSentByMe && rawLastText && rawLastText !== 'No messages yet' && rawLastText !== 'Tap to chat' && rawLastText !== 'Group created') {
@@ -801,20 +802,21 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
         const calculatedActivityMs = getChatActivityMs(data);
 
-        const rawDisplayName = details?.displayName;
+        const rawDisplayName = details?.displayName || data.name;
         const isNameValid = rawDisplayName && typeof rawDisplayName === 'string' && 
           rawDisplayName.trim() !== '' && 
           rawDisplayName.toLowerCase() !== 'unknown' && 
           rawDisplayName.toLowerCase() !== 'unknown user';
-        const cleanDisplayName = isNameValid ? rawDisplayName.trim() : (details?.username || 'Aeirmist User');
+        const cleanDisplayName = isNameValid ? rawDisplayName.trim() : (details?.username || data.name || 'Aeirmist User');
 
         return {
           ...data,
           id: data.id,
           otherParticipantId,
           otherParticipantUid,
+          otherProfile: data.otherProfile || details,
           name: (data.isGroup || data.type === 'group') ? (data.groupName || data.name || 'Group Chat') : cleanDisplayName,
-          photo: (data.isGroup || data.type === 'group') ? getAvatarUrl(data.groupPhotoURL || data.photo) : getAvatarUrl(details.photoURL),
+          photo: (data.isGroup || data.type === 'group') ? getAvatarUrl(data.groupPhotoURL || data.photo) : getAvatarUrl(details.photoURL || (details.avatarKey ? `/media/${details.avatarKey}` : data.photo)),
           rawLastMessage: rawLastMsg,
           lastMessage: typeof displayLastMsg === 'string' ? displayLastMsg : (displayLastMsg?.text || (rawLastMsg?.mediaUrl ? 'Sent an attachment' : 'No messages yet')),
           time: timeString,
@@ -870,7 +872,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
   // Auto-close active chat if it has been deleted, archived, or recipient blocked
   useEffect(() => {
-    if (activeChatId && !activeChatId.startsWith('new_')) {
+    if (activeChatId && !activeChatId.startsWith('new_') && !tempChat) {
       const chatObj = chats.find(c => c.id === activeChatId);
       if (chatObj) {
         const otherId = chatObj.otherParticipantId;
@@ -881,12 +883,9 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           setActiveChatId(null);
           setIsMobileList(true);
         }
-      } else if (chats.length > 0) {
-        setActiveChatId(null);
-        setIsMobileList(true);
       }
     }
-  }, [chats, activeChatId, activeFilter, isBlocked]);
+  }, [chats, activeChatId, activeFilter, isBlocked, tempChat]);
 
   useEffect(() => {
     const performSearch = async () => {
@@ -917,14 +916,14 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     const myAuthUid = user?.uid;
     const myProfileId = profile?.id;
     const myUsername = profile?.username;
-    const myIdentifiers = new Set([myUserId, myAuthUid, myProfileId, myUsername].filter(Boolean).map(String));
+    const myIdentifiers = new Set([myUserId, myAuthUid, myProfileId, myUsername].filter(Boolean).map(id => String(id).toLowerCase()));
 
     // Target user's candidate identifiers
     const targetUserId = userData.userId || (userData.user && userData.user.id);
     const targetProfileId = userData.profileId || (userData.id && !String(userData.id).startsWith('new_') ? userData.id : null);
     const targetUid = userData.uid || userData.ownerUid || userData.firebaseUid;
     const targetUsername = userData.username;
-    const targetIdentifiers = [targetUserId, targetProfileId, targetUid, targetUsername].filter(Boolean).map(String);
+    const targetIdentifiers = [targetUserId, targetProfileId, targetUid, targetUsername].filter(Boolean).map(id => String(id).toLowerCase());
 
     if (targetIdentifiers.length === 0) return;
 
@@ -934,7 +933,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     const existingChat = chats.find(c => {
       if (c.isGroup || c.type === 'group') return false;
       if (isSelfTarget) {
-        return c.type === 'self' || c.otherParticipantId === profile.id || c.otherParticipantUid === myUserId;
+        return c.type === 'self' || myIdentifiers.has(String(c.otherParticipantId || '').toLowerCase()) || myIdentifiers.has(String(c.otherParticipantUid || '').toLowerCase());
       }
       if (c.type === 'self') return false;
 
@@ -945,7 +944,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         c.otherProfile?.id,
         c.otherProfile?.username,
         c.otherProfile?.firebaseUid,
-      ].filter(Boolean).map(String);
+      ].filter(Boolean).map(id => String(id).toLowerCase());
 
       return partnerIds.some(pid => !myIdentifiers.has(pid) && targetIdentifiers.includes(pid));
     });
@@ -2055,6 +2054,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                 return (
                   <div 
                     key={chat.id} 
+                    data-conversation-id={chat.id}
                     onClick={() => handleChatSelect(chat)}
                     onContextMenu={(e) => handleContextMenu(e, chat.id)}
                     className={`w-full h-[72px] px-3.5 md:px-4 flex items-center gap-3 cursor-pointer hover:bg-aeirmist-cyan/[0.05] transition-all relative group ${isSelected ? 'bg-aeirmist-cyan/[0.08]' : ''}`}
@@ -2199,7 +2199,13 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                 onUserClick={onUserClick}
                 onChatUpdate={(newChat) => {
                   setActiveChatId(newChat.id);
-                  setTempChat(null);
+                  setTempChat(newChat);
+                  setChats(prevChats => {
+                    if (prevChats.some(c => c.id === newChat.id)) {
+                      return prevChats.map(c => c.id === newChat.id ? { ...c, ...newChat } : c);
+                    }
+                    return [newChat, ...prevChats];
+                  });
                 }}
                 onForwardMessage={handleForward}
                 messageFilter={messageSearchQuery}
@@ -2513,8 +2519,8 @@ const ChatWindow = ({
     }
   }, []);
   const [failedMessages, setFailedMessages] = useState<Set<string>>(new Set());
-  const [otherProfile, setOtherProfile] = useState<any>(null);
-  const [otherProfileLoaded, setOtherProfileLoaded] = useState(false);
+  const [otherProfile, setOtherProfile] = useState<any>(chat.otherProfile || null);
+  const [otherProfileLoaded, setOtherProfileLoaded] = useState(Boolean(chat.otherProfile));
 
   // Messenger 2.0: Hydrate persistent local outbox on active chat selection
   useEffect(() => {
@@ -2556,11 +2562,12 @@ const ChatWindow = ({
   const isGroupChat = Boolean(chat.isGroup || (chat as any).type === 'group' || (chat.participants && chat.participants.length > 2));
   const isOtherUnavailable = useMemo(() => {
     if (isPrivateSpace || isGroupChat || !chat.otherParticipantId) return false;
+    if (chat.otherProfile && !chat.otherProfile.isDeleted) return false;
     if (!otherProfileLoaded) return false;
-    if (otherProfile === null) return true;
+    if (otherProfile === null) return !chat.otherProfile;
     if (otherProfile.isDeleted === true || otherProfile.status === 'deleted') return true;
     return false;
-  }, [isPrivateSpace, isGroupChat, chat.otherParticipantId, otherProfileLoaded, otherProfile]);
+  }, [isPrivateSpace, isGroupChat, chat.otherParticipantId, otherProfileLoaded, otherProfile, chat.otherProfile]);
 
   // Intercept back for overlays inside active chat
   useBackHandler(() => {
@@ -2586,13 +2593,24 @@ const ChatWindow = ({
 
   useEffect(() => {
     const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
-    if (!db || !otherId) {
+    if (!otherId) {
       setOtherProfile(null);
       setOtherProfileLoaded(true);
       return;
     }
+
+    if (chat.otherProfile && (chat.otherProfile.displayName || chat.otherProfile.username || chat.otherProfile.id)) {
+      setOtherProfile(chat.otherProfile);
+      setOtherProfileLoaded(true);
+      return;
+    }
+
+    if (!db) {
+      setOtherProfileLoaded(true);
+      return;
+    }
     
-    // Subscribe to other user's profile to check if they are private or deleted
+    // Subscribe to other user's profile to check if they are private or deleted (Firestore fallback)
     const unsub = onSnapshot(doc(db, 'profiles', otherId), (snap) => {
       setOtherProfileLoaded(true);
       if (snap.exists()) {
@@ -2603,16 +2621,18 @@ const ChatWindow = ({
           setOtherProfile({ id: snap.id, ...pData });
         }
       } else {
-        setOtherProfile(null);
+        setOtherProfile(chat.otherProfile || null);
       }
     }, (err) => {
       logger.warn("Could not listen to other profile:", err);
       setOtherProfileLoaded(true);
-      setOtherProfile(null);
+      if (chat.otherProfile) {
+        setOtherProfile(chat.otherProfile);
+      }
     });
     
     return () => unsub();
-  }, [db, chat.otherParticipantId, chat.profileIds, profile?.id]);
+  }, [db, chat.otherParticipantId, chat.profileIds, profile?.id, chat.otherProfile]);
 
   const handleReply = (msg: any) => {
     setReplyingTo(msg);
@@ -3195,7 +3215,7 @@ const ChatWindow = ({
           isTemporary: false
         };
         setActiveChatId(newId);
-        setTempChat(null);
+        setTempChat(realChat);
         onChatUpdate(realChat);
       }
     } catch (e: any) {
