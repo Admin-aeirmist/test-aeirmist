@@ -81,6 +81,102 @@ class MessagingService {
     this.isSafeMode = enabled;
   }
 
+  private activeMessageSubscribers: Map<string, Set<(messages: Message[]) => void>> = new Map();
+
+  public normalizeMsg(m: any, defaultConversationId?: string): Message {
+    const timestampMs = (typeof m.timestampMs === 'number' && m.timestampMs > 0)
+      ? m.timestampMs
+      : (m.createdAt ? extractTimestampMs(m.createdAt) : Date.now());
+    const date = new Date(timestampMs);
+    return {
+      ...m,
+      id: m.id || `msg_${timestampMs}`,
+      conversationId: m.conversationId || defaultConversationId || '',
+      senderId: m.senderId || m.sender?.profileId || m.sender?.id || m.senderUid,
+      senderUid: m.senderUid || m.sender?.firebaseUid || m.sender?.id || m.senderId,
+      senderProfileId: m.senderProfileId || m.sender?.profileId,
+      senderDbId: m.senderDbId || m.sender?.id,
+      text: m.text !== undefined ? m.text : (m.content || ''),
+      content: m.content !== undefined ? m.content : (m.text || ''),
+      type: m.type || 'text',
+      mediaUrl: m.mediaUrl || m.attachmentUrl || (m.mediaKey ? `/media/${m.mediaKey}` : null),
+      attachmentUrl: m.attachmentUrl || m.mediaUrl || (m.mediaKey ? `/media/${m.mediaKey}` : null),
+      timestamp: typeof m.timestamp === 'string' && m.timestamp ? m.timestamp : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestampMs,
+      createdAt: m.createdAt || new Date(timestampMs).toISOString(),
+      isSeen: Boolean(m.isSeen || m.isRead),
+      isDelivered: Boolean(m.isDelivered !== false),
+      status: m.status || 'sent',
+      metadata: m.metadata || {}
+    };
+  }
+
+  public upsertMessages(existing: Message[], incoming: Message[]): Message[] {
+    const map = new Map<string, Message>();
+    const optToCanonical = new Map<string, string>();
+    const existingSeq = new Map<string, number>();
+
+    existing.forEach((m, idx) => {
+      if (m.id) existingSeq.set(m.id, idx);
+    });
+
+    const all = [...existing, ...incoming];
+    for (const m of all) {
+      if (!m.id) continue;
+      const optId = (m as any).metadata?.optimisticId || (m as any).metadata?.clientMessageId || (m as any).optimisticId;
+      if (optId) {
+        if (String(m.id).startsWith('opt_')) {
+          if (optToCanonical.has(optId)) {
+            continue;
+          }
+        } else {
+          optToCanonical.set(optId, m.id);
+        }
+      }
+
+      const current = map.get(m.id);
+      if (current) {
+        map.set(m.id, {
+          ...current,
+          ...m,
+          isDelivered: m.isDelivered || current.isDelivered,
+          isSeen: m.isSeen || current.isSeen,
+          status: m.status || current.status || 'sent',
+          metadata: { ...(current.metadata || {}), ...(m.metadata || {}) }
+        });
+      } else {
+        map.set(m.id, m);
+      }
+    }
+
+    for (const [optId, srvId] of optToCanonical.entries()) {
+      if (map.has(optId) && optId !== srvId) {
+        map.delete(optId);
+      }
+    }
+
+    const list = Array.from(map.values());
+    list.sort((a, b) => {
+      const diff = (a.timestampMs || 0) - (b.timestampMs || 0);
+      if (diff !== 0) return diff;
+      const seqA = existingSeq.has(a.id) ? existingSeq.get(a.id)! : 999999;
+      const seqB = existingSeq.has(b.id) ? existingSeq.get(b.id)! : 999999;
+      return seqA - seqB;
+    });
+
+    return list;
+  }
+
+  public notifySubscribers(conversationId: string, messages: Message[]) {
+    this.setCachedMessages(conversationId, messages);
+    const set = this.activeMessageSubscribers.get(conversationId);
+    if (set) {
+      set.forEach(cb => {
+        try { cb(messages); } catch (e) { logger.error('[MessagingService] Subscriber callback error:', e); }
+      });
+    }
+  }
+
   public async markAsRead(_db: any, conversationId: string, _profileId?: string) {
     if (!conversationId) return;
     try {
@@ -158,7 +254,9 @@ class MessagingService {
         metadata: {
           ...metadata,
           optimisticId: metadata.optimisticId || null,
-        }
+          clientMessageId: metadata.optimisticId || null,
+        },
+        clientMessageId: metadata.optimisticId || undefined,
       });
 
       const serverMsg = apiRes.message;
@@ -166,7 +264,8 @@ class MessagingService {
 
       // 4. Update instant memory cache so sender sees bubble immediately with canonical server data
       const existingMem = this.getCachedMessages(resolvedConvId) || this.getCachedMessages(finalConvId) || [];
-      const canonicalLocalMsg: Message = {
+      const canonicalLocalMsg: Message = this.normalizeMsg({
+        ...(serverMsg || {}),
         id: serverMsg?.id || messageId,
         conversationId: resolvedConvId,
         senderId: serverMsg?.senderId || user.userId || user.id || user.uid,
@@ -180,21 +279,22 @@ class MessagingService {
         status: 'sent',
         isDelivered: true,
         isSeen: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestampMs: Date.now(),
         metadata: {
           ...metadata,
-          optimisticId: metadata.optimisticId || null
+          optimisticId: metadata.optimisticId || null,
+          clientMessageId: metadata.optimisticId || null
         }
-      } as Message;
+      }, resolvedConvId);
 
-      const updatedMem = [
-        ...existingMem.filter(m => m.id !== canonicalLocalMsg.id && (!metadata.optimisticId || m.metadata?.optimisticId !== metadata.optimisticId)),
-        canonicalLocalMsg
-      ];
+      const updatedMem = this.upsertMessages(existingMem, [canonicalLocalMsg]);
       this.setCachedMessages(resolvedConvId, updatedMem);
       if (resolvedConvId !== finalConvId) {
         this.setCachedMessages(finalConvId, updatedMem);
+      }
+      this.notifySubscribers(resolvedConvId, updatedMem);
+      if (resolvedConvId !== finalConvId) {
+        this.notifySubscribers(finalConvId, updatedMem);
       }
 
       return resolvedConvId;
@@ -226,67 +326,24 @@ class MessagingService {
       joinChatRoom(chatData.id);
     }
 
-    // Helper: Normalize any server/API/cache message to unified Message schema
-    const normalizeMsg = (m: any): Message => {
-      const timestampMs = (typeof m.timestampMs === 'number' && m.timestampMs > 0)
-        ? m.timestampMs
-        : (m.createdAt ? extractTimestampMs(m.createdAt) : Date.now());
-      const date = new Date(timestampMs);
-      return {
-        ...m,
-        id: m.id || `msg_${timestampMs}`,
-        conversationId: m.conversationId || conversationId,
-        senderId: m.senderId || m.sender?.profileId || m.sender?.id || m.senderUid,
-        senderUid: m.senderUid || m.sender?.firebaseUid || m.sender?.id || m.senderId,
-        senderProfileId: m.senderProfileId || m.sender?.profileId,
-        senderDbId: m.senderDbId || m.sender?.id,
-        text: m.text !== undefined ? m.text : (m.content || ''),
-        content: m.content !== undefined ? m.content : (m.text || ''),
-        type: m.type || 'text',
-        mediaUrl: m.mediaUrl || m.attachmentUrl || (m.mediaKey ? `/media/${m.mediaKey}` : null),
-        attachmentUrl: m.attachmentUrl || m.mediaUrl || (m.mediaKey ? `/media/${m.mediaKey}` : null),
-        timestamp: typeof m.timestamp === 'string' && m.timestamp ? m.timestamp : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timestampMs,
-        createdAt: m.createdAt || new Date(timestampMs).toISOString(),
-        isSeen: Boolean(m.isSeen || m.isRead),
-        isDelivered: Boolean(m.isDelivered !== false),
-        status: m.status || 'sent',
-        metadata: m.metadata || {}
-      };
+    const subDispatcher = (incoming: Message[]) => {
+      if (isCancelled) return;
+      localCurrentMessages = incoming;
+      callback(incoming);
     };
 
-    // Helper to merge, deduplicate and sort messages
+    if (!this.activeMessageSubscribers.has(conversationId)) {
+      this.activeMessageSubscribers.set(conversationId, new Set());
+    }
+    this.activeMessageSubscribers.get(conversationId)!.add(subDispatcher);
+
+    // Centralized merge & dispatch
     const mergeAndEmit = (incoming: Message[]) => {
       if (isCancelled) return;
-      const map = new Map<string, Message>();
-      const optMap = new Map<string, string>();
-
-      const all = [...localCurrentMessages, ...incoming];
-      for (const m of all) {
-        if (!m.id) continue;
-        const optId = (m as any).metadata?.optimisticId || (m as any).optimisticId;
-        if (optId) {
-          if (m.id.startsWith('opt_')) {
-            if (optMap.has(optId)) continue;
-          } else {
-            optMap.set(optId, m.id);
-          }
-        }
-        map.set(m.id, m);
-      }
-
-      // Remove lingering optimistic messages when counterpart server message exists
-      for (const [optId, srvId] of optMap.entries()) {
-        if (map.has(optId) && optId !== srvId) {
-          map.delete(optId);
-        }
-      }
-
-      const list = Array.from(map.values());
-      list.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
-      localCurrentMessages = list;
-      this.setCachedMessages(conversationId, list);
-      callback(list);
+      const current = this.getCachedMessages(conversationId) || localCurrentMessages;
+      const merged = this.upsertMessages(current, incoming);
+      localCurrentMessages = merged;
+      this.notifySubscribers(conversationId, merged);
     };
 
     // 1. Instant Cache Check (0ms frame-0 latency)
@@ -298,7 +355,7 @@ class MessagingService {
       aeirmistCache.getMessages(conversationId).then(cached => {
         if (isCancelled) return;
         if (cached && cached.length > 0 && localCurrentMessages.length === 0) {
-          const formatted = cached.map(normalizeMsg);
+          const formatted = cached.map(m => this.normalizeMsg(m, conversationId));
           mergeAndEmit(formatted);
         }
       }).catch(() => {});
@@ -315,7 +372,7 @@ class MessagingService {
       try {
         const res = await api.chat.getMessages(conversationId, limitCount);
         if (res && Array.isArray(res.messages) && res.messages.length > 0) {
-          const normalized = res.messages.map(normalizeMsg);
+          const normalized = res.messages.map(m => this.normalizeMsg(m, conversationId));
           mergeAndEmit(normalized);
         }
       } catch (err) {
@@ -361,7 +418,7 @@ class MessagingService {
                           (Boolean(chatData?.id) && (chatData.id === targetConvId || chatData.id === rawConvId));
 
       if (isConvMatch) {
-        const normalized = normalizeMsg(rawMsg);
+        const normalized = this.normalizeMsg(rawMsg, conversationId);
         mergeAndEmit([normalized]);
       }
     };
@@ -371,29 +428,35 @@ class MessagingService {
       if (isCancelled || !payload) return;
       const targetConvId = String(payload.conversationId || payload.rawConversationId || '');
       if (targetConvId === conversationId || targetConvId === chatData?.id) {
-        localCurrentMessages = localCurrentMessages.map(m => {
+        const current = this.getCachedMessages(conversationId) || localCurrentMessages;
+        const updated = current.map(m => {
           if (m.senderId !== payload.userId) {
             return { ...m, isSeen: true };
           }
           return m;
         });
-        callback(localCurrentMessages);
+        localCurrentMessages = updated;
+        this.notifySubscribers(conversationId, updated);
       }
     };
     socket.on('seen_update', handleSeenUpdate);
 
     const handleMessageEdited = (payload: any) => {
       if (isCancelled || !payload?.message) return;
-      const edited = normalizeMsg(payload.message);
-      localCurrentMessages = localCurrentMessages.map(m => m.id === edited.id ? { ...m, ...edited } : m);
-      callback(localCurrentMessages);
+      const edited = this.normalizeMsg(payload.message, conversationId);
+      const current = this.getCachedMessages(conversationId) || localCurrentMessages;
+      const merged = this.upsertMessages(current, [edited]);
+      localCurrentMessages = merged;
+      this.notifySubscribers(conversationId, merged);
     };
     socket.on('message_edited', handleMessageEdited);
 
     const handleMessageDeleted = (payload: any) => {
       if (isCancelled || !payload?.messageId) return;
-      localCurrentMessages = localCurrentMessages.filter(m => m.id !== payload.messageId);
-      callback(localCurrentMessages);
+      const current = this.getCachedMessages(conversationId) || localCurrentMessages;
+      const filtered = current.filter(m => m.id !== payload.messageId);
+      localCurrentMessages = filtered;
+      this.notifySubscribers(conversationId, filtered);
     };
     socket.on('message_deleted', handleMessageDeleted);
 
@@ -403,6 +466,10 @@ class MessagingService {
       leaveChatRoom(conversationId);
       if (chatData?.id && chatData.id !== conversationId) {
         leaveChatRoom(chatData.id);
+      }
+      this.activeMessageSubscribers.get(conversationId)?.delete(subDispatcher);
+      if (this.activeMessageSubscribers.get(conversationId)?.size === 0) {
+        this.activeMessageSubscribers.delete(conversationId);
       }
       socket.off('connect', handleReconnect);
       socket.off('new_message', handleSocketMessage);

@@ -2508,6 +2508,8 @@ const ChatWindow = ({
   const inputCaptureRef = useRef<((file: File) => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastSendTextRef = useRef<string>('');
+  const lastSendTimeRef = useRef<number>(0);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     if (scrollRef.current) {
@@ -2848,21 +2850,26 @@ const ChatWindow = ({
     const lastRead = parseTimestampMs(chat.lastRead?.[otherParticipantId || '']);
     const lastDelivered = parseTimestampMs(chat.lastDelivered?.[otherParticipantId || '']);
 
-    const merged = [...messages, ...optimistic].filter((msg, index, self) => {
-      // Deduplicate optimistic messages if server confirms receipt
-      if (msg.isOptimistic) {
-        const confirmed = messages.some(m => {
-          const optMatch = m.metadata?.optimisticId === msg.id || (m as any).optimisticId === msg.id || m.id === msg.id;
-          if (optMatch) return true;
-          if (m.text === msg.text && isSenderMe(m.senderId, (m as any).senderUid) && Math.abs((m.timestampMs || 0) - (msg.timestampMs || Date.now())) < 30000) {
-            return true;
-          }
-          return false;
-        });
-        if (confirmed) return false;
-      }
-      return index === self.findIndex((m) => m.id === msg.id);
+    const confirmedOptIds = new Set<string>();
+    messages.forEach(m => {
+      if (m.metadata?.optimisticId) confirmedOptIds.add(m.metadata.optimisticId);
+      if (m.metadata?.clientMessageId) confirmedOptIds.add(m.metadata.clientMessageId);
+      if ((m as any).optimisticId) confirmedOptIds.add((m as any).optimisticId);
+      if (m.id && String(m.id).startsWith('opt_')) confirmedOptIds.add(m.id);
     });
+
+    const pendingOptimistic = optimistic.filter(opt => !confirmedOptIds.has(opt.id));
+
+    const seenIds = new Set<string>();
+    const merged: any[] = [];
+    for (const msg of [...messages, ...pendingOptimistic]) {
+      if (!msg.id) {
+        merged.push(msg);
+      } else if (!seenIds.has(msg.id)) {
+        seenIds.add(msg.id);
+        merged.push(msg);
+      }
+    }
 
     const sorted = merged.map((m, originalIndex) => {
        const timestampMs = (typeof m.timestampMs === 'number' && m.timestampMs > 0)
@@ -3108,6 +3115,7 @@ const ChatWindow = ({
       });
       
       messageOutboxService.markDelivered(chat.id, optimisticId);
+      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
 
       setFailedMessages(prev => {
         const next = new Set(prev);
@@ -3132,6 +3140,16 @@ const ChatWindow = ({
 
   const handleSendMessage = async (text: string, mood?: string) => {
     if (!profile || !user || !chat.id) return;
+
+    // Prevent duplicate sends caused by rapid double-clicks while request is pending
+    const now = Date.now();
+    const cleanText = text.trim();
+    if (cleanText && lastSendTextRef.current === cleanText && (now - lastSendTimeRef.current) < 400) {
+      logger.warn('[Messenger] Rapid duplicate send suppressed:', cleanText);
+      return;
+    }
+    lastSendTextRef.current = cleanText;
+    lastSendTimeRef.current = now;
     
     // Deterministic deduplication ID for instant UI feedback
     const optimisticId = `opt_${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -3205,8 +3223,8 @@ const ChatWindow = ({
         return next;
       });
 
-      // Instantly confirm optimistic bubble so spinner resolves to delivered checkmark
-      setOptimistic(prev => prev.map(m => m.id === optimisticId ? { ...m, isOptimistic: false, isDelivered: true, status: 'sent' } : m));
+      // Server confirmed receipt: prune optimistic placeholder since it's now in messages
+      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
 
       if (newId && (chat.isTemporary || chat.id.startsWith('new_') || chat.id !== newId)) {
         const realChat = {

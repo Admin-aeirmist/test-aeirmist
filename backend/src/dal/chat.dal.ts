@@ -209,7 +209,55 @@ export class ChatDAL {
     duration?: number;
     replyToId?: string;
     metadata?: any;
+    clientMessageId?: string;
   }) {
+    const optId = data.metadata?.optimisticId || data.metadata?.clientMessageId || data.clientMessageId;
+    if (optId && typeof optId === 'string') {
+      const existing = await db
+        .select()
+        .from(messages)
+        .where(
+          and(
+            eq(messages.conversationId, data.conversationId),
+            eq(messages.senderId, data.senderId),
+            sql`(${messages.metadata}->>'optimisticId' = ${optId} OR ${messages.metadata}->>'clientMessageId' = ${optId})`
+          )
+        )
+        .limit(1);
+
+      if (existing.length > 0) {
+        const msg = existing[0];
+        const [senderUser] = await db
+          .select({
+            id: users.id,
+            firebaseUid: users.firebaseUid,
+            profileId: profiles.id,
+            username: profiles.username,
+            displayName: profiles.displayName,
+            avatarKey: profiles.avatarKey,
+            isVerified: profiles.isVerified,
+          })
+          .from(users)
+          .leftJoin(profiles, eq(users.id, profiles.userId))
+          .where(eq(users.id, data.senderId))
+          .limit(1);
+
+        return {
+          ...msg,
+          sender: senderUser || null,
+          senderId: data.senderId,
+          senderUid: senderUser?.firebaseUid || data.senderId,
+          senderProfileId: senderUser?.profileId,
+          senderDbId: senderUser?.id || data.senderId,
+        };
+      }
+    }
+
+    const mergedMetadata = {
+      ...(data.metadata || {}),
+      ...(optId ? { optimisticId: optId, clientMessageId: optId } : {})
+    };
+
     const [msg] = await db
       .insert(messages)
       .values({
@@ -222,7 +270,7 @@ export class ChatDAL {
         fileSize: data.fileSize,
         duration: data.duration,
         replyToId: data.replyToId,
-        metadata: data.metadata || {},
+        metadata: mergedMetadata,
       })
       .returning();
 

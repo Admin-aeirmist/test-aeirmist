@@ -419,6 +419,8 @@ export const MessageItem = React.memo<{
 
   return (
     <motion.div 
+      data-message-id={message.id}
+      data-message-bubble="true"
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}

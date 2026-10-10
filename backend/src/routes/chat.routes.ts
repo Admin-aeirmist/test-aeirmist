@@ -21,6 +21,7 @@ const SendMessageSchema = z.object({
   duration: z.number().optional(),
   replyToId: z.string().nullish().transform(v => (v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v : undefined)),
   metadata: z.any().optional(),
+  clientMessageId: z.string().optional(),
 });
 
 const DirectChatSchema = z.object({
@@ -116,6 +117,12 @@ export async function resolveConversationId(rawConvId: string, currentUserId: st
         return ChatDAL.findOrCreateDirectConversation(currentUserId, target);
       }
     }
+  }
+
+  // Case 4: Single target user/profile identifier (e.g. direct conversation opened with target user ID/username)
+  const singleTargetId = await resolveUserId(normalizedConvId);
+  if (singleTargetId && singleTargetId !== currentUserId) {
+    return ChatDAL.findOrCreateDirectConversation(currentUserId, singleTargetId);
   }
 
   throw new Error(`Invalid or nonexistent conversation identifier: ${rawConvId}`);
@@ -234,22 +241,23 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
       duration: data.duration,
       replyToId: data.replyToId,
       metadata: data.metadata,
+      clientMessageId: data.clientMessageId || data.metadata?.clientMessageId || data.metadata?.optimisticId,
     });
 
-    // Real-time broadcast ONLY to authorized conversation room and participants (NO global broadcast)
+    // Real-time broadcast to authorized conversation room and participant user channels in ONE unified atomic emit
     const broadcastPayload = { conversationId: convId, rawConversationId: req.params.id, message };
-    io.to(`conv:${convId}`).emit('new_message', broadcastPayload);
+    let broadcaster = io.to(`conv:${convId}`);
     if (req.params.id && req.params.id !== convId) {
-      io.to(`conv:${req.params.id}`).emit('new_message', broadcastPayload);
+      broadcaster = broadcaster.to(`conv:${req.params.id}`);
     }
 
-    // Push to participant user rooms so inboxes and open chats update in real time
     const members = await ChatDAL.getConversationMembers(convId);
     for (const m of members) {
-      io.to(`user:${m.userId}`).emit('new_message', broadcastPayload);
-      if (m.firebaseUid) io.to(`user:${m.firebaseUid}`).emit('new_message', broadcastPayload);
-      if (m.profileId) io.to(`user:${m.profileId}`).emit('new_message', broadcastPayload);
+      broadcaster = broadcaster.to(`user:${m.userId}`);
+      if (m.firebaseUid) broadcaster = broadcaster.to(`user:${m.firebaseUid}`);
+      if (m.profileId) broadcaster = broadcaster.to(`user:${m.profileId}`);
     }
+    broadcaster.emit('new_message', broadcastPayload);
 
     // Asynchronously dispatch in-app notifications for message recipients
     (async () => {

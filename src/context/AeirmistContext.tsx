@@ -1371,8 +1371,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await earnPoints(REWARDS.MESSAGE);
       return msgId;
     } catch (e: any) {
-      logger.warn("Message send non-blocking fallback warning:", e);
-      return conversationId;
+      logger.error("[AeirmistContext] Message send failed:", e);
+      throw e;
     }
   }, [db, profile, user]);
 
