@@ -116,9 +116,13 @@ router.get('/:identifier', async (req, res: Response) => {
       }
     } catch {}
 
+    const sanitized = { ...profile };
+    delete sanitized.email;
+    delete sanitized.firebaseUid;
+
     res.json({
       profile: {
-        ...profile,
+        ...sanitized,
         isOnline,
         lastSeen: isOnline ? Date.now() : lastSeen,
       }

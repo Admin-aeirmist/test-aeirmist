@@ -529,11 +529,8 @@ export class UserDAL {
           privacySettings: profiles.privacySettings,
           createdAt: profiles.createdAt,
           updatedAt: profiles.updatedAt,
-          firebaseUid: users.firebaseUid,
-          email: users.email,
         })
         .from(profiles)
-        .leftJoin(users, eq(profiles.userId, users.id))
         .where(eq(profiles.id, profileId))
         .limit(1);
       return profile || null;
@@ -569,11 +566,8 @@ export class UserDAL {
           privacySettings: profiles.privacySettings,
           createdAt: profiles.createdAt,
           updatedAt: profiles.updatedAt,
-          firebaseUid: users.firebaseUid,
-          email: users.email,
         })
         .from(profiles)
-        .leftJoin(users, eq(profiles.userId, users.id))
         .where(eq(profiles.userId, userId))
         .limit(1);
       return profile || null;
@@ -606,11 +600,8 @@ export class UserDAL {
           privacySettings: profiles.privacySettings,
           createdAt: profiles.createdAt,
           updatedAt: profiles.updatedAt,
-          firebaseUid: users.firebaseUid,
-          email: users.email,
         })
         .from(profiles)
-        .leftJoin(users, eq(profiles.userId, users.id))
         .where(eq(profiles.username, username.toLowerCase().trim()))
         .limit(1);
       return profile || null;
