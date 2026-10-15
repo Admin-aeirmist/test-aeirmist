@@ -15,6 +15,19 @@ if (-not $pgPortOpen) {
     Write-Host "[1/4] Starting PostgreSQL..." -ForegroundColor Yellow
     $pgExe = "D:\Aeirmist\pgsql\pgsql\bin\postgres.exe"
     $pgData = "D:\Aeirmist\pgsql-data"
+    $pidFile = "$pgData\postmaster.pid"
+    if (Test-Path $pidFile) {
+        try {
+            $pidVal = (Get-Content $pidFile -TotalCount 1).Trim()
+            $proc = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
+            if (-not $proc) {
+                Write-Host "Removing stale postmaster.pid (PID $pidVal not running)..." -ForegroundColor Yellow
+                Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+            Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+        }
+    }
     Start-Process -FilePath $pgExe -ArgumentList "-D `"$pgData`"" -WindowStyle Hidden
     Start-Sleep -Seconds 3
 } else {
