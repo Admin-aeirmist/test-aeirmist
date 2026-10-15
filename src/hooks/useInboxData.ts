@@ -8,13 +8,14 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   serverTimestamp,
   Timestamp,
-  limit,
-  onSnapshot
+  limit
 } from 'firebase/firestore';
 import { useAeirmist } from '../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
+import { api } from '../services/api/client';
 
 
 export const useInboxData = (allowedAuthorIds?: string[]) => {
@@ -49,136 +50,136 @@ export const useInboxData = (allowedAuthorIds?: string[]) => {
       return;
     }
 
-    const notesQuery = query(
-      collection(db, 'notes'),
-      where('createdAt', '>', yesterdayTimestamp)
-    );
-
-    const unsubscribeNotes = onSnapshot(notesQuery, async (snapshot) => {
-      // 1. Gather unknown authors
-      const pendingAuthorIds = new Set<string>();
-      snapshot.docs.forEach(dSnap => {
-        const d = dSnap.data();
-        const aId = d.authorId || d.authorUid;
-        if (aId && aId !== profile.id && !authorStatusCache.current.has(aId)) {
-          pendingAuthorIds.add(aId);
-        }
-      });
-
-      if (pendingAuthorIds.size > 0) {
-        await Promise.all(
-          Array.from(pendingAuthorIds).map(async (aId) => {
-            try {
-              const pSnap = await getDoc(doc(db, 'profiles', aId));
-              if (pSnap.exists()) {
-                const pd = pSnap.data();
-                authorStatusCache.current.set(aId, { exists: true, isBanned: Boolean(pd.isBanned || pd.status === 'BANNED' || pd.status === 'DELETED') });
-                return;
-              }
-              const pAltSnap = await getDoc(doc(db, 'profiles', `profile_${aId}`));
-              if (pAltSnap.exists()) {
-                const pd = pAltSnap.data();
-                authorStatusCache.current.set(aId, { exists: true, isBanned: Boolean(pd.isBanned || pd.status === 'BANNED' || pd.status === 'DELETED') });
-                return;
-              }
-              const uSnap = await getDoc(doc(db, 'users', aId));
-              if (uSnap.exists()) {
-                const ud = uSnap.data();
-                authorStatusCache.current.set(aId, { exists: true, isBanned: Boolean(ud.isBanned || ud.status === 'BANNED' || ud.status === 'DELETED') });
-                return;
-              }
-              // Author was deleted from database
-              authorStatusCache.current.set(aId, { exists: false, isBanned: true });
-            } catch (e) {
-              authorStatusCache.current.set(aId, { exists: true, isBanned: false });
+    const fetchInboxData = async () => {
+      try {
+        // 1. Fetch Notes (Try PostgreSQL first, fallback to getDocs)
+        let fetchedNotes: any[] = [];
+        const notesApiRes = await api.notes.getActive().catch(() => null);
+        if (notesApiRes && Array.isArray(notesApiRes.notes) && notesApiRes.notes.length > 0) {
+          fetchedNotes = notesApiRes.notes;
+        } else if (db) {
+          const notesQuery = query(
+            collection(db, 'notes'),
+            where('createdAt', '>', yesterdayTimestamp),
+            limit(30)
+          );
+          const snapshot = await getDocs(notesQuery);
+          // Gather unknown authors
+          const pendingAuthorIds = new Set<string>();
+          snapshot.docs.forEach(dSnap => {
+            const d = dSnap.data();
+            const aId = d.authorId || d.authorUid;
+            if (aId && aId !== profile.id && !authorStatusCache.current.has(aId)) {
+              pendingAuthorIds.add(aId);
             }
-          })
-        );
-      }
+          });
 
-      const fetchedNotes = snapshot.docs
-        .map(docSnap => ({
-          id: docSnap.id,
-          ...docSnap.data()
-        }))
-        .filter((note: any) => {
-          // Check if author is banned or deleted
-          const aId = note.authorId || note.authorUid;
-          if (aId && aId !== profile.id && authorStatusCache.current.has(aId)) {
-            const st = authorStatusCache.current.get(aId)!;
-            if (!st.exists || st.isBanned) {
-              deleteDoc(doc(db, 'notes', note.id)).catch(() => {});
+          if (pendingAuthorIds.size > 0) {
+            await Promise.all(
+              Array.from(pendingAuthorIds).map(async (aId) => {
+                try {
+                  const pSnap = await getDoc(doc(db, 'profiles', aId));
+                  if (pSnap.exists()) {
+                    const pd = pSnap.data();
+                    authorStatusCache.current.set(aId, { exists: true, isBanned: Boolean(pd.isBanned || pd.status === 'BANNED' || pd.status === 'DELETED') });
+                    return;
+                  }
+                  const pAltSnap = await getDoc(doc(db, 'profiles', `profile_${aId}`));
+                  if (pAltSnap.exists()) {
+                    const pd = pAltSnap.data();
+                    authorStatusCache.current.set(aId, { exists: true, isBanned: Boolean(pd.isBanned || pd.status === 'BANNED' || pd.status === 'DELETED') });
+                    return;
+                  }
+                  const uSnap = await getDoc(doc(db, 'users', aId));
+                  if (uSnap.exists()) {
+                    const ud = uSnap.data();
+                    authorStatusCache.current.set(aId, { exists: true, isBanned: Boolean(ud.isBanned || ud.status === 'BANNED' || ud.status === 'DELETED') });
+                    return;
+                  }
+                  authorStatusCache.current.set(aId, { exists: false, isBanned: true });
+                } catch {
+                  authorStatusCache.current.set(aId, { exists: true, isBanned: false });
+                }
+              })
+            );
+          }
+
+          fetchedNotes = snapshot.docs
+            .map(docSnap => ({
+              id: docSnap.id,
+              ...docSnap.data()
+            }))
+            .filter((note: any) => {
+              const aId = note.authorId || note.authorUid;
+              if (aId && aId !== profile.id && authorStatusCache.current.has(aId)) {
+                const st = authorStatusCache.current.get(aId)!;
+                if (!st.exists || st.isBanned) {
+                  deleteDoc(doc(db, 'notes', note.id)).catch(() => {});
+                  return false;
+                }
+              }
+              if (note.isBanned || note.authorIsBanned) {
+                deleteDoc(doc(db, 'notes', note.id)).catch(() => {});
+                return false;
+              }
+              if (profile?.id && (note.hiddenFrom || []).includes(profile.id)) return false;
+              if (note.authorId === profile.id) return true;
+              if (note.audience === 'public') return true;
+              if (note.audience === 'followers' && followingWithMe.includes(note.authorId)) return true;
+              if (note.audience === 'closeFriends') {
+                 return (note.visibleTo || []).includes(profile.id);
+              }
               return false;
-            }
-          }
-          if (note.isBanned || note.authorIsBanned) {
-            deleteDoc(doc(db, 'notes', note.id)).catch(() => {});
-            return false;
-          }
-
-          // Exclude notes explicitly hidden from current user
-          if (profile?.id && (note.hiddenFrom || []).includes(profile.id)) return false;
-
-          // My own note
-          if (note.authorId === profile.id) return true;
-
-          // Public notes are visible to all users (Instagram public notes model)
-          if (note.audience === 'public') return true;
-
-          // Followers only note -> must follow author
-          if (note.audience === 'followers' && followingWithMe.includes(note.authorId)) return true;
-
-          // Close friends note -> must be on visibleTo list
-          if (note.audience === 'closeFriends') {
-             return (note.visibleTo || []).includes(profile.id);
-          }
-          return false;
-        })
-        .sort((a: any, b: any) => {
-          const tA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
-          const tB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
-          return tB - tA;
-        })
-        .slice(0, 20); // Increase limit slightly
-      setNotes(fetchedNotes);
-      setLoading(false);
-    }, (error) => {
-      logger.warn("Notes sync delayed.", error);
-    });
-
-    // 2. Listen to Stories - Efficient sub-query
-    const storiesQuery = query(
-      collection(db, 'stories'),
-      where('createdAt', '>', yesterdayTimestamp)
-    );
-
-    const unsubscribeStories = onSnapshot(storiesQuery, (snapshot) => {
-      const activeSet = new Set<string>();
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        const authorId = data.authorId || data.userId;
-        if (authorId && followingWithMe.includes(authorId)) {
-          // Check story privacy if available
-          const audience = data.audience || 'public';
-          if (authorId === profile.id || audience === 'public' || audience === 'followers') {
-            activeSet.add(authorId);
-          } else if (audience === 'closeFriends') {
-            const visibleTo = data.visibleTo || [];
-            if (visibleTo.includes(profile.id)) {
-              activeSet.add(authorId);
-            }
-          }
+            })
+            .sort((a: any, b: any) => {
+              const tA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+              const tB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+              return tB - tA;
+            })
+            .slice(0, 20);
         }
-      });
-      setActiveStories(activeSet);
-    }, (error) => {
-      logger.warn("Stories status sync delayed.", error);
-    });
+        setNotes(fetchedNotes);
 
-    return () => {
-      unsubscribeNotes();
-      unsubscribeStories();
+        // 2. Fetch Stories
+        const activeSet = new Set<string>();
+        const storiesApiRes = await api.stories.getFeed().catch(() => null);
+        if (storiesApiRes && Array.isArray(storiesApiRes.stories) && storiesApiRes.stories.length > 0) {
+          storiesApiRes.stories.forEach((st: any) => {
+            const aId = st.authorId || st.userId;
+            if (aId) activeSet.add(aId);
+          });
+        } else if (db) {
+          const storiesQuery = query(
+            collection(db, 'stories'),
+            where('createdAt', '>', yesterdayTimestamp),
+            limit(50)
+          );
+          const snap = await getDocs(storiesQuery);
+          snap.docs.forEach(docSnap => {
+            const data = docSnap.data();
+            const authorId = data.authorId || data.userId;
+            if (authorId && followingWithMe.includes(authorId)) {
+              const audience = data.audience || 'public';
+              if (authorId === profile.id || audience === 'public' || audience === 'followers') {
+                activeSet.add(authorId);
+              } else if (audience === 'closeFriends') {
+                const visibleTo = data.visibleTo || [];
+                if (visibleTo.includes(profile.id)) {
+                  activeSet.add(authorId);
+                }
+              }
+            }
+          });
+        }
+        setActiveStories(activeSet);
+      } catch (err) {
+        logger.warn('[useInboxData] Fetch error:', err);
+      } finally {
+        setLoading(false);
+      }
     };
+
+    fetchInboxData();
   }, [db, user?.uid, profile?.id, followingStr, allowedIdsStr]);
 
   const createNote = async (

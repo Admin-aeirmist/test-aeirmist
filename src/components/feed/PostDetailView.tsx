@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Heart, 
@@ -25,7 +25,7 @@ import {
   collection, 
   query, 
   orderBy, 
-  onSnapshot, 
+  getDocs, 
   addDoc, 
   serverTimestamp, 
   deleteDoc 
@@ -176,25 +176,33 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
       });
   }, [postId]);
 
-  // Subscribe to live comments
-  useEffect(() => {
-    if (!db || !postId) return;
-
-    const commentsRef = collection(db, 'posts', postId, 'comments');
-    const q = query(commentsRef, orderBy('createdAt', 'asc'));
-
-    const unsubComments = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      }));
-      setComments(docs);
-    }, (err) => {
-      logger.error('Comments listener error:', err);
-    });
-
-    return () => unsubComments();
+  // Load comments (PostgreSQL API primary, one-time getDocs fallback)
+  const fetchComments = useCallback(async () => {
+    if (!postId) return;
+    try {
+      const res = await api.posts.getComments(postId).catch(() => null);
+      if (res && Array.isArray(res.comments) && res.comments.length > 0) {
+        setComments(res.comments);
+        return;
+      }
+      if (db) {
+        const commentsRef = collection(db, 'posts', postId, 'comments');
+        const q = query(commentsRef, orderBy('createdAt', 'asc'));
+        const snapshot = await getDocs(q);
+        const docs = snapshot.docs.map(docSnap => ({
+          id: docSnap.id,
+          ...docSnap.data()
+        }));
+        setComments(docs);
+      }
+    } catch (err) {
+      logger.error('Comments fetch error:', err);
+    }
   }, [db, postId]);
+
+  useEffect(() => {
+    fetchComments();
+  }, [fetchComments]);
 
   // Parse media items
   const mediaList: MediaItem[] = useMemo(() => {
@@ -377,6 +385,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
       // Also persist to PostgreSQL backend
       api.posts.addComment(post.id, txt, activeParentId || undefined).catch(() => {});
+      fetchComments();
 
       const postRef = doc(db, 'posts', post.id);
       await updateDoc(postRef, {
@@ -439,6 +448,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
     if (!db || !post) return;
     try {
       await deleteDoc(doc(db, 'posts', post.id, 'comments', commentId));
+      fetchComments();
       await updateDoc(doc(db, 'posts', post.id), {
         commentsCount: increment(-1)
       });

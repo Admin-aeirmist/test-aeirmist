@@ -305,6 +305,7 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
     setUsernameError(null);
 
     const timer = setTimeout(async () => {
+      if (username.length < 3) return;
       try {
         const res = await checkUsernameAvailable(username);
         if (res.available) {
@@ -318,7 +319,7 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
         setUsernameStatus('taken');
         setUsernameError(err.message || 'Error checking username');
       }
-    }, 350);
+    }, 600);
 
     return () => clearTimeout(timer);
   }, [username, checkUsernameAvailable, step, profile?.username]);

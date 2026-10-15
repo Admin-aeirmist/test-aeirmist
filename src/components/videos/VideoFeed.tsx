@@ -30,12 +30,13 @@ import { VideoCard } from './VideoCard';
 import { VideoWatchPage } from './VideoWatchPage';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
-import { collection, onSnapshot, query, doc, updateDoc, increment } from 'firebase/firestore';
+import { collection, query, doc, updateDoc, increment, getDocs, limit } from 'firebase/firestore';
 import { AeirmistVideoUploader } from './AeirmistVideoUploader';
 import { AeirmistCreatorStudio } from './AeirmistCreatorStudio';
 import { getAvatarUrl } from '../../lib/avatar';
 import { formatDuration, formatTimeLeft, getPlaybackProgressMap, getWatchHistory, clearWatchHistory, getLocalPlaylists } from '../../utils/videoStorage';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 
 
@@ -84,26 +85,40 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   const [showUploader, setShowUploader] = useState(false);
   const [showStudio, setShowStudio] = useState(false);
 
-  // Listen to Firestore 'videos' collection in real-time
+  // Fetch videos (PostgreSQL API primary, fallback to getDocs)
   useEffect(() => {
-    if (!db) {
-      return;
-    }
-    const q = collection(db, 'videos');
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as Video);
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      if (list.length > 0) {
-        setDbVideos(list);
-        try {
-          localStorage.setItem('aeirmist_cached_videos', JSON.stringify(list.slice(0, 30)));
-        } catch {}
-      }
-    }, (error) => {
-      logger.error('[VideoFeed] Real-time snap error:', error);
-    });
+    let isMounted = true;
+    const fetchVideos = async () => {
+      try {
+        const apiRes = await api.videos.getFeed(30, 0).catch(() => null);
+        if (apiRes && Array.isArray(apiRes.videos) && apiRes.videos.length > 0) {
+          if (!isMounted) return;
+          setDbVideos(apiRes.videos);
+          try {
+            localStorage.setItem('aeirmist_cached_videos', JSON.stringify(apiRes.videos.slice(0, 30)));
+          } catch {}
+          return;
+        }
 
-    return () => unsubscribe();
+        if (db) {
+          const q = query(collection(db, 'videos'), limit(30));
+          const snapshot = await getDocs(q);
+          const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as Video);
+          list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          if (list.length > 0 && isMounted) {
+            setDbVideos(list);
+            try {
+              localStorage.setItem('aeirmist_cached_videos', JSON.stringify(list.slice(0, 30)));
+            } catch {}
+          }
+        }
+      } catch (error) {
+        logger.error('[VideoFeed] Fetch error:', error);
+      }
+    };
+
+    fetchVideos();
+    return () => { isMounted = false; };
   }, [db]);
 
   // Handle deep link loading from props

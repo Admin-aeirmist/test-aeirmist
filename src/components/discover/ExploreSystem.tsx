@@ -469,61 +469,54 @@ export const ExploreSystem: React.FC<{
     if (!db) return;
 
     // 1. Sync Stores
-    const unsubStores = onSnapshot(query(collection(db, 'stores'), limit(50)), (snapshot) => {
+    getDocs(query(collection(db, 'stores'), limit(50))).then((snapshot) => {
       if (!snapshot.empty) {
         setStores(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoreType)));
       } else {
         setStores(SEED_STORES);
       }
       setIsLoading(false);
-    }, (error) => {
+    }).catch((error) => {
       logger.error("ExploreSystem: Stores sync failed", error);
       setStores(SEED_STORES);
       setIsLoading(false);
     });
 
     // 2. Sync Products
-    const unsubProducts = onSnapshot(query(collection(db, 'products'), limit(80)), (snapshot) => {
+    getDocs(query(collection(db, 'products'), limit(80))).then((snapshot) => {
       if (!snapshot.empty) {
         setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
       } else {
         setProducts(SEED_PRODUCTS);
       }
-    }, (error) => {
+    }).catch((error) => {
       logger.error("ExploreSystem: Products sync failed", error);
       setProducts(SEED_PRODUCTS);
     });
 
     // 3. Sync Services
-    const unsubServices = onSnapshot(query(collection(db, 'services'), limit(50)), (snapshot) => {
+    getDocs(query(collection(db, 'services'), limit(50))).then((snapshot) => {
       if (!snapshot.empty) {
         setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service)));
       } else {
         setServices(SEED_SERVICES);
       }
-    }, (error) => {
+    }).catch((error) => {
       logger.error("ExploreSystem: Services sync failed", error);
       setServices(SEED_SERVICES);
     });
 
     // 4. Sync Store Posts
-    const unsubPosts = onSnapshot(query(collection(db, 'store_posts'), limit(60)), (snapshot) => {
+    getDocs(query(collection(db, 'store_posts'), limit(60))).then((snapshot) => {
       if (!snapshot.empty) {
         setStorePosts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StorePost)));
       } else {
         setStorePosts(SEED_STORE_POSTS);
       }
-    }, (error) => {
+    }).catch((error) => {
       logger.error("ExploreSystem: Posts sync failed", error);
       setStorePosts(SEED_STORE_POSTS);
     });
-
-    return () => {
-      unsubStores();
-      unsubProducts();
-      unsubServices();
-      unsubPosts();
-    };
   }, [db]);
 
   // Sync Orders
@@ -549,40 +542,31 @@ export const ExploreSystem: React.FC<{
       setOrderHistory(list);
     };
 
-    let unsubFallback: (() => void) | null = null;
-
-    const unsub = onSnapshot(qPrimary, (snapshot) => {
+    getDocs(qPrimary).then((snapshot) => {
       processDocs(snapshot);
-    }, (err) => {
+    }).catch((err) => {
       logger.warn("Order primary sync warning, attempting fallback query:", err);
-      unsubFallback = onSnapshot(qFallback, (snapshot) => {
+      getDocs(qFallback).then((snapshot) => {
         processDocs(snapshot);
-      }, (fallbackErr) => {
+      }).catch((fallbackErr) => {
         logger.error("Order sync error:", fallbackErr);
       });
     });
-    
-    return () => {
-      unsub();
-      if (unsubFallback) unsubFallback();
-    };
   }, [db, profile?.id]);
 
-  // Sync Bookmarks (Saved list) of user real-time
+  // Sync Bookmarks (Saved list) of user
   useEffect(() => {
     if (!db || !profile) return;
 
-    const unsubSaved = onSnapshot(query(collection(db, 'saved_items'), where('userId', '==', profile.id)), (snapshot) => {
+    getDocs(query(collection(db, 'saved_items'), where('userId', '==', profile.id))).then((snapshot) => {
       const items = snapshot.docs.map(doc => doc.data().itemId as string);
       setSavedItems(items);
-    }, (err) => {
+    }).catch((err) => {
       logger.info(err);
     });
-
-    return () => unsubSaved();
   }, [db, profile?.id]);
 
-  // Sync expanded comments in real-time
+  // Sync expanded comments
   useEffect(() => {
     if (!db || !expandedCommentsPostId) return;
 
@@ -591,7 +575,7 @@ export const ExploreSystem: React.FC<{
       where('postId', '==', expandedCommentsPostId)
     );
 
-    const unsubComm = onSnapshot(q, (snapshot) => {
+    getDocs(q).then((snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       // Sort oldest first client-side
       list.sort((a: any, b: any) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
@@ -599,9 +583,7 @@ export const ExploreSystem: React.FC<{
         ...prev,
         [expandedCommentsPostId]: list
       }));
-    });
-
-    return () => unsubComm();
+    }).catch(() => {});
   }, [db, expandedCommentsPostId]);
 
   // Helper selectors and composite lists

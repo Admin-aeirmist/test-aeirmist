@@ -527,7 +527,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         where('authorId', '==', displayUser.id),
         limit(5)
       );
-      const unsub = onSnapshot(q, (snap) => {
+      getDocs(q).then((snap) => {
         if (!snap.empty) {
           const now = Date.now();
           const validNotes = snap.docs
@@ -544,10 +544,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         } else {
           setUserNote(null);
         }
-      }, (e) => {
-        console.warn("User note fetch listener error", e);
+      }).catch((e) => {
+        console.warn("User note fetch error", e);
       });
-      return () => unsub();
     } catch (err) {
       console.warn("Notes query setup error", err);
     }
@@ -743,7 +742,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       where('userId', 'in', storyCandidateUids),
       limit(20)
     );
-    const unsub = onSnapshot(q, (snap) => {
+    getDocs(q).then((snap) => {
       const yesterday = Date.now() - 24 * 60 * 60 * 1000;
       const activeStories = snap.docs.filter(doc => {
         const data = doc.data();
@@ -767,15 +766,13 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         return viewers.includes(user?.uid);
       });
       setHasUnseenStory(dbHasStory && !allSeen);
-    }, () => {});
+    }).catch(() => {});
 
     // Immediate check for optimistic
     if (isOwn && optimisticStories.length > 0) {
       setHasActiveStory(true);
       setHasUnseenStory(true);
     }
-
-    return () => unsub();
   }, [db, displayUser?.id, optimisticStories, user?.uid]);
 
   const handleHighlightClick = async (highlight: any) => {
@@ -871,7 +868,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       limit(50)
     );
 
-    const unsub = onSnapshot(q, (snap) => {
+    getDocs(q).then((snap) => {
       const fetchedSaved = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       fetchedSaved.sort((a, b) => {
         const getTime = (p: any) => {
@@ -888,11 +885,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       });
       setSavedPosts(fetchedSaved);
       setLoadingSavedPosts(false);
-    }, () => {
+    }).catch(() => {
       setLoadingSavedPosts(false);
     });
-
-    return () => unsub();
   }, [db, displayUser?.id, isOwnProfile, activeTab]);
 
   // Fetch Highlights
@@ -906,7 +901,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       limit(30)
     );
 
-    const unsub = onSnapshot(q, (snap) => {
+    getDocs(q).then((snap) => {
       const allHighlights = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const fetchedHighlights = allHighlights.filter((h: any) => {
         const hasStories = h.stories && h.stories.length > 0;
@@ -928,11 +923,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       });
       setHighlights(fetchedHighlights);
       setLoadingHighlights(false);
-    }, () => {
+    }).catch(() => {
       setLoadingHighlights(false);
     });
-
-    return () => unsub();
   }, [db, displayUser?.id, isOwnProfile]);
 
   const openCameraForAvatar = () => {
@@ -3716,27 +3709,33 @@ const MediaViewer = ({ post, onClose }: { post: any, onClose: () => void }) => {
     }
   }, [post.id]);
 
-  // Sync post stats in real time
+  // Sync post stats
   useEffect(() => {
     if (!db || !post.id || !auth?.currentUser) return;
-    const unsub = onSnapshot(doc(db, 'posts', post.id), (snap) => {
+    getDoc(doc(db, 'posts', post.id)).then((snap) => {
       if (snap.exists()) {
         setLivePost({ id: snap.id, ...snap.data() });
       }
-    }, () => {});
-    return () => unsub();
+    }).catch(() => {});
   }, [db, post.id]);
 
-  // Load live comments
+  // Load comments
   useEffect(() => {
-    if (!db || !post.id || !auth?.currentUser) return;
-    const commentsRef = collection(db, 'posts', post.id, 'comments');
-    const q = query(commentsRef, orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLiveComments(docs);
-    }, () => {});
-    return () => unsub();
+    if (!post.id || !auth?.currentUser) return;
+    api.posts.getComments(post.id).then((res) => {
+      if (res?.comments && Array.isArray(res.comments) && res.comments.length > 0) {
+        setLiveComments(res.comments);
+        return;
+      }
+      if (db) {
+        const commentsRef = collection(db, 'posts', post.id, 'comments');
+        const q = query(commentsRef, orderBy('createdAt', 'asc'));
+        getDocs(q).then((snapshot) => {
+          const docs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+          setLiveComments(docs);
+        }).catch(() => {});
+      }
+    }).catch(() => {});
   }, [db, post.id]);
 
   // Format timestamp safely

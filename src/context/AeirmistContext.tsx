@@ -582,16 +582,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     if (!_db) return;
     const flagsRef = doc(_db, 'system_config', 'feature_flags');
-    const unsub = onSnapshot(flagsRef, (snap) => {
+    getDoc(flagsRef).then(snap => {
       if (snap.exists()) {
         setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS, ...snap.data() });
-      } else {
-        setDoc(flagsRef, DEFAULT_FEATURE_FLAGS, { merge: true }).catch(() => {});
       }
-    }, (err) => {
-      logger.warn("Feature flags snapshot listener warning:", err);
+    }).catch(err => {
+      logger.warn("Feature flags fetch notice:", err);
     });
-    return () => unsub();
   }, []);
 
   const updateFeatureFlag = useCallback(async (key: string, enabled: boolean) => {
@@ -617,7 +614,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     if (!_db) return;
     const brandingRef = doc(_db, 'system_config', 'app_branding');
-    const unsub = onSnapshot(brandingRef, (snap) => {
+    getDoc(brandingRef).then(snap => {
       if (snap.exists()) {
         const data = snap.data() as AppBranding;
         setAppBranding(prev => ({ ...prev, ...data }));
@@ -625,10 +622,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           localStorage.setItem('aeirmist_app_branding', JSON.stringify(data));
         }
       }
-    }, (err) => {
-      logger.warn("App branding snapshot listener warning:", err);
+    }).catch(err => {
+      logger.warn("App branding fetch notice:", err);
     });
-    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -1891,14 +1887,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       limit(100)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    getDocs(q).then((snapshot) => {
       const storyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setStories(storyData);
-    }, (error) => {
-      logger.warn("Global stories uplink busy.", error);
+    }).catch((error) => {
+      logger.warn("Global stories uplink notice.", error);
     });
-
-    return () => unsubscribe();
   }, [db, user?.uid]);
 
   const archivePost = useCallback(async (postId: string, archive: boolean) => {
@@ -2808,9 +2802,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setLoading(false);
         }
 
-        // Keep real-time listener active
+        // Fetch profile without keeping permanent long-polling channel open
         const q = query(collection(db, 'profiles'), where('ownerUid', '==', freshUser.uid));
-        unsubProfile = onSnapshot(q, (snap) => {
+        unsubProfile = () => {};
+        getDocs(q).then((snap) => {
           if (!snap.empty) {
             let rawProfiles = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
             if (freshUser.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || freshUser.uid === 'doViFWfMXcOoas976z6MO216YNg1') {
@@ -3379,45 +3374,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       where('profileIds', 'array-contains', profile.id)
     );
 
-    let isInitialLoad = true;
-
-    const unsubscribe = onSnapshot(q, (snap) => {
-      // Skip the very first batch on startup to avoid old request toasts
-      if (isInitialLoad) {
-        isInitialLoad = false;
-        return;
-      }
-
-      snap.docChanges().forEach(change => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          if (data.status !== 'request') return;
-          if (data.isVaulted?.[profile.id] === true) return;
-          // Only notify if we are NOT the sender
-          if (data.lastMessage?.senderId !== profile.id) {
-            const senderId = data.lastMessage?.senderId;
-            const blocked = senderId ? (profile.social?.blocked || []).includes(senderId) : false;
-            const restricted = senderId ? (profile.social?.restricted || []).includes(senderId) : false;
-
-            if (!blocked && !restricted) {
-              playNotificationSound();
-              const senderDetails = data.participantDetails?.[senderId];
-              addToast({
-                title: 'Request Received',
-                message: `${senderDetails?.displayName || 'Someone'} sent a message request`,
-                type: 'info'
-              });
-            }
-          }
-        }
-      });
-    }, (error: any) => {
-      if (!error?.message?.includes('permission') && !error?.code?.includes('permission')) {
-        logger.warn("Requests sync notice", error?.message || error);
-      }
-    });
-
-    return () => unsubscribe();
+    return () => {};
   }, [db, profile?.id]);
 
   // Clean up any hardcoded/fallback/demo profiles from Firestore on initialization
@@ -3461,52 +3418,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     if (!db || !_auth.currentUser || !profile) return;
     
-    // Listen to all online profiles in real time
-    const q = query(
-      collection(db, 'profiles'),
-      where('status', '==', 'online'),
-      limit(100)
-    );
-
+    // Socket.IO presence handles real-time online status natively via Redis
     const socket = getSocket();
-
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const now = Date.now();
-      const active = new Set<string>();
-      onlineUsersMap.current.clear();
-
-      snap.docs.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.status === 'online') {
-          const lastSeen = extractTimestampMs(data.lastSeen) || extractTimestampMs(data.lastActiveAt);
-          // Threshold: 75s (heartbeat is 30s → 2.5 missed beats = definitely offline)
-          if (lastSeen > 0 && (now - lastSeen < 75000)) {
-            const allDocIds = [
-              docSnap.id,
-              data.userId,
-              data.uid,
-              data.ownerUid,
-              data.profileId,
-              data.username,
-              data.usernameNormalized
-            ].filter(Boolean);
-            allDocIds.forEach((id: string) => {
-              onlineUsersMap.current.set(id, lastSeen);
-              active.add(id);
-            });
-          }
-        }
-      });
-
-      setOnlineUsers(prev => {
-        const merged = new Set([...prev, ...active]);
-        return merged;
-      });
-    }, (error: any) => {
-      if (!error?.code?.includes('permission') && !error?.message?.includes('permission')) {
-        logger.warn('[Online Profiles] Listener notice:', error?.code);
-      }
-    });
+    const unsubscribe = () => {};
 
     const handleUserStatus = (payload: any) => {
       if (!payload) return;
@@ -3683,20 +3597,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     if (!db || !user?.uid || !_auth.currentUser) return;
     
-    // 1. Listen for calls in conversations (Strict limit)
-    const convQ = query(
-      collection(db, 'conversations'), 
-      where('participants', 'array-contains', user.uid),
-      limit(5)
-    );
-
-    const unsubConv = onSnapshot(convQ, () => {}, (err: any) => {
-      if (!err?.message?.includes('permission') && !err?.code?.includes('permission')) {
-        logger.warn("Calls conv sync notice", err?.message || err);
-      }
-    });
-    
-    // 2. Listen for calls (Both Incoming & Outgoing)
+    // Listen for calls (Both Incoming & Outgoing)
     const callsQ = query(
       collection(db, 'calls'),
       where('participants', 'array-contains', user.uid),
@@ -3803,7 +3704,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
 
     return () => {
-      unsubConv();
       unsubCalls();
     };
   }, [db, profile, user?.uid]);

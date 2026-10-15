@@ -761,8 +761,6 @@ export class UserDAL {
         id: users.id,
         userId: users.id,
         profileId: profiles.id,
-        firebaseUid: users.firebaseUid,
-        email: users.email,
         username: profiles.username,
         displayName: profiles.displayName,
         avatarKey: profiles.avatarKey,
@@ -779,7 +777,7 @@ export class UserDAL {
         and(
           eq(users.status, 'ACTIVE'),
           eq(users.isBanned, false),
-          sql`(LOWER(${profiles.username}) LIKE ${searchPattern} OR LOWER(${profiles.displayName}) LIKE ${searchPattern} OR LOWER(${users.email}) LIKE ${searchPattern} OR LOWER(COALESCE(${users.firebaseUid}, '')) LIKE ${searchPattern})`
+          sql`(LOWER(${profiles.username}) LIKE ${searchPattern} OR LOWER(${profiles.displayName}) LIKE ${searchPattern})`
         )
       )
       .limit(limit);
@@ -791,8 +789,6 @@ export class UserDAL {
         id: users.id,
         userId: users.id,
         profileId: profiles.id,
-        firebaseUid: users.firebaseUid,
-        email: users.email,
         username: profiles.username,
         displayName: profiles.displayName,
         avatarKey: profiles.avatarKey,

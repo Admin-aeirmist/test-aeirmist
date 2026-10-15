@@ -35,6 +35,7 @@ import { ModerationWarningModal } from '../common/ModerationWarningModal';
 import { MessengerShare } from './MessengerShare';
 import { PostMusicPlayer, getPostMusicData } from './PostMusicPlayer';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 const InsightsDashboard = React.lazy(() => import('../analytics/InsightsDashboard').then(m => ({ default: m.InsightsDashboard })));
 
@@ -585,6 +586,8 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
       };
 
       await addDoc(commentsRef, newCommentData);
+      api.posts.addComment(post.id, txt, activeParentId).catch(() => {});
+      fetchComments();
 
       const postRef = doc(db, 'posts', post.id);
       await updateDoc(postRef, {
@@ -646,17 +649,32 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     }
   };
 
-  // Auto-load Comments
-  useEffect(() => {
-    if (!db || !post.id || !showComments) return;
-    const commentsRef = collection(db, 'posts', post.id, 'comments');
-    const q = query(commentsRef, orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLiveComments(docs);
-    });
-    return () => unsub();
+  // Load Comments
+  const fetchComments = React.useCallback(async () => {
+    if (!post.id || !showComments) return;
+    try {
+      // 1. Try PostgreSQL backend API
+      const apiRes = await api.posts.getComments(post.id).catch(() => null);
+      if (apiRes && Array.isArray(apiRes.comments) && apiRes.comments.length > 0) {
+        setLiveComments(apiRes.comments);
+        return;
+      }
+      // 2. Fallback to Firestore getDocs (one-time fetch, no live stream)
+      if (db) {
+        const commentsRef = collection(db, 'posts', post.id, 'comments');
+        const q = query(commentsRef, orderBy('createdAt', 'asc'));
+        const snap = await getDocs(q);
+        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setLiveComments(docs);
+      }
+    } catch (err) {
+      logger.warn('[PremiumPostCard] Failed to fetch comments:', err);
+    }
   }, [db, post.id, showComments]);
+
+  useEffect(() => {
+    fetchComments();
+  }, [fetchComments]);
 
   // Submit main comment
   const handleCommentSubmit = async (e?: React.FormEvent, bypassModCheck = false) => {
@@ -702,6 +720,8 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
         parentId: null, // Top-level commentary wave
         createdAt: serverTimestamp()
       });
+      api.posts.addComment(post.id, txt).catch(() => {});
+      fetchComments();
 
       const postRef = doc(db, 'posts', post.id);
       await updateDoc(postRef, {

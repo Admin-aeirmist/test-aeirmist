@@ -27,8 +27,9 @@ import { getAvatarUrl } from '../../lib/avatar';
 import { formatAeirmistTimestamp } from '../../lib/date';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getPlaybackProgressMap, addToWatchHistory, getLocalPlaylists, saveLocalPlaylists } from '../../utils/videoStorage';
-import { collection, query, where, onSnapshot, doc, updateDoc, increment, arrayUnion, arrayRemove, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, increment, arrayUnion, arrayRemove, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 
 interface VideoWatchPageProps {
@@ -106,25 +107,44 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
     }
   }, [profile?.id, video]);
 
-  // Realtime comments listener
-  useEffect(() => {
-    if (!db || !video.id) return;
-    const q = query(
-      collection(db, 'video_comments'),
-      where('videoId', '==', video.id)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as VideoComment);
-      if (commentSort === 'newest') {
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      } else {
-        list.sort((a, b) => (b.likeCount || 0) - (a.likeCount || 0));
+  // Fetch comments (PostgreSQL API primary, fallback to getDocs)
+  const fetchComments = React.useCallback(async () => {
+    if (!video.id) return;
+    try {
+      const apiRes = await api.videos.getComments(video.id).catch(() => null);
+      if (apiRes?.comments && Array.isArray(apiRes.comments) && apiRes.comments.length > 0) {
+        const list = [...apiRes.comments];
+        if (commentSort === 'newest') {
+          list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        } else {
+          list.sort((a, b) => (b.likeCount || 0) - (a.likeCount || 0));
+        }
+        setComments(list);
+        return;
       }
-      setComments(list);
-    }, (err) => logger.error('[VideoWatchPage] Comments error:', err));
 
-    return () => unsubscribe();
+      if (db) {
+        const q = query(
+          collection(db, 'video_comments'),
+          where('videoId', '==', video.id)
+        );
+        const snapshot = await getDocs(q);
+        const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as VideoComment);
+        if (commentSort === 'newest') {
+          list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        } else {
+          list.sort((a, b) => (b.likeCount || 0) - (a.likeCount || 0));
+        }
+        setComments(list);
+      }
+    } catch (err) {
+      logger.error('[VideoWatchPage] Comments error:', err);
+    }
   }, [db, video.id, commentSort]);
+
+  useEffect(() => {
+    fetchComments();
+  }, [fetchComments]);
 
   // Like Toggle
   const handleToggleLike = async () => {
@@ -235,6 +255,8 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
       await updateDoc(doc(db, 'videos', video.id), {
         commentCount: increment(1)
       });
+      api.videos.addComment(video.id, commentInput.trim()).catch(() => {});
+      fetchComments();
 
       setCommentInput('');
       addToast({ title: 'COMMENT POSTED', message: 'Your comment has been added.', type: 'success' });
@@ -251,6 +273,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
     if (!db) return;
     try {
       await deleteDoc(doc(db, 'video_comments', commentId));
+      fetchComments();
       await updateDoc(doc(db, 'videos', video.id), { commentCount: increment(-1) });
     } catch (err) {
       logger.error(err);
