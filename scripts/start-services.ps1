@@ -66,7 +66,7 @@ if (-not $NoTunnel) {
 $apiPortOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet -WarningAction SilentlyContinue)
 if (-not $apiPortOpen) {
     Write-Host "[4/4] Starting Backend Node API (Port 4000)..." -ForegroundColor Yellow
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c cd /d D:\Aeirmist\backend && npm run dev" -WindowStyle Hidden
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c cd /d D:\Aeirmist\backend && npm start" -WindowStyle Hidden
     Start-Sleep -Seconds 5
 } else {
     Write-Host "[4/4] Backend API is already running (Port 4000)." -ForegroundColor Green

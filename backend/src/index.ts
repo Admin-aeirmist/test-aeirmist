@@ -449,19 +449,38 @@ io.on('connection', async (socket) => {
 // -------------------------------------------------------------
 // Serve Frontend SPA Build from dist (Unified Full-Stack Deployment)
 // -------------------------------------------------------------
-const frontendDistPath = path.resolve(process.cwd(), '../dist');
-const altFrontendDistPath = path.resolve(process.cwd(), 'dist');
-const effectiveDistPath = fs.existsSync(frontendDistPath) ? frontendDistPath : (fs.existsSync(altFrontendDistPath) ? altFrontendDistPath : null);
+const candidateDistPaths = [
+  path.resolve(__dirname, '../../dist'),
+  path.resolve(__dirname, '../dist'),
+  path.resolve(process.cwd(), '../dist'),
+  path.resolve(process.cwd(), 'dist'),
+  'D:\\Aeirmist\\dist'
+];
+const effectiveDistPath = candidateDistPaths.find(p => {
+  try {
+    return fs.existsSync(path.join(p, 'index.html'));
+  } catch {
+    return false;
+  }
+});
 
-if (effectiveDistPath && fs.existsSync(path.join(effectiveDistPath, 'index.html'))) {
+if (effectiveDistPath) {
+  const indexHtmlPath = path.join(effectiveDistPath, 'index.html');
   app.use(express.static(effectiveDistPath, { index: false }));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/media') || req.path.startsWith('/health') || req.path.startsWith('/socket.io')) {
+    if (
+      req.path.startsWith('/api') || 
+      req.path.startsWith('/media') || 
+      req.path.startsWith('/health') || 
+      req.path.startsWith('/socket.io')
+    ) {
       return next();
     }
-    res.sendFile(path.join(effectiveDistPath, 'index.html'));
+    res.sendFile(indexHtmlPath);
   });
   console.log(`🌐 [Frontend SPA] Serving client interface from ${effectiveDistPath}`);
+} else {
+  console.warn('⚠️ [Frontend SPA] Could not find dist/index.html in candidate paths!');
 }
 
 // -------------------------------------------------------------
