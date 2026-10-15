@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ShieldAlert, Loader2, Search, UserX } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { doc, getDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
+import { api } from '../../services/api/client';
+import { getAvatarUrl } from '../../lib/avatar';
 
 interface UserInfo {
   uid: string;
@@ -23,7 +25,7 @@ export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, on
   // Load and resolve all blocked users
   useEffect(() => {
     let isMounted = true;
-    if (!db || rawBlockedIds.length === 0) {
+    if (rawBlockedIds.length === 0) {
       setUsers([]);
       setLoading(false);
       return;
@@ -53,7 +55,7 @@ export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, on
             resolvedList.push({
               uid: targetId,
               profileId: inMem.id,
-              photoURL: inMem.photoURL,
+              photoURL: getAvatarUrl(inMem.photoURL || inMem.avatarKey),
               displayName: inMem.displayName || inMem.name || inMem.username || 'Blocked User',
               username: inMem.username,
             });
@@ -61,21 +63,21 @@ export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, on
           continue;
         }
 
-        // 2. Direct Firestore profile doc lookup
+        // 2. PostgreSQL Backend Profile Lookup (accurate real user data!)
         let resolved = false;
         try {
-          const pSnap = await getDoc(doc(db, 'profiles', targetId));
-          if (pSnap.exists()) {
-            const d = pSnap.data();
-            const key = d.username || pSnap.id;
+          const res = await api.users.getProfile(targetId);
+          if (res?.profile) {
+            const p = res.profile;
+            const key = p.username || p.id;
             if (!seenKeys.has(key)) {
               seenKeys.add(key);
               resolvedList.push({
                 uid: targetId,
-                profileId: pSnap.id,
-                photoURL: d.photoURL,
-                displayName: d.displayName || d.name || d.username || 'Blocked User',
-                username: d.username,
+                profileId: p.id,
+                photoURL: getAvatarUrl(p.avatarKey || p.photoURL || p.avatarUrl),
+                displayName: p.displayName || p.name || p.username || 'Blocked User',
+                username: p.username,
               });
             }
             resolved = true;
@@ -84,26 +86,49 @@ export const BlockedSection = ({ onBack, onUserClick }: { onBack: () => void, on
 
         if (resolved) continue;
 
-        // 3. Try with 'profile_' prefix
-        try {
-          const normId = targetId.startsWith('profile_') ? targetId : `profile_${targetId}`;
-          const pSnap = await getDoc(doc(db, 'profiles', normId));
-          if (pSnap.exists()) {
-            const d = pSnap.data();
-            const key = d.username || pSnap.id;
-            if (!seenKeys.has(key)) {
-              seenKeys.add(key);
-              resolvedList.push({
-                uid: targetId,
-                profileId: pSnap.id,
-                photoURL: d.photoURL,
-                displayName: d.displayName || d.name || d.username || 'Blocked User',
-                username: d.username,
-              });
+        // 3. Firestore lookups (if db available)
+        if (db) {
+          try {
+            const pSnap = await getDoc(doc(db, 'profiles', targetId));
+            if (pSnap.exists()) {
+              const d = pSnap.data();
+              const key = d.username || pSnap.id;
+              if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                resolvedList.push({
+                  uid: targetId,
+                  profileId: pSnap.id,
+                  photoURL: getAvatarUrl(d.photoURL || d.avatarKey),
+                  displayName: d.displayName || d.name || d.username || 'Blocked User',
+                  username: d.username,
+                });
+              }
+              resolved = true;
             }
-            resolved = true;
+          } catch {}
+
+          if (!resolved) {
+            try {
+              const normId = targetId.startsWith('profile_') ? targetId : `profile_${targetId}`;
+              const pSnap = await getDoc(doc(db, 'profiles', normId));
+              if (pSnap.exists()) {
+                const d = pSnap.data();
+                const key = d.username || pSnap.id;
+                if (!seenKeys.has(key)) {
+                  seenKeys.add(key);
+                  resolvedList.push({
+                    uid: targetId,
+                    profileId: pSnap.id,
+                    photoURL: getAvatarUrl(d.photoURL || d.avatarKey),
+                    displayName: d.displayName || d.name || d.username || 'Blocked User',
+                    username: d.username,
+                  });
+                }
+                resolved = true;
+              }
+            } catch {}
           }
-        } catch {}
+        }
 
         if (resolved) continue;
 

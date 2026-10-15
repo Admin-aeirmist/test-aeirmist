@@ -133,7 +133,7 @@ export interface StoreChat {
   customerId: string;
   customerName: string;
   customerAvatar: string;
-  lastMessage: string;
+  lastMessage: any;
   lastMessageAt: any;
   chatCategory: 'personal' | 'store' | 'support';
   productContext?: {

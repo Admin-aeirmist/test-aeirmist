@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aeirmist-static-v103';
+const CACHE_NAME = 'aeirmist-static-v106';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ const PRECACHE_ASSETS = [
 
 self.addEventListener('install', (event) => {
   try {
+    self.skipWaiting();
     event.waitUntil(
       caches.open(CACHE_NAME)
         .then((cache) => cache.addAll(PRECACHE_ASSETS))
@@ -39,7 +40,16 @@ self.addEventListener('fetch', (event) => {
   try {
     const url = new URL(event.request.url);
     
-    // Strict network-only check for non-same-origin or Firebase API calls
+    // Strict network-only check for API, media, WebSockets, health endpoints, or Firebase
+    if (
+      url.pathname.startsWith('/api') ||
+      url.pathname.startsWith('/media') ||
+      url.pathname.startsWith('/socket.io') ||
+      url.pathname.startsWith('/health')
+    ) {
+      return; // Network-only: browser native fetch directly to server, never strip headers or cache
+    }
+
     const isFirebase = 
       url.hostname.includes('firestore.googleapis.com') ||
       url.hostname.includes('firebaseinstallations.googleapis.com') ||
@@ -94,6 +104,33 @@ self.addEventListener('fetch', (event) => {
     }
   } catch (error) {
     console.error('Service Worker: error during fetch:', error);
+  }
+});
+
+self.addEventListener('push', (event) => {
+  try {
+    let data = {};
+    if (event.data) {
+      try {
+        data = event.data.json();
+      } catch (e) {
+        data = { body: event.data.text() };
+      }
+    }
+    const title = data.title || data.notification?.title || 'Aeirmist Notification';
+    const options = {
+      body: data.body || data.notification?.body || '',
+      icon: data.icon || data.notification?.icon || '/favicon.png',
+      badge: '/favicon.png',
+      data: {
+        url: data.data?.url || data.actionUrl || data.url || '/',
+        ...(data.data || {})
+      },
+      tag: data.tag || 'aeirmist_push'
+    };
+    event.waitUntil(self.registration.showNotification(title, options));
+  } catch (err) {
+    console.error('Service Worker: error during push handling:', err);
   }
 });
 

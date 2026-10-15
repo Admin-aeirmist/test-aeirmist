@@ -17,6 +17,7 @@ import {
   ChevronLeft, Camera, Image as ImageIcon, Film, Trash2, Edit3 
 } from 'lucide-react';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 interface HighlightManagerModalProps {
   mode: 'create' | 'edit';
@@ -359,6 +360,14 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
           isHighlight: true,
           createdAt: serverTimestamp()
         });
+        // Sync highlight to PostgreSQL server
+        api.stories.createHighlight({
+          title: highlightTitle,
+          coverUrl: finalCoverUrl,
+          storyIds: finalStoryIds
+        }).catch((err) => {
+          logger.warn('[HighlightManagerModal] Backend highlight sync notice:', err);
+        });
         addToast?.({ title: "Highlight Published", message: `"${highlightTitle}" added to your profile highlights.`, type: "success" });
       } else {
         if (!existingHighlight?.id) throw new Error("Missing highlight ID");
@@ -388,6 +397,9 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
     setIsDeleting(true);
     try {
       await deleteDoc(doc(db, 'highlights', existingHighlight.id));
+      api.stories.deleteHighlight(existingHighlight.id).catch((err) => {
+        logger.warn('[HighlightManagerModal] Backend highlight delete notice:', err);
+      });
       addToast?.({ title: "Highlight Deleted", message: "Highlight removed from profile.", type: "success" });
       onSaved();
       onClose();
@@ -572,7 +584,7 @@ export const HighlightManagerModal: React.FC<HighlightManagerModalProps> = ({
                         return (
                           <div 
                             key={story.id}
-                            onClick={() => toggleStory(story.id)}
+                            onClick={() => toggleSelection(story.id)}
                             className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer border transition-all group select-none ${
                               isSelected ? 'border-[#0095F6] ring-2 ring-[#0095F6]' : 'border-white/10 hover:border-white/30'
                             }`}

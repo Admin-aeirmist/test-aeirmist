@@ -44,8 +44,7 @@ import {
   updateDoc 
 } from 'firebase/firestore';
 import { formatAeirmistTimestamp } from '../../../lib/date';
-import { storage } from '../../../lib/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { api } from '../../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 
@@ -291,21 +290,35 @@ export const SupportSettings: React.FC = () => {
     try {
       const referenceId = `SUP-2026-${Math.floor(100000 + Math.random() * 900000)}`;
 
-      // Upload attachments to Firebase Storage
+      // Upload attachments to Aeirmist Server
       const uploadedAttachments: { url: string; name: string; contentType: string; size: number; uploadedAt: string }[] = [];
-      if (selectedFiles.length > 0 && storage) {
+      if (selectedFiles.length > 0) {
         for (const file of selectedFiles) {
-          const safeName = generateSafeFilename(file.name);
-          const fileRef = ref(storage, `supportReports/${user.uid}/${referenceId}/${safeName}`);
-          await uploadBytes(fileRef, file, { contentType: file.type || 'image/png' });
-          const downloadUrl = await getDownloadURL(fileRef);
-          uploadedAttachments.push({
-            url: downloadUrl,
-            name: file.name,
-            contentType: file.type || 'image/png',
-            size: file.size,
-            uploadedAt: new Date().toISOString()
-          });
+          try {
+            const uploaded = await api.media.upload(file, 'supportReports');
+            const downloadUrl = uploaded.url || `/media/${uploaded.key}`;
+            uploadedAttachments.push({
+              url: downloadUrl,
+              name: file.name,
+              contentType: file.type || 'image/png',
+              size: file.size,
+              uploadedAt: new Date().toISOString()
+            });
+          } catch (uploadErr) {
+            logger.warn('[SupportSettings] Native upload failed, falling back to data URL:', uploadErr);
+            const reader = new FileReader();
+            const dataUrl = await new Promise<string>((resolve) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(file);
+            });
+            uploadedAttachments.push({
+              url: dataUrl,
+              name: file.name,
+              contentType: file.type || 'image/png',
+              size: file.size,
+              uploadedAt: new Date().toISOString()
+            });
+          }
         }
       }
 

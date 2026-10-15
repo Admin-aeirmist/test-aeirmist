@@ -162,6 +162,23 @@ class PermissionServiceClass {
     return promise;
   }
 
+  public async reverseGeocode(lat: number, lng: number): Promise<string> {
+    try {
+      const res = await fetch(
+        `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`,
+        { signal: AbortSignal.timeout(3500) }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const city = data.city || data.locality || data.principalSubdivision || '';
+        const country = data.countryName || '';
+        if (city && country) return `${city}, ${country}`;
+        if (country) return country;
+      }
+    } catch {}
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  }
+
   /**
    * Captures precise current location with high-accuracy GPS hardware where supported.
    * If GPS is disabled, denied, or unavailable:
@@ -249,6 +266,7 @@ class PermissionServiceClass {
         const lat = Number(position.coords.latitude.toFixed(5));
         const lng = Number(position.coords.longitude.toFixed(5));
         const accuracy = position.coords.accuracy ? Math.round(position.coords.accuracy) : undefined;
+        const displayLocation = await this.reverseGeocode(lat, lng);
 
         return {
           latitude: lat,
@@ -260,7 +278,7 @@ class PermissionServiceClass {
           timestamp: position.timestamp || now,
           isPrecise: true,
           locationType: 'precise_gps',
-          displayLocation: `${lat}, ${lng}`
+          displayLocation,
         };
       } catch (err: any) {
         logger.info('[PermissionService] High accuracy GPS unavailable, trying standard fix:', err?.message || err);
@@ -278,6 +296,7 @@ class PermissionServiceClass {
 
             const lat = Number(fallbackPos.coords.latitude.toFixed(5));
             const lng = Number(fallbackPos.coords.longitude.toFixed(5));
+            const displayLocation = await this.reverseGeocode(lat, lng);
             return {
               latitude: lat,
               longitude: lng,
@@ -285,7 +304,7 @@ class PermissionServiceClass {
               timestamp: fallbackPos.timestamp || now,
               isPrecise: false,
               locationType: 'approximate_network',
-              displayLocation: `${lat}, ${lng}`
+              displayLocation,
             };
           } catch (e2: any) {
             if (e2?.code === 1) {
@@ -570,7 +589,13 @@ class PermissionServiceClass {
     if (this.isNative()) {
       await nativeOpenSettings();
     } else if (typeof window !== 'undefined') {
-      alert('Please manage site permissions in your browser address bar (lock/settings icon).');
+      window.dispatchEvent(new CustomEvent('aeirmist_toast', {
+        detail: {
+          title: 'PERMISSIONS',
+          message: 'Please manage site permissions in your browser address bar (lock/settings icon).',
+          type: 'info'
+        }
+      }));
     }
   }
 }

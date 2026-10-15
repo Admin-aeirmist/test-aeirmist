@@ -127,7 +127,14 @@ export class PostDAL {
       .from(posts)
       .innerJoin(users, eq(posts.userId, users.id))
       .innerJoin(profiles, eq(users.id, profiles.userId))
-      .where(and(isNull(posts.deletedAt), visibilityCondition))
+      .where(and(
+        isNull(posts.deletedAt),
+        isNull(users.deletedAt),
+        eq(posts.isArchived, false),
+        sql`LOWER(COALESCE(${profiles.displayName}, '')) != 'aeirmist user'`,
+        sql`LOWER(COALESCE(${profiles.username}, '')) NOT LIKE 'aeirmistuser%'`,
+        visibilityCondition
+      ))
       .orderBy(desc(posts.createdAt))
       .limit(limit)
       .offset(offset);
@@ -171,10 +178,12 @@ export class PostDAL {
 
   static async getUserPosts(targetUserId: string, viewerId?: string, limit: number = 50, offset: number = 0) {
     let visibilityCondition = eq(posts.visibility, 'public');
+    let archiveCondition = eq(posts.isArchived, false);
 
     if (viewerId) {
       if (viewerId === targetUserId) {
         visibilityCondition = sql`TRUE` as any;
+        archiveCondition = sql`TRUE` as any; // Author can view their own archived posts
       } else {
         visibilityCondition = sql`(${posts.visibility} = 'public' OR (${posts.visibility} = 'followers' AND EXISTS (
           SELECT 1 FROM follows WHERE follower_id = ${viewerId} AND following_id = ${targetUserId}
@@ -197,7 +206,7 @@ export class PostDAL {
       .from(posts)
       .innerJoin(users, eq(posts.userId, users.id))
       .innerJoin(profiles, eq(users.id, profiles.userId))
-      .where(and(eq(posts.userId, targetUserId), isNull(posts.deletedAt), visibilityCondition))
+      .where(and(eq(posts.userId, targetUserId), isNull(posts.deletedAt), archiveCondition, visibilityCondition))
       .orderBy(desc(posts.createdAt))
       .limit(limit)
       .offset(offset);
@@ -310,5 +319,25 @@ export class PostDAL {
     await db.update(posts).set({ pollData: poll }).where(eq(posts.id, postId));
 
     return { success: true, pollData: poll };
+  }
+
+  static async toggleArchive(postId: string, userId: string, archive: boolean) {
+    // Verify ownership first
+    const [post] = await db
+      .select({ id: posts.id, userId: posts.userId })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
+
+    if (!post) return null;
+    if (post.userId !== userId) return null;
+
+    const [updated] = await db
+      .update(posts)
+      .set({ isArchived: archive, updatedAt: new Date() })
+      .where(eq(posts.id, postId))
+      .returning({ id: posts.id, isArchived: posts.isArchived });
+
+    return updated || null;
   }
 }

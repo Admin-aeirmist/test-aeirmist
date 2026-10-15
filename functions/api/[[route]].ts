@@ -22,7 +22,7 @@ const usersMap = new Map<string, any>();
 const tokensMap = new Map<string, any>();
 
 // Seed default authentic administrators & system core accounts
-const defaultAdminUser = {
+const defaultAdminUser: any = {
   id: "usr_admin_aeirmist",
   uid: "usr_admin_aeirmist",
   email: "admin.aeirmist@gmail.com",
@@ -32,6 +32,7 @@ const defaultAdminUser = {
   isAdmin: true,
   isVerified: true,
   createdAt: "2026-01-01T00:00:00.000Z",
+  lastLoginAt: "2026-01-01T00:00:00.000Z",
   location: "Dhaka, Bangladesh",
   createdLocation: "Dhaka, Bangladesh",
   signupLocation: "Dhaka, Bangladesh",
@@ -64,6 +65,7 @@ const defaultAdminUser = {
     onboardingStep: 5,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    lastLoginAt: "2026-01-01T00:00:00.000Z",
     location: "Dhaka, Bangladesh",
     createdLocation: "Dhaka, Bangladesh",
     signupLocation: "Dhaka, Bangladesh",
@@ -74,7 +76,7 @@ const defaultAdminUser = {
   }
 };
 
-const defaultJunaedUser = {
+const defaultJunaedUser: any = {
   id: "doViFWfMXcOoas976z6MO216YNg1",
   uid: "doViFWfMXcOoas976z6MO216YNg1",
   email: "junaedislamjim180@gmail.com",
@@ -84,6 +86,7 @@ const defaultJunaedUser = {
   isAdmin: true,
   isVerified: true,
   createdAt: "2026-01-15T10:30:00.000Z",
+  lastLoginAt: "2026-01-15T10:30:00.000Z",
   location: "Dhaka, Bangladesh",
   createdLocation: "Dhaka, Bangladesh",
   signupLocation: "Dhaka, Bangladesh",
@@ -116,6 +119,7 @@ const defaultJunaedUser = {
     onboardingStep: 5,
     createdAt: "2026-01-15T10:30:00.000Z",
     updatedAt: "2026-01-15T10:30:00.000Z",
+    lastLoginAt: "2026-01-15T10:30:00.000Z",
     location: "Dhaka, Bangladesh",
     createdLocation: "Dhaka, Bangladesh",
     signupLocation: "Dhaka, Bangladesh",

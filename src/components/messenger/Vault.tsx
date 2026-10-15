@@ -49,6 +49,7 @@ import { PrivacyFolderLayout } from './vault/PrivacyFolderLayout';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { logger } from '@/src/utils/logger';
 import { auth } from '../../lib/firebase';
+import { api } from '../../services/api/client';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { checkDeviceBiometrics, authenticateWithBiometrics } from '../../lib/nativeBiometrics';
 
@@ -209,8 +210,27 @@ export const Vault: React.FC<VaultProps> = ({
   onHome
 }) => {
   const { user, addToast, uploadMedia } = useAeirmist();
-  const [loading, setLoading] = useState(true);
-  const [vaultConfigured, setVaultConfigured] = useState(false);
+  const [loading, setLoading] = useState(() => {
+    if (typeof window !== 'undefined' && profile?.id) {
+      try {
+        const localSaved = localStorage.getItem(`aeirmist_vault_config_${profile.id}`);
+        if (localSaved) return false;
+      } catch {}
+    }
+    return !profile?.vaultConfigured;
+  });
+  const [vaultConfigured, setVaultConfigured] = useState(() => {
+    if (typeof window !== 'undefined' && profile?.id) {
+      try {
+        const localSaved = localStorage.getItem(`aeirmist_vault_config_${profile.id}`);
+        if (localSaved) {
+          const parsed = JSON.parse(localSaved);
+          if (parsed?.passcodeHash) return true;
+        }
+      } catch {}
+    }
+    return Boolean(profile?.vaultConfigured);
+  });
   const [view, setView] = useState<
     | 'welcome' 
     | 'setup_passcode' 
@@ -230,7 +250,20 @@ export const Vault: React.FC<VaultProps> = ({
     | 'add_chat'
     | 'privacy_folder'
     | 'private_chats'
-  >('welcome');
+  >(() => {
+    if (typeof window !== 'undefined' && profile?.id) {
+      try {
+        const localSaved = localStorage.getItem(`aeirmist_vault_config_${profile.id}`);
+        if (localSaved) {
+          const parsed = JSON.parse(localSaved);
+          if (parsed?.passcodeHash || profile?.vaultConfigured) {
+            return isUnlocked ? 'home' : 'login';
+          }
+        }
+      } catch {}
+    }
+    return profile?.vaultConfigured ? (isUnlocked ? 'home' : 'login') : 'welcome';
+  });
 
   useEffect(() => {
     if (view === 'home' && onHome) {
@@ -305,22 +338,80 @@ export const Vault: React.FC<VaultProps> = ({
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
-  // Load configuration on mount or auth change
+  // Load configuration on mount or auth change (Dual-Engine: PostgreSQL + Local Device + Firestore Fallback)
   useEffect(() => {
     const loadVaultConfig = async () => {
-      if (!db || !profile?.id) return;
+      if (!profile?.id) return;
       try {
-        const docRef = doc(db, 'profiles', profile.id, 'vault', 'config');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists() || profile.vaultConfigured === true) {
-          const data = docSnap.data() || {};
-          setPasscodeHash(data.passcodeHash || '');
-          setSelectedQuestions(data.questionIds || [0, 1, 2]);
-          setRecoveryAnswersHashes(data.answersHashes || []);
-          setAutoLockDuration(data.autoLockDuration || '300');
-          setBiometricEnabled(!!data.biometricEnabled);
-          setSilentNotifications(!!data.silentNotifications);
+        let loadedData: any = null;
+
+        // 1. Instant Fast Path: Device Local Encrypted Storage (0ms)
+        if (typeof window !== 'undefined') {
+          try {
+            const localSaved = localStorage.getItem(`aeirmist_vault_config_${profile.id}`);
+            if (localSaved) {
+              loadedData = JSON.parse(localSaved);
+              if (loadedData?.passcodeHash || profile.vaultConfigured === true) {
+                setPasscodeHash(loadedData.passcodeHash || '');
+                if (loadedData.passcodeType) setPasscodeType(loadedData.passcodeType);
+                setSelectedQuestions(loadedData.questionIds || [0, 1, 2]);
+                setRecoveryAnswersHashes(loadedData.answersHashes || []);
+                setAutoLockDuration(loadedData.autoLockDuration || '300');
+                setBiometricEnabled(!!loadedData.biometricEnabled);
+                setSilentNotifications(!!loadedData.silentNotifications);
+                setVaultConfigured(true);
+                setView(isUnlocked ? 'home' : 'login');
+                setLoading(false);
+              }
+            }
+          } catch {}
+        }
+
+        // 2. Authoritative PostgreSQL Universal Backend (Silent background sync)
+        try {
+          const res = await api.vault.getConfig();
+          if (res?.config?.passcodeHash) {
+            loadedData = {
+              passcodeHash: res.config.passcodeHash,
+              passcodeType: res.config.passcodeType || 'pin6',
+              questionIds: res.config.questionIds || [0, 1, 2],
+              answersHashes: res.config.answersHashes || [],
+              autoLockDuration: res.config.autoLockDuration || '300',
+              biometricEnabled: !!res.config.biometricEnabled,
+              silentNotifications: !!res.config.silentNotifications,
+            };
+          }
+        } catch (apiErr) {
+          logger.warn('[Vault] Backend config fetch fallback to Firestore/Local:', apiErr);
+        }
+
+        // 3. Fallback to Firestore if needed
+        if (!loadedData && db) {
+          try {
+            const docRef = doc(db, 'profiles', profile.id, 'vault', 'config');
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              loadedData = docSnap.data();
+            }
+          } catch (fsErr) {
+            logger.warn('[Vault] Firestore config fetch fallback:', fsErr);
+          }
+        }
+
+        if (loadedData?.passcodeHash || profile.vaultConfigured === true) {
+          setPasscodeHash(loadedData.passcodeHash || '');
+          if (loadedData.passcodeType) setPasscodeType(loadedData.passcodeType);
+          setSelectedQuestions(loadedData.questionIds || [0, 1, 2]);
+          setRecoveryAnswersHashes(loadedData.answersHashes || []);
+          setAutoLockDuration(loadedData.autoLockDuration || '300');
+          setBiometricEnabled(!!loadedData.biometricEnabled);
+          setSilentNotifications(!!loadedData.silentNotifications);
           setVaultConfigured(true);
+
+          // Save copy to local device for instant offline access
+          try {
+            localStorage.setItem(`aeirmist_vault_config_${profile.id}`, JSON.stringify(loadedData));
+          } catch {}
           
           if (isUnlocked) {
             setView('home');
@@ -331,7 +422,10 @@ export const Vault: React.FC<VaultProps> = ({
           setVaultConfigured(false);
           setView('welcome');
         }
-      } catch (err: any) { logger.error("Failed to load secure Hidden Chats Settings:", err); addToast({ title: "Failed", message: "Failed to load Vault settings", type: "warning" }); } finally {
+      } catch (err: any) { 
+        logger.error("Failed to load secure Hidden Chats Settings:", err); 
+        addToast({ title: "Failed", message: "Failed to load Vault settings", type: "warning" }); 
+      } finally {
         setLoading(false);
       }
     };
@@ -481,9 +575,7 @@ export const Vault: React.FC<VaultProps> = ({
       const hashedAns3 = await hashString(recoveryAnswers[2], '_aurareCOVERY_salt');
       const ansHashes = [hashedAns1, hashedAns2, hashedAns3];
 
-      // Save inside vault/config subcollection of profiles
-      const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
-      await setDoc(configRef, {
+      const configData = {
         passcodeType,
         passcodeHash: hashedPasscode,
         questionIds: selectedQuestions,
@@ -492,13 +584,44 @@ export const Vault: React.FC<VaultProps> = ({
         autoLockDuration,
         silentNotifications,
         createdAt: new Date().toISOString()
-      });
+      };
 
-      // Update parent profile document for quick queries
-      const profileRef = doc(db, 'profiles', profile.id);
-      await updateDoc(profileRef, {
-        vaultConfigured: true
-      });
+      // 1. Sync with PostgreSQL Backend Universal Database
+      try {
+        await api.vault.saveConfig({
+          passcodeType,
+          passcodeHash: hashedPasscode,
+          questionIds: selectedQuestions,
+          answersHashes: ansHashes,
+          biometricEnabled,
+          autoLockDuration,
+          silentNotifications,
+        });
+      } catch (apiErr) {
+        logger.warn('[Vault] PostgreSQL config save failed:', apiErr);
+      }
+
+      // 2. Sync with Device Encrypted Local Storage
+      if (typeof window !== 'undefined' && profile?.id) {
+        try {
+          localStorage.setItem(`aeirmist_vault_config_${profile.id}`, JSON.stringify(configData));
+        } catch {}
+      }
+
+      // 3. Fallback / Sync inside Firestore vault/config
+      if (db && profile?.id) {
+        try {
+          const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
+          await setDoc(configRef, configData);
+
+          const profileRef = doc(db, 'profiles', profile.id);
+          await updateDoc(profileRef, {
+            vaultConfigured: true
+          });
+        } catch (fsErr) {
+          logger.warn('[Vault] Firestore save fallback:', fsErr);
+        }
+      }
 
       setPasscodeHash(hashedPasscode);
       setRecoveryAnswersHashes(ansHashes);
@@ -677,6 +800,28 @@ export const Vault: React.FC<VaultProps> = ({
 
       setPasscodeHash(hashedPasscode);
       setView('forgot_reset_success');
+
+      // Sync updated passcode to PostgreSQL & Local Device
+      try {
+        await api.vault.saveConfig({
+          passcodeType,
+          passcodeHash: hashedPasscode,
+          questionIds: selectedQuestions,
+          answersHashes: recoveryAnswersHashes,
+          biometricEnabled,
+          autoLockDuration,
+          silentNotifications,
+        });
+      } catch (e) {
+        logger.warn('[Vault] Backend reset passcode save:', e);
+      }
+      if (typeof window !== 'undefined' && profile?.id) {
+        try {
+          const raw = localStorage.getItem(`aeirmist_vault_config_${profile.id}`);
+          const parsed = raw ? JSON.parse(raw) : {};
+          localStorage.setItem(`aeirmist_vault_config_${profile.id}`, JSON.stringify({ ...parsed, passcodeHash: hashedPasscode, passcodeType }));
+        } catch {}
+      }
     } catch (e) {
       logger.error(e);
       setErrorText("Failed to rewrite passcode database keys.");
@@ -688,10 +833,37 @@ export const Vault: React.FC<VaultProps> = ({
   // Theme & Media State
   const [privacyMedia, setPrivacyMedia] = useState<any[]>([]);
 
-  // Load Vault Media from Firestore
+  // Load Vault Media from Firestore & PostgreSQL
   useEffect(() => {
-    if (!db || !profile?.id || !isUnlocked) return;
+    if (!profile?.id || !isUnlocked) return;
     
+    // Fetch from PostgreSQL Universal Backend
+    const fetchBackendMedia = async () => {
+      try {
+        const res = await api.vault.getItems();
+        if (res?.items && res.items.length > 0) {
+          const pgItems = res.items.map((item: any) => ({
+            id: item.id,
+            url: item.mediaUrl || item.content,
+            name: item.title || 'Vault Asset',
+            type: item.type === 'video' ? 'video' : 'image',
+            createdAt: item.createdAt,
+            isFavorite: false,
+            source: 'postgres',
+          }));
+          setPrivacyMedia(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newItems = pgItems.filter((p: any) => !existingIds.has(p.id));
+            return [...prev, ...newItems];
+          });
+        }
+      } catch (err) {
+        logger.warn('[Vault] Backend items fetch fallback:', err);
+      }
+    };
+    fetchBackendMedia();
+
+    if (!db) return;
     const userKeys = Array.from(new Set([
       profile.id, 
       profile.uid, 
@@ -708,7 +880,12 @@ export const Vault: React.FC<VaultProps> = ({
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const media = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setPrivacyMedia(media);
+      setPrivacyMedia(prev => {
+        // Merge without duplicates
+        const fsIds = new Set(media.map(m => m.id));
+        const nonFsItems = prev.filter(p => !fsIds.has(p.id) && p.source === 'postgres');
+        return [...media, ...nonFsItems];
+      });
     }, (err) => {
       logger.warn('[Vault] vault_media subscription fallback:', err);
     });
@@ -718,7 +895,7 @@ export const Vault: React.FC<VaultProps> = ({
 
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files || files.length === 0 || !db || !profile?.id) return;
+    if (!files || files.length === 0 || !profile?.id) return;
 
     const currentAuthUid = auth?.currentUser?.uid || user?.uid || profile?.ownerUid || profile?.uid || profile.id;
     for (let i = 0; i < files.length; i++) {
@@ -742,17 +919,39 @@ export const Vault: React.FC<VaultProps> = ({
           });
         }
 
-        await addDoc(collection(db, 'vault_media'), {
-          userId: currentAuthUid,
-          ownerUid: currentAuthUid,
-          profileId: profile.id,
-          url: mediaUrl,
-          type: file.type.startsWith('video') ? 'video' : 'image',
-          name: file.name,
-          createdAt: serverTimestamp(),
-          isFavorite: false,
-          folderId: null
-        });
+        const isVideo = file.type.startsWith('video');
+
+        // 1. Save to PostgreSQL Universal Database
+        try {
+          await api.vault.addItem({
+            type: isVideo ? 'video' : 'photo',
+            title: file.name,
+            mediaUrl,
+            folder: 'General',
+            isEncrypted: true,
+          });
+        } catch (pgErr) {
+          logger.warn('[Vault] PostgreSQL item upload sync failed:', pgErr);
+        }
+
+        // 2. Save to Firestore for real-time listener compatibility
+        if (db) {
+          try {
+            await addDoc(collection(db, 'vault_media'), {
+              userId: currentAuthUid,
+              ownerUid: currentAuthUid,
+              profileId: profile.id,
+              url: mediaUrl,
+              type: isVideo ? 'video' : 'image',
+              name: file.name,
+              createdAt: serverTimestamp(),
+              isFavorite: false,
+              folderId: null
+            });
+          } catch (fsErr) {
+            logger.warn('[Vault] Firestore addDoc fallback:', fsErr);
+          }
+        }
 
         addToast({
           title: "Vault Storage Updated",
@@ -775,15 +974,29 @@ export const Vault: React.FC<VaultProps> = ({
   };
 
   const handleVaultDelete = async (id: string) => {
-    if (!db) return;
     try {
-      await deleteDoc(doc(db, 'vault_media', id));
+      // 1. Try deleting from PostgreSQL backend
+      try {
+        await api.vault.deleteItem(id);
+      } catch {}
+
+      // 2. Try deleting from Firestore
+      if (db) {
+        try {
+          await deleteDoc(doc(db, 'vault_media', id));
+        } catch {}
+      }
+
+      setPrivacyMedia(prev => prev.filter(m => m.id !== id));
       addToast({ title: "Deleted", message: "Item removed from Vault.", type: "info" });
-    } catch (e: any) { logger.error("Delete failed:", e); addToast({ title: "Failed", message: "Failed to delete vault item", type: "warning" }); }
+    } catch (e: any) { 
+      logger.error("Delete failed:", e); 
+      addToast({ title: "Failed", message: "Failed to delete vault item", type: "warning" }); 
+    }
   };
 
   const handleRestoreMedia = async (id: string) => {
-    if (!db || !profile?.id) return;
+    if (!profile?.id) return;
     const item = privacyMedia.find(m => m.id === id);
     if (!item) return;
 
@@ -791,30 +1004,32 @@ export const Vault: React.FC<VaultProps> = ({
       const restoredContent = item.content || (item.name ? `Restored from Vault: ${item.name}` : 'Restored Post');
       const hasMediaUrl = !!item.url;
 
-      await addDoc(collection(db, 'posts'), {
-        userId: user?.uid || profile.id,
-        authorUid: user?.uid || profile.id,
-        authorId: profile.id,
-        userDisplayName: profile.displayName || profile.username,
-        userPhoto: profile.photoURL || '',
-        userRank: profile.aeirmistRank || 'IRON',
-        content: restoredContent,
-        media: hasMediaUrl ? [{
-          url: item.url,
-          type: item.type || 'image'
-        }] : [],
-        mediaUrls: hasMediaUrl ? [item.url] : [],
-        mediaType: hasMediaUrl ? (item.type || 'image') : 'text',
-        type: 'post',
-        createdAt: serverTimestamp(),
-        likes: 0,
-        comments: 0,
-        shares: 0,
-        isPrivate: true
-      });
+      if (db) {
+        await addDoc(collection(db, 'posts'), {
+          userId: user?.uid || profile.id,
+          authorUid: user?.uid || profile.id,
+          authorId: profile.id,
+          userDisplayName: profile.displayName || profile.username,
+          userPhoto: profile.photoURL || '',
+          userRank: profile.aeirmistRank || 'IRON',
+          content: restoredContent,
+          media: hasMediaUrl ? [{
+            url: item.url,
+            type: item.type || 'image'
+          }] : [],
+          mediaUrls: hasMediaUrl ? [item.url] : [],
+          mediaType: hasMediaUrl ? (item.type || 'image') : 'text',
+          type: 'post',
+          createdAt: serverTimestamp(),
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          isPrivate: true
+        });
+      }
 
       // Remove from vault
-      await deleteDoc(doc(db, 'vault_media', id));
+      await handleVaultDelete(id);
       addToast({ title: 'Restored', message: 'Item moved to your private posts.', type: 'success' });
     } catch (e: any) { 
       logger.error("Restore failed:", e); 
@@ -823,13 +1038,15 @@ export const Vault: React.FC<VaultProps> = ({
   };
 
   const handleVaultFavorite = async (id: string) => {
-    if (!db) return;
     const item = privacyMedia.find(m => m.id === id);
     if (!item) return;
     try {
-      await updateDoc(doc(db, 'vault_media', id), {
-        isFavorite: !item.isFavorite
-      });
+      if (db) {
+        await updateDoc(doc(db, 'vault_media', id), {
+          isFavorite: !item.isFavorite
+        });
+      }
+      setPrivacyMedia(prev => prev.map(m => m.id === id ? { ...m, isFavorite: !m.isFavorite } : m));
     } catch (e: any) { logger.error("Favorite failed:", e); addToast({ title: "Failed", message: "Failed to favorite", type: "warning" }); }
   };
 
@@ -838,12 +1055,41 @@ export const Vault: React.FC<VaultProps> = ({
     setErrorText('');
     setSuccessText('');
     try {
-      const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
-      await updateDoc(configRef, {
-        autoLockDuration,
-        silentNotifications,
-        biometricEnabled
-      });
+      // 1. Sync PostgreSQL settings
+      try {
+        await api.vault.updateSettings({
+          autoLockDuration,
+          silentNotifications,
+          biometricEnabled
+        });
+      } catch (pgErr) {
+        logger.warn('[Vault] PostgreSQL updateSettings fallback:', pgErr);
+      }
+
+      // 2. Sync Device Local Storage
+      if (typeof window !== 'undefined' && profile?.id) {
+        try {
+          const raw = localStorage.getItem(`aeirmist_vault_config_${profile.id}`);
+          const parsed = raw ? JSON.parse(raw) : {};
+          localStorage.setItem(`aeirmist_vault_config_${profile.id}`, JSON.stringify({
+            ...parsed,
+            autoLockDuration,
+            silentNotifications,
+            biometricEnabled
+          }));
+        } catch {}
+      }
+
+      // 3. Fallback Firestore update
+      if (db && profile?.id) {
+        const configRef = doc(db, 'profiles', profile.id, 'vault', 'config');
+        await updateDoc(configRef, {
+          autoLockDuration,
+          silentNotifications,
+          biometricEnabled
+        });
+      }
+
       setSuccessText("Security profile saved.");
       setTimeout(() => setSuccessText(''), 3000);
     } catch (err) {

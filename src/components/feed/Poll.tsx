@@ -25,10 +25,25 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
 
   if (!poll || !poll.options) return null;
 
-  const totalVotes = Object.values(poll.votes || {}).reduce(
-    (acc, userIds) => acc + (userIds?.length || 0),
-    0
-  );
+  const normalizedOptions = React.useMemo(() => {
+    if (!poll?.options || !Array.isArray(poll.options)) return [];
+    return poll.options.map((opt: any, idx: number) => {
+      if (typeof opt === 'string') {
+        const optionVotes = Array.isArray(poll.votes?.[opt]) ? poll.votes[opt].length : 0;
+        return { id: opt, text: opt, votes: optionVotes };
+      }
+      if (opt && typeof opt === 'object') {
+        const text = typeof opt.text === 'string' ? opt.text : (opt.label || `Option ${idx + 1}`);
+        const votes = typeof opt.votes === 'number' ? opt.votes : (Array.isArray(opt.votes) ? opt.votes.length : 0);
+        return { id: text, text, votes };
+      }
+      return { id: String(opt), text: String(opt), votes: 0 };
+    });
+  }, [poll]);
+
+  const totalVotes = typeof (poll as any).totalVotes === 'number'
+    ? (poll as any).totalVotes
+    : normalizedOptions.reduce((acc, opt) => acc + opt.votes, 0);
 
   const userVotedOption = profile 
     ? Object.keys(poll.votes || {}).find(option => poll.votes[option]?.includes(profile.id))
@@ -36,7 +51,7 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
 
   const hasVoted = !!userVotedOption;
 
-  const handleVote = async (option: string) => {
+  const handleVote = async (optionText: string) => {
     if (!db || !profile || voting) return;
     setVoting(true);
     
@@ -52,10 +67,10 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
       });
 
       // Add vote to chosen option
-      if (!Array.isArray(votesCopy[option])) {
-        votesCopy[option] = [];
+      if (!Array.isArray(votesCopy[optionText])) {
+        votesCopy[optionText] = [];
       }
-      votesCopy[option].push(profile.id);
+      votesCopy[optionText].push(profile.id);
 
       await updateDoc(doc(db, 'posts', postId), {
         'poll.votes': votesCopy
@@ -81,16 +96,16 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
       </h4>
 
       <div className="space-y-2.5 relative z-10">
-        {poll.options.map((option, idx) => {
-          const optionVotes = poll.votes?.[option]?.length || 0;
+        {normalizedOptions.map((opt, idx) => {
+          const optionVotes = opt.votes;
           const percentage = totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 100) : 0;
-          const isSelected = userVotedOption === option;
+          const isSelected = userVotedOption === opt.text;
 
           return (
             <button
               key={idx}
               disabled={!profile || voting}
-              onClick={() => handleVote(option)}
+              onClick={() => handleVote(opt.text)}
               className={`w-full group text-left relative overflow-hidden rounded-xl border p-3 sm:p-3.5 transition-all outline-none ${
                 isSelected 
                   ? 'border-aeirmist-cyan/40 bg-aeirmist-cyan/[0.04]' 
@@ -111,11 +126,11 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
                 <div className="flex items-center gap-2.5 max-w-[80%]">
                   {isSelected && <CheckCircle2 size={14} className="text-aeirmist-cyan shrink-0 animate-bounce" />}
                   <span className={`font-semibold truncate tracking-tight ${isSelected ? 'text-aeirmist-cyan font-black' : 'text-white/80'}`}>
-                    {option}
+                    {opt.text}
                   </span>
                 </div>
                 
-                {hasVoted && (
+                {(hasVoted || totalVotes > 0) && (
                   <motion.span 
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}

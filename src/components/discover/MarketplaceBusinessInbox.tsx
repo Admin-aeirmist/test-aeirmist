@@ -371,7 +371,7 @@ export const MarketplaceBusinessInbox: React.FC<BusinessInboxProps> = ({
                 const isSentByMe = (chat as any).lastSenderId === profile?.id;
                 const rawDesc = typeof chat.lastMessage === 'string' 
                   ? chat.lastMessage 
-                  : (chat.lastMessage?.text || (chat as any).latestMessagePreview || 'Connected to feed thread...');
+                  : ((chat.lastMessage as any)?.text || (chat as any).latestMessagePreview || 'Connected to feed thread...');
                 const desc = (isSentByMe && rawDesc && rawDesc !== 'Connected to feed thread...' && !rawDesc.startsWith('You: '))
                   ? `You: ${rawDesc}`
                   : rawDesc;

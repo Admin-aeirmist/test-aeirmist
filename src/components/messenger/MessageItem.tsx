@@ -269,6 +269,24 @@ export const MessageItem = React.memo<{
     [message.senderId, senderPhoto]
   );
 
+  // Determine if this message is image or video
+  const isImageOrVideo = Boolean(
+    message.type === 'image' || 
+    message.type === 'video' || 
+    message.metadata?.mediaType === 'image' ||
+    message.metadata?.mediaType === 'video' ||
+    (message.type === 'media' && !message.metadata?.isAudioMusic && (
+      message.metadata?.fileType?.startsWith('image/') ||
+      message.metadata?.fileType?.startsWith('video/') ||
+      /\.(jpe?g|png|webp|gif|svg|avif|bmp|mp4|webm|mov|mkv)($|\?)/i.test(message.mediaUrl || '') ||
+      /\.(jpe?g|png|webp|gif|svg|avif|bmp|mp4|webm|mov|mkv)($|\?)/i.test(message.fileName || message.metadata?.fileName || '')
+    )) ||
+    (!message.metadata?.isAudioMusic && message.type !== 'voice' && message.type !== 'file' && (
+      /\.(jpe?g|png|webp|gif|svg|avif|bmp|mp4|webm|mov|mkv)($|\?)/i.test(message.mediaUrl || '') ||
+      /\.(jpe?g|png|webp|gif|svg|avif|bmp|mp4|webm|mov|mkv)($|\?)/i.test(message.fileName || message.metadata?.fileName || '')
+    ))
+  );
+
   // Grouped album items for Telegram-style collage
   const effectiveAlbum: AlbumItem[] = React.useMemo(() => {
     if (albumItems && albumItems.length > 0) return albumItems;
@@ -283,15 +301,6 @@ export const MessageItem = React.memo<{
         isFailed: message.isFailed
       }));
     }
-    const isImageOrVideo = (
-      message.type === 'image' || 
-      message.type === 'video' || 
-      (message.type === 'media' && 
-        !message.metadata?.fileName && 
-        !message.metadata?.isAudioMusic && 
-        !message.fileName &&
-        (message.metadata?.mediaType === 'image' || message.metadata?.mediaType === 'video' || /\.(jpe?g|png|webp|gif|mp4|webm|mov)($|\?)/i.test(message.mediaUrl || '')))
-    );
 
     if (message.mediaUrl && isImageOrVideo) {
       return [{
@@ -305,10 +314,10 @@ export const MessageItem = React.memo<{
       }];
     }
     return [];
-  }, [albumItems, message]);
+  }, [albumItems, message, isImageOrVideo]);
 
   const isSticker = message.type === 'sticker';
-  const isSpecialCard = message.type === 'file' || message.type === 'location' || message.type === 'contact' || message.type === 'poll' || Boolean(message.metadata?.poll) || Boolean(message.metadata?.isAudioMusic);
+  const isSpecialCard = !isImageOrVideo && (message.type === 'file' || message.metadata?.mediaType === 'file' || message.type === 'location' || message.type === 'contact' || message.type === 'poll' || Boolean(message.metadata?.poll) || Boolean(message.metadata?.isAudioMusic));
   const isPlaceholder = isAutoMediaPlaceholder(message.text);
   const hasRealText = Boolean(message.text && !isPlaceholder && !isSticker && !isSpecialCard);
   const isMediaOnly = !hasRealText && effectiveAlbum.length > 0;
@@ -616,7 +625,7 @@ export const MessageItem = React.memo<{
             )}
 
             {/* 1. Document / File Attachment Card */}
-            {(message.type === 'file' || Boolean(message.metadata?.fileName && message.type !== 'voice' && !message.metadata?.isAudioMusic)) && (
+            {(!isImageOrVideo && (message.type === 'file' || message.metadata?.mediaType === 'file' || Boolean(message.metadata?.fileName && message.type !== 'voice' && !message.metadata?.isAudioMusic))) && (
               <div className="flex items-center gap-3 p-2.5 my-1 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 transition-all min-w-[220px] max-w-[320px]">
                 <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-lime-500/20 to-emerald-500/20 border border-lime-500/30 flex items-center justify-center text-lime-400 shrink-0">
                   <FileText size={22} />

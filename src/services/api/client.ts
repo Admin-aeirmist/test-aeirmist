@@ -1,9 +1,6 @@
-/**
- * Aeirmist Universal API Client Bridge
- * Reads endpoint dynamically from VITE_API_URL (Zero Hardcoding!)
- */
+import { auth } from '../../lib/firebase';
 
-function resolveApiBase(): string {
+export function resolveApiBase(): string {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     const isLocal = hostname === 'localhost' || 
@@ -27,6 +24,52 @@ function resolveApiBase(): string {
   return 'http://localhost:4000';
 }
 
+// Shared Firebase account used only so Firestore-backed screens can read data. It must NEVER be an API identity.
+export const GATEWAY_EMAIL = 'gateway_node@aeirmist.social';
+
+function decodeJwtPayload(token: string): any | null {
+  try {
+    const part = token.split('.')[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '=')));
+  } catch {
+    return null;
+  }
+}
+
+// Native backend JWT (device PostgreSQL login): has userId and is NOT a Firebase securetoken JWT.
+function isNativeToken(token: string): boolean {
+  const p = decodeJwtPayload(token);
+  return !!p && !!p.userId && !p.firebase && !(typeof p.iss === 'string' && p.iss.includes('securetoken.google.com'));
+}
+
+export function hasUsableNativeToken(skewSeconds = 60): boolean {
+  const t = getAuthToken();
+  if (!t || !isNativeToken(t)) return false;
+  const p = decodeJwtPayload(t);
+  return !p?.exp || p.exp * 1000 > Date.now() + skewSeconds * 1000;
+}
+
+export async function getFreshToken(): Promise<string | null> {
+  // 1. A valid native backend session always wins (it identifies the real account).
+  if (hasUsableNativeToken()) return getAuthToken();
+
+  // 2. A real Firebase user (never the shared gateway account) -> auto-refreshing ID token.
+  try {
+    const u = auth?.currentUser;
+    if (u && u.email !== GATEWAY_EMAIL) {
+      const freshToken = await u.getIdToken();
+      if (freshToken) {
+        setAuthToken(freshToken);
+        return freshToken;
+      }
+    }
+  } catch {}
+
+  return getAuthToken();
+}
+
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   const token = localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token');
@@ -43,6 +86,24 @@ export function getAuthToken(): string | null {
       }
     }
   } catch {}
+
+  // Firebase Auth persistence auto-detection fallback
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('firebase:authUser:')) {
+        const item = localStorage.getItem(k);
+        if (item) {
+          const parsed = JSON.parse(item);
+          const fbToken = parsed.stsTokenManager?.accessToken;
+          if (fbToken && typeof fbToken === 'string' && fbToken.trim() !== '') {
+            return fbToken.trim();
+          }
+        }
+      }
+    }
+  } catch {}
+
   return null;
 }
 
@@ -83,7 +144,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const url = `${base}${normalizedEndpoint}`;
   const headers = new Headers(options.headers || {});
 
-  const token = getAuthToken();
+  const token = await getFreshToken();
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
@@ -106,21 +167,64 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     } catch {}
   }
 
+  try {
+    const trustToken = localStorage.getItem('aeirmist_device_trust_token');
+    if (trustToken && !headers.has('X-Device-Trust-Token')) {
+      headers.set('X-Device-Trust-Token', trustToken);
+    }
+  } catch {}
+
+  try {
+    const sessionToken = localStorage.getItem('aeirmist_session_token');
+    if (sessionToken && !headers.has('X-Session-Token')) {
+      headers.set('X-Session-Token', sessionToken);
+    }
+  } catch {}
+
   if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  try {
-    const res = await fetch(url, {
+  const doFetch = (authToken: string | null) => {
+    const reqHeaders = new Headers(headers);
+    if (authToken) {
+      reqHeaders.set('Authorization', `Bearer ${authToken}`);
+    }
+    return fetch(url, {
       ...options,
-      headers,
+      headers: reqHeaders,
+      credentials: options.credentials || 'include',
     });
+  };
+
+  try {
+    let res = await doFetch(token);
+
+    if (res.status === 401 && auth && auth.currentUser && auth.currentUser.email !== GATEWAY_EMAIL && !hasUsableNativeToken()) {
+      try {
+        const fresh = await auth.currentUser.getIdToken(true);
+        if (fresh) {
+          setAuthToken(fresh);
+          res = await doFetch(fresh);
+        }
+      } catch {}
+    }
 
     if (!res.ok) {
       const errorBody = await res.json().catch(() => ({ error: res.statusText }));
       const httpErr: any = new Error(errorBody.error || `HTTP error ${res.status}`);
       httpErr.status = res.status;
       httpErr.isHttpError = true;
+
+      // Broadcast force logout if session was invalidated or account deleted
+      if (res.status === 401 || (res.status === 404 && path === '/api/v1/auth/me')) {
+        if (typeof window !== 'undefined' && path !== '/api/v1/auth/login' && path !== '/api/v1/auth/register') {
+          window.dispatchEvent(new CustomEvent('aeirmist:force_logout', { 
+            detail: { reason: 'session_invalidated', status: res.status } 
+          }));
+        }
+      }
+
       throw httpErr;
     }
 
@@ -279,6 +383,37 @@ export const api = {
 
   // Auth
   auth: {
+    requestSignupOtp: (data: {
+      email: string;
+      password: string;
+      username: string;
+      displayName: string;
+      location?: string;
+      deviceInfo?: string;
+    }) =>
+      request<{ success: boolean; message: string; email: string; maskedEmail?: string }>('/api/v1/auth/signup/request-otp', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    verifySignupOtp: (data: {
+      email: string;
+      otp: string;
+      deviceInfo?: string;
+    }) =>
+      request<{ token: string; refreshToken?: string; sessionToken?: string; user: any; profile?: any }>('/api/v1/auth/signup/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }).then(res => {
+        if (res && res.token) {
+          setAuthToken(res.token);
+        }
+        if (res && res.sessionToken) {
+          try {
+            localStorage.setItem('aeirmist_session_token', res.sessionToken);
+          } catch {}
+        }
+        return res;
+      }),
     register: (data: {
       email: string;
       password: string;
@@ -289,15 +424,22 @@ export const api = {
       longitude?: number;
       deviceInfo?: string;
     }) =>
-      request<{ token: string; user: any; profile?: any }>('/api/v1/auth/register', {
+      request<{ token: string; sessionToken?: string; user: any; profile?: any }>('/api/v1/auth/register', {
         method: 'POST',
         body: JSON.stringify(data),
       }).then(res => {
         if (res && res.token) {
           setAuthToken(res.token);
         }
+        if (res && res.sessionToken) {
+          try {
+            localStorage.setItem('aeirmist_session_token', res.sessionToken);
+          } catch {}
+        }
         return res;
       }),
+    checkUsername: (username: string) =>
+      request<{ available: boolean; error?: string }>(`/api/v1/auth/check-username?username=${encodeURIComponent(username)}`),
     login: (
       dataOrEmail: {
         email?: string;
@@ -307,11 +449,17 @@ export const api = {
         latitude?: number;
         longitude?: number;
         deviceInfo?: string;
+        trustToken?: string;
       } | string,
       maybePass?: string
     ) => {
+      let trustToken: string | undefined;
+      try {
+        trustToken = localStorage.getItem('aeirmist_device_trust_token') || undefined;
+      } catch {}
+
       const payload = typeof dataOrEmail === 'string'
-        ? { email: dataOrEmail, identifier: dataOrEmail, password: maybePass || '' }
+        ? { email: dataOrEmail, identifier: dataOrEmail, password: maybePass || '', trustToken }
         : {
             email: dataOrEmail.email || dataOrEmail.identifier,
             identifier: dataOrEmail.identifier || dataOrEmail.email,
@@ -320,17 +468,74 @@ export const api = {
             latitude: dataOrEmail.latitude,
             longitude: dataOrEmail.longitude,
             deviceInfo: dataOrEmail.deviceInfo,
+            trustToken: dataOrEmail.trustToken || trustToken,
           };
-      return request<{ token: string; user: any; profile?: any }>('/api/v1/auth/login', {
+      return request<{
+        token?: string;
+        refreshToken?: string;
+        sessionToken?: string;
+        user?: any;
+        profile?: any;
+        requires2FA?: boolean;
+        tempToken?: string;
+        maskedEmail?: string;
+        message?: string;
+      }>('/api/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify(payload),
       }).then(res => {
         if (res && res.token) {
           setAuthToken(res.token);
         }
+        if (res && res.sessionToken) {
+          try {
+            localStorage.setItem('aeirmist_session_token', res.sessionToken);
+          } catch {}
+        }
         return res;
       });
     },
+    verifyLogin2FA: (data: {
+      tempToken: string;
+      otp: string;
+      trustDevice?: boolean;
+      deviceInfo?: string;
+    }) =>
+      request<{
+        token: string;
+        refreshToken?: string;
+        trustToken?: string;
+        sessionToken?: string;
+        user: any;
+        profile?: any;
+      }>('/api/v1/auth/login/verify-2fa', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }).then(res => {
+        if (res && res.token) {
+          setAuthToken(res.token);
+        }
+        if (res && res.trustToken) {
+          try {
+            localStorage.setItem('aeirmist_device_trust_token', res.trustToken);
+          } catch {}
+        }
+        if (res && res.sessionToken) {
+          try {
+            localStorage.setItem('aeirmist_session_token', res.sessionToken);
+          } catch {}
+        }
+        return res;
+      }),
+    resendOtp: (data: {
+      type: 'signup' | 'login';
+      email?: string;
+      tempToken?: string;
+    }) =>
+      request<{ success: boolean; message: string }>('/api/v1/auth/resend-otp', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     refresh: () =>
       request<{ token: string; user?: any }>('/api/v1/auth/refresh', {
         method: 'POST',
@@ -341,11 +546,12 @@ export const api = {
         return res;
       }),
     me: () => request<{ user: any; profile?: any }>('/api/v1/auth/me'),
+    getMe: () => request<{ user: any; profile?: any }>('/api/v1/auth/me'),
     logout: () => request<{ success: boolean; message?: string }>('/api/v1/auth/logout', { method: 'POST' }),
-    forgotPassword: (email: string) =>
+    forgotPassword: (identifier: string) =>
       request<{ success: boolean; message: string; resetToken?: string }>('/api/v1/auth/forgot-password', {
         method: 'POST',
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ identifier, email: identifier }),
       }),
     resetPassword: (data: { token: string; newPassword: string }) =>
       request<{ success: boolean; message: string }>('/api/v1/auth/reset-password', {
@@ -366,6 +572,45 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    getSessions: () =>
+      request<{
+        sessions: Array<{
+          id: string;
+          userId: string;
+          ipAddress?: string;
+          deviceName?: string;
+          deviceType: string;
+          model: string;
+          browser: string;
+          os: string;
+          location?: string;
+          latitude?: string | number;
+          longitude?: string | number;
+          isTrusted?: boolean;
+          sessionToken?: string;
+          lastActiveAt: string;
+          createdAt: string;
+          isCurrent?: boolean;
+        }>;
+        unrecognizedCount: number;
+      }>('/api/v1/auth/sessions'),
+    revokeSession: (id: string) =>
+      request<{ success: boolean; message: string }>(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' }),
+    logoutOtherSessions: (currentSessionId?: string) => {
+      let currentSessionToken: string | undefined;
+      try {
+        currentSessionToken = localStorage.getItem('aeirmist_session_token') || undefined;
+      } catch {}
+      return request<{ success: boolean; revokedCount: number; message: string }>('/api/v1/auth/sessions/logout-others', {
+        method: 'POST',
+        body: JSON.stringify({ currentSessionId, currentSessionToken }),
+      });
+    },
+    updateSessionLocation: (data: { location?: string; latitude?: number; longitude?: number }) =>
+      request<{ success: boolean; location?: string }>('/api/v1/auth/sessions/current-location', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Feed & Posts
@@ -384,6 +629,11 @@ export const api = {
       request<{ bookmarked: boolean }>(`/api/v1/posts/${id}/bookmark`, { method: 'POST' }),
     delete: (id: string) =>
       request<{ success: boolean }>(`/api/v1/posts/${id}`, { method: 'DELETE' }),
+    toggleArchive: (id: string, archive: boolean) =>
+      request<{ success: boolean; isArchived: boolean }>(`/api/v1/posts/${id}/archive`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archive }),
+      }),
     getComments: (postId: string) =>
       request<{ comments: any[] }>(`/api/v1/posts/${postId}/comments`),
     addComment: (postId: string, content: string, parentId?: string) =>
@@ -406,12 +656,15 @@ export const api = {
 
   // Users & Profiles
   users: {
+    getMe: () => request<{ user: any; profile?: any }>('/api/v1/auth/me'),
     getProfile: (identifier: string) =>
       request<{ profile: any }>(`/api/v1/users/${encodeURIComponent(identifier)}`),
     updateProfile: (data: {
+      username?: string;
       displayName?: string;
       bio?: string;
       location?: string;
+      website?: string;
       avatarKey?: string;
       bannerKey?: string;
       socialLinks?: any;
@@ -422,9 +675,13 @@ export const api = {
         body: JSON.stringify(data),
       }),
     toggleFollow: (targetUserId: string) =>
-      request<{ following: boolean }>(`/api/v1/users/${targetUserId}/follow`, {
+      request<{ following: boolean; followersCount?: number; followingCount?: number }>(`/api/v1/users/${targetUserId}/follow`, {
         method: 'POST',
       }),
+    getFollowers: (userId: string) =>
+      request<{ followers: any[] }>(`/api/v1/users/${encodeURIComponent(userId)}/followers`),
+    getFollowing: (userId: string) =>
+      request<{ following: any[] }>(`/api/v1/users/${encodeURIComponent(userId)}/following`),
     search: (query: string, limit = 20) =>
       request<{ users: any[] }>(`/api/v1/users/search?q=${encodeURIComponent(query)}&limit=${limit}`),
     getSuggestions: (limit = 20) =>
@@ -441,6 +698,11 @@ export const api = {
       request<{ success: boolean; points?: number }>('/api/v1/users/points', {
         method: 'POST',
         body: JSON.stringify({ points }),
+      }),
+    updatePresence: (status: 'online' | 'offline') =>
+      request<{ success: boolean; status: string }>('/api/v1/users/presence', {
+        method: 'POST',
+        body: JSON.stringify({ status }),
       }),
   },
 
@@ -462,6 +724,10 @@ export const api = {
     markAllRead: () =>
       request<{ success: boolean }>('/api/v1/notifications/read-all', {
         method: 'POST',
+      }),
+    delete: (id: string) =>
+      request<{ success: boolean }>(`/api/v1/notifications/${id}`, {
+        method: 'DELETE',
       }),
   },
 
@@ -499,6 +765,10 @@ export const api = {
       request<{ success: boolean }>(`/api/v1/chat/conversations/${conversationId}/seen`, {
         method: 'POST',
       }),
+    markUnread: (conversationId: string) =>
+      request<{ success: boolean }>(`/api/v1/chat/conversations/${conversationId}/unread`, {
+        method: 'POST',
+      }),
     createGroup: (title: string, memberIds: string[], avatarKey?: string) =>
       request<{ conversation: any }>('/api/v1/chat/conversations/group', {
         method: 'POST',
@@ -512,6 +782,41 @@ export const api = {
     deleteMessage: (messageId: string) =>
       request<{ success: boolean }>(`/api/v1/chat/messages/${messageId}`, {
         method: 'DELETE',
+      }),
+    addReaction: (messageId: string, emoji: string) =>
+      request<{ success: boolean; reactions: Record<string, number>; userReactions: Record<string, string> }>(`/api/v1/chat/messages/${messageId}/reactions`, {
+        method: 'POST',
+        body: JSON.stringify({ emoji }),
+      }),
+    removeReaction: (messageId: string, emoji?: string) =>
+      request<{ success: boolean; reactions: Record<string, number>; userReactions: Record<string, string> }>(`/api/v1/chat/messages/${messageId}/reactions${emoji ? `?emoji=${encodeURIComponent(emoji)}` : ''}`, {
+        method: 'DELETE',
+      }),
+    deleteConversation: (conversationId: string) =>
+      request<{ success: boolean; conversationId?: string }>(`/api/v1/chat/conversations/${conversationId}`, {
+        method: 'DELETE',
+      }),
+    clearChat: (conversationId: string, clearType: 'me' | 'both' = 'me') =>
+      request<{ success: boolean; conversationId?: string }>(`/api/v1/chat/conversations/${conversationId}/clear`, {
+        method: 'POST',
+        body: JSON.stringify({ clearType }),
+      }),
+    togglePin: (conversationId: string) =>
+      request<{ success: boolean; isPinned: boolean; conversationId: string }>(`/api/v1/chat/conversations/${conversationId}/pin`, {
+        method: 'POST',
+      }),
+    toggleMute: (conversationId: string) =>
+      request<{ success: boolean; isMuted: boolean; conversationId: string }>(`/api/v1/chat/conversations/${conversationId}/mute`, {
+        method: 'POST',
+      }),
+    toggleArchive: (conversationId: string) =>
+      request<{ success: boolean; isArchived: boolean; conversationId: string }>(`/api/v1/chat/conversations/${conversationId}/archive`, {
+        method: 'POST',
+      }),
+    updateTheme: (conversationId: string, themeSettings: any) =>
+      request<{ success: boolean; conversation: any }>(`/api/v1/chat/conversations/${conversationId}/theme`, {
+        method: 'PATCH',
+        body: JSON.stringify({ themeSettings }),
       }),
   },
 
@@ -564,8 +869,32 @@ export const api = {
       request<{ success: boolean }>('/api/v1/notes', { method: 'DELETE' }),
   },
 
-  // Vault Items
+  // Vault Items & Config
   vault: {
+    getConfig: () =>
+      request<{ config: any }>('/api/v1/vault/config'),
+    saveConfig: (data: {
+      passcodeType: string;
+      passcodeHash: string;
+      questionIds: number[];
+      answersHashes: string[];
+      biometricEnabled?: boolean;
+      autoLockDuration?: string;
+      silentNotifications?: boolean;
+    }) =>
+      request<{ config: any }>('/api/v1/vault/config', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateSettings: (data: {
+      autoLockDuration?: string;
+      silentNotifications?: boolean;
+      biometricEnabled?: boolean;
+    }) =>
+      request<{ config: any }>('/api/v1/vault/settings', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
     getItems: (folder?: string) =>
       request<{ items: any[] }>(`/api/v1/vault${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`),
     addItem: (data: {
@@ -683,6 +1012,9 @@ export const api = {
   // Admin
   admin: {
     getStats: () => request<{ stats: any }>('/api/v1/admin/stats'),
+    getSystemHealth: () => request<any>('/api/v1/admin/system-health'),
+    getUsers: () => request<{ users: any[] }>('/api/v1/admin/users'),
+    getUserDetails: (id: string) => request<any>(`/api/v1/admin/users/${encodeURIComponent(id)}/details`),
     banUser: (id: string, ban: boolean, reason?: string) =>
       request<{ success: boolean; status: string }>(`/api/v1/admin/users/${id}/ban`, {
         method: 'POST',

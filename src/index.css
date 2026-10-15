@@ -191,8 +191,8 @@
 
   /* Native App Fallbacks & 100% Native Feel */
   html.is-native-app {
-    --sat: 38px;
-    --sab: 16px;
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;

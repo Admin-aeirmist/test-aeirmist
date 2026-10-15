@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { ChevronLeft, Shield, Trash2, UserPlus, Ghost, Loader2 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 
@@ -25,25 +25,18 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const handleAccept = async (convId: string, otherId: string) => {
-    if (!db) return;
     setAcceptingId(convId);
     try {
-      // 1. Update conversation status
-      await updateDoc(doc(db, 'conversations', convId), {
-        status: 'active',
-        acceptedAt: serverTimestamp()
-      });
-
-      // 2. Clear view and open chat immediately for visual feedback
       if (onChatSelect) {
         onChatSelect(convId);
       }
 
-      // 3. Follow back if not already following (background effort)
-      try {
-        await toggleFollow(otherId);
-      } catch (err) {
-        logger.warn("Follow back during acceptance failed", err);
+      if (otherId) {
+        try {
+          await toggleFollow(otherId);
+        } catch (err) {
+          logger.warn("Follow back during acceptance failed", err);
+        }
       }
 
       addToast({
@@ -64,23 +57,19 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
   };
 
   const handleBlock = async (otherId: string, convId: string) => {
-    if (!db || !profile) return;
     setBlockingId(convId);
     try {
-      await updateDoc(doc(db, 'profiles', profile.id), {
-        'social.blocked': arrayUnion(otherId)
-      });
-      await deleteDoc(doc(db, 'conversations', convId));
+      await api.chat.deleteConversation(convId);
       addToast({
         title: 'Connection Severed',
-        message: 'Successfully blocked user and deleted request.',
+        message: 'Successfully deleted request.',
         type: 'info'
       });
     } catch (e) {
       logger.error("Block request failed", e);
       addToast({
         title: 'Block Error',
-        message: 'Failed to block user and delete request.',
+        message: 'Failed to delete request.',
         type: 'warning'
       });
     } finally {
@@ -89,10 +78,9 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
   };
 
   const handleDelete = async (convId: string) => {
-    if (!db) return;
     setDeletingId(convId);
     try {
-      await deleteDoc(doc(db, 'conversations', convId));
+      await api.chat.deleteConversation(convId);
       addToast({
         title: 'Deleted',
         message: 'Successfully deleted conversation request.',

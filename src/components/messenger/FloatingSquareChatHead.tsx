@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, MessageSquare, Maximize2, SquarePen, Plus } from 'lucide-react';
+import { X, MessageSquare, Maximize2, SquarePen, Plus, Loader2 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { SystemChatHead } from '../../utils/nativeSettings';
 import { DockedChatWindow } from './DockedChatWindow';
+import { api } from '../../services/api/client';
+import { logger } from '@/src/utils/logger';
 
 interface FloatingSquareChatHeadProps {
   onOpenChat: (chatId: string) => void;
@@ -13,7 +15,7 @@ interface FloatingSquareChatHeadProps {
   isInboxView?: boolean;
 }
 
-type Head = { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string };
+type Head = { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string; themeSettings?: any };
 
 interface MessagePreview {
   text: string;
@@ -27,12 +29,12 @@ const HeadBubble: React.FC<{
   onOpen: (id: string) => void;
   onClose: (id: string) => void;
 }> = ({ head, isOpenInDock, preview, onOpen, onClose }) => {
-  const { onlineUsers } = useAeirmist();
+  const { onlineUsers, profile, user } = useAeirmist();
   const [isHovered, setIsHovered] = useState(false);
   const avatar = getAvatarUrl(head.photo);
-  const isOnline = !!(
-    (head.participantId && onlineUsers?.has(head.participantId)) ||
-    onlineUsers?.has(head.id)
+  const isOnline = Boolean(
+    (head.participantId && head.participantId !== profile?.id && head.participantId !== user?.uid && onlineUsers?.has(head.participantId)) ||
+    (head.id && !head.id.startsWith('conv_') && head.id !== profile?.id && head.id !== user?.uid && onlineUsers?.has(head.id))
   );
 
   return (
@@ -66,7 +68,7 @@ const HeadBubble: React.FC<{
         </div>
         {/* Active online badge */}
         {isOnline && (
-          <div className="absolute bottom-1 right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-neutral-950 ring-1 ring-emerald-400/50 shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
+          <div className="absolute bottom-1 right-1 w-3.5 h-3.5 rounded-full bg-aeirmist-lime border-2 border-neutral-950 ring-1 ring-aeirmist-lime/50 shadow-[0_0_8px_rgba(191,255,0,0.7)]" />
         )}
         
         {/* Hover overlay hint */}
@@ -137,10 +139,13 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
   onNewMessage,
   isInboxView = false 
 }) => {
-  const { floatingChatHeads, removeFloatingChatHead, profile, addToast } = useAeirmist();
+  const { floatingChatHeads, setFloatingChatHeads, removeFloatingChatHead, profile, addToast } = useAeirmist();
   const [openChatIds, setOpenChatIds] = useState<string[]>([]);
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
   const [activePreviews, setActivePreviews] = useState<Record<string, MessagePreview>>({});
+  const [isLoadingRecents, setIsLoadingRecents] = useState(false);
+  // Debounce ref to prevent accidental double-tap/click close bug
+  const lastHeadClickRef = useRef<{ id: string; time: number }>({ id: '', time: 0 });
 
   // Responsive breakpoint tracking
   useEffect(() => {
@@ -180,9 +185,21 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       }, 6000);
     };
 
+    const handleChatDeleted = (e: any) => {
+      const cid = e.detail?.conversationId;
+      if (cid) {
+        removeFloatingChatHead?.(cid);
+        setOpenChatIds(prev => prev.filter(id => id !== cid));
+      }
+    };
+
     window.addEventListener('aeirmist_chathead_preview', handlePreview);
-    return () => window.removeEventListener('aeirmist_chathead_preview', handlePreview);
-  }, []);
+    window.addEventListener('aeirmist_chat_deleted', handleChatDeleted);
+    return () => {
+      window.removeEventListener('aeirmist_chathead_preview', handlePreview);
+      window.removeEventListener('aeirmist_chat_deleted', handleChatDeleted);
+    };
+  }, [removeFloatingChatHead]);
 
   // Stable key so native sync only runs when something actually changed
   const headsKey = heads.map(h => `${h.id}|${h.name}|${h.photo || ''}|${h.unreadCount || 0}`).join(';');
@@ -255,28 +272,90 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
   }, [onOpenChat, removeFloatingChatHead]);
 
   const isInboxRoute = isInboxView || (typeof window !== 'undefined' && (window.location.pathname.startsWith('/messages') || window.location.pathname === '/messages'));
-  if (isInboxRoute || (heads.length === 0 && !onNewMessage)) return null;
+  if (isInboxRoute) return null;
 
-  // Click on a head bubble
-  const handleHeadClick = (id: string) => {
+  // Toggle recent chats as chat heads
+  const handleToggleRecentChatHeads = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     triggerNativeHaptic('selection');
 
-    if (isDesktop) {
-      // Facebook-style web behavior: Toggle bottom docked chat window!
-      setOpenChatIds(prev => {
-        if (prev.includes(id)) {
-          // If already open, minimize it
-          return prev.filter(openId => openId !== id);
-        }
-        // Max 2 docked windows side by side (or 3 on large screens)
-        const maxDocked = window.innerWidth >= 1440 ? 3 : 2;
-        const next = [id, ...prev.filter(openId => openId !== id)];
-        return next.slice(0, maxDocked);
-      });
-    } else {
-      // Mobile screen: open full chat without removing the head
-      onOpenChat(id);
+    // Case 1: If docked chat is currently open, minimize/close it
+    if (openChatIds.length > 0) {
+      setOpenChatIds([]);
+      return;
     }
+
+    // Case 2: If heads already exist on screen, open top one on desktop or toggle close
+    if (heads.length > 0) {
+      if (isDesktop && heads[0]) {
+        setOpenChatIds([heads[0].id]);
+      } else {
+        setFloatingChatHeads([]);
+      }
+      return;
+    }
+
+    // Case 3: Heads are empty, fetch recent conversations from API
+    setIsLoadingRecents(true);
+    try {
+      const res = await api.chat.getConversations();
+      const convs: any[] = res?.conversations || [];
+      if (convs.length > 0) {
+        const newHeads: Head[] = convs.slice(0, 4).map((c: any) => {
+          const other = c.otherParticipant || c.otherProfile;
+          const name = c.name || other?.displayName || other?.username || 'Chat';
+          const photo = c.photo || other?.photoURL || other?.avatarKey || '';
+          const participantId = c.otherParticipantId || other?.id || other?.userId || '';
+          return {
+            id: c.id,
+            name,
+            photo,
+            unreadCount: c.unreadCount || 0,
+            participantId,
+            themeSettings: c.themeSettings || null
+          };
+        });
+
+        setFloatingChatHeads(newHeads);
+
+        // On desktop, immediately dock the top recent chat so user can chat right away!
+        if (isDesktop && newHeads[0]) {
+          setOpenChatIds([newHeads[0].id]);
+        }
+      } else {
+        addToast?.({
+          title: 'No recent conversations',
+          message: 'You have no recent messages yet.',
+          type: 'info'
+        });
+        if (onNewMessage) onNewMessage();
+      }
+    } catch (err) {
+      logger.error('Failed to load recent chats for chat heads:', err);
+    } finally {
+      setIsLoadingRecents(false);
+    }
+  };
+
+  // Click on a head bubble: Toggle floating popup chat window on both mobile & desktop!
+  const handleHeadClick = (id: string) => {
+    const now = Date.now();
+    if (lastHeadClickRef.current.id === id && now - lastHeadClickRef.current.time < 450) {
+      return;
+    }
+    lastHeadClickRef.current = { id, time: now };
+    triggerNativeHaptic('selection');
+
+    setOpenChatIds(prev => {
+      if (prev.includes(id)) {
+        // If already open, minimize it
+        return prev.filter(openId => openId !== id);
+      }
+      // On mobile screen show 1 active window, on desktop up to 2-3
+      const maxDocked = isDesktop ? (window.innerWidth >= 1440 ? 3 : 2) : 1;
+      const next = [id, ...prev.filter(openId => openId !== id)];
+      return next.slice(0, maxDocked);
+    });
   };
 
   const handleCloseHead = (id: string) => {
@@ -301,11 +380,10 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
 
   return (
     <>
-      {/* ── Facebook-Style Bottom-Docked Popup Chat Windows (Desktop Web) ── */}
-      {isDesktop && !isInboxRoute && openChatIds.length > 0 && (
+      {/* ── Facebook-Style Popup Chat Windows (Both Mobile & Desktop Web) ── */}
+      {!isInboxRoute && openChatIds.length > 0 && (
         <div 
-          className="fixed bottom-0 z-[300] flex flex-row-reverse items-end gap-3 pointer-events-none"
-          style={{ right: '82px' }}
+          className="fixed bottom-[74px] sm:bottom-0 right-2 sm:right-[82px] z-[320] flex flex-row-reverse items-end gap-3 pointer-events-none max-w-[calc(100vw-16px)]"
         >
           {openChatIds.map(chatId => {
             const head = heads.find(h => h.id === chatId);
@@ -317,6 +395,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                   chatName={head.name}
                   chatPhoto={head.photo}
                   participantId={head.participantId}
+                  initialThemeSettings={head.themeSettings}
                   onMinimize={() => handleMinimizeDocked(head.id)}
                   onClose={() => handleCloseDocked(head.id)}
                   onMaximize={() => handleMaximizeDocked(head.id)}
@@ -344,28 +423,30 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
             right: '16px'
           }}
         >
-          {/* ── Add New Message Button ── */}
-          {onNewMessage && (
-            <motion.div
-              layout
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                triggerNativeHaptic('selection');
-                onNewMessage();
-              }}
-              className="relative cursor-pointer group select-none"
-            >
-              <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-[#121422] to-[#090a10] border-2 border-aeirmist-cyan/40 hover:border-aeirmist-cyan transition-all duration-200 flex items-center justify-center text-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.25)] hover:shadow-[0_0_22px_rgba(0,242,255,0.5)]">
+          {/* ── Recent Chats / Chat Heads Button ── */}
+          <motion.div
+            layout
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleToggleRecentChatHeads}
+            className="relative cursor-pointer group select-none"
+          >
+            <div className={`w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-[#121422] to-[#090a10] border-2 transition-all duration-200 flex items-center justify-center text-aeirmist-cyan ${
+              heads.length > 0 || openChatIds.length > 0
+                ? 'border-aeirmist-cyan shadow-[0_0_22px_rgba(0,242,255,0.5)] ring-2 ring-aeirmist-cyan/30'
+                : 'border-aeirmist-cyan/40 hover:border-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.25)] hover:shadow-[0_0_22px_rgba(0,242,255,0.5)]'
+            }`}>
+              {isLoadingRecents ? (
+                <Loader2 size={20} className="animate-spin text-aeirmist-cyan" />
+              ) : (
                 <SquarePen size={20} className="group-hover:rotate-6 transition-transform" />
-              </div>
-              <div className="absolute right-16 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-white/15 text-white text-[11px] font-bold whitespace-nowrap shadow-2xl z-50 flex items-center gap-1.5">
-                <Plus size={12} className="text-aeirmist-cyan" />
-                <span>New Message</span>
-              </div>
-            </motion.div>
-          )}
+              )}
+            </div>
+            <div className="absolute right-16 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-white/15 text-white text-[11px] font-bold whitespace-nowrap shadow-2xl z-50 flex items-center gap-1.5">
+              <MessageSquare size={12} className="text-aeirmist-cyan" />
+              <span>{heads.length > 0 ? (openChatIds.length > 0 ? 'Minimize' : 'Recent Chats') : 'Recent Chats'}</span>
+            </div>
+          </motion.div>
 
           {/* ── Active Conversation Chat Heads ── */}
           <AnimatePresence initial={false}>

@@ -17,7 +17,8 @@ import {
   Check,
   Lock,
   Globe,
-  Tv
+  Tv,
+  Film
 } from 'lucide-react';
 import { Video, VideoComment, VideoPlaylist } from '../../types/videos';
 import { VideoPlayerComponent } from './VideoPlayer';
@@ -45,7 +46,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
   onBack,
   onUserClick
 }) => {
-  const { profile, user, db, addToast } = useAeirmist();
+  const { profile, user, db, addToast, toggleFollow } = useAeirmist();
 
   const [isLiked, setIsLiked] = useState(() => 
     profile?.id ? (video.likedBy || []).includes(profile.id) : false
@@ -90,7 +91,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
         detail: {
           name: video.creatorName || (video as any).authorName || 'Aeirmist Creator',
           username: (video as any).creatorUsername || (video as any).username,
-          avatar: video.creatorPhoto || (video as any).authorPhoto
+          avatar: (video as any).creatorPhoto || (video as any).creatorAvatar || (video as any).authorPhoto
         }
       }));
     }
@@ -182,15 +183,17 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
       window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
       return;
     }
-    if (!db) return;
     const nextFollowing = !isFollowing;
     setIsFollowing(nextFollowing);
 
     try {
-      const pRef = doc(db, 'profiles', `profile_${profile.id}`);
-      await updateDoc(pRef, {
-        'social.following': nextFollowing ? arrayUnion(video.creatorId) : arrayRemove(video.creatorId)
-      });
+      if (toggleFollow) {
+        await toggleFollow(video.creatorId, {
+          id: video.creatorId,
+          displayName: video.creatorName,
+          photoURL: (video as any).creatorPhoto || (video as any).creatorAvatar
+        });
+      }
       addToast({
         title: nextFollowing ? `FOLLOWING ${video.creatorName}` : `UNFOLLOWED`,
         message: nextFollowing ? `You will now see videos from ${video.creatorName}` : `Unfollowed ${video.creatorName}`,
@@ -341,44 +344,71 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-[#050505] text-white overflow-y-auto no-scrollbar font-sans pb-24">
-      {/* Top Bar Navigation */}
+      {/* Desktop Top Bar Navigation */}
       <div 
-        className="sticky top-0 z-30 bg-[#050505]/90 backdrop-blur-xl border-b border-white/5 px-4 pb-3 flex items-center justify-between transition-all"
-        style={{ paddingTop: 'calc(0.75rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+        className="hidden sm:flex sticky top-0 z-30 bg-[#050505]/90 backdrop-blur-xl border-b border-white/5 px-6 py-2.5 items-center justify-between transition-all"
+        style={{ paddingTop: 'calc(0.5rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
       >
         <button
           onClick={onBack}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs font-medium text-white/80 hover:text-white transition-colors"
+          className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/90 hover:text-white transition-colors border border-white/10"
         >
           <ArrowLeft size={16} />
           <span>Back to Feed</span>
         </button>
-        <span className="text-xs font-semibold uppercase tracking-wider text-white/40">Aeirmist Cinema</span>
+        <div className="flex items-center gap-1.5 font-bold text-xs uppercase tracking-wider text-white/60">
+          <Film size={14} className="text-aeirmist-cyan" />
+          <span>Aeirmist Cinema</span>
+        </div>
       </div>
 
-      <div className={`p-4 md:p-6 mx-auto w-full transition-all ${
-        isTheaterMode ? 'max-w-7xl' : 'max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-8'
+      {/* Mobile Top Bar - Compact & Clean */}
+      <div 
+        className="flex sm:hidden sticky top-0 z-40 bg-[#050505]/95 backdrop-blur-md px-3 py-1.5 items-center justify-between border-b border-white/5"
+        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 0.25rem)' }}
+      >
+        <button
+          onClick={onBack}
+          className="p-1 -ml-1 rounded-full text-white/80 hover:text-white active:bg-white/10 transition-colors"
+          aria-label="Back to feed"
+        >
+          <ArrowLeft size={19} />
+        </button>
+        <div className="flex items-center gap-1.5 font-bold text-xs uppercase tracking-wider text-white/70">
+          <Film size={13} className="text-aeirmist-cyan" />
+          <span>Cinema</span>
+        </div>
+        <div className="w-6" />
+      </div>
+
+      {/* Main Content Area (Player + Information) - Edge to Edge on Mobile */}
+      <div className={`p-0 sm:p-6 mx-auto w-full transition-all ${
+        isTheaterMode ? 'max-w-7xl' : 'max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-0 lg:gap-8'
       }`}>
         
         {/* Main Content Area (Player + Information) */}
-        <div className={isTheaterMode ? 'w-full space-y-6' : 'lg:col-span-2 space-y-6'}>
-          {/* 16:9 Production Video Player */}
-          <VideoPlayerComponent
-            video={video}
-            initialTime={initialTime}
-            onBack={onBack}
-            isTheaterMode={isTheaterMode}
-            onToggleTheaterMode={() => setIsTheaterMode(!isTheaterMode)}
-            autoPlayOnMount={true}
-          />
+        <div className={isTheaterMode ? 'w-full space-y-4 sm:space-y-6' : 'lg:col-span-2 space-y-4 sm:space-y-6'}>
+          {/* 16:9 Production Video Player - Seamless Flush With Screen */}
+          <div className="w-full aspect-video bg-black">
+            <VideoPlayerComponent
+              video={video}
+              initialTime={initialTime}
+              onBack={onBack}
+              isTheaterMode={isTheaterMode}
+              onToggleTheaterMode={() => setIsTheaterMode(!isTheaterMode)}
+              autoPlayOnMount={true}
+            />
+          </div>
 
-          {/* Title & Category */}
-          <div className="space-y-2">
-            {video.category && (
-              <span className="inline-block px-2.5 py-0.5 rounded-full bg-aeirmist-cyan/10 border border-aeirmist-cyan/30 text-aeirmist-cyan text-[11px] font-semibold tracking-wide">
-                {video.category}
-              </span>
-            )}
+          {/* Details below player have normal mobile padding */}
+          <div className="px-3.5 sm:px-0 space-y-4">
+            {/* Title & Category */}
+            <div className="space-y-2">
+              {video.category && (
+                <span className="inline-block px-2.5 py-0.5 rounded-full bg-aeirmist-cyan/10 border border-aeirmist-cyan/30 text-aeirmist-cyan text-[11px] font-semibold tracking-wide">
+                  {video.category}
+                </span>
+              )}
             <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight leading-snug">
               {video.title || video.caption}
             </h1>
@@ -610,10 +640,11 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
               )}
             </div>
           </div>
+          </div>
         </div>
 
         {/* Sidebar / Recommended Videos */}
-        <div className={isTheaterMode ? 'w-full space-y-4 pt-6 border-t border-white/10' : 'space-y-4'}>
+        <div className={isTheaterMode ? 'w-full space-y-4 pt-6 border-t border-white/10 px-3.5 sm:px-0' : 'space-y-4 px-3.5 sm:px-0'}>
           <h2 className="text-sm font-bold uppercase tracking-wider text-white/80 flex items-center gap-2">
             <Sparkles size={16} className="text-aeirmist-cyan" />
             <span>Recommended Videos</span>

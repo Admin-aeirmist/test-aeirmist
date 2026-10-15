@@ -184,7 +184,11 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
         : (activeCall?.callerPhoto || (activeCall as any)?.participantDetails?.[activeCall?.callerId || '']?.photoURL), 
       isCallerFallback ? activeCall?.receiverId : activeCall?.callerId
     ),
-    participants: activeCall ? [activeCall.callerId, activeCall.receiverId, profile?.id].filter(Boolean) : [],
+    isGroup: Boolean((activeCall as any)?.isGroup || (activeCall as any)?.type === 'group' || (chat as any)?.isGroup || (chat as any)?.type === 'group'),
+    type: (activeCall as any)?.type || (chat as any)?.type || ((activeCall as any)?.isGroup ? 'group' : 'direct'),
+    participants: (activeCall as any)?.participants && Array.isArray((activeCall as any).participants)
+      ? (activeCall as any).participants
+      : (activeCall ? [activeCall.callerId, activeCall.receiverId].filter(Boolean) : []),
     otherParticipantUid: isCallerFallback ? activeCall?.receiverUid : activeCall?.callerUid
   };
 
@@ -1493,44 +1497,34 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
       .map(id => allProfiles?.find((p: any) => p.id === id))
       .filter(Boolean);
 
-    const isGroupCall = (safeChat.participants && safeChat.participants.length > 2) || invitedList.length > 0;
+    const isGroupCall = Boolean(
+      (safeChat as any)?.isGroup || 
+      (safeChat as any)?.type === 'group' || 
+      (activeCall as any)?.isGroup || 
+      (activeCall as any)?.type === 'group' ||
+      invitedList.length > 0
+    );
 
-    // List of participants for group mode
+    // List of participants for group mode (strictly real participants)
     const groupParticipants = [
       {
         id: 'remote_1',
-        name: safeChat.name || 'George Alan',
+        name: safeChat.name || 'Participant',
         photo: displayPhoto,
         isLocal: false,
       },
       {
         id: 'local_user',
-        name: profile?.displayName || 'Mary Jane',
+        name: profile?.displayName || profile?.username || 'You',
         photo: getAvatarUrl(profile?.photoURL, profile?.id),
         isLocal: true,
       },
-      ...(invitedList.length > 0 
-        ? invitedList.map((usr: any, idx: number) => ({
-            id: usr.id || `inv_${idx}`,
-            name: usr.displayName || 'Participant',
-            photo: getAvatarUrl(usr.photoURL || usr.avatar, usr.id),
-            isLocal: false,
-          }))
-        : [
-            {
-              id: 'p_3',
-              name: 'Paul David',
-              photo: getAvatarUrl(null, 'p_3'),
-              isLocal: false,
-            },
-            {
-              id: 'p_4',
-              name: 'Muhammed',
-              photo: getAvatarUrl(null, 'p_4'),
-              isLocal: false,
-            }
-          ]
-      )
+      ...invitedList.map((usr: any, idx: number) => ({
+        id: usr.id || `inv_${idx}`,
+        name: usr.displayName || usr.username || 'Participant',
+        photo: getAvatarUrl(usr.photoURL || usr.avatar, usr.id),
+        isLocal: false,
+      }))
     ];
 
     return (
@@ -1542,7 +1536,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           </div>
         )}
 
-        {/* TOP HEADER OVERLAY (Design Discussion | 12:32 | 👥 count) */}
+        {/* TOP HEADER OVERLAY */}
         <div className="w-full flex items-center justify-between shrink-0 z-20 px-2">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -1551,7 +1545,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
 
           <div className="flex items-center gap-2">
             <div className="px-3.5 py-1.5 rounded-lg bg-[#25262a] border border-white/10 text-xs font-bold text-white/90 shadow-md">
-              {safeChat.name || 'Design Discussion'}
+              {safeChat.name || (isGroupCall ? 'Group Call' : 'Encrypted Call')}
             </div>
             <div className="px-3.5 py-1.5 rounded-lg bg-[#25262a] border border-white/10 text-xs font-mono font-bold text-white/90 shadow-md">
               {callStatus === 'connected' ? formatDuration(duration) : 'Connecting'}
@@ -1563,9 +1557,37 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
           </div>
         </div>
 
-        {/* MAIN VIDEO / PARTICIPANT GRID AREA */}
-        <div className="flex-1 min-h-0 w-full relative z-10">
-          {!isGroupCall ? (
+        {/* MAIN VIDEO / PARTICIPANT GRID OR AUDIO CARD */}
+        <div className="flex-1 min-h-0 w-full relative z-10 flex items-center justify-center">
+          {!isVideoLayout ? (
+            /* DESKTOP CONNECTED AUDIO CALL MODE */
+            <div className="flex flex-col items-center justify-center text-center gap-5 my-auto">
+              <div className="relative flex items-center justify-center">
+                <div 
+                  className="absolute w-44 h-44 rounded-3xl border border-cyan-400/30 bg-cyan-400/10 blur-md transition-all duration-300"
+                  style={{ transform: `scale(${1 + remoteAudioLevel / 70})` }}
+                />
+                <img 
+                  src={displayPhoto} 
+                  className="w-32 h-32 rounded-2xl object-cover border-[3px] border-white/20 relative z-10 shadow-2xl" 
+                  referrerPolicy="no-referrer" 
+                />
+              </div>
+
+              <div>
+                <LiveParticipantName
+                  participantId={participantId}
+                  fallbackName={safeChat.name}
+                  chatId={safeChat.id}
+                  className="text-2xl font-black text-white uppercase tracking-tight block drop-shadow-md"
+                />
+                <div className="flex items-center justify-center gap-1.5 mt-2 text-white/50">
+                  <ShieldCheck size={14} className="text-emerald-400" />
+                  <span className="text-[10px] font-black uppercase tracking-widest font-mono">Audio Link • Encrypted</span>
+                </div>
+              </div>
+            </div>
+          ) : !isGroupCall ? (
             /* 2-PERSON NORMAL INBOX CALL (Just 2 Screens Side-by-Side) */
             <div className="w-full h-full grid grid-cols-2 gap-3">
               {/* Tile 1: Remote Participant */}

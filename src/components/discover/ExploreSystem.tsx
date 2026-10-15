@@ -1231,7 +1231,7 @@ export const ExploreSystem: React.FC<{
       onTouchEnd={handleTouchEnd}
     >
       {/* ----------------- STICKY HEADER ----------------- */}
-      <header className="sticky top-0 bg-zinc-950/95 backdrop-blur-xl border-b border-white/10 px-4 pt-[calc(0.625rem+var(--sat,var(--safe-area-inset-top,0px)))] pb-2.5 z-40">
+      <header className="sticky top-0 bg-zinc-950/95 backdrop-blur-xl border-b border-white/10 px-4 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-2 z-40">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
           {/* Left: Branding */}
           <div className="flex items-center justify-between">

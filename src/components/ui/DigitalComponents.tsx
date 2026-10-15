@@ -32,7 +32,7 @@ export const LiquidBackground = () => (
     />
     
     {/* Subtle Glass Noise Overlay */}
-    <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.04] mix-blend-overlay" />
+    <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[length:16px_16px] opacity-[0.35] mix-blend-overlay" />
   </div>
 );
 

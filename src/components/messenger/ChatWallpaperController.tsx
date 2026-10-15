@@ -164,13 +164,22 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
   
   const globalWallpaper = profile?.themeSettings?.chatWallpaper || {};
 
+  const localChatSettings = useMemo(() => {
+    try {
+      const s = typeof window !== 'undefined' ? localStorage.getItem(`chat_settings_${chatId}`) : null;
+      if (s) return JSON.parse(s);
+    } catch {}
+    return null;
+  }, [chatId]);
+  const effectiveTheme = chatThemeSettings || localChatSettings || {};
+
   // Form states initialized with existing per-chat configurations, or fallback to global configurations
-  const [currentWallpaper, setCurrentWallpaper] = useState(chatThemeSettings?.wallpaperURL || globalWallpaper.wallpaperURL || (isLight ? PRESET_WALLPAPERS[4].value : PRESET_WALLPAPERS[0].value));
-  const [blurLevel, setBlurLevel] = useState(chatThemeSettings?.blurLevel !== undefined ? chatThemeSettings.blurLevel : (globalWallpaper.blurLevel !== undefined ? globalWallpaper.blurLevel : 0));
-  const [brightness, setBrightness] = useState(chatThemeSettings?.brightness !== undefined ? chatThemeSettings.brightness : (globalWallpaper.brightness !== undefined ? globalWallpaper.brightness : (isLight ? 0.95 : 0.65)));
-  const [selectedThemeId, setSelectedThemeId] = useState<string>(chatThemeSettings?.themeId || globalWallpaper.themeId || 'ocean');
-  const [cropPosition, setCropPosition] = useState(chatThemeSettings?.cropPosition || globalWallpaper.cropPosition || { x: 50, y: 50, zoom: 1 });
-  const [parallaxEnabled, setParallaxEnabled] = useState(chatThemeSettings?.parallaxEnabled ?? globalWallpaper.parallaxEnabled ?? false);
+  const [currentWallpaper, setCurrentWallpaper] = useState(effectiveTheme?.wallpaperURL || globalWallpaper.wallpaperURL || (isLight ? PRESET_WALLPAPERS[4].value : PRESET_WALLPAPERS[0].value));
+  const [blurLevel, setBlurLevel] = useState(effectiveTheme?.blurLevel !== undefined ? effectiveTheme.blurLevel : (globalWallpaper.blurLevel !== undefined ? globalWallpaper.blurLevel : 0));
+  const [brightness, setBrightness] = useState(effectiveTheme?.brightness !== undefined ? effectiveTheme.brightness : (globalWallpaper.brightness !== undefined ? globalWallpaper.brightness : (isLight ? 0.95 : 0.65)));
+  const [selectedThemeId, setSelectedThemeId] = useState<string>(effectiveTheme?.themeId || globalWallpaper.themeId || 'ocean');
+  const [cropPosition, setCropPosition] = useState(effectiveTheme?.cropPosition || globalWallpaper.cropPosition || { x: 50, y: 50, zoom: 1 });
+  const [parallaxEnabled, setParallaxEnabled] = useState(effectiveTheme?.parallaxEnabled ?? globalWallpaper.parallaxEnabled ?? false);
   const [saveScope, setSaveScope] = useState<'me' | 'both'>('me'); // 'me' = single inbox for me, 'both' = both participants in this chat
 
   const selectedTheme = useMemo(() => {
@@ -349,6 +358,11 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
     };
 
     try {
+      try {
+        localStorage.setItem(`chat_settings_${chatId}`, JSON.stringify(resolvedConfig));
+        localStorage.setItem(`chat_theme_${chatId}`, JSON.stringify(resolvedConfig));
+      } catch {}
+
       if (saveScope === 'me') {
         // Apply for Me: Save to personal user profile perChatWallpapers[chatId]
         const currentThemeSettings = profile?.themeSettings || {};
@@ -362,6 +376,8 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
             ...currentThemeSettings,
             perChatWallpapers: updatedPerChat
           }
+        }).catch((profileErr) => {
+          logger.warn('Failed updating profile perChatWallpapers, cached locally:', profileErr);
         });
       } else {
         // Apply for Both: Save to shared conversation document for both participants
@@ -377,6 +393,8 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
               ...currentThemeSettings,
               perChatWallpapers: currentPerChat
             }
+          }).catch((profileErr) => {
+            logger.warn('Failed removing personal theme override:', profileErr);
           });
         }
       }

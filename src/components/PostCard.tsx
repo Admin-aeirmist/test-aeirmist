@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Heart, MessageCircle, Share2, MoreHorizontal, Bookmark, Sparkles, MapPin, ChevronLeft, ChevronRight, Eye, BarChart3 } from 'lucide-react';
+import { Heart, MessageCircle, Share2, MoreHorizontal, Bookmark, Sparkles, MapPin, ChevronLeft, ChevronRight, Eye, BarChart3, ShieldCheck } from 'lucide-react';
 import { formatAeirmistTimestamp } from '../lib/date';
 import { PostMenu } from './PostMenu';
 import { EditPostModal } from './EditPostModal';
@@ -13,6 +13,7 @@ import { InsightsDashboard } from './analytics/InsightsDashboard';
 import { postAnalytics } from '../services/PostAnalyticsService';
 import { triggerNativeHaptic } from '../lib/nativeHaptics';
 import { logger } from '@/src/utils/logger';
+import { normalizeMediaUrl } from '../utils/mediaUtils';
 
 
 interface PostProps {
@@ -33,9 +34,10 @@ interface PostProps {
     timestamp: string;
   };
   onUserClick?: (user: any) => void;
+  onClick?: () => void;
 }
 
-export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) => {
+export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick, onClick }) => {
   const { openReportModal } = useReport();
   const { profile, toggleLike, earnPoints, localAvatarURL, deletePost, archivePost, toggleBookmark, addToast } = useAeirmist();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -45,20 +47,20 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
   const [showHeartAnim, setShowHeartAnim] = useState(false);
   const lastTapRef = React.useRef<number>(0);
 
-  const postAuthorId = post.authorId || (post as any).userId || post.authorUid;
-  const isDeletedAuthor = Boolean(
-    (post as any).isDeletedAuthor || 
-    post.authorName === 'Aeirmist User' || 
-    (post as any).userName === 'Aeirmist User' || 
-    !postAuthorId
-  );
-  const displayAuthorName = isDeletedAuthor ? 'Aeirmist User' : (post.authorName || 'Aeirmist User');
+  const postAuthor = (post as any).author;
+  const postAuthorId = post.authorId || (post as any).userId || post.authorUid || postAuthor?.id;
   const isOwnPost = Boolean(profile?.id && postAuthorId && (postAuthorId === profile.id || postAuthorId === profile.uid));
-  const authorPhoto = isDeletedAuthor ? getBlankDp() : (isOwnPost ? (localAvatarURL || profile.photoURL || post.authorPhoto) : post.authorPhoto);
 
-  const images = post.mediaUrls && post.mediaUrls.length > 0 
+  const rawAuthorName = postAuthor?.displayName || postAuthor?.username || post.authorName || (post as any).userName || (isOwnPost ? (profile?.displayName || profile?.username) : '') || '';
+  const isDeletedAuthor = Boolean((post as any).isDeletedAuthor || (!postAuthorId && !rawAuthorName));
+  const displayAuthorName = isDeletedAuthor ? 'Aeirmist Member' : (rawAuthorName || 'Aeirmist Member');
+  const authorPhoto = isDeletedAuthor ? getBlankDp() : (isOwnPost ? (localAvatarURL || profile?.photoURL || postAuthor?.avatarKey || post.authorPhoto) : (postAuthor?.avatarKey || post.authorPhoto));
+  const isVerified = Boolean(postAuthor?.isVerified || (post as any).isVerified || (isOwnPost ? profile?.isVerified : false));
+
+  const rawImages = post.mediaUrls && post.mediaUrls.length > 0 
     ? post.mediaUrls 
     : (post.mediaURL ? [post.mediaURL] : []);
+  const images = rawImages.map(u => normalizeMediaUrl(u)).filter(Boolean);
 
   const isLiked = profile && post.likedBy?.includes(profile.id);
   const isSaved = profile && (post as any).savedBy?.includes(profile.id);
@@ -67,16 +69,16 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
   usePostAnalytics({ postId: post.id, type });
 
   const handleAuthorClick = () => {
-    if (isDeletedAuthor) {
+    if (isDeletedAuthor || !postAuthorId) {
       addToast?.({ title: 'Unavailable', message: 'This account is unavailable on Aeirmist.', type: 'info' });
       return;
     }
     postAnalytics.trackProfileClick(post.id);
     onUserClick?.({
-      id: post.authorId,
+      id: postAuthorId,
       displayName: displayAuthorName,
       photoURL: authorPhoto,
-      username: displayAuthorName.toLowerCase().replace(' ', '_')
+      username: postAuthor?.username || displayAuthorName.toLowerCase().replace(' ', '_')
     });
   };
 
@@ -139,7 +141,10 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
               />
             </div>
             <div className="cursor-pointer" onClick={handleAuthorClick}>
-              <h3 className="font-bold text-sm tracking-tight">{displayAuthorName}</h3>
+              <h3 className="font-bold text-sm tracking-tight flex items-center gap-1.5">
+                {displayAuthorName}
+                {isVerified && <ShieldCheck size={12} className="text-aeirmist-cyan shrink-0" />}
+              </h3>
               {post.location ? (
                 <p className="text-[9px] text-aeirmist-cyan flex items-center gap-1 font-black uppercase tracking-widest">
                    <MapPin size={8} className="fill-current" /> {post.location}
@@ -178,7 +183,7 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
                 setShowHeartAnim(true);
                 setTimeout(() => setShowHeartAnim(false), 900);
                 if (!isLiked) {
-                  toggleLike(post.id, false);
+                  toggleLike(post.id, false, post.authorId || post.authorUid || (post as any).userId || (post as any).author?.id);
                 }
                 lastTapRef.current = 0;
                 return;
@@ -199,6 +204,9 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
                     alt="Artifact" 
                     className="w-full h-full object-cover" 
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
                   />
                 </div>
               ))}
@@ -261,12 +269,22 @@ export const PostCard: React.FC<PostProps> = React.memo(({ post, onUserClick }) 
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-5">
               <button 
-                onClick={() => toggleLike(post.id, !!isLiked)}
+                onClick={() => toggleLike(post.id, !!isLiked, post.authorId || post.authorUid || (post as any).userId || (post as any).author?.id)}
                 className="transition-all hover:scale-110 active:scale-90"
               >
                 <Heart size={26} className={`transition-colors ${isLiked ? 'fill-aeirmist-magenta text-aeirmist-magenta' : 'text-white hover:text-aeirmist-magenta'}`} />
               </button>
-              <button onClick={() => logger.info("Action coming soon")} className="transition-all hover:scale-110 active:scale-90">
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onClick) {
+                    onClick();
+                  } else {
+                    window.dispatchEvent(new CustomEvent('aeirmist_open_post', { detail: { postId: post.id } }));
+                  }
+                }} 
+                className="transition-all hover:scale-110 active:scale-90"
+              >
                 <MessageCircle size={26} className="text-white hover:text-aeirmist-cyan transition-colors" />
               </button>
               <button 

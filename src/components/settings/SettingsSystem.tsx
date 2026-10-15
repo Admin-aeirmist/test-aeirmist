@@ -233,7 +233,7 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
     developer: DeveloperSettings
   };
 
-  const ActiveSection = sectionMap[activeTab];
+  const ActiveSection = activeTab ? sectionMap[activeTab] : null;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [formData, setFormData] = useState<any>(null);
@@ -1171,6 +1171,8 @@ const ToggleItem = ({ label, desc, enabled, onChange }: any) => {
 
 // Profile Preview Sub-component
 const ProfilePreview = ({ formData, activeTheme }: any) => {
+  const { addToast } = useAeirmist();
+  const [isPreviewFollowing, setIsPreviewFollowing] = useState(false);
   return (
     <div className="w-full rounded-[2.5rem] bg-aeirmist-bg border border-white/10 overflow-hidden shadow-2xl relative">
       {/* Banner */}
@@ -1217,8 +1219,23 @@ const ProfilePreview = ({ formData, activeTheme }: any) => {
         </div>
 
         <div className="mt-8 flex gap-3">
-          <button onClick={() => logger.info("Action coming soon")} className="flex-1 h-11 rounded-xl bg-aeirmist-cyan text-black text-xs font-bold uppercase tracking-widest neon-glow-cyan">Follow</button>
-          <button onClick={() => logger.info("Action coming soon")} className="flex-1 h-11 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-bold uppercase tracking-widest">Message</button>
+          <button 
+            type="button"
+            onClick={() => {
+              setIsPreviewFollowing(!isPreviewFollowing);
+              addToast?.({ title: 'Preview Mode', message: isPreviewFollowing ? 'Unfollowed (preview mode)' : 'Followed (preview mode)', type: 'info' });
+            }} 
+            className="flex-1 h-11 rounded-xl bg-aeirmist-cyan text-black text-xs font-bold uppercase tracking-widest neon-glow-cyan active:scale-95 transition-all"
+          >
+            {isPreviewFollowing ? 'Following' : 'Follow'}
+          </button>
+          <button 
+            type="button"
+            onClick={() => addToast?.({ title: 'Preview Mode', message: 'Messaging preview: opens your direct chat thread.', type: 'info' })} 
+            className="flex-1 h-11 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-bold uppercase tracking-widest active:scale-95 transition-all"
+          >
+            Message
+          </button>
         </div>
 
         <div className="mt-6 flex justify-around py-4 rounded-2xl bg-white/[0.02]">

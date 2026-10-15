@@ -56,6 +56,7 @@ import { useInboxData } from '../../hooks/useInboxData';
 import { NGLSticker } from '../profile/NGLSystem';
 import { StoryStudio } from '../stories/StoryStudio';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 import { 
   collection, 
@@ -306,9 +307,9 @@ export const StoriesSystem: React.FC = React.memo(() => {
   const myNote = notes.find(n => n.authorId === profile?.id);
 
   return (
-    <div className="relative mb-2 select-none">
+    <div className="relative mb-1 select-none">
       {/* MINIMAL HORIZONTAL STORIES ROW */}
-      <div className="flex items-center gap-5 md:gap-8 overflow-x-auto py-2 pl-6 pr-4 scroll-smooth snap-x snap-mandatory">
+      <div className="flex items-center gap-4 md:gap-6 overflow-x-auto pt-1 pb-1 pl-3.5 pr-3.5 scroll-smooth snap-x snap-mandatory no-scrollbar">
         
         {/* YOUR STORY */}
         <div className="flex flex-col items-center gap-2.5 shrink-0 snap-start ml-1.5 sm:ml-0">
@@ -1034,6 +1035,14 @@ export const StoryViewer = ({
         createdAt: serverTimestamp()
       };
       await addDoc(collection(db, 'highlights'), newHighlight);
+      // Sync highlight to PostgreSQL server
+      api.stories.createHighlight({
+        title: newHighlightName,
+        coverUrl: activeStory.mediaUrl,
+        storyIds: [activeStory.id]
+      }).catch((err) => {
+        logger.warn('[StoriesSystem] Backend highlight sync notice:', err);
+      });
       setNewHighlightName('');
       setIsHighlightModalOpen(false);
       addToast?.({ title: "Highlight Created", message: "New highlight created with this story.", type: "success" });

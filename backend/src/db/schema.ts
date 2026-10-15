@@ -56,12 +56,32 @@ export const profiles = pgTable('profiles', {
   postsCount: integer('posts_count').default(0).notNull(),
   socialLinks: jsonb('social_links').default({}).notNull(),
   privacySettings: jsonb('privacy_settings').default({ privateAccount: false, showOnlineStatus: true }).notNull(),
+  // Extended personal info — saved to device server
+  phoneNumber: varchar('phone_number', { length: 20 }),
+  phoneCountryCode: varchar('phone_country_code', { length: 10 }).default('+1'),
+  phoneVerified: boolean('phone_verified').default(false),
+  dateOfBirth: varchar('date_of_birth', { length: 20 }),
+  gender: varchar('gender', { length: 50 }),
+  relationshipStatus: varchar('relationship_status', { length: 50 }),
+  relationshipStatusVisibility: varchar('relationship_status_visibility', { length: 20 }).default('public'),
+  pronouns: text('pronouns'),
+  tagline: varchar('tagline', { length: 150 }),
+  fullName: varchar('full_name', { length: 150 }),
+  personalEmail: varchar('personal_email', { length: 255 }),
+  recoveryEmail: varchar('recovery_email', { length: 255 }),
+  recoveryPhone: varchar('recovery_phone', { length: 20 }),
+  isProfessional: boolean('is_professional').default(false).notNull(),
+  isProfileLocked: boolean('is_profile_locked').default(false).notNull(),
+  category: varchar('category', { length: 50 }),
+  themeSettings: jsonb('theme_settings').default({}).notNull(),
+  locationData: jsonb('location_data'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_profiles_username').on(table.username),
   index('idx_profiles_user_id').on(table.userId),
 ]);
+
 
 export const loginSessions = pgTable('login_sessions', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -70,6 +90,15 @@ export const loginSessions = pgTable('login_sessions', {
   ipAddress: varchar('ip_address', { length: 45 }),
   userAgent: text('user_agent'),
   deviceName: varchar('device_name', { length: 100 }),
+  deviceType: varchar('device_type', { length: 32 }).default('desktop'),
+  model: varchar('model', { length: 100 }),
+  browser: varchar('browser', { length: 50 }),
+  os: varchar('os', { length: 50 }),
+  location: varchar('location', { length: 200 }),
+  latitude: numeric('latitude', { precision: 10, scale: 6 }),
+  longitude: numeric('longitude', { precision: 10, scale: 6 }),
+  isTrusted: boolean('is_trusted').default(false),
+  sessionToken: varchar('session_token', { length: 64 }),
   isRevoked: boolean('is_revoked').default(false).notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   lastActiveAt: timestamp('last_active_at', { withTimezone: true }).defaultNow().notNull(),
@@ -111,6 +140,7 @@ export const posts = pgTable('posts', {
   mediaKeys: text('media_keys').array().default([]).notNull(),
   mediaType: varchar('media_type', { length: 16 }).default('none').notNull(),
   visibility: varchar('visibility', { length: 16 }).default('public').notNull(),
+  isArchived: boolean('is_archived').default(false).notNull(),
   likesCount: integer('likes_count').default(0).notNull(),
   commentsCount: integer('comments_count').default(0).notNull(),
   sharesCount: integer('shares_count').default(0).notNull(),
@@ -125,6 +155,7 @@ export const posts = pgTable('posts', {
   index('idx_posts_user_id').on(table.userId),
   index('idx_posts_created_at').on(table.createdAt),
 ]);
+
 
 export const postLikes = pgTable('post_likes', {
   postId: uuid('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
@@ -433,6 +464,19 @@ export const vaultItems = pgTable('vault_items', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const vaultConfigs = pgTable('vault_configs', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  passcodeType: varchar('passcode_type', { length: 16 }).default('pin6').notNull(),
+  passcodeHash: varchar('passcode_hash', { length: 255 }).notNull(),
+  questionIds: jsonb('question_ids').$type<number[]>().default([]).notNull(),
+  answersHashes: jsonb('answers_hashes').$type<string[]>().default([]).notNull(),
+  biometricEnabled: boolean('biometric_enabled').default(false).notNull(),
+  autoLockDuration: varchar('auto_lock_duration', { length: 32 }).default('300').notNull(),
+  silentNotifications: boolean('silent_notifications').default(false).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const pollVotes = pgTable('poll_votes', {
   id: uuid('id').defaultRandom().primaryKey(),
   postId: uuid('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
@@ -528,3 +572,21 @@ export const conversationsRelations = relations(conversations, ({ many }) => ({
   members: many(conversationMembers),
   messages: many(messages),
 }));
+
+export const refreshTokens = pgTable('refresh_tokens', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  token: varchar('token', { length: 100 }).notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+

@@ -82,7 +82,7 @@ export const ChatMiniPoll: React.FC<ChatMiniPollProps> = ({ chatId, messageId, p
       addToast?.({
         title: 'Vote Failed',
         message: 'Could not record your vote. Please retry.',
-        type: 'error'
+        type: 'warning'
       });
     } finally {
       setVoting(false);

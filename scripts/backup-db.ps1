@@ -1,44 +1,46 @@
-# ==============================================================================
-# Aeirmist PostgreSQL Automated Backup Script (Windows PowerShell)
-# ==============================================================================
+# Aeirmist PostgreSQL Automated Backup Script
 param(
-  [string]$BackupDir = "backups"
+    [string]$BackupDir = "D:\Aeirmist\backups\db",
+    [int]$RetentionCount = 14
 )
 
 $ErrorActionPreference = "Stop"
 
-# Load .env variables
-$EnvPath = Join-Path $PSScriptRoot "..\.env"
-if (Test-Path $EnvPath) {
-  Get-Content $EnvPath | ForEach-Object {
-    if ($_ -match "^\s*([^#=]+)\s*=\s*(.*)$") {
-      [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim())
-    }
-  }
-}
-
-$DbUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { "aeirmist" }
-$DbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "aeirmist" }
-$DbPass = if ($env:POSTGRES_PASSWORD) { $env:POSTGRES_PASSWORD } else { "aeirmist_secure_2026" }
-
-$TargetDir = Join-Path $PSScriptRoot "..\" $BackupDir
-if (!(Test-Path $TargetDir)) {
-  New-Item -ItemType Directory -Path $TargetDir | Out-Null
+if (-not (Test-Path $BackupDir)) {
+    New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
 }
 
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$BackupFile = Join-Path $TargetDir "aeirmist_$Timestamp.sql"
+$BackupFile = Join-Path $BackupDir "aeirmist_$Timestamp.dump"
+$PgDumpPath = "D:\Aeirmist\pgsql\pgsql\bin\pg_dump.exe"
 
-Write-Host "📦 Starting Aeirmist PostgreSQL backup..." -ForegroundColor Cyan
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host "  Aeirmist Database Backup Initiated" -ForegroundColor Cyan
+Write-Host "  Timestamp: $Timestamp" -ForegroundColor Gray
+Write-Host "==========================================" -ForegroundColor Cyan
 
-$env:PGPASSWORD = $DbPass
+$env:PGPASSWORD = "aeirmist"
 
-# Run pg_dump either natively or inside docker container
-if (Get-Command pg_dump -ErrorAction SilentlyContinue) {
-  pg_dump -h 127.0.0.1 -p 5432 -U $DbUser $DbName > $BackupFile
-} else {
-  # Docker container execution fallback
-  docker exec -t aeirmist-postgres pg_dump -U $DbUser $DbName > $BackupFile
+try {
+    & $PgDumpPath -h 127.0.0.1 -p 5432 -U aeirmist -F c -b -f $BackupFile aeirmist
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $BackupFile)) {
+        $fileSize = (Get-Item $BackupFile).Length
+        $sizeMB = [math]::Round($fileSize / 1MB, 2)
+        Write-Host "SUCCESS: Backup completed successfully!" -ForegroundColor Green
+        Write-Host "File: $BackupFile ($sizeMB MB)" -ForegroundColor Green
+
+        # Retention management - keep last $RetentionCount backups
+        $allBackups = Get-ChildItem -Path $BackupDir -Filter "aeirmist_*.dump" | Sort-Object CreationTime -Descending
+        if ($allBackups.Count -gt $RetentionCount) {
+            $toDelete = $allBackups | Select-Object -Skip $RetentionCount
+            foreach ($item in $toDelete) {
+                Write-Host "Pruning old backup: $($item.Name)" -ForegroundColor Yellow
+                Remove-Item $item.FullName -Force
+            }
+        }
+    } else {
+        Write-Error "Backup command failed with exit code $LASTEXITCODE"
+    }
+} catch {
+    Write-Error "Backup failed: $_"
 }
-
-Write-Host "✅ Backup completed at: $BackupFile" -ForegroundColor Green

@@ -34,9 +34,11 @@ import {
   ExternalLink,
   Users,
   UserCheck,
-  Heart
+  Heart,
+  MapPin
 } from 'lucide-react';
 import { getAvatarUrl } from '../../lib/avatar';
+import { normalizeMediaUrl } from '../../utils/mediaUtils';
 import { Avatar } from '../ui/Avatar';
 import { AeirmistRankBadge } from './AeirmistRankBadge';
 import { getRankInfo } from '../../lib/aeirmistRanks';
@@ -296,9 +298,9 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
         
         {isDataLoading ? (
           <Skeleton className="w-full h-full opacity-10" />
-        ) : (isOwnProfile && localCoverURL) || displayUser?.coverURL ? (
+        ) : (isOwnProfile && localCoverURL) || displayUser?.coverURL || displayUser?.bannerURL || displayUser?.bannerKey ? (
           <img 
-            src={(isOwnProfile && localCoverURL) ? localCoverURL : displayUser.coverURL} 
+            src={(isOwnProfile && localCoverURL) ? localCoverURL : normalizeMediaUrl(displayUser?.coverURL || displayUser?.bannerURL || displayUser?.bannerKey)} 
             alt="Cover" 
             loading="eager"
             decoding="sync"
@@ -419,15 +421,17 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
             <div>
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3">
                 <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-white truncate max-w-sm">
-                  {displayUser?.displayName || "Junaed Islam"}
+                  {displayUser?.displayName || displayUser?.username || "Aeirmist User"}
                 </h1>
                 {isVerified && (
                   <ShieldCheck size={20} className="text-aeirmist-cyan shrink-0" />
                 )}
               </div>
-              <p className="text-[11px] font-mono font-bold text-aeirmist-cyan tracking-widest mt-1">
-                @{displayUser?.username || "junaed"}
-              </p>
+              {displayUser?.username && (
+                <p className="text-[11px] font-mono font-bold text-aeirmist-cyan tracking-widest mt-1">
+                  @{displayUser.username}
+                </p>
+              )}
 
               {/* Relationship Status Badge */}
               {(() => {
@@ -566,7 +570,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 {isDataLoading ? (
                   <Skeleton className="h-6 w-8 mb-1 opacity-20" />
                 ) : (
-                  <span className="text-lg font-black text-slate-900 dark:text-white">{Array.isArray(displayUser?.social?.followers) ? displayUser.social.followers.length : Math.max(0, displayUser?.followersCount || 0)}</span>
+                  <span className="text-lg font-black text-slate-900 dark:text-white">{Math.max(displayUser?.followersCount || 0, Array.isArray(displayUser?.social?.followers) ? displayUser.social.followers.length : 0)}</span>
                 )}
                 <span className="text-[10px] font-black text-slate-400 dark:text-white/30 uppercase tracking-widest">Followers</span>
               </div>
@@ -577,7 +581,7 @@ export const DesktopProfileLayout = React.memo<DesktopProfileLayoutProps>(({
                 {isDataLoading ? (
                   <Skeleton className="h-6 w-8 mb-1 opacity-20" />
                 ) : (
-                  <span className="text-lg font-black text-slate-900 dark:text-white">{Array.isArray(displayUser?.social?.following) ? displayUser.social.following.length : Math.max(0, displayUser?.followingCount || 0)}</span>
+                  <span className="text-lg font-black text-slate-900 dark:text-white">{Math.max(displayUser?.followingCount || 0, Array.isArray(displayUser?.social?.following) ? displayUser.social.following.length : 0)}</span>
                 )}
                 <span className="text-[10px] font-black text-slate-400 dark:text-white/30 uppercase tracking-widest">Following</span>
               </div>

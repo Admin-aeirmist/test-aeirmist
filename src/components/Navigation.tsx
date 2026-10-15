@@ -792,7 +792,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            style={{ bottom: 'calc(0.75rem + var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
+            style={{ bottom: 'calc(0.5rem + var(--sab, var(--safe-area-inset-bottom, 0px)))' }}
             className="md:hidden fixed left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-[390px] overflow-visible pointer-events-auto"
           >
             <div 

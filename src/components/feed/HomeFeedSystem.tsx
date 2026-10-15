@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppearance } from '../../context/AppearanceContext';
 import { StoriesSystem } from './StoriesSystem';
@@ -17,7 +17,8 @@ import {
   Compass
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, query, orderBy, onSnapshot, limit, where } from 'firebase/firestore';
+import { api } from '../../services/api/client';
+import { formatAeirmistTimestamp } from '../../lib/date';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
 import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
 import { Skeleton } from '../ui/Skeleton';
@@ -29,10 +30,20 @@ import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 
 export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPostClick?: (postId: string) => void, onCreate?: () => void, onNavigate?: (tab: string, param?: string) => void }> = React.memo(({ onUserClick, onPostClick, onCreate, onNavigate }) => {
   const [posts, setPosts] = useState<any[]>(() => {
-    // Attempt instant hydration from local cache
+    // Attempt instant hydration from local cache (ignoring stale/placeholder cache)
     try {
       const cached = localStorage.getItem('aeirmist_home_feed_cache');
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((p: any) => 
+            p && 
+            p.authorName !== 'Aeirmist User' && 
+            p.userName !== 'Aeirmist User' && 
+            p.author?.displayName !== 'Aeirmist User'
+          );
+        }
+      }
     } catch (e) {
       logger.warn("Feed hydration failed", e);
     }
@@ -51,17 +62,34 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
 
   // Hydrate from Local SQLite/IndexedDB vault on mount + safety timeout
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem('aeirmist_home_feed_cache');
+      if (raw && (raw.includes('"Aeirmist User"') || raw.includes('aeirmist_user'))) {
+        localStorage.removeItem('aeirmist_home_feed_cache');
+      }
+    } catch {}
+
     LocalSqlService.getFeedPosts(20).then(cached => {
       if (cached && cached.length > 0) {
-        setPosts(prev => prev.length === 0 ? cached.map(c => c.raw || c) : prev);
-        setLoading(false);
+        const valid = cached
+          .map(c => c.raw || c)
+          .filter((p: any) => 
+            p && 
+            p.authorName !== 'Aeirmist User' && 
+            p.userName !== 'Aeirmist User' && 
+            p.author?.displayName !== 'Aeirmist User'
+          );
+        if (valid.length > 0) {
+          setPosts(prev => prev.length === 0 ? valid : prev);
+          setLoading(false);
+        }
       }
     }).catch(e => logger.warn("Local DB hydration failed", e));
 
-    // Instant safety fallback: if no posts loaded within 1.2s, dismiss skeleton to prevent black blank freeze
+    // Instant safety fallback: if no posts loaded within 350ms, dismiss skeleton to prevent black blank freeze
     const safetyTimer = setTimeout(() => {
       setLoading(false);
-    }, 1200);
+    }, 350);
 
     return () => clearTimeout(safetyTimer);
   }, []);
@@ -96,12 +124,27 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
   useEffect(() => {
     if (processedPosts.length > 0) {
       try {
-        // Store only the first 20 for fast cold-start hydration
-        localStorage.setItem('aeirmist_home_feed_cache', JSON.stringify(processedPosts.slice(0, 20)));
+        // Store lightweight representation (first 15) for fast cold-start hydration without overflowing 5MB quota
+        const safeCache = processedPosts.slice(0, 15).map(p => {
+          const cleanUrls = (p.mediaUrls || []).map((u: string) => (typeof u === 'string' && u.startsWith('data:') && u.length > 1024 ? '' : u)).filter(Boolean);
+          const cleanAvatar = (typeof p.userAvatar === 'string' && p.userAvatar.startsWith('data:') && p.userAvatar.length > 1024) ? '' : p.userAvatar;
+          return {
+            ...p,
+            mediaUrls: cleanUrls,
+            userAvatar: cleanAvatar,
+            authorAvatar: cleanAvatar,
+            author: p.author ? { ...p.author, avatar: cleanAvatar, avatarKey: cleanAvatar, photoURL: cleanAvatar } : p.author
+          };
+        });
+        localStorage.setItem('aeirmist_home_feed_cache', JSON.stringify(safeCache));
         // Persist into Local SQLite/IndexedDB vault
         LocalSqlService.saveFeedPosts(processedPosts.slice(0, 50));
-      } catch (e) {
-        logger.warn("Feed cache sync failed", e);
+      } catch (e: any) {
+        if (e?.name === 'QuotaExceededError' || e?.code === 22) {
+          try {
+            localStorage.removeItem('aeirmist_home_feed_cache');
+          } catch {}
+        }
       }
     }
   }, [processedPosts]);
@@ -153,237 +196,96 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
     setRetryCount(prev => prev + 1);
   };
 
-  useEffect(() => {
-    if (!db || !user || !profile) return;
-    
-    const uidsToQuery: string[] = JSON.parse(uidsToQueryString);
-    if (!isInitialLoad.current) setIsRefreshing(true);
+  const fetchFeed = useCallback(async () => {
+    try {
+      if (!isInitialLoad.current) setIsRefreshing(true);
+      const res: any = await api.posts.getFeed(postLimit);
+      if (res?.posts && Array.isArray(res.posts)) {
+        const following = (profile?.social?.following || []).filter(Boolean);
+        const followers = (profile?.social?.followers || []).filter(Boolean);
+        const closeFriends = (profile?.closeFriends || []).filter(Boolean);
 
-    const resultsByBatch = new Map<string, any[]>();
-    let commitTimer: any = null;
+        const mapped = res.posts
+          .filter((p: any) => {
+            if (!p || p.isArchived || p.deletedAt) return false;
+            const name = p.author?.displayName || p.author?.username || p.authorName || '';
+            if (name.toLowerCase() === 'aeirmist user' || name.toLowerCase().startsWith('aeirmistuser')) {
+              return false;
+            }
+            return true;
+          })
+          .map((p: any) => {
+            const authorDisplayName = p.author?.displayName || p.author?.username || p.authorName || 'Aeirmist Member';
+            const authorAvatar = p.author?.avatarKey || p.userAvatar || '';
+            const isVerified = Boolean(p.author?.isVerified);
 
-    const scheduleCommit = () => {
-      if (commitTimer) clearTimeout(commitTimer);
-      commitTimer = setTimeout(() => {
-        applyFilterAndCommit();
-      }, 16);
-    };
+            return {
+              id: p.id,
+              userId: p.userId,
+              authorId: p.userId,
+              authorName: authorDisplayName,
+              userName: p.author?.username || authorDisplayName,
+              userAvatar: authorAvatar,
+              authorAvatar: authorAvatar,
+              author: {
+                id: p.author?.id || p.userId,
+                name: authorDisplayName,
+                displayName: authorDisplayName,
+                username: p.author?.username || '',
+                avatar: authorAvatar,
+                avatarKey: authorAvatar,
+                photoURL: authorAvatar,
+                isVerified: isVerified,
+                badge: p.author?.badge || null
+              },
+              isVerified: isVerified,
+              content: p.content,
+              mediaKeys: p.mediaKeys || [],
+              mediaUrls: (p.mediaKeys || []).map((k: string) => 
+                k.startsWith('http') || k.startsWith('data:') ? k : `/media/${k.replace(/^\/+media\/+/, '')}`
+              ),
+              mediaType: p.mediaType || ((p.mediaKeys && p.mediaKeys.length > 0) ? 'image' : 'none'),
+              likesCount: p.likesCount || 0,
+              commentsCount: p.commentsCount || 0,
+              sharesCount: p.sharesCount || 0,
+              viewsCount: p.viewsCount || 0,
+              likedBy: p.isLiked && profile?.id ? [profile.id] : [],
+              isLiked: Boolean(p.isLiked),
+              isBookmarked: Boolean(p.isBookmarked),
+              poll: p.pollData || null,
+              tags: p.tags || [],
+              location: p.location || null,
+              createdAt: p.createdAt,
+              timestamp: p.createdAt ? formatAeirmistTimestamp(p.createdAt) : 'Just now',
+              __sortTime: p.createdAt ? new Date(p.createdAt).getTime() : Date.now(),
+            };
+          });
 
-    const applyFilterAndCommit = () => {
-      const merged = Array.from(resultsByBatch.values()).flat();
-      const seen = new Set<string>();
-      const deduped = merged.filter(p => {
-        if (!p || !p.id || seen.has(p.id)) return false;
-        seen.add(p.id);
-        return true;
-      });
-
-      // SORT IN JAVASCRIPT: This removes the need for composite indices in Firestore
-      deduped.sort((a, b) => (b.__sortTime || 0) - (a.__sortTime || 0));
-
-      const following = (profile.social?.following || []).filter(Boolean);
-      const followers = (profile.social?.followers || []).filter(Boolean);
-      const closeFriends = (profile.closeFriends || []).filter(Boolean);
-
-      const filtered = deduped.slice(0, postLimit * 2).filter(p => {
-        if (!p || p.isArchived) return false;
-        // Strictly exclude posts from deleted, banned, or scheduled-for-purge accounts
-        if (
-          p.isBanned ||
-          p.author?.isBanned ||
-          p.authorIsBanned ||
-          p.status === 'BANNED' ||
-          p.authorStatus === 'BANNED' ||
-          p.isDeletedAuthor || 
-          p.scheduledForPurge || 
-          p.isDeleted ||
-          p.hidden ||
-          p.authorName === 'Aeirmist User' || 
-          p.userName === 'Aeirmist User' || 
-          p.author?.name === 'Aeirmist User' ||
-          p.author?.displayName === 'Aeirmist User' ||
-          p.author?.username === 'aeirmist_user' ||
-          p.author?.username === 'deleted_user'
-        ) {
-          return false;
-        }
-
-        const authorId = p.authorId || p.authorUid || p.author?.id || '';
-        const authorUid = p.authorUid || p.author?.uid || '';
-        const isOwn = authorId === profile.id || authorUid === user.uid;
-
-        // Feed Mode specific filtering: strictly posts from users in following list
+        let filtered = mapped;
         if (feedMode === 'following') {
-          const authorCandidates = [
-            p.authorId,
-            p.authorUid,
-            p.userId,
-            p.author?.id,
-            p.author?.uid,
-            authorId,
-            authorUid
-          ].filter(Boolean);
-
-          const followingSet = new Set([
-            ...following,
-            ...following.map((id: string) => id.replace(/^profile_/, '')),
-            ...following.map((id: string) => 'profile_' + id.replace(/^profile_/, ''))
-          ]);
-
-          return authorCandidates.some(id => followingSet.has(id));
+          filtered = mapped.filter((p: any) => following.includes(p.userId) || following.includes(p.authorId));
+        } else if (feedMode === 'friends') {
+          const friends = Array.from(new Set([...following.filter((id: string) => followers.includes(id)), ...closeFriends]));
+          filtered = mapped.filter((p: any) => friends.includes(p.userId) || friends.includes(p.authorId));
+        } else if (feedMode === 'saved') {
+          filtered = mapped.filter((p: any) => p.isBookmarked);
         }
 
-        if (feedMode === 'friends') {
-          const isMutual = (following.includes(authorId) && followers.includes(authorId)) ||
-                           (following.includes(authorUid) && followers.includes(authorUid));
-          const isClose = closeFriends.includes(authorId) || closeFriends.includes(authorUid);
-          return isMutual || isClose;
-        }
-
-        if (feedMode === 'saved') {
-          return p.savedBy?.includes(profile.id) || p.savedBy?.includes(user.uid) || p.isSaved;
-        }
-
-        // 'smart' and 'latest' modes
-        if (isOwn) return true;
-        if (p.audience === 'only_me') return false;
-        if (p.audience === 'close_friends') {
-          return (p.closeFriends || []).includes(profile.id);
-        }
-        return true;
-      });
-
-      setPosts(filtered);
-      setLoading(false);
-      setIsRefreshing(false);
-      setError(null);
-      isInitialLoad.current = false;
-    };
-
-    const handleError = (err: any) => {
-      logger.error("Feed listener error:", err);
-      LocalSqlService.getFeedPosts(30).then(cached => {
-        if (cached && cached.length > 0) {
-          setPosts(prev => prev.length === 0 ? cached.map(c => c.raw || c) : prev);
-        }
-      }).catch(() => {});
-      setLoading(false);
-      setIsRefreshing(false);
-
-      if (err.message?.includes('index') || err.code === 'failed-precondition') {
-        const indexLink = err.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/)?.[0];
-        setError({
-          message: 'QUERY OPTIMIZATION REQUIRED',
-          details: 'This feed view requires a composite index in Firestore to save correctly.',
-          link: indexLink
-        });
-      } else {
-        setError({
-          message: 'Sync INTERRUPTED',
-          details: err.message || 'The Feed could not be established.'
-        });
+        setPosts(filtered);
+        setError(null);
       }
-    };
-
-    const processSnapshot = (snapshot: any, key: string) => {
-      const dbPosts = snapshot.docs.map((doc: any) => {
-        const data = doc.data() as any;
-        const isDeleted = Boolean(
-          data.isDeletedAuthor === true || 
-          data.scheduledForPurge === true ||
-          data.isDeleted === true || 
-          data.hidden === true ||
-          data.author?.isDeleted === true ||
-          data.author?.scheduledForPurge === true ||
-          data.authorName === 'Aeirmist User' || 
-          data.userName === 'Aeirmist User' ||
-          data.author?.name === 'Aeirmist User' ||
-          data.author?.displayName === 'Aeirmist User' ||
-          data.author?.username === 'aeirmist_user' ||
-          data.author?.username === 'deleted_user'
-        );
-
-        if (isDeleted) return null;
-
-        return {
-          id: doc.id,
-          ...data,
-          author: {
-            name: data.author?.displayName || data.author?.username || data.authorName || data.userName || 'User',
-            avatar: getAvatarUrl(data.author?.photoURL || data.userAvatar || data.authorAvatar),
-            isVerified: data.author?.isVerified || false
-          },
-          likesCount: data.likesCount || 0,
-          commentsCount: data.commentsCount || 0,
-          timestamp: data.createdAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'Just now',
-          __sortTime: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || 0,
-        };
-      }).filter(Boolean);
-      resultsByBatch.set(key, dbPosts);
-      scheduleCommit();
-    };
-
-    // Subscriptions container
-    const unsubscribes: (() => void)[] = [];
-
-    // Mode: Saved
-    if (feedMode === 'saved') {
-      const qSaved = query(
-        collection(db, 'posts'),
-        where('savedBy', 'array-contains', profile.id),
-        limit(postLimit)
-      );
-      unsubscribes.push(onSnapshot(qSaved, (s) => processSnapshot(s, 'saved_posts'), handleError));
-      return () => {
-        if (commitTimer) clearTimeout(commitTimer);
-        unsubscribes.forEach(unsub => unsub());
-      };
-    }
-
-    // Modes: Following or Friends with 0 contacts
-    if ((feedMode === 'following' || feedMode === 'friends') && uidsToQuery.length === 0) {
-      setPosts([]);
+    } catch (err: any) {
+      logger.error('Device Feed Load error:', err);
+    } finally {
       setLoading(false);
       setIsRefreshing(false);
-      return;
+      isInitialLoad.current = false;
     }
+  }, [postLimit, feedMode, profile?.id, JSON.stringify(profile?.social?.following || []), retryCount]);
 
-    // Author batches for following / network
-    const BATCH_SIZE = 30;
-    const batches: string[][] = [];
-    for (let i = 0; i < uidsToQuery.length; i += BATCH_SIZE) {
-      batches.push(uidsToQuery.slice(i, i + BATCH_SIZE));
-    }
-
-    batches.forEach((batch, batchIndex) => {
-      const q1 = query(
-        collection(db, 'posts'),
-        where('authorId', 'in', batch),
-        limit(postLimit)
-      );
-      const q2 = query(
-        collection(db, 'posts'),
-        where('authorUid', 'in', batch),
-        limit(postLimit)
-      );
-      unsubscribes.push(onSnapshot(q1, (s) => processSnapshot(s, `batch_${batchIndex}_id`), handleError));
-      unsubscribes.push(onSnapshot(q2, (s) => processSnapshot(s, `batch_${batchIndex}_uid`), handleError));
-    });
-
-    // In smart and latest modes, also stream general platform posts directly (deduped and ranked client-side)
-    if (feedMode === 'smart' || feedMode === 'latest') {
-      const qGeneral = query(
-        collection(db, 'posts'),
-        limit(postLimit)
-      );
-      unsubscribes.push(onSnapshot(qGeneral, (s) => processSnapshot(s, 'general_discovery'), handleError));
-    }
-
-    return () => {
-      if (commitTimer) clearTimeout(commitTimer);
-      unsubscribes.forEach(unsub => unsub());
-    };
-  }, [db, user?.uid, profile?.id, uidsToQueryString, feedMode, retryCount, postLimit]);
+  useEffect(() => {
+    fetchFeed();
+  }, [fetchFeed]);
 
   // Infinite Scroll Trigger
   useEffect(() => {
@@ -413,21 +315,23 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
         {/* Mobile Header with Marketplace Link */}
         <div 
           role="banner"
-          className={`sticky top-0 z-[100] ${isGlobalBgActive ? 'bg-[#050505]/80 backdrop-blur-3xl border-b border-white/10 shadow-[0_4px_24px_rgba(0,0,0,0.6)]' : 'bg-[#050505]/95 backdrop-blur-md border-b border-white/5'} flex md:hidden items-center justify-between pb-2.5 pt-[calc(0.875rem+var(--sat,var(--safe-area-inset-top,0px)))] mb-1 px-4 transition-colors duration-200`}
+          className={`sticky top-0 z-[100] ${isGlobalBgActive ? 'bg-black/20 backdrop-blur-xl border-b border-white/5' : 'bg-[#050505]/90 backdrop-blur-md border-b border-white/5'} flex md:hidden items-center justify-between pb-1.5 pt-[max(env(safe-area-inset-top,0px),0.25rem)] mb-0 px-3.5 transition-colors duration-200`}
         >
-           <div className="flex items-center justify-start gap-1.5 w-24 shrink-0">
+           <div className="flex items-center justify-start gap-1.5 shrink-0">
              <button 
               type="button"
               aria-label="Go to Marketplace"
               onClick={() => {
                 window.dispatchEvent(new CustomEvent('aeirmist-navigate', { detail: 'discover' }));
               }}
-              className={`w-10 h-10 rounded-xl ${isGlobalBgActive ? 'bg-[#00f2ff]/15 border-[#00f2ff]/40 shadow-[0_2px_12px_rgba(0,0,0,0.5)]' : 'bg-[#00f2ff]/10 border-[#00f2ff]/30'} border flex items-center justify-center text-aeirmist-cyan shadow-lg active:scale-95 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
+              className={`w-9 h-9 rounded-xl ${isGlobalBgActive ? 'bg-[#00f2ff]/15 border-[#00f2ff]/40 shadow-[0_2px_12px_rgba(0,0,0,0.5)]' : 'bg-[#00f2ff]/10 border-[#00f2ff]/30'} border flex items-center justify-center text-aeirmist-cyan shadow-lg active:scale-95 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
               title="Marketplace"
-           >
-             <ShoppingBag size={18} className="drop-shadow-[0_0_6px_rgba(0,242,255,0.4)]" aria-hidden="true" />
-           </button>
+             >
+               <ShoppingBag size={17} className="drop-shadow-[0_0_6px_rgba(0,242,255,0.4)]" aria-hidden="true" />
+             </button>
            </div>
+
+           {/* Brand Center Logo - App Name */}
            <div className="flex-1 flex items-center justify-center z-10 min-w-0 px-2">
              <button
                type="button"
@@ -456,12 +360,13 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
                />
              </button>
            </div>
-           <div className="flex items-center justify-end gap-2 w-24 shrink-0">
+
+           <div className="flex items-center justify-end gap-1.5 shrink-0">
              <button 
               type="button"
               aria-label="Create new post"
               onClick={onCreate}
-              className={`w-10 h-10 rounded-xl ${isGlobalBgActive ? 'bg-white/10 border-white/20 text-white/80 shadow-[0_2px_8px_rgba(0,0,0,0.4)]' : 'bg-white/5 border-white/10 text-white/40'} border flex items-center justify-center hover:text-aeirmist-cyan transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
+              className={`w-9 h-9 rounded-xl ${isGlobalBgActive ? 'bg-white/10 border-white/20 text-white/80 shadow-[0_2px_8px_rgba(0,0,0,0.4)]' : 'bg-white/5 border-white/10 text-white/40'} border flex items-center justify-center hover:text-aeirmist-cyan transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
              >
                <Plus size={16} aria-hidden="true" />
              </button>
@@ -472,7 +377,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
                 const navEvent = new CustomEvent('aeirmist-navigate', { detail: 'notifications' });
                 window.dispatchEvent(navEvent);
               }}
-              className={`w-10 h-10 rounded-xl ${isGlobalBgActive ? 'bg-white/10 border-white/20 text-white/80 shadow-[0_2px_8px_rgba(0,0,0,0.4)]' : 'bg-white/5 border-white/10 text-white/40'} border flex items-center justify-center hover:text-aeirmist-cyan transition-all relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
+              className={`w-9 h-9 rounded-xl ${isGlobalBgActive ? 'bg-white/10 border-white/20 text-white/80 shadow-[0_2px_8px_rgba(0,0,0,0.4)]' : 'bg-white/5 border-white/10 text-white/40'} border flex items-center justify-center hover:text-aeirmist-cyan transition-all relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan`}
              >
                <Bell size={16} aria-hidden="true" />
                {unreadNotificationsCount > 0 && (
@@ -489,7 +394,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
           {/* MAIN FEED COLUMN */}
           <div className="w-full max-w-[700px]">
             {/* NOTES & STORIES RESTORED */}
-            <div className="mb-3">
+            <div className="mb-1">
               <StoriesSystem />
             </div>
             {/* FEED ITEMS */}

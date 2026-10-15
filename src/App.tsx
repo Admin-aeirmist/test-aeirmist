@@ -140,9 +140,9 @@ const preload = (comp: PreloadComponent) => {
 };
 
 const LazyFallback = () => (
-  <div className="w-full h-full flex flex-col items-center justify-center p-20 gap-4 opacity-40">
-    <div className="w-8 h-8 rounded-full border-2 border-aeirmist-cyan/20 border-t-aeirmist-cyan animate-spin" />
-    <span className="text-[8px] font-black uppercase tracking-[0.4em] text-aeirmist-cyan">Syncing...</span>
+  <div className="w-full h-full flex flex-col items-center justify-center p-8 gap-3 opacity-60 min-h-[140px]">
+    <div className="w-6 h-6 rounded-full border-2 border-aeirmist-cyan/20 border-t-aeirmist-cyan animate-spin" />
+    <span className="text-[8px] font-mono font-bold uppercase tracking-[0.3em] text-aeirmist-cyan/70">Syncing...</span>
   </div>
 );
 
@@ -450,6 +450,50 @@ function AppContent() {
     }
     return 'feed';
   });
+  const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(() => new Set<Tab>(['feed', activeTab]));
+
+  useEffect(() => {
+    setVisitedTabs(prev => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
+
+  // Proactively preload all primary application tabs in the background right after mounting
+  useEffect(() => {
+    const preloadAll = () => {
+      preload('feed');
+      preload('messenger');
+      preload('discover');
+      preload('profile');
+      preload('dashboard');
+      preload('videos');
+      preload('settings');
+      preload('notifications');
+    };
+
+    if (typeof window !== 'undefined') {
+      if ('requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(() => preloadAll(), { timeout: 400 });
+      } else {
+        setTimeout(preloadAll, 50);
+      }
+    }
+  }, []);
+
+  // Pause any video playback when switching away from the videos tab
+  useEffect(() => {
+    if (activeTab !== 'videos') {
+      const videos = document.querySelectorAll('video');
+      videos.forEach(v => {
+        try {
+          if (!v.paused) v.pause();
+        } catch (e) {}
+      });
+    }
+  }, [activeTab]);
   const isGlobalBgActive = Boolean(settings?.globalBgType && settings.globalBgType !== 'none');
   const [viewingPostId, setViewingPostId] = useState<string | null>(null);
   const [viewingStoreId, setViewingStoreId] = useState<string | null>(null);
@@ -541,6 +585,11 @@ function AppContent() {
       }, 250);
       return () => clearTimeout(timer);
     }
+    // Maximum safety fallback: prevent splash screen from locking up on slow networks
+    const safetyTimer = setTimeout(() => {
+      setShowSplash(false);
+    }, 4000);
+    return () => clearTimeout(safetyTimer);
   }, [user?.uid, profile?.id, loading]);
 
   useEffect(() => {
@@ -746,10 +795,20 @@ function AppContent() {
       if (!url) return;
       if (url.includes('create_post')) {
         setIsPosting(true);
-      } else if (url.includes('messages')) {
-        handleTabChange('messages');
-      } else if (url.includes('explore')) {
-        handleTabChange('explore');
+      } else if (url.includes('messages') || url.includes('messenger')) {
+        handleTabChange('messenger');
+      } else if (url.includes('explore') || url.includes('discover')) {
+        handleTabChange('discover');
+      } else if (url.includes('notifications')) {
+        handleTabChange('notifications');
+      } else if (url.includes('profile')) {
+        handleTabChange('profile');
+      } else if (url.includes('videos') || url.includes('reels')) {
+        handleTabChange('videos');
+      } else if (url.includes('settings')) {
+        handleTabChange('settings');
+      } else if (url.includes('admin')) {
+        handleTabChange('admin');
       }
     };
 
@@ -765,13 +824,22 @@ function AppContent() {
       }
     };
 
+    const handleOpenPost = (e: any) => {
+      const postId = e.detail?.postId;
+      if (postId) {
+        setViewingPostId(postId);
+      }
+    };
+
     window.addEventListener('aeirmist-navigate', handleNavigate);
     window.addEventListener('aeirmist_deep_link', handleDeepLink);
     window.addEventListener('aeirmist_share_target', handleShareTarget);
+    window.addEventListener('aeirmist_open_post', handleOpenPost);
     return () => {
       window.removeEventListener('aeirmist-navigate', handleNavigate);
       window.removeEventListener('aeirmist_deep_link', handleDeepLink);
       window.removeEventListener('aeirmist_share_target', handleShareTarget);
+      window.removeEventListener('aeirmist_open_post', handleOpenPost);
     };
   }, []);
 
@@ -795,7 +863,11 @@ function AppContent() {
       isCaller ? (activeCall.receiverPhoto || '') : (activeCall.callerPhoto || ''), 
       isCaller ? activeCall.receiverId : activeCall.callerId
     ),
-    participants: [activeCall.callerId, activeCall.receiverId, profile?.id].filter(Boolean),
+    isGroup: Boolean((activeCall as any).isGroup || (activeCall as any).type === 'group'),
+    type: (activeCall as any).type || ((activeCall as any).isGroup ? 'group' : 'direct'),
+    participants: (activeCall as any).participants && Array.isArray((activeCall as any).participants)
+      ? (activeCall as any).participants
+      : [activeCall.callerId, activeCall.receiverId].filter(Boolean),
     otherParticipantUid: isCaller ? activeCall.receiverUid : activeCall.callerUid,
   } : null;
 
@@ -833,6 +905,11 @@ function AppContent() {
   const handleTabChange = (tab: Tab) => {
     if (tab === 'notifications') {
       setIsNotificationsOpen(true);
+      return;
+    }
+
+    if (tab === 'feed' && activeTab === 'feed') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
@@ -882,6 +959,26 @@ function AppContent() {
       } else if (url.includes('/messenger') || url.includes('/messages')) {
         setIsNotificationsOpen(false);
         handleTabChange('messenger');
+      } else if (url.includes('/video/') || url.includes('/videos/') || url.includes('/reel')) {
+        setIsNotificationsOpen(false);
+        const parts = url.split(/\/videos?\/|\/reels?\//);
+        const vId = parts[1]?.split('?')[0]?.split('/')[0];
+        if (vId) setViewingVideoId(vId);
+        handleTabChange('videos');
+      } else if (url.includes('/profile/') || url.includes('/@')) {
+        setIsNotificationsOpen(false);
+        const username = url.includes('/@') ? url.split('/@')[1]?.split('?')[0] : url.split('/profile/')[1]?.split('?')[0];
+        if (username) {
+          handleUserClick({ id: username, username });
+        } else {
+          handleTabChange('profile');
+        }
+      } else if (url.includes('/settings')) {
+        setIsNotificationsOpen(false);
+        handleTabChange('settings');
+      } else if (url.includes('/marketplace') || url.includes('/store/')) {
+        setIsNotificationsOpen(false);
+        handleTabChange('discover');
       }
     };
     window.addEventListener('aeirmist_notification_click', handleNotificationClickEvent);
@@ -985,51 +1082,60 @@ function AppContent() {
       setIsVaultOpen(true);
     }
 
-    if (!window.history.state || !window.history.state._appNav) {
-      const targetUrl = getPathForAppState(
-        pathInit.tab, 
-        null, 
-        pathInit.notifs, 
-        (pathInit as any).postId || null, 
-        (pathInit as any).videoId || null,
-        (pathInit as any).storeId || null, 
-        (pathInit as any).productId || null,
-        (pathInit as any).chatUid || null
-      );
-      window.history.replaceState(initialState, '', targetUrl);
-    } else {
-      // Restore state on reload/mount if history exists
-      const s = window.history.state;
-      const currentNormPath = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
-      const restoredTab = currentNormPath === '/' ? 'feed' : (pathInit.tab || s.activeTab || 'feed');
-      setActiveTab(restoredTab);
-      setViewingProfile(s.viewingProfile || null);
-      setViewingPostId(s.viewingPostId || null);
-      setViewingVideoId(s.viewingVideoId || null);
-      setViewingStoreId(s.viewingStoreId || null);
-      setViewingProductId(s.viewingProductId || null);
-      setMessageRecipient(s.messageRecipient || null);
-      setIsPosting(!!s.isPosting);
-      setIsNotificationsOpen(typeof s.isNotificationsOpen === 'boolean' ? s.isNotificationsOpen : pathInit.notifs);
-      setIsAccountSwitcherOpen(!!s.isAccountSwitcherOpen);
-      if (s.storyState) {
-        setStoryState(s.storyState);
-        // Let StoriesSystem know
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('aeirmist-story-state-restore', { detail: s.storyState }));
-        }, 100);
+    const hasAuthActionParam = typeof window !== 'undefined' && Boolean(
+      (new URLSearchParams(window.location.search).get('oobCode') ||
+       new URLSearchParams(window.location.search).get('resetToken') ||
+       (sessionStorage.getItem('aeirmist_pending_reset_token'))) &&
+      (new URLSearchParams(window.location.search).get('mode') || sessionStorage.getItem('aeirmist_pending_reset_mode'))
+    );
+
+    if (!hasAuthActionParam) {
+      if (!window.history.state || !window.history.state._appNav) {
+        const targetUrl = getPathForAppState(
+          pathInit.tab, 
+          null, 
+          pathInit.notifs, 
+          (pathInit as any).postId || null, 
+          (pathInit as any).videoId || null,
+          (pathInit as any).storeId || null, 
+          (pathInit as any).productId || null,
+          (pathInit as any).chatUid || null
+        );
+        window.history.replaceState(initialState, '', targetUrl);
+      } else {
+        // Restore state on reload/mount if history exists
+        const s = window.history.state;
+        const currentNormPath = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+        const restoredTab = currentNormPath === '/' ? 'feed' : (pathInit.tab || s.activeTab || 'feed');
+        setActiveTab(restoredTab);
+        setViewingProfile(s.viewingProfile || null);
+        setViewingPostId(s.viewingPostId || null);
+        setViewingVideoId(s.viewingVideoId || null);
+        setViewingStoreId(s.viewingStoreId || null);
+        setViewingProductId(s.viewingProductId || null);
+        setMessageRecipient(s.messageRecipient || null);
+        setIsPosting(!!s.isPosting);
+        setIsNotificationsOpen(typeof s.isNotificationsOpen === 'boolean' ? s.isNotificationsOpen : pathInit.notifs);
+        setIsAccountSwitcherOpen(!!s.isAccountSwitcherOpen);
+        if (s.storyState) {
+          setStoryState(s.storyState);
+          // Let StoriesSystem know
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('aeirmist-story-state-restore', { detail: s.storyState }));
+          }, 100);
+        }
+        const targetUrl = getPathForAppState(
+          restoredTab, 
+          s.viewingProfile, 
+          s.isNotificationsOpen, 
+          s.viewingPostId || null, 
+          s.viewingVideoId || null,
+          s.viewingStoreId || null, 
+          s.viewingProductId || null,
+          s.messageRecipient?.id || null
+        );
+        window.history.replaceState(s, '', targetUrl);
       }
-      const targetUrl = getPathForAppState(
-        restoredTab, 
-        s.viewingProfile, 
-        s.isNotificationsOpen, 
-        s.viewingPostId || null, 
-        s.viewingVideoId || null,
-        s.viewingStoreId || null, 
-        s.viewingProductId || null,
-        s.messageRecipient?.id || null
-      );
-      window.history.replaceState(s, '', targetUrl);
     }
   }, []);
 
@@ -1040,6 +1146,16 @@ function AppContent() {
     }
 
     if (isGuidelinesPage || location.pathname === '/community-guidelines') {
+      return;
+    }
+
+    const hasAuthActionParam = typeof window !== 'undefined' && Boolean(
+      (new URLSearchParams(window.location.search).get('oobCode') ||
+       new URLSearchParams(window.location.search).get('resetToken') ||
+       (sessionStorage.getItem('aeirmist_pending_reset_token'))) &&
+      (new URLSearchParams(window.location.search).get('mode') || sessionStorage.getItem('aeirmist_pending_reset_mode'))
+    );
+    if (hasAuthActionParam) {
       return;
     }
 
@@ -1477,10 +1593,13 @@ function AppContent() {
     location.pathname.startsWith('/product/')
   );
 
-  // Check if an incoming Firebase Authentication Template action code is present (e.g. verifyEmail, resetPassword)
+  // Check if an incoming Authentication action code or reset token is present (e.g. verifyEmail, resetPassword)
   const hasAuthActionCode = typeof window !== 'undefined' && Boolean(
-    new URLSearchParams(window.location.search).get('oobCode') &&
-    new URLSearchParams(window.location.search).get('mode')
+    (new URLSearchParams(window.location.search).get('oobCode') ||
+     new URLSearchParams(window.location.search).get('resetToken') ||
+     sessionStorage.getItem('aeirmist_pending_reset_token')) &&
+    (new URLSearchParams(window.location.search).get('mode') ||
+     sessionStorage.getItem('aeirmist_pending_reset_mode'))
   );
 
   // Prevent AuthSystem flashing for logged-in users while Firebase is verifying or profile is hydrating
@@ -1504,7 +1623,7 @@ function AppContent() {
   if ((!user || hasAuthActionCode) && (showFullAuth || !isSharedUrl || hasAuthActionCode)) {
     // CRITICAL: If the user has a valid cached session, NEVER flash AuthSystem!
     // Instead, continue waiting or showing the fallback screen until Firebase Auth restores or the user explicitly clicks login.
-    if (hasCachedAuth && !showFullAuth && !hasAuthActionCode) {
+    if (loading && hasCachedAuth && !showFullAuth && !hasAuthActionCode) {
       return (
         <div className="fixed inset-0 bg-[#050508] flex items-center justify-center z-[100]">
           <LazyFallback />
@@ -1823,203 +1942,185 @@ function AppContent() {
                 <Route path="/payment-failure" element={<Suspense fallback={null}><PaymentResult status="failure" /></Suspense>} />
                 <Route path="/community-guidelines" element={<CommunityGuidelines />} />
                 <Route path="*" element={
-                  <AnimatePresence mode="wait" initial={false}>
-                    {activeTab === 'feed' ? (
-                  <motion.div
-                    key="feed"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="h-full flex overflow-hidden lg:grid lg:grid-cols-[1fr_var(--right-panel-w)]"
-                  >
-                    <div className="flex-1 h-full overflow-y-auto overflow-x-hidden scroll-smooth relative min-w-0">
-                      <div className="fluid-container pt-0 md:pt-0">
-                        <ErrorBoundary inline>
-                          <Suspense fallback={<LazyFallback />}>
-                            <HomeFeedSystem 
-                              onUserClick={handleUserClick} 
-                              onPostClick={handlePostClick}
-                              onCreate={handleCreatePostClick} 
-                              onNavigate={(tab, param) => {
-                                setActiveTab(tab as any);
-                                if (tab === 'videos' && param) {
-                                  setViewingVideoId(param);
-                                }
-                              }} 
-                            />
-                          </Suspense>
-                        </ErrorBoundary>
+                  <div className="w-full h-full flex-1 flex flex-col min-h-0 overflow-hidden relative">
+                    {/* 1. Home Feed Tab */}
+                    <div
+                      className={`h-full flex overflow-hidden lg:grid lg:grid-cols-[1fr_var(--right-panel-w)] flex-1 min-h-0 ${activeTab === 'feed' ? '' : '!hidden'}`}
+                    >
+                      <div className="flex-1 h-full overflow-y-auto overflow-x-hidden scroll-smooth relative min-w-0">
+                        <div className="fluid-container pt-0 md:pt-0">
+                          <ErrorBoundary inline>
+                            <Suspense fallback={<LazyFallback />}>
+                              <HomeFeedSystem 
+                                onUserClick={handleUserClick} 
+                                onPostClick={handlePostClick}
+                                onCreate={handleCreatePostClick} 
+                                onNavigate={(tab, param) => {
+                                  setActiveTab(tab as any);
+                                  if (tab === 'videos' && param) {
+                                    setViewingVideoId(param);
+                                  }
+                                }} 
+                              />
+                            </Suspense>
+                          </ErrorBoundary>
+                        </div>
                       </div>
+                      <Sidebar onUserClick={handleUserClick} />
                     </div>
-                    <Sidebar onUserClick={handleUserClick} />
-                  </motion.div>
-                ) : activeTab === 'messenger' ? (
-                  <motion.div
-                    key="messenger"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="flex-1 overflow-hidden h-full flex flex-col min-h-0"
-                  >
-                    {featureFlags?.inbox === false ? (
-                      <ComingSoonScreen sectorName="Direct Messaging & Inbox" onHomeClick={() => setActiveTab('feed')} />
-                    ) : (
-                      <ErrorBoundary inline>
-                        <Suspense fallback={<LazyFallback />}>
-                          <Messenger initialRecipient={messageRecipient} onUserClick={handleUserClick} />
-                        </Suspense>
-                      </ErrorBoundary>
-                    )}
-                  </motion.div>
-                ) : activeTab === 'discover' ? (
-                  <motion.div
-                    key="discover"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="flex-1 h-full overflow-y-auto overflow-x-hidden scroll-container flex flex-col"
-                  >
-                    {featureFlags?.marketplace === false ? (
-                      <ComingSoonScreen sectorName="Marketplace & E-Commerce" onHomeClick={() => setActiveTab('feed')} />
-                    ) : (
-                      <ErrorBoundary inline>
-                        <Suspense fallback={<LazyFallback />}>
-                          <ExploreSystem 
-                            onUserClick={handleUserClick} 
-                            onPostClick={handlePostClick} 
-                            initialStoreId={viewingStoreId}
-                            initialProductId={viewingProductId}
-                            onStoreChange={setViewingStoreId}
-                            onProductChange={setViewingProductId}
-                          />
-                        </Suspense>
-                      </ErrorBoundary>
-                    )}
-                  </motion.div>
-                ) : activeTab === 'dashboard' ? (
-                  <motion.div
-                    key="dashboard"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="flex-1 h-full min-h-0 overflow-hidden flex flex-col"
-                  >
-                    {featureFlags?.discover === false ? (
-                      <ComingSoonScreen sectorName="Explore & Connections Hub" onHomeClick={() => setActiveTab('feed')} />
-                    ) : (
-                      <div className="w-full h-full min-h-0 flex flex-col flex-1">
-                        <ErrorBoundary inline>
-                          <Suspense fallback={<LazyFallback />}>
-                            <AeirmistDashboard onUserClick={handleUserClick} onMessageClick={handleMessageClick} />
-                          </Suspense>
-                        </ErrorBoundary>
+
+                    {/* 2. Messenger / Inbox Tab */}
+                    {visitedTabs.has('messenger') && (
+                      <div
+                        className={`flex-1 overflow-hidden h-full flex flex-col min-h-0 ${activeTab === 'messenger' ? '' : '!hidden'}`}
+                      >
+                        {featureFlags?.inbox === false ? (
+                          <ComingSoonScreen sectorName="Direct Messaging & Inbox" onHomeClick={() => setActiveTab('feed')} />
+                        ) : (
+                          <ErrorBoundary inline>
+                            <Suspense fallback={<LazyFallback />}>
+                              <Messenger 
+                                initialRecipient={messageRecipient} 
+                                onUserClick={handleUserClick} 
+                                onOpenSettings={() => setActiveTab('settings')}
+                              />
+                            </Suspense>
+                          </ErrorBoundary>
+                        )}
                       </div>
                     )}
-                  </motion.div>
-                ) : activeTab === 'profile' ? (
-                  <motion.div
-                    key="profile"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="flex-1 h-full overflow-y-auto overflow-x-hidden touch-pan-y"
-                  >
-                    <div className="fluid-container pt-0 pb-0">
-                      <ErrorBoundary inline>
-                        <Suspense fallback={<LazyFallback />}>
-                          <ProfileSystem 
-                            targetProfile={viewingProfile} 
-                            onMessageClick={handleMessageClick} 
-                            onEditProfile={handleEditProfileClick} 
-                            onUserClick={handleUserClick}
-                            onPostClick={handlePostClick}
-                            onCreate={handleCreatePostClick}
-                          />
-                        </Suspense>
-                      </ErrorBoundary>
-                    </div>
-                  </motion.div>
-                ) : activeTab === 'settings' ? (
-                  <motion.div
-                    key="settings"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="flex-1 h-full overflow-y-auto overflow-x-hidden scroll-container"
-                  >
-                    <div className="w-full min-h-full">
-                      <ErrorBoundary inline>
-                        <Suspense fallback={<LazyFallback />}>
-                          <SettingsSystem initialSection={settingsSection as any} onSectionChange={(sec) => setSettingsSection(sec)} />
-                        </Suspense>
-                      </ErrorBoundary>
-                    </div>
-                  </motion.div>
-                ) : activeTab === 'admin' ? (
-                  <motion.div
-                    key="admin"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="flex-1 h-full overflow-hidden flex flex-col"
-                  >
-                    <div className="w-full h-full flex-1 overflow-hidden flex flex-col">
-                      <ErrorBoundary inline>
-                        <Suspense fallback={<LazyFallback />}>
-                          <AdminPanel />
-                        </Suspense>
-                      </ErrorBoundary>
-                    </div>
-                  </motion.div>
-                ) : activeTab === 'videos' ? (
-                  <motion.div
-                    key="videos"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1, ease: "easeOut" }}
-                    className="flex-1 h-full overflow-hidden flex flex-col"
-                  >
-                    {featureFlags?.videos === false ? (
-                      <ComingSoonScreen sectorName="Reels & Short Videos Feed" onHomeClick={() => setActiveTab('feed')} />
-                    ) : (
-                      <ErrorBoundary inline>
-                        <Suspense fallback={<LazyFallback />}>
-                          <VideoFeed 
-                            onBack={() => setActiveTab('feed')} 
-                            onUserClick={handleUserClick} 
-                            initialVideoId={viewingVideoId}
-                            onVideoClick={(id) => setViewingVideoId(id)}
-                          />
-                        </Suspense>
-                      </ErrorBoundary>
+
+                    {/* 3. Discover / Marketplace Tab */}
+                    {visitedTabs.has('discover') && (
+                      <div
+                        className={`flex-1 h-full overflow-y-auto overflow-x-hidden scroll-container flex flex-col ${activeTab === 'discover' ? '' : '!hidden'}`}
+                      >
+                        {featureFlags?.marketplace === false ? (
+                          <ComingSoonScreen sectorName="Marketplace & E-Commerce" onHomeClick={() => setActiveTab('feed')} />
+                        ) : (
+                          <ErrorBoundary inline>
+                            <Suspense fallback={<LazyFallback />}>
+                              <ExploreSystem 
+                                onUserClick={handleUserClick} 
+                                onPostClick={handlePostClick} 
+                                initialStoreId={viewingStoreId}
+                                initialProductId={viewingProductId}
+                                onStoreChange={setViewingStoreId}
+                                onProductChange={setViewingProductId}
+                              />
+                            </Suspense>
+                          </ErrorBoundary>
+                        )}
+                      </div>
                     )}
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="notification-full"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.08, ease: "linear" }}
-                    className="flex-1 h-full overflow-y-auto touch-pan-y"
-                  >
-                    <div className="fluid-container py-8 md:py-12">
-                      <h1 className="text-4xl font-display font-bold mb-8 text-fluid-4xl">Alerts</h1>
-                      <AlertsTabRedirect onComplete={() => {
-                        setIsNotificationsOpen(true);
-                        setActiveTab('feed');
-                      }} />
-                    </div>
-                  </motion.div>
+
+                    {/* 4. Connections / Dashboard Tab */}
+                    {visitedTabs.has('dashboard') && (
+                      <div
+                        className={`flex-1 h-full min-h-0 overflow-hidden flex flex-col ${activeTab === 'dashboard' ? '' : '!hidden'}`}
+                      >
+                        {featureFlags?.discover === false ? (
+                          <ComingSoonScreen sectorName="Explore & Connections Hub" onHomeClick={() => setActiveTab('feed')} />
+                        ) : (
+                          <div className="w-full h-full min-h-0 flex flex-col flex-1">
+                            <ErrorBoundary inline>
+                              <Suspense fallback={<LazyFallback />}>
+                                <AeirmistDashboard onUserClick={handleUserClick} onMessageClick={handleMessageClick} />
+                              </Suspense>
+                            </ErrorBoundary>
+                          </div>
+                        )}
+                      </div>
                     )}
-                  </AnimatePresence>
+
+                    {/* 5. Profile Tab */}
+                    {visitedTabs.has('profile') && (
+                      <div
+                        className={`flex-1 h-full overflow-y-auto overflow-x-hidden touch-pan-y ${activeTab === 'profile' ? '' : '!hidden'}`}
+                      >
+                        <div className="fluid-container pt-0 pb-0">
+                          <ErrorBoundary inline>
+                            <Suspense fallback={<LazyFallback />}>
+                              <ProfileSystem 
+                                key={viewingProfile ? `profile_${viewingProfile.id || viewingProfile.username}` : 'own_profile'}
+                                targetProfile={viewingProfile} 
+                                onMessageClick={handleMessageClick} 
+                                onEditProfile={handleEditProfileClick} 
+                                onUserClick={handleUserClick}
+                                onPostClick={handlePostClick}
+                                onCreate={handleCreatePostClick}
+                              />
+                            </Suspense>
+                          </ErrorBoundary>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 6. Settings Tab */}
+                    {visitedTabs.has('settings') && (
+                      <div
+                        className={`flex-1 h-full overflow-y-auto overflow-x-hidden scroll-container ${activeTab === 'settings' ? '' : '!hidden'}`}
+                      >
+                        <div className="w-full min-h-full">
+                          <ErrorBoundary inline>
+                            <Suspense fallback={<LazyFallback />}>
+                              <SettingsSystem initialSection={settingsSection as any} onSectionChange={(sec) => setSettingsSection(sec)} />
+                            </Suspense>
+                          </ErrorBoundary>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 7. Admin Tab */}
+                    {visitedTabs.has('admin') && (
+                      <div
+                        className={`flex-1 h-full overflow-hidden flex flex-col ${activeTab === 'admin' ? '' : '!hidden'}`}
+                      >
+                        <div className="w-full h-full flex-1 overflow-hidden flex flex-col">
+                          <ErrorBoundary inline>
+                            <Suspense fallback={<LazyFallback />}>
+                              <AdminPanel />
+                            </Suspense>
+                          </ErrorBoundary>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 8. Videos Tab */}
+                    {visitedTabs.has('videos') && (
+                      <div
+                        className={`flex-1 h-full overflow-hidden flex flex-col ${activeTab === 'videos' ? '' : '!hidden'}`}
+                      >
+                        {featureFlags?.videos === false ? (
+                          <ComingSoonScreen sectorName="Reels & Short Videos Feed" onHomeClick={() => setActiveTab('feed')} />
+                        ) : (
+                          <ErrorBoundary inline>
+                            <Suspense fallback={<LazyFallback />}>
+                              <VideoFeed 
+                                onBack={() => setActiveTab('feed')} 
+                                onUserClick={handleUserClick} 
+                                initialVideoId={viewingVideoId}
+                                onVideoClick={(id) => setViewingVideoId(id)}
+                              />
+                            </Suspense>
+                          </ErrorBoundary>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 9. Alerts Redirect Tab */}
+                    {activeTab === 'notifications' && (
+                      <div className="flex-1 h-full overflow-y-auto touch-pan-y">
+                        <div className="fluid-container py-8 md:py-12">
+                          <h1 className="text-4xl font-display font-bold mb-8 text-fluid-4xl">Alerts</h1>
+                          <AlertsTabRedirect onComplete={() => {
+                            setIsNotificationsOpen(true);
+                            setActiveTab('feed');
+                          }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 } />
               </Routes>
             </Suspense>
@@ -2167,11 +2268,7 @@ function AppContent() {
           <FloatingSquareChatHead
             isInboxView={activeTab === 'messenger'}
             onOpenChat={(chatId) => {
-              setMessageRecipient({ id: chatId });
-              handleTabChange('messenger');
-            }}
-            onNewMessage={() => {
-              setMessageRecipient(null);
+              setMessageRecipient({ conversationId: chatId, id: chatId });
               handleTabChange('messenger');
             }}
           />

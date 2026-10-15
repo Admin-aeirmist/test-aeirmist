@@ -85,6 +85,7 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
   const [spamKeywords, setSpamKeywords] = useState('buy, bot, link, cheap, promo, earn, free');
   const [commentFilter, setCommentFilter] = useState<'all' | 'held'>('all');
   const [replyInputMap, setReplyInputMap] = useState<Record<string, string>>({});
+  const [telemetryLogsEnabled, setTelemetryLogsEnabled] = useState(true);
 
   // Fetch Videos & Build Creator Stats
   const fetchCreatorData = async () => {
@@ -1254,8 +1255,17 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
                         <h4 className="text-[10px] font-black uppercase tracking-widest text-white">Developer API logs telemetry</h4>
                         <p className="text-[8px] text-white/30 uppercase mt-0.5 tracking-wide">Feed metrics into decentralized console systems</p>
                       </div>
-                      <button onClick={() => logger.info("Action coming soon")} className="w-10 h-6 bg-aeirmist-cyan rounded-full p-1 cursor-pointer">
-                        <div className="w-4 h-4 bg-black rounded-full translate-x-4" />
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          const nextVal = !telemetryLogsEnabled;
+                          setTelemetryLogsEnabled(nextVal);
+                          addToast?.({ title: 'Creator Studio', message: nextVal ? 'Developer telemetry logging enabled' : 'Developer telemetry logging paused', type: 'info' });
+                        }} 
+                        className={`w-10 h-6 rounded-full p-1 cursor-pointer transition-colors ${telemetryLogsEnabled ? 'bg-aeirmist-cyan' : 'bg-white/20'}`}
+                        title={telemetryLogsEnabled ? 'Disable telemetry' : 'Enable telemetry'}
+                      >
+                        <div className={`w-4 h-4 bg-black rounded-full transition-transform ${telemetryLogsEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
                       </button>
                     </div>
                   </div>

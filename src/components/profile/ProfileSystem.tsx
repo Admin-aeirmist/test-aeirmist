@@ -9,6 +9,9 @@ import { getRankInfo, AEIRMIST_THRESHOLDS } from '../../lib/aeirmistRanks';
 import { AeirmistRankBadge } from './AeirmistRankBadge';
 import { AeirmistRankGuide } from './AeirmistRankGuide';
 import { getAvatarUrl } from '../../lib/avatar';
+import { normalizeMediaUrl } from '../../utils/mediaUtils';
+import { api } from '../../services/api/client';
+import { logger } from '../../utils/logger';
 import { Avatar } from '../ui/Avatar';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
 import { PostMenu } from '../PostMenu';
@@ -16,6 +19,7 @@ import { EditPostModal } from '../EditPostModal';
 import { Skeleton } from '../ui/Skeleton';
 import { EmptyState } from '../ui/EmptyState';
 import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, deleteDoc, getDocs, limit } from 'firebase/firestore';
+import { auth } from '../../lib/firebase';
 import { AccountSwitcher } from '../auth/AccountSwitcher';
 import { StoryArchiveModal } from './StoryArchiveModal';
 import { StoryViewer } from '../feed/StoriesSystem';
@@ -156,36 +160,56 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   const rankInfo = getRankInfo(displayUser?.aeirmistLevel || 0);
   const progressInfo = getNextRankProgress(displayUser?.aeirmistLevel || 0);
 
-  // Real-time listener for target profile
+  // Real-time listener & API fetch for target profile
   React.useEffect(() => {
-    if (!db) return;
-    
     // Reset live profile whenever target changes to avoid showing stale data from previous views
     setLiveTargetProfile(null);
-    
-    // If we have an ID, use it (existing logic)
-    if (targetProfile?.id && targetProfile.id !== profile?.id) {
-      const unsub = onSnapshot(doc(db, 'profiles', targetProfile.id), (snap) => {
-        if (snap.exists()) {
-          setLiveTargetProfile({ id: snap.id, ...snap.data() });
-        }
-      });
-      return () => unsub();
-    } 
-    
-    // If we only have a username, fetch by username
-    if (!targetProfile?.id && targetProfile?.username) {
-      const q = query(collection(db, 'profiles'), where('username', '==', targetProfile.username), limit(1));
-      const unsub = onSnapshot(q, (snap) => {
-        if (!snap.empty) {
-          setLiveTargetProfile({ id: snap.docs[0].id, ...snap.docs[0].data() });
-        }
-      });
-      return () => unsub();
+
+    const targetKey = targetProfile?.username || targetProfile?.id || targetProfile?.uid || profile?.username || profile?.id;
+    if (!targetKey) {
+      return;
     }
 
-    setLiveTargetProfile(null);
-  }, [db, targetProfile?.id, targetProfile?.username, profile?.id]);
+    let isMounted = true;
+
+    // 1. Authoritative: Fetch complete profile from device server (PostgreSQL)
+    api.users.getProfile(targetKey)
+      .then((res: any) => {
+        if (!isMounted || !res?.profile) return;
+        const p = res.profile;
+        const mapped = {
+          ...p,
+          id: p.id,
+          uid: p.firebaseUid || p.userId,
+          ownerUid: p.firebaseUid || p.userId,
+          displayName: p.displayName || p.username || 'User',
+          username: p.username,
+          bio: p.bio || '',
+          photoURL: p.avatarKey ? (p.avatarKey.startsWith('http') || p.avatarKey.startsWith('data:') ? p.avatarKey : `/media/${p.avatarKey.replace(/^\/+media\/+/, '')}`) : (p.photoURL || null),
+          coverURL: p.bannerKey ? (p.bannerKey.startsWith('http') || p.bannerKey.startsWith('data:') ? p.bannerKey : `/media/${p.bannerKey.replace(/^\/+media\/+/, '')}`) : (p.coverURL || null),
+          bannerURL: p.bannerKey ? (p.bannerKey.startsWith('http') || p.bannerKey.startsWith('data:') ? p.bannerKey : `/media/${p.bannerKey.replace(/^\/+media\/+/, '')}`) : (p.bannerURL || null),
+          aeirmistLevel: p.points || 0,
+          followersCount: Number(p.followersCount ?? 0),
+          followingCount: Number(p.followingCount ?? 0),
+          postsCount: Number(p.postsCount ?? 0),
+          isVerified: p.isVerified !== undefined ? Boolean(p.isVerified) : true,
+          badge: p.badge,
+          social: {
+            followers: Array.isArray(p.social?.followers) ? p.social.followers : [],
+            following: Array.isArray(p.social?.following) ? p.social.following : [],
+          }
+        };
+        setLiveTargetProfile(mapped);
+      })
+      .catch((err: any) => {
+        if (isOwnProfile && (err?.status === 404 || err?.status === 401)) {
+          logger.warn('[ProfileSystem] Own profile returned 404/401 from backend. Account has been deleted.');
+          window.dispatchEvent(new CustomEvent('aeirmist:force_logout', { detail: { reason: 'account_deleted' } }));
+        }
+      });
+
+    return () => { isMounted = false; };
+  }, [targetProfile?.id, targetProfile?.username, targetProfile?.uid, profile?.id, profile?.username]);
 
   // Broadcast author details for public preview gateway if visitor is unauthenticated
   useEffect(() => {
@@ -209,19 +233,83 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     }
   }, [isOwnProfile, profile?.id, profile?.pruningReason, updateProfile]);
 
-  const isFollowingUser = targetProfile ? checkIsFollowing(targetProfile.id) : false;
+  const targetCheckId = targetProfile?.id || displayUser?.id || displayUser?.userId;
+  const isFollowingUser = targetCheckId ? (checkIsFollowing(targetCheckId) || checkIsFollowing(displayUser?.id) || checkIsFollowing(displayUser?.userId)) : false;
   const isMessageLocked = false;
-  const isFollowerOfMe = targetProfile ? (profile?.social?.followers || []).includes(targetProfile.id) : false;
-  const isMutual = isFollowingUser && (profile?.social?.followers || []).includes(displayUser?.id);
-  const isPendingUser = targetProfile ? isFollowPending(targetProfile.id) : false;
+  const isFollowerOfMe = targetCheckId ? (
+    (profile?.social?.followers || []).includes(targetCheckId) ||
+    (profile?.social?.followers || []).includes(displayUser?.id) ||
+    (profile?.social?.followers || []).includes(displayUser?.userId)
+  ) : false;
+  const isMutual = isFollowingUser && isFollowerOfMe;
+  const isPendingUser = targetCheckId ? (isFollowPending(targetCheckId) || isFollowPending(displayUser?.id)) : false;
   const isLocked = !isOwnProfile && (displayUser?.isPrivate || displayUser?.isProfileLocked) && !isFollowingUser;
   const isOnline = Boolean(onlineUsers?.has(displayUser?.id));
   const isBlockedUser = targetProfile 
     ? (isBlocked(targetProfile.id) || isBlocked(targetProfile.ownerUid || '') || isBlocked(targetProfile.uid || '')) 
     : false;
   const isRestrictedUser = targetProfile ? isRestricted(targetProfile.id) : false;
-  const isFav = targetProfile ? isCloseFriend(targetProfile.id) : false;
+  const isFav = targetCheckId 
+    ? (Boolean(isCloseFriend?.(targetCheckId)) || (displayUser?.id ? Boolean(isCloseFriend?.(displayUser.id)) : false))
+    : false;
   const [isHoveringFollow, setIsHoveringFollow] = useState(false);
+
+  const getFollowerCount = (u: any): number => {
+    if (!u) return 0;
+    const direct = typeof u.followersCount === 'number' ? u.followersCount : undefined;
+    const arrayCount = Array.isArray(u.social?.followers) ? u.social.followers.length : 0;
+    if (direct !== undefined) return Math.max(direct, arrayCount);
+    return arrayCount;
+  };
+
+  const getFollowingCount = (u: any): number => {
+    if (!u) return 0;
+    const direct = typeof u.followingCount === 'number' ? u.followingCount : undefined;
+    const arrayCount = Array.isArray(u.social?.following) ? u.social.following.length : 0;
+    if (direct !== undefined) return Math.max(direct, arrayCount);
+    return arrayCount;
+  };
+
+  const handleToggleFollow = async () => {
+    if (!user) {
+      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
+      return;
+    }
+    const targetId = displayUser.id || displayUser.uid || displayUser.userId;
+    if (!targetId) return;
+
+    const willFollow = !isFollowingUser;
+
+    // Optimistically update liveTargetProfile immediately (0ms instant UI feedback)
+    setLiveTargetProfile((prev: any) => {
+      const current = prev || displayUser;
+      const currentFollowers = getFollowerCount(current);
+      const newFollowers = Math.max(0, currentFollowers + (willFollow ? 1 : -1));
+      const currentFollowerList = Array.isArray(current?.social?.followers) ? current.social.followers : [];
+      const myId = profile?.id || user.uid;
+      const newFollowerList = willFollow
+        ? Array.from(new Set([...currentFollowerList, myId]))
+        : currentFollowerList.filter((id: string) => id !== myId);
+
+      return {
+        ...current,
+        followersCount: newFollowers,
+        social: {
+          ...current?.social,
+          followers: newFollowerList,
+        }
+      };
+    });
+
+    try {
+      const res: any = await toggleFollow(targetId, displayUser);
+      if (res && typeof res.followersCount === 'number') {
+        setLiveTargetProfile((prev: any) => prev ? ({ ...prev, followersCount: res.followersCount }) : prev);
+      }
+    } catch (err) {
+      logger.error('Failed to toggle follow:', err);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState('posts');
   const [isStoryArchiveOpen, setIsStoryArchiveOpen] = useState(false);
@@ -432,7 +520,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   // Fetch active user note (valid within 24h)
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
+    if (!db || !displayUser?.id || !auth?.currentUser) return;
     try {
       const q = query(
         collection(db, 'notes'),
@@ -465,8 +553,30 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     }
   }, [db, displayUser?.id]);
   
-  const [posts, setPosts] = useState<any[]>([]);
-  const [loadingPosts, setLoadingPosts] = useState(true);
+  const [posts, setPosts] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const uid = displayUser?.userId || displayUser?.id || profile?.id;
+        if (uid) {
+          const cached = localStorage.getItem(`aeirmist_user_posts_${uid}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          }
+        }
+      } catch {}
+    }
+    return [];
+  });
+  const [loadingPosts, setLoadingPosts] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const uid = displayUser?.userId || displayUser?.id || profile?.id;
+        if (uid && localStorage.getItem(`aeirmist_user_posts_${uid}`)) return false;
+      } catch {}
+    }
+    return true;
+  });
   const [savedPosts, setSavedPosts] = useState<any[]>([]);
   const [loadingSavedPosts, setLoadingSavedPosts] = useState(false);
   const [mutualConnections, setMutualConnections] = useState<any[]>([]);
@@ -616,7 +726,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   // Check for active stories
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
+    if (!db || !displayUser?.id || !auth?.currentUser) return;
     
     const isOwn = displayUser.id === user?.uid || displayUser.id === profile?.id;
     
@@ -657,7 +767,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         return viewers.includes(user?.uid);
       });
       setHasUnseenStory(dbHasStory && !allSeen);
-    });
+    }, () => {});
 
     // Immediate check for optimistic
     if (isOwn && optimisticStories.length > 0) {
@@ -708,64 +818,55 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
     }
   };
 
-  // Fetch Posts
+  // Fetch Posts (Authoritative local API + silent secondary sync)
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
+    const targetId = displayUser?.userId || displayUser?.id;
+    if (!targetId) return;
     
-    setLoadingPosts(true);
-    const authorCandidateIds = Array.from(new Set([
-      displayUser.id,
-      displayUser.uid,
-      displayUser.ownerUid,
-      displayUser.id.replace(/^profile_/, ''),
-      'profile_' + displayUser.id.replace(/^profile_/, '')
-    ].filter(Boolean)));
+    // Only show loading if we don't already have posts for this target
+    setLoadingPosts(prev => posts.length === 0 ? true : false);
+    let isMounted = true;
 
-    const q = query(
-      collection(db, 'posts'), 
-      where('authorId', 'in', authorCandidateIds),
-      limit(50)
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const fetchedPosts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      console.log("[Diagnostics - Profile Posts] fetchedPosts from Firestore:", fetchedPosts.map((p: any) => ({
-        id: p.id,
-        content: (p.content || '').substring(0, 50),
-        mediaType: p.mediaType || 'none',
-        isArchived: !!p.isArchived,
-        hasImage: !!((p.mediaUrls && p.mediaUrls.length > 0) || p.mediaUrl || p.mediaURL || (p.mediaItems && p.mediaItems.some((item: any) => item?.type === 'image')))
-      })));
-      fetchedPosts.sort((a, b) => {
-        const getTime = (p: any) => {
-          if (!p || !p.createdAt) return Date.now();
+    // 1. Authoritative: Fetch from local Device API (PostgreSQL DAL)
+    api.posts.getUserPosts(targetId)
+      .then((res: any) => {
+        if (!isMounted) return;
+        if (res?.posts && Array.isArray(res.posts)) {
+          const mapped = res.posts.map((p: any) => {
+            const keys = Array.isArray(p.mediaKeys) ? p.mediaKeys : [];
+            const urls = keys.map((k: string) => k.startsWith('http') || k.startsWith('data:') ? k : `/media/${k.replace(/^\/+media\/+/, '')}`);
+            return {
+              ...p,
+              id: p.id,
+              authorId: p.userId,
+              createdAt: p.createdAt,
+              mediaUrls: urls.length > 0 ? urls : (p.mediaUrls || []),
+              mediaUrl: urls[0] || p.mediaUrl || p.mediaURL || '',
+              mediaURL: urls[0] || p.mediaUrl || p.mediaURL || '',
+              caption: p.content || p.caption || '',
+            };
+          });
+          setPosts(mapped);
+          setLoadingPosts(false);
           try {
-            if (p.createdAt.toDate) return p.createdAt.toDate().getTime();
-            if (p.createdAt instanceof Date) return p.createdAt.getTime();
-            if (p.createdAt.seconds) return p.createdAt.seconds * 1000;
-            if (typeof p.createdAt === 'number') return p.createdAt;
-          } catch (e) {}
-          return Date.now();
-        };
-        return getTime(b) - getTime(a);
+            localStorage.setItem(`aeirmist_user_posts_${targetId}`, JSON.stringify(mapped.slice(0, 30)));
+          } catch {}
+        }
+      })
+      .catch(() => {
+        if (isMounted) setLoadingPosts(false);
       });
-      setPosts(fetchedPosts);
-      setLoadingPosts(false);
-    }, (error) => {
-      console.error("Posts fetch failed", error);
-      setLoadingPosts(false);
-    });
 
-    return () => unsub();
-  }, [db, displayUser?.id]);
+    return () => { isMounted = false; };
+  }, [displayUser?.id, displayUser?.userId]);
 
   // Fetch Bookmarked/Saved Posts for Self
   React.useEffect(() => {
-    if (!db || !displayUser?.id || !isOwnProfile || activeTab !== 'saved') return;
+    if (!db || !displayUser?.id || !isOwnProfile || activeTab !== 'saved' || !auth?.currentUser) return;
     
     setLoadingSavedPosts(true);
     const q = query(
-      collection(db, 'posts'),
+      collection(db, 'posts'), 
       where('savedBy', 'array-contains', displayUser.id),
       limit(50)
     );
@@ -787,8 +888,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       });
       setSavedPosts(fetchedSaved);
       setLoadingSavedPosts(false);
-    }, (error) => {
-      console.warn("Saved posts loading error", error);
+    }, () => {
       setLoadingSavedPosts(false);
     });
 
@@ -797,7 +897,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
   // Fetch Highlights
   React.useEffect(() => {
-    if (!db || !displayUser?.id) return;
+    if (!db || !displayUser?.id || !auth?.currentUser) return;
     
     setLoadingHighlights(true);
     const q = query(
@@ -828,8 +928,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       });
       setHighlights(fetchedHighlights);
       setLoadingHighlights(false);
-    }, (error) => {
-      console.error("Highlights fetch failed", error);
+    }, () => {
       setLoadingHighlights(false);
     });
 
@@ -1638,7 +1737,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               <div className="flex gap-3 sm:gap-4 mb-5 w-full justify-center lg:justify-start overflow-x-auto pb-1.5">
                 <GlassStat value={(posts || []).filter(p => p && !p.isArchived).length} label="POSTS" isLoading={loadingPosts} />
                 <GlassStat 
-                  value={Array.isArray(displayUser?.social?.followers) ? displayUser.social.followers.length : Math.max(0, displayUser?.followersCount || 0)} 
+                  value={getFollowerCount(displayUser)} 
                   label="FOLLOWERS" 
                   onClick={() => !isLocked && handleShowFollowList('followers')} 
                   disabled={isLocked}
@@ -1646,7 +1745,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                   isLoading={isDataLoading}
                 />
                 <GlassStat 
-                  value={Array.isArray(displayUser?.social?.following) ? displayUser.social.following.length : Math.max(0, displayUser?.followingCount || 0)} 
+                  value={getFollowingCount(displayUser)} 
                   label="FOLLOWING" 
                   onClick={() => !isLocked && handleShowFollowList('following')} 
                   disabled={isLocked}
@@ -1719,7 +1818,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                       whileTap={{ scale: 0.98 }}
                       onMouseEnter={() => setIsHoveringFollow(true)}
                       onMouseLeave={() => setIsHoveringFollow(false)}
-                      onClick={() => toggleFollow(displayUser.id, displayUser)}
+                      onClick={handleToggleFollow}
                       className={`flex-1 sm:flex-none px-8 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-xl ${isFollowingUser ? 'bg-white/5 border border-white/10 text-white hover:border-red-500/30 hover:text-red-500' : 'bg-aeirmist-cyan text-black'}`}
                     >
                       {isPendingUser 
@@ -1791,9 +1890,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       {/* End of Desktop-only Version Wrapper */}
 
         {/* Mobile Instagram-styled Profile Header View */}
-        <div className="block lg:hidden mb-1 px-1">
+        <div className="block lg:hidden mb-1">
           {/* Top Navigation Bar with Premium Layout */}
-          <div className="flex items-center justify-between pt-[calc(0.625rem+var(--sat,var(--safe-area-inset-top,0px)))] pb-2.5 px-4 border-b border-white/5 bg-[#01050a]/95 backdrop-blur-xl z-40 sticky top-0">
+          <div className="flex items-center justify-between pt-[max(env(safe-area-inset-top,0px),0.25rem)] pb-1.5 px-3.5 border-b border-white/5 bg-[#01050a]/95 backdrop-blur-xl z-40 sticky top-0">
             {/* Left: Account Switcher if own profile */}
             <div className="flex items-center shrink-0 z-10 relative w-24">
               {isOwnProfile && (
@@ -1873,9 +1972,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
             >
               {isDataLoading ? (
                 <Skeleton className="w-full h-full opacity-20" />
-              ) : ((isOwnProfile && localCoverURL) || (displayUser?.coverURL && displayUser.coverURL.trim() !== "")) && (
+              ) : ((isOwnProfile && localCoverURL) || displayUser?.coverURL || displayUser?.bannerURL || displayUser?.bannerKey) && (
                 <img
-                  src={(isOwnProfile && localCoverURL) ? localCoverURL : displayUser.coverURL}
+                  src={(isOwnProfile && localCoverURL) ? localCoverURL : normalizeMediaUrl(displayUser?.coverURL || displayUser?.bannerURL || displayUser?.bannerKey)}
                   alt="Cover"
                   loading="eager"
                   decoding="async"
@@ -1974,7 +2073,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
               <div className="flex flex-1 justify-around max-w-sm pl-2">
                 <MobileStatItem value={(posts || []).filter(p => p && !p.isArchived).length} label="Posts" isLoading={loadingPosts} />
                 <MobileStatItem 
-                  value={Array.isArray(displayUser?.social?.followers) ? displayUser.social.followers.length : Math.max(0, displayUser?.followersCount || 0)} 
+                  value={getFollowerCount(displayUser)} 
                   label="Followers" 
                   onClick={() => !isLocked && handleShowFollowList('followers')}
                   disabled={isLocked}
@@ -1982,7 +2081,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                   isLoading={isDataLoading}
                 />
                 <MobileStatItem 
-                  value={Array.isArray(displayUser?.social?.following) ? displayUser.social.following.length : Math.max(0, displayUser?.followingCount || 0)} 
+                  value={getFollowingCount(displayUser)} 
                   label="Following" 
                   onClick={() => !isLocked && handleShowFollowList('following')}
                   disabled={isLocked}
@@ -2258,13 +2357,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                 <button 
                   onMouseEnter={() => setIsHoveringFollow(true)}
                   onMouseLeave={() => setIsHoveringFollow(false)}
-                  onClick={() => {
-                    if (!user) {
-                      window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
-                      return;
-                    }
-                    toggleFollow(displayUser.id, displayUser);
-                  }}
+                  onClick={handleToggleFollow}
                   className={`flex-1 py-2 rounded-xl text-xs font-black tracking-wider uppercase transition-all ${
                     isFollowingUser 
                       ? 'bg-white/5 border border-white/10 text-white hover:border-red-500/30 hover:text-red-500' 
@@ -2543,7 +2636,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
             });
             return picturePosts.map(post => {
               if (!post) return null;
-              return <PostCard key={post.id} post={post} onClick={() => onPostClick?.(post.id)} />;
+              return <PostCard key={post.id} post={post} onClick={() => onPostClick ? onPostClick(post.id) : setSelectedPost(post)} />;
             });
           })()}
           
@@ -2566,7 +2659,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
             if (videoPosts.length > 0) {
               return videoPosts.map(post => {
                 if (!post) return null;
-                return <PostCard key={post.id} post={post} onClick={() => onPostClick?.(post.id)} />;
+                return <PostCard key={post.id} post={post} onClick={() => onPostClick ? onPostClick(post.id) : setSelectedPost(post)} />;
               });
             } else {
               return (
@@ -3030,7 +3123,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                         : 'text-white/40 hover:text-white/70'
                     }`}
                   >
-                    Followers ({Array.isArray(displayUser?.social?.followers) ? displayUser.social.followers.length : (displayUser?.followersCount || 0)})
+                    Followers ({getFollowerCount(displayUser)})
                   </button>
                   <button
                     onClick={() => handleShowFollowList('following')}
@@ -3040,7 +3133,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                         : 'text-white/40 hover:text-white/70'
                     }`}
                   >
-                    Following ({Array.isArray(displayUser?.social?.following) ? displayUser.social.following.length : (displayUser?.followingCount || 0)})
+                    Following ({getFollowingCount(displayUser)})
                   </button>
                 </div>
               </div>
@@ -3465,14 +3558,21 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
   usePostAnalytics({ postId: post.id, type });
 
   // Get the best thumbnail for video posts
-  const videoThumbnail = post.thumbnailUrl || post.thumbnailURL || post.videoThumbnail || post.coverUrl || post.coverURL || null;
+  let videoThumbnail = post.thumbnailUrl || post.thumbnailURL || post.videoThumbnail || post.coverUrl || post.coverURL || null;
+  if (!videoThumbnail && isVideoPost) {
+    const candidateUrl = post.mediaUrl || post.mediaURL || (post.mediaUrls && post.mediaUrls[0]);
+    if (candidateUrl && typeof candidateUrl === 'string' && candidateUrl.includes('cloudinary.com')) {
+      videoThumbnail = candidateUrl.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2');
+    }
+  }
 
   const renderMediaItem = (url: string, className: string, key?: number) => {
-    const isVideoUrl = url?.toString().toLowerCase().includes('.mp4') || url?.toString().toLowerCase().includes('video');
+    const isVideoUrl = isVideoPost || url?.toString().toLowerCase().includes('.mp4') || url?.toString().toLowerCase().includes('video');
     
     if (isVideoUrl) {
-      if (videoThumbnail) {
-        return <img key={key} src={videoThumbnail} className={className} alt="" referrerPolicy="no-referrer" />;
+      const thumb = videoThumbnail || (typeof url === 'string' && url.includes('cloudinary.com') ? url.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2') : null);
+      if (thumb) {
+        return <img key={key} src={thumb} className={className} alt="" referrerPolicy="no-referrer" />;
       }
       return <video key={key} src={`${url}#t=0.5`} className={className} muted preload="metadata" playsInline />;
     }
@@ -3553,10 +3653,17 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
 
       {/* Video Play Icon Overlay */}
       {isVideoPost && hasMedia && (
-        <div className="absolute top-3 right-3 z-10 flex items-center gap-1 bg-black/60 backdrop-blur-sm rounded-full px-2 py-1">
-          <Play size={12} className="text-white fill-white" />
-          <span className="text-[9px] font-bold text-white uppercase tracking-wider">Video</span>
-        </div>
+        <>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md border border-white/25 flex items-center justify-center shadow-2xl group-hover:scale-115 transition-transform duration-300">
+              <Play size={20} className="text-white fill-white ml-0.5 drop-shadow-[0_0_12px_rgba(0,242,255,0.8)]" />
+            </div>
+          </div>
+          <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1 bg-black/70 backdrop-blur-md rounded-full px-2 py-0.5 border border-white/10">
+            <Play size={10} className="text-aeirmist-cyan fill-aeirmist-cyan" />
+            <span className="text-[8px] font-black text-white uppercase tracking-wider">Video</span>
+          </div>
+        </>
       )}
 
       {/* Minimalist Stat Overlay */}
@@ -3611,24 +3718,24 @@ const MediaViewer = ({ post, onClose }: { post: any, onClose: () => void }) => {
 
   // Sync post stats in real time
   useEffect(() => {
-    if (!db || !post.id) return;
+    if (!db || !post.id || !auth?.currentUser) return;
     const unsub = onSnapshot(doc(db, 'posts', post.id), (snap) => {
       if (snap.exists()) {
         setLivePost({ id: snap.id, ...snap.data() });
       }
-    });
+    }, () => {});
     return () => unsub();
   }, [db, post.id]);
 
   // Load live comments
   useEffect(() => {
-    if (!db || !post.id) return;
+    if (!db || !post.id || !auth?.currentUser) return;
     const commentsRef = collection(db, 'posts', post.id, 'comments');
     const q = query(commentsRef, orderBy('createdAt', 'asc'));
     const unsub = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setLiveComments(docs);
-    });
+    }, () => {});
     return () => unsub();
   }, [db, post.id]);
 

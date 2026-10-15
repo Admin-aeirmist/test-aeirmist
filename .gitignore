@@ -15,4 +15,5 @@ pgsql-data/
 *.zip
 dump.rdb
 cloudflared.exe
-
+backups/
+*.sql

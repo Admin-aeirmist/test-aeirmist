@@ -1,10 +1,11 @@
 import { Message, Chat } from '../../types/messenger';
 import { aeirmistCache } from '../../services/CacheService';
 import { logger } from '@/src/utils/logger';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
 import { extractTimestampMs } from '../../lib/date';
 import { api } from '../../services/api/client';
 import { getSocket, joinChatRoom, leaveChatRoom, identifyUserSocket } from '../../services/api/socket';
+import { normalizeMediaUrl } from '@/src/utils/mediaUtils';
 
 function cleanUndefined(obj: any): any {
   if (obj === null || typeof obj !== 'object') {
@@ -92,6 +93,19 @@ class MessagingService {
       ? m.timestampMs
       : (m.createdAt ? extractTimestampMs(m.createdAt) : Date.now());
     const date = new Date(timestampMs);
+    const rawKey = m.mediaKey || m.media_key;
+    const normalizedKey = rawKey 
+      ? (String(rawKey).startsWith('/media/') ? String(rawKey) : `/media/${String(rawKey).replace(/^\/+/, '')}`) 
+      : null;
+    const rawMedia = m.mediaUrl || m.attachmentUrl || normalizedKey;
+    const resolvedMedia = rawMedia ? normalizeMediaUrl(rawMedia) : null;
+    const rawSenderPhoto = m.senderPhoto 
+      || (m.sender?.avatarKey ? (String(m.sender.avatarKey).startsWith('/media/') ? m.sender.avatarKey : `/media/${m.sender.avatarKey}`) : null) 
+      || m.metadata?.senderPhoto 
+      || m.sender?.photoURL 
+      || null;
+    const resolvedSenderPhoto = rawSenderPhoto ? normalizeMediaUrl(rawSenderPhoto) : undefined;
+
     return {
       ...m,
       id: m.id || `msg_${timestampMs}`,
@@ -100,16 +114,17 @@ class MessagingService {
       senderUid: m.senderUid || m.sender?.firebaseUid || m.sender?.id || m.senderId,
       senderProfileId: m.senderProfileId || m.sender?.profileId,
       senderDbId: m.senderDbId || m.sender?.id,
+      senderPhoto: resolvedSenderPhoto,
       text: m.text !== undefined ? m.text : (m.content || ''),
       content: m.content !== undefined ? m.content : (m.text || ''),
       type: m.type || 'text',
-      mediaUrl: m.mediaUrl || m.attachmentUrl || (m.mediaKey ? `/media/${m.mediaKey}` : null),
-      attachmentUrl: m.attachmentUrl || m.mediaUrl || (m.mediaKey ? `/media/${m.mediaKey}` : null),
+      mediaUrl: resolvedMedia,
+      attachmentUrl: resolvedMedia,
       timestamp: typeof m.timestamp === 'string' && m.timestamp ? m.timestamp : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timestampMs,
       createdAt: m.createdAt || new Date(timestampMs).toISOString(),
-      isSeen: Boolean(m.isSeen || m.isRead),
-      isDelivered: Boolean(m.isDelivered !== false),
+      isSeen: Boolean(m.isSeen || m.is_seen || m.isRead),
+      isDelivered: Boolean(m.isDelivered || m.is_delivered || m.isSeen || m.is_seen || m.isRead),
       status: m.status || 'sent',
       metadata: m.metadata || {}
     };
@@ -127,7 +142,7 @@ class MessagingService {
     const all = [...existing, ...incoming];
     for (const m of all) {
       if (!m.id) continue;
-      const optId = (m as any).metadata?.optimisticId || (m as any).metadata?.clientMessageId || (m as any).optimisticId;
+      const optId = (m as any).metadata?.optimisticId || (m as any).metadata?.clientMessageId || (m as any).optimisticId || (String(m.id).startsWith('opt_') ? m.id : null);
       if (optId) {
         if (String(m.id).startsWith('opt_')) {
           if (optToCanonical.has(optId)) {
@@ -190,13 +205,23 @@ class MessagingService {
     }
   }
 
-  public async deleteMessage(_db: any, _conversationId: string, messageId: string, _profileId?: string, _deleteType: 'me' | 'everyone' = 'everyone') {
+  public async deleteMessage(_db: any, conversationId: string, messageId: string, _profileId?: string, deleteType: 'me' | 'everyone' = 'everyone') {
     if (!messageId) return;
-    try {
-      await api.chat.deleteMessage(messageId);
-    } catch (err) {
-      logger.error("[MessagingService] deleteMessage error:", err);
-      throw err;
+    const current = this.getCachedMessages(conversationId) || [];
+    const filtered = current.filter(m => m.id !== messageId);
+    this.notifySubscribers(conversationId, filtered);
+
+    if (deleteType === 'everyone') {
+      try {
+        await api.chat.deleteMessage(messageId);
+      } catch (err) {
+        logger.error("[MessagingService] deleteMessage error:", err);
+        throw err;
+      }
+    } else {
+      try {
+        await api.chat.deleteMessage(messageId);
+      } catch {}
     }
   }
 
@@ -276,7 +301,7 @@ class MessagingService {
           type,
           mediaUrl: mediaUrl || null,
           status: 'sent',
-          isDelivered: true,
+          isDelivered: Boolean(serverMsg?.isDelivered ?? false),
           isSeen: false,
           timestampMs: Date.now(),
           metadata: {
@@ -331,29 +356,70 @@ class MessagingService {
       const rawConvId = String(payload.rawConversationId || '');
 
       for (const convId of this.activeMessageSubscribers.keys()) {
-        if (convId === targetConvId || convId === rawConvId) {
-          const normalized = this.normalizeMsg(rawMsg, convId);
-          const current = this.getCachedMessages(convId) || [];
-          const merged = this.upsertMessages(current, [normalized]);
-          this.notifySubscribers(convId, merged);
-        }
+        const current = this.getCachedMessages(convId) || [];
+        const matches =
+          convId === targetConvId ||
+          convId === rawConvId ||
+          (!!targetConvId && current.some((m: any) => String(m.conversationId || '') === targetConvId));
+        if (!matches) continue;
+
+        const normalized = this.normalizeMsg(rawMsg, convId);
+        const merged = this.upsertMessages(current, [normalized]);
+        this.notifySubscribers(convId, merged);
       }
     });
 
     socket.on('seen_update', (payload: any) => {
       if (!payload) return;
-      const targetConvId = String(payload.conversationId || payload.rawConversationId || '');
+      const targetConvId = String(payload.conversationId || '');
+      const rawConvId = String(payload.rawConversationId || '');
+      const readerIds = new Set<string>(
+        [payload.userId, payload.readerUid, payload.readerProfileId].filter(Boolean).map((v: any) => String(v))
+      );
+
       for (const convId of this.activeMessageSubscribers.keys()) {
-        if (convId === targetConvId) {
-          const current = this.getCachedMessages(convId) || [];
-          const updated = current.map(m => {
-            if (m.senderId !== payload.userId) {
-              return { ...m, isSeen: true };
-            }
-            return m;
-          });
-          this.notifySubscribers(convId, updated);
-        }
+        const current = this.getCachedMessages(convId) || [];
+        // Subscriber key may be a raw/alias id: also match by the canonical conversationId on cached messages
+        const matches =
+          convId === targetConvId ||
+          convId === rawConvId ||
+          (!!targetConvId && current.some((m: any) => String(m.conversationId || '') === targetConvId));
+        if (!matches) continue;
+
+        const updated = current.map((m: any) => {
+          if (m.isSeen || m.isOptimistic || String(m.id || '').startsWith('opt_')) return m;
+          const authorIds = [m.senderId, m.senderDbId, m.senderUid, m.senderProfileId].filter(Boolean).map(String);
+          const sentByReader = authorIds.some((id) => readerIds.has(id));
+          return sentByReader ? m : { ...m, isSeen: true, isDelivered: true };
+        });
+        this.notifySubscribers(convId, updated);
+
+        // Reconcile with server truth (messages.is_seen is persisted in Postgres)
+        this.fetchAndEmitApiMessages(convId).catch(() => {});
+      }
+    });
+
+    socket.on('messages_delivered', (payload: any) => {
+      if (!payload) return;
+      const targetConvId = String(payload.conversationId || '');
+      const rawConvId = String(payload.rawConversationId || '');
+      const recipientId = String(payload.deliveredToUserId || '');
+
+      for (const convId of this.activeMessageSubscribers.keys()) {
+        const current = this.getCachedMessages(convId) || [];
+        const matches =
+          convId === targetConvId ||
+          convId === rawConvId ||
+          (!!targetConvId && current.some((m: any) => String(m.conversationId || '') === targetConvId));
+        if (!matches) continue;
+
+        const updated = current.map((m: any) => {
+          if (m.isDelivered || m.isOptimistic || String(m.id || '').startsWith('opt_')) return m;
+          const authorIds = [m.senderId, m.senderDbId, m.senderUid, m.senderProfileId].filter(Boolean).map(String);
+          const sentByRecipient = recipientId && authorIds.includes(recipientId);
+          return sentByRecipient ? m : { ...m, isDelivered: true };
+        });
+        this.notifySubscribers(convId, updated);
       }
     });
 
@@ -361,12 +427,15 @@ class MessagingService {
       if (!payload?.message) return;
       const targetConvId = String(payload.conversationId || payload.message?.conversationId || '');
       for (const convId of this.activeMessageSubscribers.keys()) {
-        if (convId === targetConvId) {
-          const edited = this.normalizeMsg(payload.message, convId);
-          const current = this.getCachedMessages(convId) || [];
-          const merged = this.upsertMessages(current, [edited]);
-          this.notifySubscribers(convId, merged);
-        }
+        const current = this.getCachedMessages(convId) || [];
+        const matches =
+          convId === targetConvId ||
+          (!!targetConvId && current.some((m: any) => String(m.conversationId || '') === targetConvId));
+        if (!matches) continue;
+
+        const edited = this.normalizeMsg(payload.message, convId);
+        const merged = this.upsertMessages(current, [edited]);
+        this.notifySubscribers(convId, merged);
       }
     });
 
@@ -374,11 +443,38 @@ class MessagingService {
       if (!payload?.messageId) return;
       const targetConvId = String(payload.conversationId || '');
       for (const convId of this.activeMessageSubscribers.keys()) {
-        if (!targetConvId || convId === targetConvId) {
-          const current = this.getCachedMessages(convId) || [];
-          const filtered = current.filter(m => m.id !== payload.messageId);
-          this.notifySubscribers(convId, filtered);
-        }
+        const current = this.getCachedMessages(convId) || [];
+        const matches =
+          !targetConvId ||
+          convId === targetConvId ||
+          (!!targetConvId && current.some((m: any) => String(m.conversationId || '') === targetConvId));
+        if (!matches) continue;
+
+        const filtered = current.filter(m => m.id !== payload.messageId);
+        this.notifySubscribers(convId, filtered);
+      }
+    });
+
+    socket.on('message_reaction_updated', (payload: any) => {
+      if (!payload?.messageId) return;
+      const targetConvId = String(payload.conversationId || '');
+      for (const convId of this.activeMessageSubscribers.keys()) {
+        const current = this.getCachedMessages(convId) || [];
+        const matches =
+          !targetConvId ||
+          convId === targetConvId ||
+          (!!targetConvId && current.some((m: any) => String(m.conversationId || '') === targetConvId));
+        if (!matches) continue;
+
+        const updated = current.map(m => {
+          if (m.id !== payload.messageId) return m;
+          return {
+            ...m,
+            reactions: payload.reactions || {},
+            userReactions: payload.userReactions || {},
+          };
+        });
+        this.notifySubscribers(convId, updated);
       }
     });
 
@@ -556,7 +652,10 @@ class MessagingService {
         }
       }
 
-      const resolvedPhoto = c.avatarKey ? `/media/${c.avatarKey}` : (other?.avatarKey ? `/media/${other.avatarKey}` : (c.photo || other?.photoURL || null));
+      const resolvedPhoto = resolveAvatarSrc(c.avatarKey) || resolveAvatarSrc(other?.avatarKey) || resolveAvatarSrc(c.photo) || resolveAvatarSrc(other?.photoURL) || null;
+
+      const uCount = typeof c.unreadCount === 'number' ? c.unreadCount : (typeof c.unreadCount === 'object' ? (c.unreadCount[profileId] || 0) : 0);
+      const isUnread = typeof c.unread === 'boolean' ? c.unread : (uCount > 0);
 
       return {
         ...c,
@@ -576,7 +675,8 @@ class MessagingService {
         } : c.otherProfile),
         latestMessageAt: c.lastMessageAt || c.latestMessageAt || new Date(ms || Date.now()).toISOString(),
         latestMessagePreview: c.lastMessagePreview || c.lastMessage?.text || '',
-        unreadCount: typeof c.unreadCount === 'number' ? c.unreadCount : (typeof c.unreadCount === 'object' ? (c.unreadCount[profileId] || 0) : 0),
+        unreadCount: uCount,
+        unread: isUnread,
         participants: c.participants ? (Array.isArray(c.participants) && typeof c.participants[0] === 'object' ? c.participants.map((p: any) => p.userId) : c.participants) : [userUid],
         profileIds: c.profileIds || (otherParticipantId ? [profileId, otherParticipantId] : [profileId])
       } as Chat;
@@ -636,6 +736,13 @@ class MessagingService {
               const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
               const preferredId = isUuid(c.id) ? c.id : (isUuid(existingId) ? existingId : c.id);
 
+              const mergedUnreadCount = typeof c.unreadCount === 'number'
+                ? c.unreadCount
+                : (typeof existing.unreadCount === 'number' ? existing.unreadCount : 0);
+              const mergedUnread = typeof c.unread === 'boolean'
+                ? c.unread
+                : (typeof existing.unread === 'boolean' ? existing.unread : (mergedUnreadCount > 0));
+
               const merged: Chat = {
                 ...existing,
                 ...c,
@@ -644,6 +751,8 @@ class MessagingService {
                 photo: bestPhoto,
                 latestMessagePreview: latestPreview,
                 latestMessageAt: latestAt,
+                unreadCount: mergedUnreadCount,
+                unread: mergedUnread,
                 otherParticipantId: existing.otherParticipantId || c.otherParticipantId,
                 otherParticipantUid: existing.otherParticipantUid || c.otherParticipantUid,
                 otherProfile: { ...(existing.otherProfile || {}), ...(c.otherProfile || {}) }
@@ -754,9 +863,14 @@ class MessagingService {
       if (typeof window !== 'undefined') {
         const msg = payload.message || payload;
         const cId = payload.conversationId || payload.rawConversationId;
+        // Do not show chathead preview for muted conversations
+        const mutedChats: Set<string> = (window as any).__aeirmistMutedChats || new Set();
+        if (cId && mutedChats.has(cId)) return;
         const sender = msg.sender || {};
         const senderName = sender.displayName || sender.username || payload.senderName || 'Message';
-        const text = msg.content || msg.text || (msg.type ? `Sent a ${msg.type}` : 'Sent a message');
+        const text = (msg.type === 'voice' || msg.metadata?.mediaType === 'voice')
+          ? '🎤 Voice note'
+          : (msg.content || msg.text || (msg.type ? `Sent a ${msg.type}` : 'Sent a message'));
         window.dispatchEvent(new CustomEvent('aeirmist_chathead_preview', {
           detail: { chatId: cId, text, senderName }
         }));
@@ -828,43 +942,43 @@ class MessagingService {
     logger.info(`[MessagingService] demoteAdmin in ${conversationId}: ${memberIdToDemote}`);
   }
 
-  public async setMemberRole(_db: any, conversationId: string, _requesterId: string, targetId: string, role: string) {
+  public async setMemberRole(_db: any, conversationId: string, _requesterId: string, targetId: string, role: string, ..._rest: any[]) {
     logger.info(`[MessagingService] setMemberRole in ${conversationId}: ${targetId} -> ${role}`);
   }
 
-  public async transferOwnership(_db: any, conversationId: string, _currentOwnerId: string, newOwnerId: string) {
+  public async transferOwnership(_db: any, conversationId: string, _currentOwnerId: string, newOwnerId: string, ..._rest: any[]) {
     logger.info(`[MessagingService] transferOwnership in ${conversationId} to ${newOwnerId}`);
   }
 
-  public async toggleMuteMember(_db: any, conversationId: string, memberId: string, isMuted: boolean) {
+  public async toggleMuteMember(_db: any, conversationId: string, memberId: string, isMuted: boolean, ..._rest: any[]) {
     logger.info(`[MessagingService] toggleMuteMember in ${conversationId}: ${memberId} -> ${isMuted}`);
   }
 
-  public async requestToJoinGroup(_db: any, conversationId: string, requesterId: string) {
+  public async requestToJoinGroup(_db: any, conversationId: string, requesterId: string, ..._rest: any[]) {
     logger.info(`[MessagingService] requestToJoinGroup in ${conversationId}: ${requesterId}`);
   }
 
-  public async approveJoinRequest(_db: any, conversationId: string, _adminId: string, requesterId: string) {
+  public async approveJoinRequest(_db: any, conversationId: string, _adminId: string, requesterId: string, ..._rest: any[]) {
     logger.info(`[MessagingService] approveJoinRequest in ${conversationId}: ${requesterId}`);
   }
 
-  public async rejectJoinRequest(_db: any, conversationId: string, _adminId: string, requesterId: string) {
+  public async rejectJoinRequest(_db: any, conversationId: string, _adminId: string, requesterId: string, ..._rest: any[]) {
     logger.info(`[MessagingService] rejectJoinRequest in ${conversationId}: ${requesterId}`);
   }
 
-  public async updateGroupDetails(_db: any, conversationId: string, updates: any) {
+  public async updateGroupDetails(_db: any, conversationId: string, updates: any, ..._rest: any[]) {
     logger.info(`[MessagingService] updateGroupDetails in ${conversationId}:`, updates);
   }
 
-  public async setGroupNickname(_db: any, conversationId: string, memberId: string, nickname: string) {
+  public async setGroupNickname(_db: any, conversationId: string, memberId: string, nickname: string, ..._rest: any[]) {
     logger.info(`[MessagingService] setGroupNickname in ${conversationId}: ${memberId} -> ${nickname}`);
   }
 
-  public async leaveGroup(_db: any, conversationId: string, memberId: string) {
+  public async leaveGroup(_db: any, conversationId: string, memberId: string, ..._rest: any[]) {
     logger.info(`[MessagingService] leaveGroup in ${conversationId}: ${memberId}`);
   }
 
-  public async deleteGroup(_db: any, conversationId: string, _requesterId: string) {
+  public async deleteGroup(_db: any, conversationId: string, _requesterId?: string, ..._rest: any[]) {
     logger.info(`[MessagingService] deleteGroup in ${conversationId}`);
   }
 

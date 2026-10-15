@@ -23,6 +23,7 @@ import { useTheme } from '../../../context/ThemeContext';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { mapAuthError } from '../../../utils/authErrorMapper';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../../services/api';
 
 
 interface AccountSettingsProps {
@@ -297,7 +298,28 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
       setEmailModalError('Please enter a valid email address.');
       return;
     }
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) {
+      setIsEmailChanging(true);
+      try {
+        await api.auth.changeEmail({ newEmail, currentPassword: emailModalPassword });
+        setShowEmailModal(false);
+        setNewEmail('');
+        setEmailModalPassword('');
+        setRequiresPasswordReauth(false);
+        await reloadAuthUser();
+        await refreshProfile();
+        addToast?.({
+          title: 'EMAIL UPDATED',
+          message: `Your primary email has been updated to ${newEmail}.`,
+          type: 'success'
+        });
+      } catch (err: any) {
+        setEmailModalError(err?.message || 'Failed to update email.');
+      } finally {
+        setIsEmailChanging(false);
+      }
+      return;
+    }
 
     setIsEmailChanging(true);
     try {
@@ -754,6 +776,24 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
       // 3. Fetch Orders
       const ordersSnap = await getDocs(query(collection(db, 'orders'), where('buyerId', '==', user.uid)));
       exportData.orders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // 4. Fetch Highlights
+      try {
+        const highlightsSnap = await getDocs(query(collection(db, 'highlights'), where('userId', '==', user.uid)));
+        exportData.highlights = highlightsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch (hErr) {
+        logger.warn('[DataExport] Highlights export notice:', hErr);
+      }
+
+      // 5. Fetch Device Server (PostgreSQL) profile records
+      try {
+        const pgProfile = await api.users.getMe().catch(() => null);
+        if (pgProfile) {
+          exportData.deviceServerProfile = pgProfile;
+        }
+      } catch (pgErr) {
+        logger.warn('[DataExport] Device server export notice:', pgErr);
+      }
 
       const dataStr = JSON.stringify(exportData, null, 2);
       const blob = new Blob([dataStr], { type: 'application/json' });
@@ -1518,7 +1558,7 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
                     <Mail size={18} />
                   </div>
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <p className="text-xs font-mono font-bold text-white/85 break-words truncate hover:whitespace-normal transition-all">{auth.currentUser?.email || user?.email || 'unregistered@email.com'}</p>
+                    <p className="text-xs font-mono font-bold text-white/85 break-words truncate hover:whitespace-normal transition-all">{auth.currentUser?.email || user?.email || profile?.email || 'unregistered@email.com'}</p>
                     {formData.pendingEmailChange && (
                       <p className="text-[10px] font-mono text-amber-400 mt-0.5 break-words">Pending change to: {formData.pendingEmailChange} (verify inbox)</p>
                     )}
@@ -2219,10 +2259,18 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
                 </div>
 
                 <div className="flex gap-2.5 mt-6 w-full">
-                  <button onClick={() => logger.info("Action coming soon")} className="flex-1 py-2 rounded-xl bg-aeirmist-cyan text-black font-bold text-xs uppercase tracking-wider shadow-[0_0_10px_rgba(0,242,255,0.2)]">
+                  <button 
+                    type="button"
+                    onClick={() => addToast?.({ title: 'Preview Mode', message: 'This is a live preview of how other users view your profile card.', type: 'info' })} 
+                    className="flex-1 py-2 rounded-xl bg-aeirmist-cyan text-black font-bold text-xs uppercase tracking-wider shadow-[0_0_10px_rgba(0,242,255,0.2)] active:scale-95 transition-all"
+                  >
                     Follow
                   </button>
-                  <button onClick={() => logger.info("Action coming soon")} className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-xs uppercase tracking-wider">
+                  <button 
+                    type="button"
+                    onClick={() => addToast?.({ title: 'Preview Mode', message: 'Messaging is disabled in preview mode.', type: 'info' })} 
+                    className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-xs uppercase tracking-wider active:scale-95 transition-all"
+                  >
                     Message
                   </button>
                 </div>

@@ -25,13 +25,45 @@ export function getBlankDp(isLight?: boolean): string {
   return light ? BLANK_DP_LIGHT : BLANK_DP_DARK;
 }
 
+export function resolveAvatarSrc(keyOrUrl?: string | null): string | null {
+  if (!keyOrUrl || typeof keyOrUrl !== 'string') return null;
+  const trimmed = keyOrUrl.trim();
+  if (!trimmed || trimmed === 'null' || trimmed === 'undefined') return null;
+  if (trimmed.startsWith('data:')) {
+    if (trimmed.startsWith('data:image/jpeg;base64') && trimmed.length <= 512) {
+      return null;
+    }
+    return trimmed.replace(/\s+/g, '');
+  }
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:')
+  ) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/media/')) {
+    if (trimmed.startsWith('/media/data:') || trimmed.startsWith('/media/http://') || trimmed.startsWith('/media/https://')) {
+      return trimmed.slice(7);
+    }
+    return trimmed;
+  }
+  return `/media/${trimmed}`;
+}
+
 export function getAvatarUrl(photoURL?: string | null, seed?: string, isLight?: boolean): string {
   const fallback = getBlankDp(isLight);
   if (!photoURL || typeof photoURL !== 'string') {
     return fallback;
   }
   
-  const trimmed = photoURL.trim();
+  let trimmed = photoURL.trim();
+  if (trimmed.startsWith('/media/data:') || trimmed.startsWith('/media/http://') || trimmed.startsWith('/media/https://')) {
+    trimmed = trimmed.slice(7);
+  }
+  if (trimmed.startsWith('data:image/jpeg;base64') && trimmed.length <= 512) {
+    return fallback;
+  }
   if (
     !trimmed || 
     trimmed === 'null' || 

@@ -23,9 +23,9 @@ import {
   X
 } from 'lucide-react';
 import { useAeirmist } from '../../../context/AeirmistContext';
-import { db, storage } from '../../../lib/firebase';
+import { db } from '../../../lib/firebase';
+import { api } from '../../../services/api/client';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
 
 
@@ -89,10 +89,18 @@ const FeedbackSettings = () => {
     
     try {
       let attachmentUrl = null;
-      if (screenshot && storage) {
-        const fileRef = ref(storage, `supportTickets/${user.uid}/${Date.now()}_${screenshot.name}`);
-        await uploadBytes(fileRef, screenshot);
-        attachmentUrl = await getDownloadURL(fileRef);
+      if (screenshot) {
+        try {
+          const uploaded = await api.media.upload(screenshot, 'supportTickets');
+          attachmentUrl = uploaded.url || `/media/${uploaded.key}`;
+        } catch (uploadErr) {
+          logger.warn('[FeedbackSettings] Native upload failed, falling back to data URL:', uploadErr);
+          const reader = new FileReader();
+          attachmentUrl = await new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(screenshot);
+          });
+        }
       }
 
       await addDoc(collection(db, 'supportTickets'), {

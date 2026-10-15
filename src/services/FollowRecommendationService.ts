@@ -60,9 +60,10 @@ class FollowRecommendationService {
       };
 
       await updateDoc(doc(db, 'profiles', profileId), summary);
-      logger.info(`[RecommService] Signals synced to Firestore for ${profileId}`);
-    } catch (e) {
-      logger.warn("[RecommService] Firestore sync failed:", e);
+    } catch (e: any) {
+      if (!e?.message?.includes('permission') && !e?.code?.includes('permission')) {
+        logger.warn("[RecommService] Firestore sync notice:", e?.message || e);
+      }
     }
   }
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Play, Check, CheckCheck, Loader2 } from 'lucide-react';
 import { SafeImage } from '../ui/SafeImage';
+import { normalizeMediaUrl } from '@/src/utils/mediaUtils';
 
 export interface AlbumItem {
   id: string;
@@ -49,19 +50,20 @@ export const TelegramMediaAlbum: React.FC<TelegramMediaAlbumProps> = ({
 }) => {
   if (!items || items.length === 0) return null;
 
-  const allUrls = items.map(it => it.url);
+  const allUrls = items.map(it => normalizeMediaUrl(it.url));
   const count = items.length;
 
   // Render individual cell with zoom, video icon & optimistic state
   const renderCell = (item: AlbumItem, index: number, customClass: string = 'w-full h-full', overlayText?: string) => {
-    const isVideo = item.type === 'video' || item.url.includes('.mp4');
+    const itemUrl = normalizeMediaUrl(item.url);
+    const isVideo = item.type === 'video' || itemUrl.includes('.mp4');
 
     return (
       <div
         key={item.id || `album-item-${index}`}
         onClick={(e) => {
           e.stopPropagation();
-          onItemClick(item.url, index, allUrls);
+          onItemClick(itemUrl, index, allUrls);
         }}
         className={`relative overflow-hidden cursor-pointer group/cell bg-black/40 select-none ${customClass}`}
       >
@@ -222,10 +224,8 @@ export const TelegramMediaAlbum: React.FC<TelegramMediaAlbumProps> = ({
                 <Loader2 size={10} className="animate-spin text-white/40" />
               ) : (isSeen && !otherUserRestricted && readReceiptsAllowed) ? (
                 <CheckCheck size={12} className="text-aeirmist-cyan" />
-              ) : isDelivered ? (
-                <CheckCheck size={12} className="text-white/60" />
               ) : (
-                <Check size={12} className="text-white/40" />
+                <Check size={12} className="text-white/60" />
               )}
             </span>
           )}

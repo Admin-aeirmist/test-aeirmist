@@ -26,7 +26,8 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
-import { collection, query, where, getDocs, limit, orderBy, doc, updateDoc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { api } from '../../services/api/client';
+import { collection, query, where, getDocs, limit, orderBy, doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { Chat } from '../../types/messenger';
 import { logger } from '@/src/utils/logger';
 import { DownloadManagerService } from '../../services/DownloadManagerService';
@@ -113,26 +114,19 @@ export const ChatInfoPanel = ({
   const [searchDraft, setSearchDraft] = useState('');
   
   useEffect(() => {
-    if (!db || !otherId) return;
-    const unsub = onSnapshot(doc(db, 'profiles', otherId), (snap) => {
-      if (snap.exists()) {
-        setOtherProfile({ id: snap.id, ...snap.data() });
-      }
-    });
-    return () => unsub();
-  }, [db, otherId]);
+    if (!otherId) return;
+    if (chat.otherProfile) {
+      setOtherProfile(chat.otherProfile);
+    } else {
+      api.users.getProfile(otherId).then((res: any) => {
+        if (res?.profile) setOtherProfile(res.profile);
+      }).catch(() => {});
+    }
+  }, [otherId, chat.otherProfile]);
 
   useEffect(() => {
-    if (!db || !chat.id) return;
-    const unsub = onSnapshot(doc(db, 'chat_settings', chat.id), (snap) => {
-      if (snap.exists()) {
-        setChatSettings(snap.data());
-      } else {
-        setChatSettings(null);
-      }
-    });
-    return () => unsub();
-  }, [db, chat.id]);
+    setChatSettings(null);
+  }, [chat.id]);
 
   const handleSaveSharedNickname = async (targetUserId: string, newNickname: string) => {
     if (!db || !chat.id) return;

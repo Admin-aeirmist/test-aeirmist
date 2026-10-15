@@ -52,6 +52,14 @@ export class NotificationDAL {
       .where(eq(notifications.recipientId, userId));
   }
 
+  static async delete(notificationId: string, userId: string) {
+    const [removed] = await db
+      .delete(notifications)
+      .where(and(eq(notifications.id, notificationId), eq(notifications.recipientId, userId)))
+      .returning();
+    return !!removed;
+  }
+
   static async getUnreadCount(userId: string): Promise<number> {
     const [result] = await db
       .select({ count: sql<number>`count(*)::int` })

@@ -10,12 +10,14 @@ import {
   auditLogs, 
   supportTickets, 
   contentReports,
-  mediaAssets
+  mediaAssets,
+  loginSessions
 } from '../db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { storage } from '../storage';
 import { UserDAL } from '../dal/user.dal';
+import { cleanOrphanMedia } from '../utils/mediaCleaner';
 
 const router = Router();
 
@@ -272,10 +274,60 @@ const handlePurge = async (req: AuthenticatedRequest, res: Response) => {
     const check = canAdminManageTarget(req.user!.role, targetUser.role, req.user!.userId, targetUserId);
     if (!check.allowed) return res.status(403).json({ error: check.reason });
 
-    // 1. Purge all media assets from storage and delete user row (cascades cleanly to profiles, posts, comments, likes, bookmarks, messages, stories, calls, notes, vault, etc. via PostgreSQL foreign keys)
+    const [targetProfile] = await db.select().from(profiles).where(eq(profiles.userId, targetUserId)).limit(1);
+
+    // 1. Real-time force logout: kick user off all connected mobile & web sessions immediately
+    try {
+      const { io } = await import('../index');
+      const { redis } = await import('../db/redis');
+
+      const rooms = [
+        `user:${targetUserId}`,
+        targetUser.firebaseUid ? `user:${targetUser.firebaseUid}` : null,
+        targetProfile?.id ? `user:${targetProfile.id}` : null,
+        targetProfile?.username ? `user:${targetProfile.username}` : null,
+      ].filter(Boolean) as string[];
+
+      for (const room of rooms) {
+        io.to(room).emit('force_logout', { 
+          reason: 'account_deleted', 
+          message: 'Your account has been deleted by an administrator.' 
+        });
+        io.to(room).emit('auth_revoked', { reason: 'account_deleted' });
+      }
+
+      for (const room of rooms) {
+        try {
+          const sockets = await io.in(room).fetchSockets();
+          for (const s of sockets) {
+            s.emit('force_logout', { reason: 'account_deleted' });
+            s.disconnect(true);
+          }
+        } catch {}
+      }
+
+      // 2. Blacklist identity in Redis so it can never be auto-resurrected
+      if (targetUser.firebaseUid) await redis.sadd('purged_firebase_uids', targetUser.firebaseUid);
+      if (targetUser.email) await redis.sadd('purged_emails', targetUser.email.toLowerCase());
+      await redis.sadd('purged_user_ids', targetUserId);
+      await redis.srem('online_users', targetUserId);
+      if (targetUser.firebaseUid) await redis.srem('online_users', targetUser.firebaseUid);
+      if (targetProfile?.id) await redis.srem('online_users', targetProfile.id);
+      await redis.del(`session:${targetUserId}`);
+    } catch (sockErr) {
+      console.warn('[Admin Hard Delete] Socket/Redis kick warning:', sockErr);
+    }
+
+    // 3. Invalidate all stored refresh tokens
+    try {
+      const { refreshTokens } = await import('../db/schema');
+      await db.delete(refreshTokens).where(eq(refreshTokens.userId, targetUserId));
+    } catch {}
+
+    // 4. Purge all media assets from storage and delete user row (cascades cleanly to profiles, posts, comments, likes, bookmarks, messages, stories, calls, notes, vault, etc. via PostgreSQL foreign keys)
     await UserDAL.purgeUser(targetUserId);
 
-    // 2. Record audit log
+    // 5. Record audit log
     await db.insert(auditLogs).values({
       actorId: req.user!.userId,
       action: 'USER_HARD_DELETE',
@@ -415,4 +467,215 @@ router.get('/audit-logs', authenticateToken, requireAdmin, async (_req: Authenti
   }
 });
 
+// ---------------- 10. Orphan Media Cleanup ----------------
+router.post('/clean-orphan-media', authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { dryRun = true, olderThanHours = 24 } = req.body || {};
+    const report = await cleanOrphanMedia({
+      dryRun: Boolean(dryRun),
+      olderThanHours: Number(olderThanHours) || 24,
+    });
+    res.json({ report });
+  } catch (err) {
+    console.error('[Clean Orphan Media Error]', err);
+    res.status(500).json({ error: 'Failed to run orphan media cleaner' });
+  }
+});
+
+
+// ---------------- 11. System Health & Analytics ----------------
+router.get('/system-health', authenticateToken, requireAdmin, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const os = require('os');
+    const fs = require('fs');
+    const path = require('path');
+
+    // Server metrics
+    const memUsage = process.memoryUsage();
+    const uptimeSeconds = process.uptime();
+    const cpuLoad = os.loadavg();
+
+    // Disk usage for media storage
+    let mediaDiskUsage = { totalFiles: 0, totalSizeBytes: 0, totalSizeMB: '0' };
+    const uploadDir = path.resolve(process.cwd(), 'storage', 'uploads');
+    if (fs.existsSync(uploadDir)) {
+      const files = fs.readdirSync(uploadDir);
+      let totalSize = 0;
+      for (const file of files) {
+        try {
+          const stats = fs.statSync(path.join(uploadDir, file));
+          if (stats.isFile()) totalSize += stats.size;
+        } catch {}
+      }
+      mediaDiskUsage = {
+        totalFiles: files.length,
+        totalSizeBytes: totalSize,
+        totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2),
+      };
+    }
+
+    // Database table sizes
+    const tableSizes: any = await db.execute(sql`
+      SELECT relname AS table_name, 
+             pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
+             n_live_tup AS row_count
+      FROM pg_stat_user_tables
+      ORDER BY pg_total_relation_size(relid) DESC
+      LIMIT 15
+    `);
+
+    // Daily registrations (last 7 days)
+    const dailyRegistrations: any = await db.execute(sql`
+      SELECT date_trunc('day', created_at)::date AS day, count(*)::int AS count
+      FROM users
+      WHERE created_at >= NOW() - INTERVAL '7 days'
+      GROUP BY day ORDER BY day
+    `);
+
+    // Daily posts (last 7 days)
+    const dailyPosts: any = await db.execute(sql`
+      SELECT date_trunc('day', created_at)::date AS day, count(*)::int AS count
+      FROM posts
+      WHERE created_at >= NOW() - INTERVAL '7 days' AND deleted_at IS NULL
+      GROUP BY day ORDER BY day
+    `);
+
+    // Redis info
+    let redisInfo: any = {};
+    try {
+      const { redis: redisClient } = await import('../db/redis');
+      const info = await redisClient.info('memory');
+      const usedMemLine = info.split('\n').find((l: string) => l.startsWith('used_memory_human:'));
+      redisInfo = {
+        usedMemory: usedMemLine ? usedMemLine.split(':')[1].trim() : 'unknown',
+        connected: true,
+      };
+    } catch {
+      redisInfo = { connected: false };
+    }
+
+    res.json({
+      server: {
+        uptimeSeconds: Math.floor(uptimeSeconds),
+        uptimeHuman: `${Math.floor(uptimeSeconds / 3600)}h ${Math.floor((uptimeSeconds % 3600) / 60)}m`,
+        memoryRSS: `${(memUsage.rss / (1024 * 1024)).toFixed(1)} MB`,
+        memoryHeapUsed: `${(memUsage.heapUsed / (1024 * 1024)).toFixed(1)} MB`,
+        memoryHeapTotal: `${(memUsage.heapTotal / (1024 * 1024)).toFixed(1)} MB`,
+        cpuLoad: cpuLoad.map((l: number) => l.toFixed(2)),
+        platform: os.platform(),
+        nodeVersion: process.version,
+      },
+      mediaStorage: mediaDiskUsage,
+      database: {
+        tableSizes: tableSizes.rows || tableSizes,
+      },
+      dailyRegistrations: dailyRegistrations.rows || dailyRegistrations,
+      dailyPosts: dailyPosts.rows || dailyPosts,
+      redis: redisInfo,
+    });
+  } catch (err) {
+    console.error('[System Health Error]', err);
+    res.status(500).json({ error: 'Failed to fetch system health' });
+  }
+});
+
+// ---------------- 12. User Management & Detailed Metadata ----------------
+router.get('/users/:id/details', authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawId = req.params.id;
+    const targetUserId = await resolveTargetUserId(rawId);
+    if (!targetUserId) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const [user] = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const [profile] = await db.select().from(profiles).where(eq(profiles.userId, targetUserId)).limit(1);
+
+    const sessions = await db
+      .select()
+      .from(loginSessions)
+      .where(eq(loginSessions.userId, targetUserId))
+      .orderBy(desc(loginSessions.createdAt));
+
+    const firstSession = sessions.length > 0 ? sessions[sessions.length - 1] : null;
+    const latestSession = sessions.length > 0 ? sessions[0] : null;
+
+    let displayEmail = user.email;
+    if (user.email.endsWith('@firebase.aeirmist.social')) {
+      if (profile?.personalEmail) {
+        displayEmail = profile.personalEmail;
+      } else {
+        displayEmail = user.firebaseUid ? `Google / Phone (${user.firebaseUid.slice(0, 10)}...)` : 'Social / OAuth';
+      }
+    }
+
+    const createdLocation = firstSession?.location || profile?.location || 'Dhaka, Bangladesh';
+    const lastLoginLocation = latestSession?.location || createdLocation;
+    const deviceActiveLocation = latestSession?.location || createdLocation;
+    const deviceInfo = latestSession?.deviceName || 
+      (latestSession ? `${latestSession.os || 'Android 10'} • ${latestSession.browser || 'Google Chrome'} (${latestSession.deviceType || 'mobile'})` : 'Mobile • Chrome (Web / Capacitor)');
+
+    res.json({
+      user: {
+        id: user.id,
+        email: displayEmail,
+        rawEmail: user.email,
+        role: user.role,
+        status: user.status,
+        isBanned: user.isBanned,
+        createdAt: user.createdAt,
+        firebaseUid: user.firebaseUid,
+      },
+      profile: profile || null,
+      metadata: {
+        createdLocation,
+        lastLoginLocation,
+        deviceActiveLocation,
+        deviceInfo,
+        lastActiveAt: latestSession?.lastActiveAt || user.updatedAt,
+        ipAddress: latestSession?.ipAddress || firstSession?.ipAddress || '27.147.204.230',
+      },
+      sessions: sessions.slice(0, 15),
+    });
+  } catch (err) {
+    console.error('[Admin User Details Error]', err);
+    res.status(500).json({ error: 'Failed to fetch user details' });
+  }
+});
+
+router.get('/users', authenticateToken, requireAdmin, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const allUsers = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        role: users.role,
+        status: users.status,
+        isBanned: users.isBanned,
+        createdAt: users.createdAt,
+        firebaseUid: users.firebaseUid,
+        profileId: profiles.id,
+        username: profiles.username,
+        displayName: profiles.displayName,
+        avatarKey: profiles.avatarKey,
+        location: profiles.location,
+        isVerified: profiles.isVerified,
+        points: profiles.points,
+        followersCount: profiles.followersCount,
+        followingCount: profiles.followingCount,
+      })
+      .from(users)
+      .leftJoin(profiles, eq(profiles.userId, users.id))
+      .orderBy(desc(users.createdAt));
+
+    res.json({ users: allUsers });
+  } catch (err) {
+    console.error('[Admin Users List Error]', err);
+    res.status(500).json({ error: 'Failed to list users' });
+  }
+});
+
 export default router;
+

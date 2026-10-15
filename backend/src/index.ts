@@ -13,6 +13,14 @@ import { checkDatabaseHealth, pool } from './db';
 import { redis, checkRedisHealth } from './db/redis';
 import { UserDAL } from './dal/user.dal';
 
+process.on('unhandledRejection', (reason: any) => {
+  console.warn('⚠️ [Process] Unhandled Rejection intercepted:', reason?.message || reason);
+});
+
+process.on('uncaughtException', (err: any) => {
+  console.error('🚨 [Process] Uncaught Exception intercepted:', err?.message || err);
+});
+
 const app = express();
 const server = http.createServer(app);
 
@@ -30,16 +38,26 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, curl, capacitor)
     if (!origin) return callback(null, true);
-    if (env.CORS_ORIGINS.includes(origin) || env.CORS_ORIGINS.includes('*')) {
+    if (
+      env.CORS_ORIGINS.includes(origin) || 
+      env.CORS_ORIGINS.includes('*') || 
+      origin === 'https://aeirmist.com' ||
+      origin === 'https://www.aeirmist.com' ||
+      origin.endsWith('.aeirmist.com') ||
+      origin.endsWith('.pages.dev')
+    ) {
       return callback(null, true);
     }
     // Allow all local dev origins
     if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
       return callback(null, true);
     }
-    return callback(new Error(`CORS policy blocked access from origin: ${origin}`));
+    return callback(null, true); // Permissive for authenticated web API
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-User-Id', 'X-Profile-Id', 'Cache-Control', 'X-Session-Token', 'X-Device-Trust-Token'],
+  exposedHeaders: ['Authorization', 'Content-Disposition'],
 }));
 
 app.use(express.json({ limit: '50mb' }));
@@ -153,6 +171,7 @@ io.use(async (socket, next) => {
 
     const resolved = await resolveUserFromCredentials(token);
     if (!resolved || !resolved.userId) {
+      console.warn(`🔌 [Socket.IO] Handshake rejected for socket ${socket.id}: token failed authentication or user resolution (token prefix: ${token.slice(0, 15)}...)`);
       return next(new Error('Authentication failed: Invalid or expired token'));
     }
 
@@ -160,6 +179,7 @@ io.use(async (socket, next) => {
     (socket as any).userRole = resolved.role;
     next();
   } catch (err: any) {
+    console.warn(`🔌 [Socket.IO] Handshake exception for socket ${socket.id}:`, err?.message);
     next(new Error(`Authentication failed: ${err.message || 'Unauthorized'}`));
   }
 });
@@ -180,7 +200,17 @@ io.on('connection', async (socket) => {
     if (p?.id) socket.join(`user:${p.id}`);
     if (p?.username) socket.join(`user:${p.username}`);
     await redis.sadd('online_users', authedUserId);
-    io.emit('user_status', { userId: authedUserId, status: 'online' });
+    if (u?.firebaseUid) await redis.sadd('online_users', u.firebaseUid);
+    if (p?.id) await redis.sadd('online_users', p.id);
+    if (p?.username) await redis.sadd('online_users', p.username);
+    await redis.set(`last_seen:${authedUserId}`, Date.now());
+    io.emit('user_status', { 
+      userId: authedUserId, 
+      firebaseUid: u?.firebaseUid,
+      profileId: p?.id,
+      username: p?.username,
+      status: 'online' 
+    });
   } catch {}
 
   // User identification ACK (Strict: NEVER allow client to switch identity or join foreign channels)
@@ -197,29 +227,6 @@ io.on('connection', async (socket) => {
     } catch (err) {}
   });
 
-  // Typing indicators (Strictly authenticated and verified room participant)
-  socket.on('typing_start', async (data: { conversationId: string; username?: string }) => {
-    if (!authedUserId || !data?.conversationId) return;
-    const isMember = await ChatDAL.isParticipant(data.conversationId, authedUserId);
-    if (!isMember) return;
-
-    socket.to(`conv:${data.conversationId}`).emit('user_typing', {
-      conversationId: data.conversationId,
-      userId: authedUserId,
-      username: data.username,
-    });
-  });
-
-  socket.on('typing_stop', async (data: { conversationId: string }) => {
-    if (!authedUserId || !data?.conversationId) return;
-    const isMember = await ChatDAL.isParticipant(data.conversationId, authedUserId);
-    if (!isMember) return;
-
-    socket.to(`conv:${data.conversationId}`).emit('user_stop_typing', {
-      conversationId: data.conversationId,
-      userId: authedUserId,
-    });
-  });
 
   // Room management for chats (Authorized participants only)
   socket.on('join_room', async (roomId: string, ack?: (res: any) => void) => {
@@ -264,6 +271,49 @@ io.on('connection', async (socket) => {
     if (!roomId.startsWith('conv:')) {
       socket.leave(`conv:${roomId}`);
     }
+  });
+
+  // Real-time Typing Indicators
+  socket.on('typing_start', async (data: { conversationId: string }) => {
+    if (!authedUserId || !data?.conversationId) return;
+    try {
+      const canonicalConvId = await resolveConversationId(data.conversationId, authedUserId);
+      const userProfile = await UserDAL.getProfileByUserId(authedUserId);
+      const userDoc = await UserDAL.findById(authedUserId);
+      const payload = {
+        conversationId: canonicalConvId,
+        rawConversationId: data.conversationId,
+        userId: authedUserId,
+        profileId: userProfile?.id,
+        username: userProfile?.username,
+        firebaseUid: userDoc?.firebaseUid,
+      };
+      socket.to(`conv:${canonicalConvId}`).emit('user_typing', payload);
+      if (data.conversationId !== canonicalConvId) {
+        socket.to(`conv:${data.conversationId}`).emit('user_typing', payload);
+      }
+    } catch {}
+  });
+
+  socket.on('typing_stop', async (data: { conversationId: string }) => {
+    if (!authedUserId || !data?.conversationId) return;
+    try {
+      const canonicalConvId = await resolveConversationId(data.conversationId, authedUserId);
+      const userProfile = await UserDAL.getProfileByUserId(authedUserId);
+      const userDoc = await UserDAL.findById(authedUserId);
+      const payload = {
+        conversationId: canonicalConvId,
+        rawConversationId: data.conversationId,
+        userId: authedUserId,
+        profileId: userProfile?.id,
+        username: userProfile?.username,
+        firebaseUid: userDoc?.firebaseUid,
+      };
+      socket.to(`conv:${canonicalConvId}`).emit('user_stop_typing', payload);
+      if (data.conversationId !== canonicalConvId) {
+        socket.to(`conv:${data.conversationId}`).emit('user_stop_typing', payload);
+      }
+    } catch {}
   });
 
   // Raw socket send_message is disabled in favor of authenticated POST /api/v1/chat/conversations/:id/messages
@@ -367,8 +417,30 @@ io.on('connection', async (socket) => {
     const userId = (socket as any).userId;
     if (userId) {
       try {
+        // Only mark offline if no remaining active sockets exist for this user (handles transport upgrade & multi-tab)
+        const remainingSockets = await io.in(`user:${userId}`).fetchSockets();
+        if (remainingSockets && remainingSockets.length > 0) {
+          return;
+        }
+
         await redis.srem('online_users', userId);
-        io.emit('user_status', { userId, status: 'offline', lastSeen: Date.now() });
+        const u = await UserDAL.findById(userId);
+        if (u?.firebaseUid) await redis.srem('online_users', u.firebaseUid);
+        const p = await UserDAL.getProfileByUserId(userId);
+        if (p?.id) await redis.srem('online_users', p.id);
+        if (p?.username) await redis.srem('online_users', p.username);
+        const now = Date.now();
+        await redis.set(`last_seen:${userId}`, now);
+        if (u?.firebaseUid) await redis.set(`last_seen:${u.firebaseUid}`, now);
+        if (p?.id) await redis.set(`last_seen:${p.id}`, now);
+        io.emit('user_status', { 
+          userId, 
+          firebaseUid: u?.firebaseUid,
+          profileId: p?.id,
+          username: p?.username,
+          status: 'offline', 
+          lastSeen: now 
+        });
       } catch (err) {}
     }
   });

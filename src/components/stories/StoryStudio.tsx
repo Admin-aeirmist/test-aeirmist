@@ -322,13 +322,14 @@ interface PhotoLayer {
   url: string;
   x: number;
   y: number;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
   scale: number;
   rotation: number;
-  zIndex: number;
-  aspectRatio: number;
+  zIndex?: number;
+  aspectRatio?: number;
   file?: File;
+  shape?: 'circle' | 'square' | 'rounded' | string;
 }
 
 interface TextLayer {
@@ -1007,6 +1008,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
   // Media states
   const [mode, setMode] = useState<'story' | 'reel' | 'text' | 'music' | 'layout' | 'boomerang'>('story');
   const [audience, setAudience] = useState<'public' | 'followers' | 'closeFriends'>('public');
+  const [isHandsFree, setIsHandsFree] = useState(false);
   
   // Mention search state
   const [mentionSearchOpen, setMentionSearchOpen] = useState(false);

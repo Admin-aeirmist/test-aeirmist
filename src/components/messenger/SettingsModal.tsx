@@ -1,315 +1,291 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Database, Bell, Eye, Zap, Image as ImageIcon, Download, Check, MessageSquare, Signal, Ghost } from 'lucide-react';
+import { 
+  X, 
+  Settings, 
+  Signal, 
+  CheckCheck, 
+  MessageSquare, 
+  BellOff
+} from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { MediaQuality } from '../../services/MediaService';
-import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
-
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const QUALITY_OPTIONS = [
-  { id: MediaQuality.AUTO, label: 'AUTO' },
-  { id: MediaQuality.DATA_SAVER, label: 'DATA SAVER' },
-  { id: MediaQuality.HD, label: 'HD' },
-  { id: MediaQuality.ULTRA, label: 'ULTRA' },
-];
+export const SettingsModal: React.FC<SettingsModalProps> = ({ 
+  isOpen, 
+  onClose
+}) => {
+  const { 
+    db, 
+    profile, 
+    updateProfile
+  } = useAeirmist();
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const { db, clearCache, profile, mediaSettings, setMediaSettings, addToast } = useAeirmist();
-  const [clearing, setClearing] = React.useState(false);
-  const [done, setDone] = React.useState(false);
-
-  const [overlaySettings, setOverlaySettings] = React.useState(() => {
+  // 1. Active Status (Online status)
+  const [onlineStatus, setOnlineStatus] = useState<boolean>(() => {
     try {
-      const saved = localStorage.getItem('aeirmist_inbox_overlay_settings_v1');
-      return saved ? JSON.parse(saved) : {
-        pushNotifications: true,
-        stealthMode: false,
-      };
-    } catch {
-      return {
-        pushNotifications: true,
-        stealthMode: false,
-      };
-    }
+      const saved = localStorage.getItem('aeirmist_online_status');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return profile?.messagingSettings?.onlineStatus !== false;
   });
 
-  React.useEffect(() => {
+  // 2. Read Receipts
+  const [readReceipts, setReadReceipts] = useState<boolean>(() => {
     try {
-      localStorage.setItem('aeirmist_inbox_overlay_settings_v1', JSON.stringify(overlaySettings));
+      const saved = localStorage.getItem('aeirmist_read_receipts');
+      if (saved !== null) return saved === 'true';
     } catch {}
-  }, [overlaySettings]);
+    return profile?.messagingSettings?.readReceipts !== false;
+  });
 
-  const toggleOverlay = async (key: keyof typeof overlaySettings | 'onlineStatus' | 'readReceipts', label: string) => {
-    if (key === 'onlineStatus' || key === 'readReceipts') {
-      if (!db || !profile?.id) return;
+  // 3. Chat Heads
+  const [chatHeads, setChatHeads] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('aeirmist_chat_heads');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return profile?.messagingSettings?.enableChatHeads !== false;
+  });
+
+  // 4. Mute Notifications
+  const [muteNotifications, setMuteNotifications] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('aeirmist_inbox_muted');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return profile?.messagingSettings?.muteNotifications === true;
+  });
+
+  // Keep in sync when profile loads
+  useEffect(() => {
+    if (profile?.messagingSettings) {
+      if (typeof profile.messagingSettings.onlineStatus === 'boolean') {
+        setOnlineStatus(profile.messagingSettings.onlineStatus);
+      }
+      if (typeof profile.messagingSettings.readReceipts === 'boolean') {
+        setReadReceipts(profile.messagingSettings.readReceipts);
+      }
+      if (typeof profile.messagingSettings.enableChatHeads === 'boolean') {
+        setChatHeads(profile.messagingSettings.enableChatHeads);
+      }
+      if (typeof profile.messagingSettings.muteNotifications === 'boolean') {
+        setMuteNotifications(profile.messagingSettings.muteNotifications);
+      }
+    }
+  }, [profile?.messagingSettings]);
+
+  const handleToggle = async (key: 'onlineStatus' | 'readReceipts' | 'chatHeads' | 'muteNotifications') => {
+    let nextVal = false;
+
+    if (key === 'onlineStatus') {
+      nextVal = !onlineStatus;
+      setOnlineStatus(nextVal);
       try {
-        const currentMessaging = profile.messagingSettings || {};
-        const nextVal = !currentMessaging[key];
-        await updateDoc(doc(db, 'profiles', profile.id), {
-          messagingSettings: {
-            ...currentMessaging,
-            [key]: nextVal
-          }
-        });
-        addToast({
-          title: `${label} ${nextVal ? 'Enabled' : 'Disabled'}`,
-          message: `Messaging preference updated successfully.`,
-          type: nextVal ? 'success' : 'info'
-        });
-      } catch (e) {
-        logger.error("Failed to update messaging settings", e);
-        addToast({ title: 'Error', message: 'Failed to update settings', type: 'warning' });
-      }
-      return;
+        localStorage.setItem('aeirmist_online_status', String(nextVal));
+      } catch {}
+    } else if (key === 'readReceipts') {
+      nextVal = !readReceipts;
+      setReadReceipts(nextVal);
+      try {
+        localStorage.setItem('aeirmist_read_receipts', String(nextVal));
+      } catch {}
+    } else if (key === 'chatHeads') {
+      nextVal = !chatHeads;
+      setChatHeads(nextVal);
+      try {
+        localStorage.setItem('aeirmist_chat_heads', String(nextVal));
+      } catch {}
+    } else if (key === 'muteNotifications') {
+      nextVal = !muteNotifications;
+      setMuteNotifications(nextVal);
+      try {
+        localStorage.setItem('aeirmist_inbox_muted', String(nextVal));
+      } catch {}
     }
 
-    const nextVal = !overlaySettings[key as keyof typeof overlaySettings];
-    setOverlaySettings((prev: any) => ({ ...prev, [key]: nextVal }));
+    // Persist in background
+    try {
+      const currentMessaging = profile?.messagingSettings || {};
+      const messagingKey = key === 'chatHeads' ? 'enableChatHeads' : key;
 
-    if (key === 'pushNotifications' && nextVal && typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission();
+      const nextMessaging = {
+        ...currentMessaging,
+        [messagingKey]: nextVal
+      };
+
+      const updatePayload: any = {
+        messagingSettings: nextMessaging
+      };
+
+      if (key === 'onlineStatus') {
+        updatePayload.privacySettings = {
+          ...(profile?.privacySettings || {}),
+          showOnlineStatus: nextVal,
+          showActivity: nextVal
+        };
       }
+
+      await updateProfile(updatePayload);
+
+      if (db && profile?.id) {
+        await updateDoc(doc(db, 'profiles', profile.id), updatePayload).catch(() => {});
+      }
+    } catch (e) {
+      logger.error('Failed to sync settings:', e);
     }
-
-    addToast({
-      title: `${label} ${nextVal ? 'Enabled' : 'Disabled'}`,
-      message: `Inbox preference updated successfully.`,
-      type: nextVal ? 'success' : 'info'
-    });
   };
 
-  const handleClearCache = async () => {
-    setClearing(true);
-    await clearCache();
-    await new Promise(r => setTimeout(r, 600));
-    setClearing(false);
-    setDone(true);
-    addToast({
-      title: 'Cache Cleared',
-      message: 'Cache cleared.',
-      type: 'success'
-    });
-    setTimeout(() => setDone(false), 3000);
-  };
-
-  const updateQuality = (q: MediaQuality) => {
-    setMediaSettings({ ...mediaSettings, quality: q });
-    addToast({
-      title: 'Quality Preset Updated',
-      message: `Transmission resolution set to ${q.toUpperCase().replace('_', ' ')}.`,
-      type: 'info'
-    });
-  };
-
-  const toggleAutoDownload = () => {
-    const nextVal = !mediaSettings.autoDownload;
-    setMediaSettings({ ...mediaSettings, autoDownload: nextVal });
-    addToast({
-      title: `Auto-Download ${nextVal ? 'Enabled' : 'Disabled'}`,
-      message: nextVal ? 'Media assets will sync automatically.' : 'Automatic downloads paused.',
-      type: 'info'
-    });
-  };
+  if (!isOpen) return null;
 
   return (
     <AnimatePresence>
-      {isOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="absolute inset-0 bg-black/80 backdrop-blur-2xl"
-          />
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.92, y: 15 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 15 }}
-            className="relative w-full max-w-md bg-[#0a0a0e] border border-white/10 rounded-[2rem] overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto no-scrollbar"
-          >
-            <div className="p-6 sm:p-8">
-              <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/10">
-                <div>
-                  <h2 className="text-xl font-display font-bold text-white tracking-tight">Inbox Settings</h2>
-                  <p className="text-[10px] text-aeirmist-cyan font-mono uppercase tracking-widest mt-0.5">Device & Media Configuration</p>
-                </div>
-                <button 
-                  onClick={onClose} 
-                  className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all"
-                >
-                  <X size={18} />
-                </button>
-              </div>
+      <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+        {/* Backdrop */}
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+        />
 
-              <div className="space-y-6">
-                {/* Media Transmission */}
-                <section>
-                  <label className="text-[10px] font-mono font-bold text-aeirmist-cyan uppercase tracking-widest mb-3 block">Media Transmission</label>
-                  <div className="space-y-3">
-                    <div className="p-4 bg-white/[0.03] rounded-2xl border border-white/10">
-                      <div className="flex items-center gap-2.5 mb-3">
-                        <ImageIcon size={15} className="text-aeirmist-cyan" />
-                        <span className="text-[11px] font-bold text-white/90 uppercase tracking-wider">Media Quality</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {QUALITY_OPTIONS.map((item) => {
-                          const isActive = mediaSettings.quality === item.id;
-                          return (
-                            <button
-                              key={item.id}
-                              onClick={() => updateQuality(item.id)}
-                              className={`px-3 py-2.5 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wider transition-all border flex items-center justify-center gap-1.5 ${
-                                isActive 
-                                  ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.2)]' 
-                                  : 'bg-white/5 border-white/5 text-white/50 hover:text-white hover:border-white/20'
-                              }`}
-                            >
-                              {isActive && <Check size={12} className="shrink-0" />}
-                              <span>{item.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3.5 bg-white/[0.03] rounded-2xl border border-white/10 hover:border-white/20 transition-all">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-aeirmist-cyan/10 border border-aeirmist-cyan/20 flex items-center justify-center text-aeirmist-cyan">
-                          <Download size={16} />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-white">Auto-Download</p>
-                          <p className="text-[9px] text-white/40 font-mono">Sync incoming media automatically</p>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={toggleAutoDownload}
-                        className={`w-11 h-6 rounded-full transition-colors relative p-1 ${mediaSettings.autoDownload ? 'bg-aeirmist-cyan' : 'bg-white/10'}`}
-                      >
-                        <motion.div 
-                          animate={{ x: mediaSettings.autoDownload ? 20 : 0 }}
-                          className="w-4 h-4 rounded-full bg-black shadow-sm"
-                        />
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                {/* Data Vault */}
-                <section>
-                  <label className="text-[10px] font-mono font-bold text-aeirmist-magenta uppercase tracking-widest mb-3 block">Data Vault</label>
-                  <div className="p-3.5 bg-white/[0.03] rounded-2xl border border-white/10 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-aeirmist-magenta/10 border border-aeirmist-magenta/20 flex items-center justify-center text-aeirmist-magenta">
-                        <Database size={16} />
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-white">Identity Cache</p>
-                        <p className="text-[9px] text-white/40 font-mono">Messages & media cache storage</p>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={handleClearCache}
-                      disabled={clearing}
-                      className={`px-3.5 py-2 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wider transition-all border flex items-center gap-1.5 ${
-                        done 
-                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' 
-                          : 'bg-aeirmist-magenta/15 border-aeirmist-magenta/30 text-aeirmist-magenta hover:bg-aeirmist-magenta hover:text-white'
-                      }`}
-                    >
-                      {clearing ? (
-                        <Zap size={13} className="animate-spin" />
-                      ) : done ? (
-                        <>CLEARED</>
-                      ) : (
-                        <>CLEAR CACHE</>
-                      )}
-                    </button>
-                  </div>
-                </section>
-
-                {/* Digital Overlay */}
-                <section>
-                  <label className="text-[10px] font-mono font-bold text-white/40 uppercase tracking-widest mb-3 block">Privacy & Alerts</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <SettingsToggle 
-                      icon={<Bell size={14} />} 
-                      label="Push Notifications" 
-                      active={overlaySettings.pushNotifications}
-                      onClick={() => toggleOverlay('pushNotifications', 'Push Notifications')}
-                    />
-                    <SettingsToggle 
-                      icon={<Ghost size={14} />} 
-                      label="Stealth Mode" 
-                      active={overlaySettings.stealthMode}
-                      onClick={() => toggleOverlay('stealthMode', 'Stealth Mode')}
-                    />
-                    <SettingsToggle 
-                      icon={<Signal size={14} />} 
-                      label="Show Online Status" 
-                      active={profile?.messagingSettings?.onlineStatus !== false}
-                      onClick={() => toggleOverlay('onlineStatus', 'Show Online Status')}
-                    />
-                    <SettingsToggle 
-                      icon={<MessageSquare size={14} />} 
-                      label="Message Read Receipts" 
-                      active={profile?.messagingSettings?.readReceipts !== false}
-                      onClick={() => toggleOverlay('readReceipts', 'Message Read Receipts')}
-                    />
-                  </div>
-                </section>
-              </div>
-
-              {/* Identity Sync Footer */}
-              <div className="mt-8 p-3.5 bg-white/[0.02] border border-white/10 rounded-2xl flex items-center gap-3">
-                <img src={getAvatarUrl(profile?.photoURL)} alt="" className="w-10 h-10 rounded-full border border-aeirmist-cyan shrink-0 object-cover" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-white truncate">{profile?.displayName || profile?.username}</p>
-                  <p className="text-[9px] text-aeirmist-cyan font-mono uppercase tracking-wider italic">Identity sync active</p>
-                </div>
-              </div>
+        {/* Modal Card */}
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.96, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: 10 }}
+          transition={{ duration: 0.15 }}
+          className="relative w-full max-w-sm bg-[#0d0e12] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-10"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+            <div className="flex items-center gap-2.5">
+              <Settings size={18} className="text-aeirmist-cyan" />
+              <h2 className="text-sm font-bold text-white">Inbox Settings</h2>
             </div>
-          </motion.div>
-        </div>
-      )}
+            <button 
+              onClick={onClose}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Toggle List */}
+          <div className="p-4 space-y-1">
+            {/* 1. Active Status */}
+            <div className="flex items-center justify-between p-3 rounded-xl hover:bg-white/[0.02] transition-colors">
+              <div className="flex items-center gap-3 min-w-0 pr-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  onlineStatus ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'
+                }`}>
+                  <Signal size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-white">Active Status</p>
+                  <p className="text-[11px] text-white/40">Show when you're active</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={onlineStatus}
+                onClick={() => handleToggle('onlineStatus')}
+                className={`w-11 h-6 rounded-full p-0.5 transition-colors duration-200 flex items-center shrink-0 ${
+                  onlineStatus ? 'bg-emerald-500 justify-end' : 'bg-white/15 justify-start'
+                }`}
+              >
+                <div className="w-5 h-5 rounded-full bg-white shadow" />
+              </button>
+            </div>
+
+            {/* 2. Read Receipts */}
+            <div className="flex items-center justify-between p-3 rounded-xl hover:bg-white/[0.02] transition-colors">
+              <div className="flex items-center gap-3 min-w-0 pr-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  readReceipts ? 'bg-aeirmist-cyan/15 text-aeirmist-cyan' : 'bg-white/5 text-white/30'
+                }`}>
+                  <CheckCheck size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-white">Read Receipts</p>
+                  <p className="text-[11px] text-white/40">Show when you've seen messages</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={readReceipts}
+                onClick={() => handleToggle('readReceipts')}
+                className={`w-11 h-6 rounded-full p-0.5 transition-colors duration-200 flex items-center shrink-0 ${
+                  readReceipts ? 'bg-aeirmist-cyan justify-end' : 'bg-white/15 justify-start'
+                }`}
+              >
+                <div className="w-5 h-5 rounded-full bg-white shadow" />
+              </button>
+            </div>
+
+            {/* 3. Chat Heads */}
+            <div className="flex items-center justify-between p-3 rounded-xl hover:bg-white/[0.02] transition-colors">
+              <div className="flex items-center gap-3 min-w-0 pr-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  chatHeads ? 'bg-indigo-500/15 text-indigo-400' : 'bg-white/5 text-white/30'
+                }`}>
+                  <MessageSquare size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-white">Chat Heads</p>
+                  <p className="text-[11px] text-white/40">Floating bubble for open chats</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={chatHeads}
+                onClick={() => handleToggle('chatHeads')}
+                className={`w-11 h-6 rounded-full p-0.5 transition-colors duration-200 flex items-center shrink-0 ${
+                  chatHeads ? 'bg-indigo-500 justify-end' : 'bg-white/15 justify-start'
+                }`}
+              >
+                <div className="w-5 h-5 rounded-full bg-white shadow" />
+              </button>
+            </div>
+
+            {/* 4. Mute Notifications */}
+            <div className="flex items-center justify-between p-3 rounded-xl hover:bg-white/[0.02] transition-colors">
+              <div className="flex items-center gap-3 min-w-0 pr-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  muteNotifications ? 'bg-amber-500/15 text-amber-400' : 'bg-white/5 text-white/30'
+                }`}>
+                  <BellOff size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-white">Mute Notifications</p>
+                  <p className="text-[11px] text-white/40">Silence message alerts and sounds</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={muteNotifications}
+                onClick={() => handleToggle('muteNotifications')}
+                className={`w-11 h-6 rounded-full p-0.5 transition-colors duration-200 flex items-center shrink-0 ${
+                  muteNotifications ? 'bg-amber-500 justify-end' : 'bg-white/15 justify-start'
+                }`}
+              >
+                <div className="w-5 h-5 rounded-full bg-white shadow" />
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      </div>
     </AnimatePresence>
   );
 };
-
-interface SettingsToggleProps {
-  icon: React.ReactNode;
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}
-
-const SettingsToggle: React.FC<SettingsToggleProps> = ({ icon, label, active, onClick }) => (
-  <button 
-    onClick={onClick}
-    className={`flex items-center gap-2.5 p-3 rounded-2xl border transition-all text-left group relative ${
-      active 
-        ? 'bg-white/[0.07] border-aeirmist-cyan/40 text-white shadow-[0_0_12px_rgba(0,242,255,0.08)]' 
-        : 'bg-white/[0.02] border-white/5 text-white/40 hover:border-white/20 hover:text-white/70'
-    }`}
-  >
-    <div className={`p-1.5 rounded-lg transition-colors ${active ? 'bg-aeirmist-cyan/20 text-aeirmist-cyan' : 'bg-white/5 text-white/30'}`}>
-      {icon}
-    </div>
-    <div className="flex-1 min-w-0">
-      <span className="text-[10px] font-bold uppercase tracking-wider block leading-tight truncate">{label}</span>
-      <span className={`text-[8px] font-mono block mt-0.5 ${active ? 'text-aeirmist-cyan' : 'text-white/20'}`}>
-        {active ? 'ON' : 'OFF'}
-      </span>
-    </div>
-  </button>
-);
-

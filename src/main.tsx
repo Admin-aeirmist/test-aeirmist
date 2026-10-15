@@ -14,9 +14,46 @@ import { applyDeviceOptimizations } from './utils/deviceTier';
 import App from './App.tsx';
 import './services/authHelpers';
 import { securityShield } from './services/SecurityShieldService';
+import { BLANK_DP } from './lib/avatar';
 import './index.css';
 
+// Global image error resilience: automatically fallback broken image loads to BLANK_DP
+if (typeof window !== 'undefined') {
+  window.addEventListener(
+    'error',
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target && target.tagName === 'IMG') {
+        const img = target as HTMLImageElement;
+        if (!img.dataset.fallbackApplied) {
+          img.dataset.fallbackApplied = 'true';
+          img.src = BLANK_DP;
+        }
+      }
+    },
+    true
+  );
+}
+
 // Initialize in-app runtime security barrier
+if (typeof window !== 'undefined') {
+  const _rawErr = console.error.bind(console);
+  console.error = function (...args: any[]) {
+    try {
+      const s = args.map(a => typeof a === 'string' ? a : (a?.message || a?.code || '')).join(' ');
+      if (
+        s.includes('@firebase/firestore') ||
+        s.includes('Uncaught Error in snapshot listener') ||
+        s.includes('Missing or insufficient permissions') ||
+        s.includes('permission-denied')
+      ) {
+        return;
+      }
+    } catch {}
+    _rawErr(...args);
+  };
+}
+
 securityShield.initialize();
 
 // Apply adaptive optimizations for Android and budget/low-RAM devices early

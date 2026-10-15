@@ -4,6 +4,7 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   onAuthStateChanged, 
+  onIdTokenChanged,
   User, 
   signInWithPopup, 
   signInWithRedirect,
@@ -55,7 +56,6 @@ import {
   enableNetwork,
   disableNetwork
 } from 'firebase/firestore';
-import { getStorage, ref, deleteObject } from 'firebase/storage';
 import { extractTimestampMs } from '../lib/date';
 import { App as CapApp } from '@capacitor/app';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -65,8 +65,8 @@ import { consolidateAndSyncUserProfiles } from '../services/accountSyncService';
 import { LocalSqlService } from '../services/LocalSqlService';
 import { validateEmailDetailed, isValidEmail } from '../utils/emailValidator';
 import { sendTemplatePasswordResetEmail, sendTemplateEmailVerification } from '../services/authActionService';
-import { api, setAuthToken, getAuthToken } from '../services/api/client';
-import { identifyUserSocket } from '../services/api/socket';
+import { api, setAuthToken, getAuthToken, hasUsableNativeToken, GATEWAY_EMAIL } from '../services/api/client';
+import { identifyUserSocket, getSocket } from '../services/api/socket';
 
 /**
  * Deduplicates profiles ensuring only one profile per normalized username / UID
@@ -182,7 +182,7 @@ interface AeirmistContextType {
   pendingLinkCredential: any | null;
   setPendingLinkCredential: React.Dispatch<React.SetStateAction<any | null>>;
   isScheduledForPurge: boolean;
-  loginWithEmail: (identifier: string, pass: string, remember?: boolean) => Promise<any>;
+  loginWithEmail: (identifier: string, pass: string, remember?: boolean, locationData?: any) => Promise<any>;
   loginAsGuestSandbox: () => Promise<void>;
   signupWithEmail: (email: string, pass: string) => Promise<any>;
   completeSignup: (email: string, pass: string, username: string, fullName: string, avatarFile: File | null, presetPhotoURL?: string | null) => Promise<User>;
@@ -203,7 +203,7 @@ interface AeirmistContextType {
   syncDatabaseProfile: () => Promise<void>;
   rejectFollowRequest: (requestId: string) => Promise<void>;
   acceptFollowRequest: (requestId: string, fromProfileId: string) => Promise<void>;
-  toggleFollow: (targetUid: string, targetProfileData?: any) => Promise<void>;
+  toggleFollow: (targetUid: string, targetProfileData?: any) => Promise<any>;
   removeFollower: (targetProfileId: string) => Promise<void>;
   recalculateFollowCounts: (profileId?: string) => Promise<void>;
   isFollowing: (targetUid: string) => boolean;
@@ -360,9 +360,10 @@ interface AeirmistContextType {
   openVault: () => void;
   showVerificationCelebration: boolean;
   setShowVerificationCelebration: React.Dispatch<React.SetStateAction<boolean>>;
-  floatingChatHead: { id: string; name: string; photo?: string; unreadCount?: number } | null;
-  setFloatingChatHead: React.Dispatch<React.SetStateAction<{ id: string; name: string; photo?: string; unreadCount?: number } | null>>;
-  floatingChatHeads: { id: string; name: string; photo?: string; unreadCount?: number }[];
+  floatingChatHead: { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string } | null;
+  setFloatingChatHead: React.Dispatch<React.SetStateAction<any>>;
+  floatingChatHeads: { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string }[];
+  setFloatingChatHeads: React.Dispatch<React.SetStateAction<{ id: string; name: string; photo?: string; unreadCount?: number; participantId?: string }[]>>;
   removeFloatingChatHead: (id: string) => void;
 }
 
@@ -915,12 +916,20 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     (window as any)._last_points_update = now;
 
     try {
-      const profileRef = doc(db, 'profiles', profile.id);
-      await updateDoc(profileRef, {
-        aeirmistLevel: increment(points)
-      });
-    } catch (e) {
-      logger.warn("Points sync failed", e);
+      // 1. Device server PostgreSQL points engine
+      api.users.addPoints(points).catch(() => {});
+      
+      // 2. Firestore optional sync
+      if (db && profile?.id) {
+        const profileRef = doc(db, 'profiles', profile.id);
+        await updateDoc(profileRef, {
+          aeirmistLevel: increment(points)
+        });
+      }
+    } catch (e: any) {
+      if (!e?.message?.includes('permission') && !e?.code?.includes('permission')) {
+        logger.warn("Points sync notice:", e?.message || e);
+      }
     }
   }, [db, profile?.id, user?.uid, isOffline]);
 
@@ -989,29 +998,51 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [isSafeMode]);
 
   const createNotification = useCallback(async (targetId: string, type: any, message: string, metadata: any = {}) => {
-    if (!db || !profile) return; 
+    if (!profile) return; 
     try {
-      await addDoc(collection(db, 'notifications'), {
-        userId: targetId,
-        fromUserId: profile.id,
-        fromUserUid: user?.uid || profile.id,
-        user: {
-          name: profile.displayName || profile.username || 'User',
-          avatar: profile.photoURL || '',
-          username: profile.username || 'user',
-          isVerified: profile.isVerified || false
-        },
-        type,
-        message,
+      // 1. Post to PostgreSQL/Redis API (powers live socket events and Postgres persistence)
+      api.notifications.create({
+        recipientId: targetId,
+        type: type || 'general',
+        title: metadata?.senderName || profile.displayName || profile.username || 'Aeirmist',
+        body: message,
+        actionUrl: metadata?.actionUrl || (metadata?.postId ? `/post/${metadata.postId}` : (metadata?.conversationId ? `/messages?chatId=${metadata.conversationId}` : undefined)),
         metadata: {
           ...metadata,
-          senderPhoto: profile.photoURL || '',
+          senderId: profile.id,
+          senderUid: user?.uid || profile.id,
           senderName: profile.displayName || profile.username || 'User',
-          senderUsername: profile.username || ''
-        },
-        read: false,
-        createdAt: serverTimestamp()
+          senderUsername: profile.username || '',
+          senderPhoto: profile.photoURL || '',
+        }
+      }).catch((apiErr) => {
+        logger.warn("Backend notification creation failed:", apiErr);
       });
+
+      // 2. Dual-write to Firestore if available for legacy compatibility
+      if (db) {
+        await addDoc(collection(db, 'notifications'), {
+          userId: targetId,
+          fromUserId: profile.id,
+          fromUserUid: user?.uid || profile.id,
+          user: {
+            name: profile.displayName || profile.username || 'User',
+            avatar: profile.photoURL || '',
+            username: profile.username || 'user',
+            isVerified: profile.isVerified || false
+          },
+          type,
+          message,
+          metadata: {
+            ...metadata,
+            senderPhoto: profile.photoURL || '',
+            senderName: profile.displayName || profile.username || 'User',
+            senderUsername: profile.username || ''
+          },
+          read: false,
+          createdAt: serverTimestamp()
+        }).catch(() => {});
+      }
     } catch (e) {
       logger.warn("Notification creation failed", e);
     }
@@ -1029,7 +1060,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (db && user?.uid) {
       const isGoogle = user.providerData?.some((p: any) => p.providerId === 'google.com');
       trackUserSession(db, user.uid, isGoogle ? 'Google' : 'Email & Password').catch(err => {
-        logger.warn("Session tracking initialization warning:", err);
+        if (!err?.message?.includes('permission') && !err?.code?.includes('permission')) {
+          logger.warn("Session tracking initialization warning:", err);
+        }
       });
     }
   }, [db, user?.uid]);
@@ -1052,7 +1085,65 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, [addToast]);
 
+  const sharedAudioContextRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (sharedAudioContextRef.current && sharedAudioContextRef.current.state === 'suspended') {
+        sharedAudioContextRef.current.resume().catch(() => {});
+      }
+    };
+    window.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
+    window.addEventListener('keydown', unlockAudio, { once: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, []);
+
   const playNotificationSound = () => {
+    try {
+      if (profile?.messagingSettings?.muteNotifications || localStorage.getItem('aeirmist_inbox_muted') === 'true') {
+        return;
+      }
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        if (!sharedAudioContextRef.current || sharedAudioContextRef.current.state === 'closed') {
+          sharedAudioContextRef.current = new AudioCtx();
+        }
+        const ctx = sharedAudioContextRef.current;
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+        const now = ctx.currentTime;
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(880, now);
+        osc1.frequency.exponentialRampToValueAtTime(1318.5, now + 0.08);
+
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(1760, now + 0.08);
+
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc1.start(now);
+        osc1.stop(now + 0.09);
+        osc2.start(now + 0.08);
+        osc2.stop(now + 0.35);
+        return;
+      }
+    } catch (e) {
+      // Fallback to HTMLAudioElement
+    }
+
     try {
       const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3');
       audio.volume = 0.4;
@@ -1104,10 +1195,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [pendingPermission, setPendingPermission] = useState<any>(null);
 
   const uploadMedia = useCallback(async (file: File, folder: string, onProgress?: (p: number, status: string) => void, quality: MediaQuality = MediaQuality.AUTO) => {
-    if (!storage) {
-        logger.error("[AeirmistContext] Storage not initialized");
-        throw new Error("Storage not initialized");
-    }
+    const activeStorage = storage || { driver: 'native' };
 
     // Digital Size Sentinel: Validate limits before processing
     const isProfile = folder.includes('profile');
@@ -1139,7 +1227,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     logger.info(`[MediaContext] Queuing upload: ${file.name} to ${filePath} (Quality: ${quality})`);
     
     try {
-      const url = await mediaService.uploadWithProgress(storage, file, filePath, (p, status) => {
+      const url = await mediaService.uploadWithProgress(activeStorage, file, filePath, (p, status) => {
         onProgress?.(p, status);
       }, quality);
       
@@ -1596,64 +1684,75 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const lastTypingUpdateTime = useRef<{ [key: string]: number }>({});
 
   const setTypingStatus = async (conversationId: string, isTyping: boolean) => {
-    if (!db || !profile || isOffline) return;
+    if (!profile || isOffline || !conversationId) return;
     
-    if (isTyping) {
-      const opKey = `typing_${conversationId}_true`;
-      const throttle = 2000; 
-      if (!canWrite(opKey, throttle)) return;
-    }
-
     try {
-      // OPTIMIZATION: Use a dedicated 'indicators' collection to avoid updating main conversation doc
-      const indicatorId = `${conversationId}_${profile.id}`;
-      const indicatorRef = doc(db, 'typing_indicators', indicatorId);
-      
-      if (isTyping) {
-        await setDoc(indicatorRef, {
-          conversationId,
-          profileId: profile.id,
-          username: profile.username,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      } else {
-        await deleteDoc(indicatorRef);
+      const socket = getSocket();
+      if (socket) {
+        if (isTyping) {
+          const opKey = `typing_${conversationId}_true`;
+          const throttle = 1500; 
+          if (canWrite(opKey, throttle)) {
+            socket.emit('typing_start', { conversationId });
+          }
+        } else {
+          socket.emit('typing_stop', { conversationId });
+        }
       }
     } catch (e) {
-      logger.warn("Typing status update failed", e);
+      logger.warn("Socket typing status update failed", e);
     }
   };
 
   const updateSeenStatus = useCallback(async (conversationId: string) => {
     if (!profile || isOffline || !conversationId) return;
     
+    // Clear unread badge locally for current user immediately
+    window.dispatchEvent(new CustomEvent('aeirmist_chat_unread_changed', { 
+      detail: { conversationId, unread: false, unreadCount: 0 } 
+    }));
+
     // Respect Read Receipts setting
     if (profile.messagingSettings?.readReceipts === false) return;
 
-    if (!canWrite(`read_${conversationId}`, 2000)) return;
+    if (!canWrite(`read_${conversationId}`, 1500)) return;
 
     try {
-      await messagingService.markAsRead(db, conversationId, profile.id);
+      await api.chat.markSeen(conversationId);
+      if (db && profile?.id) {
+        await messagingService.markAsRead(db, conversationId, profile.id).catch(() => {});
+      }
     } catch (e) {
       logger.warn("[AeirmistContext] Seen status update delayed", e);
     }
-  }, [profile?.id, profile?.messagingSettings?.readReceipts, isOffline, canWrite]);
+  }, [profile?.id, profile?.messagingSettings?.readReceipts, isOffline, canWrite, db]);
 
   const markAsRead = useCallback(async (conversationId: string) => {
-    return updateSeenStatus(conversationId);
-  }, [updateSeenStatus]);
+    if (!conversationId) return;
+    try {
+      window.dispatchEvent(new CustomEvent('aeirmist_chat_unread_changed', { 
+        detail: { conversationId, unread: false, unreadCount: 0 } 
+      }));
+      await api.chat.markSeen(conversationId);
+      if (db && profile?.id) {
+        await messagingService.markAsRead(db, conversationId, profile.id).catch(() => {});
+      }
+    } catch (e) {
+      logger.error("[AeirmistContext] markAsRead error:", e);
+    }
+  }, [db, profile?.id]);
 
   const markAsUnread = useCallback(async (conversationId: string) => {
-    if (!profile?.id || !db || !conversationId) return;
+    if (!conversationId) return;
     try {
-      const convRef = doc(db, 'conversations', conversationId);
-      await updateDoc(convRef, {
-        [`unreadCount.${profile.id}`]: 1
-      });
+      window.dispatchEvent(new CustomEvent('aeirmist_chat_unread_changed', { 
+        detail: { conversationId, unread: true, unreadCount: 1 } 
+      }));
+      await api.chat.markUnread(conversationId);
     } catch (e) {
       logger.error("[AeirmistContext] markAsUnread error:", e);
     }
-  }, [db, profile?.id]);
+  }, []);
 
   const createPost = useCallback(async (content: string, mediaUrls: string[] = []) => {
     if (!db || !profile || !user || isSafeMode) return;
@@ -1751,20 +1850,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [db, profile, isSafeMode, addToast]);
 
-  const deleteVideo = useCallback(async (videoId: string, videoURL: string, thumbnailURL?: string) => {
+  const deleteVideo = useCallback(async (videoId: string, _videoURL: string, _thumbnailURL?: string) => {
     if (!db || !profile || isSafeMode) return;
     try {
       // 1. Delete Firestore Document
       await deleteDoc(doc(db, 'videos', videoId));
-
-      // 2. Delete Storage Objects
-      const videoRef = ref(storage, videoURL);
-      await deleteObject(videoRef).catch(err => logger.warn('Failed to delete video file:', err));
-
-      if (thumbnailURL && !thumbnailURL.includes('unsplash.com') && !thumbnailURL.includes('picsum.photos')) {
-        const thumbRef = ref(storage, thumbnailURL);
-        await deleteObject(thumbRef).catch(err => logger.warn('Failed to delete thumbnail file:', err));
-      }
 
       addToast({
         title: 'Video Deleted',
@@ -1774,7 +1864,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `videos/${videoId}`);
     }
-  }, [db, profile, isSafeMode, storage, addToast]);
+  }, [db, profile, isSafeMode, addToast]);
 
   const deleteStory = useCallback(async (storyId: string) => {
     if (!db || !profile || isSafeMode) return;
@@ -1791,7 +1881,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, profile, isSafeMode, addToast]);
 
   useEffect(() => {
-    if (!db || !user) return;
+    if (!db || !_auth.currentUser) return;
     const storiesRef = collection(db, 'stories');
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const q = query(
@@ -1818,6 +1908,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await updateDoc(postRef, {
         isArchived: archive,
         updatedAt: serverTimestamp()
+      });
+      // Also sync archive state to PostgreSQL device server (fire-and-forget)
+      api.posts.toggleArchive(postId, archive).catch((err) => {
+        logger.warn('[archivePost] PostgreSQL sync notice:', err);
       });
       logger.info(`[archivePost Success] Updated archive state of post: ${postId} to ${archive}`);
     } catch (e) {
@@ -1903,71 +1997,73 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, profile?.id, fetchSuggestions, JSON.stringify(profile?.social?.following || [])]);
 
   const toggleNotification = async (type: 'mute' | 'pin' | 'archive', targetId: string) => {
-    if (type === 'archive') {
-      logger.info('[Archive Action Initiated]', { conversationId: targetId });
-    } else {
-      logger.info(`[Notification ${type} Action Initiated]`, { conversationId: targetId });
+    if (!targetId) return;
+    logger.info(`[Notification ${type} Action Initiated]`, { conversationId: targetId });
+
+    let nextVal = true;
+
+    // 1. If Firestore conversation exists, update it per-user
+    if (db && profile?.id && !isSafeMode) {
+      try {
+        const convRef = doc(db, 'conversations', targetId);
+        const fieldKey = type === 'mute' ? 'isMuted' : (type === 'pin' ? 'isPinned' : 'isArchived');
+        const chatDoc = await getDoc(convRef);
+        if (chatDoc.exists()) {
+          const rawData = chatDoc.data();
+          const rawVal = rawData?.[fieldKey];
+          let currentVal = false;
+          if (typeof rawVal === 'boolean') {
+            currentVal = rawVal;
+          } else if (rawVal && typeof rawVal === 'object') {
+            currentVal = !!rawVal[profile.id];
+          }
+          nextVal = !currentVal;
+
+          const updates: any = {};
+          if (rawVal && typeof rawVal === 'object') {
+            updates[`${fieldKey}.${profile.id}`] = nextVal;
+          } else {
+            updates[fieldKey] = { [profile.id]: nextVal };
+          }
+          await updateDoc(convRef, updates);
+        }
+      } catch (e) {
+        logger.warn(`[AeirmistContext] Firestore toggleNotification note for ${type}:`, e);
+      }
     }
 
-    if (!profile || !db || isSafeMode) return;
-
+    // 2. Also sync with PostgreSQL backend API
     try {
-      const convRef = doc(db, 'conversations', targetId);
-      const fieldKey = type === 'mute' ? 'isMuted' : (type === 'pin' ? 'isPinned' : 'isArchived');
-      const chatDoc = await getDoc(convRef);
-      const rawData = chatDoc.data();
-      const rawVal = rawData?.[fieldKey];
-      
-      // Determine current value for the user
-      let currentVal = false;
-      if (typeof rawVal === 'boolean') {
-        currentVal = rawVal;
-      } else if (rawVal && typeof rawVal === 'object') {
-        currentVal = !!rawVal[profile.id];
-      }
-
-      const nextVal = !currentVal;
-
-      // Update safely. If it's currently a boolean, we should ideally convert it to an object 
-      // or just keep it as a boolean if we want global. 
-      // But per-user is better. 
-      
-      const updates: any = {};
-      
-      if (rawVal && typeof rawVal === 'object') {
-        updates[`${fieldKey}.${profile.id}`] = nextVal;
-      } else {
-        // If it was a boolean or null, we start the object structure
-        updates[fieldKey] = {
-          [profile.id]: nextVal
-        };
-      }
-      
-      await updateDoc(convRef, updates);
-
-      const actionLabel = type === 'mute' ? (nextVal ? 'Muted' : 'Unmuted') : 
-                          type === 'pin' ? (nextVal ? 'Pinned' : 'Unpinned') : 
-                          (nextVal ? 'Archived' : 'Restored');
-
-      addToast({
-        title: `${actionLabel}`,
-        message: `Chat has been ${actionLabel.toLowerCase()} successfully.`,
-        type: 'success'
-      });
-
-      if (type === 'archive') {
-        logger.info('[Archive Action Successful]', { conversationId: targetId, isArchived: nextVal });
-      } else {
-        logger.info(`[Notification ${type} Action Successful]`, { conversationId: targetId, [fieldKey]: nextVal });
+      if (type === 'pin') {
+        const res = await api.chat.togglePin(targetId);
+        if (res && typeof res.isPinned === 'boolean') nextVal = res.isPinned;
+      } else if (type === 'mute') {
+        const res = await api.chat.toggleMute(targetId);
+        if (res && typeof res.isMuted === 'boolean') nextVal = res.isMuted;
+      } else if (type === 'archive') {
+        const res = await api.chat.toggleArchive(targetId);
+        if (res && typeof res.isArchived === 'boolean') nextVal = res.isArchived;
       }
     } catch (e) {
-      if (type === 'archive') {
-        logger.error('[Archive Action Failed]', e);
-      } else {
-        logger.error(`[Notification ${type} Action Failed]`, e);
-      }
-      handleFirestoreError(e, OperationType.UPDATE, `conversations/${targetId}`);
+      // Backend sync fallback
     }
+
+    // 3. Dispatch optimistic event to local UI for 0ms latency update
+    window.dispatchEvent(new CustomEvent('aeirmist_chat_setting_changed', {
+      detail: { conversationId: targetId, type, value: nextVal }
+    }));
+
+    const actionLabel = type === 'mute' ? (nextVal ? 'Muted' : 'Unmuted') : 
+                        type === 'pin' ? (nextVal ? 'Pinned' : 'Unpinned') : 
+                        (nextVal ? 'Archived' : 'Restored');
+
+    addToast({
+      title: `${actionLabel}`,
+      message: `Chat has been ${actionLabel.toLowerCase()} successfully.`,
+      type: 'success'
+    });
+
+    logger.info(`[Notification ${type} Action Successful]`, { conversationId: targetId, value: nextVal });
   };
 
   const toggleVanishMode = async (conversationId: string) => {
@@ -1997,19 +2093,42 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateConversationThemeSettings = async (conversationId: string, settings: any) => {
-    if (!db || !profile) return;
+    if (!conversationId) return;
     try {
-      const convRef = doc(db, 'conversations', conversationId);
       // Clean undefined keys before saving
       const cleanSettings: any = {};
-      Object.keys(settings).forEach(k => {
-        if (settings[k] !== undefined) {
-          cleanSettings[k] = settings[k];
+      if (settings && typeof settings === 'object') {
+        Object.keys(settings).forEach(k => {
+          if (settings[k] !== undefined) {
+            cleanSettings[k] = settings[k];
+          }
+        });
+      }
+
+      // Immediately cache locally so the theme persists smoothly across reloads & view switches
+      try {
+        localStorage.setItem(`chat_settings_${conversationId}`, JSON.stringify(cleanSettings));
+        localStorage.setItem(`chat_theme_${conversationId}`, JSON.stringify(cleanSettings));
+      } catch {}
+
+      // Save to PostgreSQL via Backend API
+      try {
+        await api.chat.updateTheme(conversationId, cleanSettings);
+      } catch (apiErr) {
+        logger.warn('Backend updateTheme warning:', apiErr);
+      }
+
+      // Optional Firestore fallback - non-blocking so permission denial doesn't fail save
+      if (db) {
+        try {
+          const convRef = doc(db, 'conversations', conversationId);
+          await setDoc(convRef, {
+            themeSettings: cleanSettings
+          }, { merge: true });
+        } catch (fsErr) {
+          logger.warn('Firestore setDoc themeSettings skipped/failed gracefully:', fsErr);
         }
-      });
-      await setDoc(convRef, {
-        themeSettings: cleanSettings
-      }, { merge: true });
+      }
     } catch (e) {
       logger.error("Update conversation themeSettings failed", e);
       throw e;
@@ -2282,28 +2401,43 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const deleteConversation = async (conversationId: string) => {
     logger.info('[Delete For Me - Conversation Initiated]', { conversationId });
-    if (!db || !profile) return;
-    if (isSafeMode) {
-      logger.info('[Delete For Me - Conversation Sandbox Bypass / No DB]', { conversationId });
-      return;
-    }
-    if (!canWrite(`deleteConv_${conversationId}`, 2000)) {
-      logger.warn('[Delete For Me - Conversation Throttled]', { conversationId });
-      return;
-    }
+    if (!conversationId) return;
+
+    // 1. Optimistic UI removal immediately with 0ms latency
+    window.dispatchEvent(new CustomEvent('aeirmist_chat_deleted', {
+      detail: { conversationId }
+    }));
+    window.dispatchEvent(new CustomEvent('aeirmist_chat_setting_changed', {
+      detail: { conversationId, type: 'delete' }
+    }));
+
+    // 2. PostgreSQL Backend Sync
     try {
-      const convRef = doc(db, 'conversations', conversationId);
-      // We don't actually delete the whole conversation for everyone
-      // We just hide it for the current profile
-      await updateDoc(convRef, {
-        [`deletedFor.${profile.id}`]: Date.now(),
-        [`unreadCount.${profile.id}`]: 0
-      });
-      logger.info('[Delete For Me - Conversation Successful]', { conversationId });
-    } catch (e) {
-      logger.error('[Delete For Me - Conversation Failed]', e);
-      handleFirestoreError(e, OperationType.UPDATE, `conversations/${conversationId}`);
+      await api.chat.deleteConversation(conversationId);
+      logger.info('[Delete For Me - PostgreSQL Backend Success]', { conversationId });
+    } catch (apiErr) {
+      logger.warn('[Delete For Me - PostgreSQL Backend Notice]', apiErr);
     }
+
+    // 3. Firestore fallback if db is active and doc exists
+    if (db && profile?.id) {
+      try {
+        const convRef = doc(db, 'conversations', conversationId);
+        await updateDoc(convRef, {
+          [`deletedFor.${profile.id}`]: Date.now(),
+          [`unreadCount.${profile.id}`]: 0
+        });
+        logger.info('[Delete For Me - Firestore Success]', { conversationId });
+      } catch (e) {
+        // Safe bypass - PostgreSQL is authoritative
+      }
+    }
+
+    addToast?.({
+      title: 'Chat Deleted',
+      message: 'Conversation has been removed.',
+      type: 'info'
+    });
   };
 
   const toggleCloseFriend = async (targetId: string) => {
@@ -2350,13 +2484,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
 
-    // Handle Redirect Result with detailed diagnostics logging
+    // Handle Redirect Result
     const handleRedirect = async () => {
-      logger.info("[Diagnostics - Auth] handleRedirect: Checking for pending redirect auth callback event...");
-      
-      const isIframe = window.self !== window.top;
-      logger.info("[Diagnostics - Auth] Environment Check - Iframe:", isIframe, "Domain:", window.location.hostname);
-      
       setIsConnecting(true);
       if (typeof window !== 'undefined') {
         try {
@@ -2378,7 +2507,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         clearTimeout(redirectTimeout);
         
         if (result?.user) {
-          logger.info("[Diagnostics - Auth] handleRedirect: Redirect sign-in success UID:", result.user.uid);
           let isLinking = false;
           try {
             isLinking = sessionStorage.getItem('aeirmist_pending_link') === 'true';
@@ -2397,7 +2525,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           }
           setUser(result.user);
         } else {
-          logger.info("[Diagnostics - Auth] No pending redirect event detected.");
           try {
             sessionStorage.removeItem('aeirmist_pending_link');
           } catch (e) {}
@@ -2431,7 +2558,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     const unsub = onAuthStateChanged(auth, async (user) => {
-      logger.info("[Diagnostics - Auth] onAuthStateChanged Message:", user?.uid);
       
       if (unsubProfile) {
         unsubProfile();
@@ -2447,6 +2573,18 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         
         const freshUser = auth.currentUser || user;
         let effectiveUser: any = freshUser;
+
+        // Ensure backend auth token is synchronized for PostgreSQL REST and Socket.IO
+        if (freshUser) {
+          freshUser.getIdToken().then((idToken: string) => {
+            if (idToken) {
+              const currentToken = getAuthToken();
+              if (freshUser.email !== GATEWAY_EMAIL && (!currentToken || currentToken.startsWith('token_'))) {
+                setAuthToken(idToken);
+              }
+            }
+          }).catch(() => {});
+        }
 
         if (freshUser.email === 'gateway_node@aeirmist.social' && typeof window !== 'undefined') {
           try {
@@ -2625,7 +2763,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               email: effectiveUser.email || 'junaedislamjim180@gmail.com',
               isAdmin: true,
               role: 'admin',
-              isVerified: true
+              isVerified: true,
+              photoURL: p.photoURL || p.avatarKey || 'https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg',
+              avatarKey: p.avatarKey || 'https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg'
             };
             try {
               setDoc(doc(db, 'profiles', p.id), {
@@ -2634,7 +2774,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 displayName: updated.displayName,
                 isAdmin: true,
                 role: 'admin',
-                isVerified: true
+                isVerified: true,
+                photoURL: updated.photoURL,
+                avatarKey: updated.avatarKey
               }, { merge: true }).catch(() => {});
               setDoc(doc(db, 'users', effectiveUser.uid), {
                 username: adminHandle,
@@ -2682,7 +2824,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 email: 'junaedislamjim180@gmail.com',
                 isAdmin: true,
                 role: 'admin',
-                isVerified: true
+                isVerified: true,
+                photoURL: p.photoURL || p.avatarKey || 'https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg',
+                avatarKey: p.avatarKey || 'https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg'
               }));
             }
             const profiles = deduplicateProfiles(rawProfiles);
@@ -2723,8 +2867,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             });
             auth.signOut().catch(() => {});
           }
-        }, (err) => {
-          logger.error("[Diagnostics - Auth] Profile snapshot warning:", err);
+        }, (err: any) => {
+          if (!err?.code?.includes('permission') && !err?.message?.includes('permission')) {
+            logger.warn("[Diagnostics - Auth] Profile snapshot notice:", err?.code);
+          }
         });
       } else {
         // If a cached session is present in localStorage, Firebase Auth may still be reading from IndexedDB in the background.
@@ -2757,19 +2903,109 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 setAllProfiles([]);
                 setIsScheduledForPurge(false);
                 setNeedsUsername(false);
-                setLoading(false);
               }
+              setLoading(false);
             }
           }, 2500);
         }
       }
     });
 
+    const unsubIdToken = onIdTokenChanged(auth, async (u) => {
+      // A native device-database (PostgreSQL) session owns the API token: Firebase must not overwrite or wipe it,
+      // and the shared gateway account must never become the API identity.
+      if (u) {
+        if (u.email === GATEWAY_EMAIL || hasUsableNativeToken()) return;
+        try {
+          const freshToken = await u.getIdToken();
+          if (freshToken) {
+            setAuthToken(freshToken);
+          }
+        } catch {}
+      } else if (!hasUsableNativeToken()) {
+        setAuthToken(null);
+      }
+    });
+
     return () => {
       unsub();
+      unsubIdToken();
       if (unsubProfile) unsubProfile();
     };
   }, [auth, db]);
+
+  // Global Force Logout Handler - Cleans all storage and resets session
+  const handleForceLogout = useCallback(async (reason?: string) => {
+    logger.warn('[Auth] Force logout executed. Reason:', reason || 'account_deleted');
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('aeirmist_session');
+        localStorage.removeItem('aeirmist_cached_profile');
+        localStorage.removeItem('aeirmist_user_profile');
+        localStorage.removeItem('aeirmist_cached_id_name');
+        localStorage.removeItem('aeirmist_auth_token');
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('aeirmist_refresh_token');
+        localStorage.removeItem('aeirmist_session_token');
+        localStorage.removeItem('aeirmist_user_id');
+        localStorage.removeItem('aeirmist_active_profile_id');
+        localStorage.removeItem('aeirmist_remember_me');
+        sessionStorage.clear();
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('firebase:authUser:') || k.startsWith('aeirmist_'))) {
+            localStorage.removeItem(k);
+          }
+        }
+      }
+      if (auth) {
+        await signOut(auth).catch(() => {});
+      }
+    } catch {}
+    setUser(null);
+    setProfile(null);
+    setAllProfiles([]);
+    setActiveProfileId(null);
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+  }, [auth]);
+
+  // Listen to window-level force logout events from API client or child components
+  useEffect(() => {
+    const onForceLogout = (e: any) => {
+      handleForceLogout(e?.detail?.reason || 'event_dispatched');
+    };
+    window.addEventListener('aeirmist:force_logout', onForceLogout);
+    return () => window.removeEventListener('aeirmist:force_logout', onForceLogout);
+  }, [handleForceLogout]);
+
+  // Authoritative Session & Profile Verification against Backend PostgreSQL
+  useEffect(() => {
+    const rawUsername = profile?.username;
+    const rawUid = profile?.id || profile?.userId || profile?.uid || user?.uid;
+    const identifier = rawUsername || rawUid;
+    if (!identifier) return;
+
+    let isCancelled = false;
+    api.users.getProfile(identifier)
+      .then((res: any) => {
+        if (isCancelled) return;
+        if (!res?.profile) {
+          logger.warn('[Session Verification] Profile does not exist in backend. Logging out...');
+          handleForceLogout('profile_not_found');
+        }
+      })
+      .catch((err: any) => {
+        if (isCancelled) return;
+        if (err?.status === 404 || err?.status === 401) {
+          logger.warn(`[Session Verification] Backend returned HTTP ${err.status}. Account deleted. Logging out...`);
+          handleForceLogout('account_purged');
+        }
+      });
+
+    return () => { isCancelled = true; };
+  }, [profile?.username, profile?.id, user?.uid, handleForceLogout]);
 
   // Proactive token initialization: exchange cached session for valid server JWT
   useEffect(() => {
@@ -2792,41 +3028,73 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
        // Set up visibility change listener
        const handleVisibilityChange = () => {
          if (document.visibilityState === 'visible') {
+           lastPresenceStatus.current = ''; // force re-write on return
            goOnline();
          } else {
-           // Small delay to see if they come back quickly
+           // Shorter grace window — 3s. If still hidden after 3s → offline
            setTimeout(() => {
              if (document.visibilityState !== 'visible') {
                goOffline();
              }
-           }, 5000);
+           }, 3000);
          }
        };
 
-       // Handle tab close / browser close
+       // Idle detection — go offline after 5 minutes of no interaction
+       let idleTimer: ReturnType<typeof setTimeout> | null = null;
+       const resetIdleTimer = () => {
+         if (idleTimer) clearTimeout(idleTimer);
+         idleTimer = setTimeout(() => {
+           if (document.visibilityState === 'visible') {
+             goOffline();
+           }
+         }, 5 * 60 * 1000);
+       };
+       resetIdleTimer();
+       const activityEvents = ['mousemove', 'touchstart', 'keydown', 'click', 'scroll'];
+       const handleActivity = () => {
+         if (document.visibilityState === 'visible') {
+           lastPresenceStatus.current = '';
+           goOnline();
+         }
+         resetIdleTimer();
+       };
+       activityEvents.forEach(ev => document.addEventListener(ev, handleActivity, { passive: true }));
+
+       // Handle tab close / browser close — use sendBeacon for reliable offline signal
        const handleBeforeUnload = () => {
-         const profileRef = doc(db, 'profiles', profile.id);
-         updateDoc(profileRef, {
-           status: 'offline',
-           lastSeen: serverTimestamp(),
-           lastActiveAt: serverTimestamp()
-         }).catch(() => {});
+         // sendBeacon is fire-and-forget and survives page close
+         const token = typeof window !== 'undefined' ? (localStorage.getItem('aeirmist_auth_token') || '') : '';
+         try {
+           const blob = new Blob([JSON.stringify({ status: 'offline' })], { type: 'application/json' });
+           navigator.sendBeacon?.('/api/v1/users/presence', blob);
+         } catch {}
+         // Also try the Firestore path synchronously
+         if (db && profile?.id) {
+           const profileRef = doc(db, 'profiles', profile.id);
+           updateDoc(profileRef, {
+             status: 'offline',
+             lastSeen: serverTimestamp(),
+             lastActiveAt: serverTimestamp()
+           }).catch(() => {});
+         }
        };
        
-       // Keep alive interval — every 30s update lastSeen while tab is visible
+       // Keep alive interval — every 45s update lastSeen while tab is visible
        const interval = setInterval(() => {
           if (document.visibilityState === 'visible') {
             // Reset status ref so goOnline() can re-write even if already 'online'
             lastPresenceStatus.current = '';
             goOnline();
           }
-        }, 30000);
+        }, 45000);
 
        // Set up Capacitor App state listener for native Android/iOS backgrounding
        let capListenerRemove: (() => void) | undefined;
        try {
          CapApp.addListener('appStateChange', ({ isActive }) => {
            if (isActive) {
+             lastPresenceStatus.current = '';
              goOnline();
            } else {
              goOffline();
@@ -2842,7 +3110,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
        return () => {
          document.removeEventListener('visibilitychange', handleVisibilityChange);
          window.removeEventListener('beforeunload', handleBeforeUnload);
+         activityEvents.forEach(ev => document.removeEventListener(ev, handleActivity));
          clearInterval(interval);
+         if (idleTimer) clearTimeout(idleTimer);
          if (capListenerRemove) capListenerRemove();
        };
     }
@@ -2904,138 +3174,205 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const onlineUsersMap = useRef<Map<string, number>>(new Map());
 
-  // Listen for Unread Messages
+  // Listen for Unread Messages (Derived from PostgreSQL conversations + Real-time Sockets)
   useEffect(() => {
-    if (!db || !profile) return;
+    if (!profile?.id || !user) return;
+    let isCancelled = false;
 
-    const q = query(
-      collection(db, 'conversations'),
-      where('profileIds', 'array-contains', profile.id)
-    );
+    const syncUnreadMessages = async () => {
+      try {
+        const res = await api.chat.getConversations();
+        if (isCancelled) return;
+        const list = res?.conversations || [];
+        const total = list.reduce((acc: number, c: any) => {
+          if (c.isMuted) return acc;
+          return acc + (Number(c.unreadCount) || 0);
+        }, 0);
+        setUnreadMessagesCount(total);
+      } catch (error) {
+        logger.warn("Messages unread count sync failed", error);
+      }
+    };
 
-    const unsubscribe = onSnapshot(q, (snap) => {
-      let total = 0;
-      snap.docs.forEach(doc => {
-        const data = doc.data();
-        // Skip requests in main count
-        if (data.status === 'request') return;
+    syncUnreadMessages();
 
-        // Skip private/vaulted chats so they are completely silent and invisible in badge
-        if (data.isVaulted?.[profile.id] === true) return;
-        
-        // Skip deleted chats
-        const deletedAt = data.deletedFor?.[profile.id];
-        const chatUpdatedAt = data.updatedAt?.toMillis?.() || Date.now();
-        if (deletedAt === true) return;
-        if (typeof deletedAt === 'number' && chatUpdatedAt <= deletedAt) return;
-        
-        const count = data.unreadCount?.[profile.id] || 0;
-        total += count;
-      });
-      setUnreadMessagesCount(total);
-    }, (error) => logger.warn("Messages unread count sync failed", error));
+    const socket = getSocket();
 
-    return () => unsubscribe();
-  }, [db, profile?.id]);
+    let debounceTimer: any = null;
+    const debouncedSync = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (!isCancelled) syncUnreadMessages();
+      }, 400);
+    };
 
-  // Listen for Unread Notifications
+    const handleNewMessage = () => {
+      debouncedSync();
+    };
+    const handleSeenUpdate = () => {
+      debouncedSync();
+    };
+    const handleLocalUnreadChanged = () => {
+      debouncedSync();
+    };
+
+    const handleThemeUpdated = (payload: any) => {
+      if (!payload || !payload.conversationId) return;
+      try {
+        localStorage.setItem(`chat_settings_${payload.conversationId}`, JSON.stringify(payload.themeSettings));
+        localStorage.setItem(`chat_theme_${payload.conversationId}`, JSON.stringify(payload.themeSettings));
+        window.dispatchEvent(new CustomEvent('aeirmist_chat_theme_updated', { detail: payload }));
+      } catch {}
+    };
+
+    if (socket) {
+      socket.on('new_message', handleNewMessage);
+      socket.on('seen_update', handleSeenUpdate);
+      socket.on('messages_delivered', handleSeenUpdate);
+      socket.on('conversation_theme_updated', handleThemeUpdated);
+      socket.on('connect', syncUnreadMessages);
+    }
+
+    window.addEventListener('aeirmist_chat_unread_changed', handleLocalUnreadChanged);
+
+    const interval = setInterval(() => {
+      if (!isCancelled && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        syncUnreadMessages();
+      }
+    }, 20000);
+
+    return () => {
+      isCancelled = true;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      clearInterval(interval);
+      if (socket) {
+        socket.off('new_message', handleNewMessage);
+        socket.off('seen_update', handleSeenUpdate);
+        socket.off('messages_delivered', handleSeenUpdate);
+        socket.off('conversation_theme_updated', handleThemeUpdated);
+        socket.off('connect', syncUnreadMessages);
+      }
+      window.removeEventListener('aeirmist_chat_unread_changed', handleLocalUnreadChanged);
+    };
+  }, [profile?.id, user?.uid]);
+
+  // Listen for Notifications (PostgreSQL REST + Socket.IO realtime)
   useEffect(() => {
-    if (!db || !profile) return;
+    if (!profile?.id || !user) return;
+    let cancelled = false;
 
-    const targetIds = Array.from(new Set([profile.id, user?.uid].filter(Boolean)));
-    if (targetIds.length === 0) return;
+    const isDirectChatMessage = (raw: any) => {
+      const type = String(raw || '').toLowerCase();
+      return ['message', 'message_media', 'message_voice', 'message_video', 'store_message', 'store_message_received'].includes(type) && !type.includes('request');
+    };
 
-    const q = query(
-      collection(db, 'notifications'),
-      where('userId', 'in', targetIds),
-      where('read', '==', false)
-    );
+    const syncUnreadCount = async () => {
+      try {
+        const res = await api.notifications.get(100);
+        if (cancelled) return;
+        const list = Array.isArray(res?.notifications) ? res.notifications : [];
+        setUnreadNotificationsCount(list.filter((n: any) => !n.isRead && !isDirectChatMessage(n.type)).length);
+      } catch (err) {
+        logger.warn("Notifications unread count sync failed", err);
+      }
+    };
+    syncUnreadCount();
 
-    // Record the exact moment this listener starts — only show toasts for notifications
-    // created AFTER this point, so old unread notifications never pop up on refresh/page load
-    const listenerStartTime = Date.now();
-    let isInitialLoad = true;
+    const socket = getSocket();
 
-    const unsubscribe = onSnapshot(q, (snap) => {
-      // Skip the very first batch (historical data loaded on startup)
-      if (isInitialLoad) {
-        isInitialLoad = false;
+    const onNewNotification = (payload: any) => {
+      const n = payload?.notification || payload;
+      if (!n || !n.id) return;
+
+      const meta = n.metadata || {};
+      const senderId = n.actorId || meta.senderId;
+      const isFromMe = !!senderId && (
+        senderId === profile.id || senderId === user.uid || senderId === (user as any).id || (profile as any)?.userId === senderId
+      );
+      if (isFromMe) return;
+      if (senderId && (profile.social?.blocked || []).includes(senderId)) return;
+
+      const type = String(n.type || '').toLowerCase();
+      const isMessage = isDirectChatMessage(type);
+
+      // Keep the activity badge in sync (direct messages are covered by unreadMessagesCount)
+      if (!isMessage) setUnreadNotificationsCount(c => c + 1);
+      window.dispatchEvent(new CustomEvent('aeirmist_notification_received', { detail: n }));
+
+      // Do not alert for the chat that is currently open and visible
+      const activeChatId = String((window as any).__aeirmistActiveChatId || '').toLowerCase().trim();
+      const notifConvId = String(meta.conversationId || meta.chatId || '').toLowerCase().trim();
+      const isActiveChatOpen = Boolean(
+        activeChatId && 
+        notifConvId && 
+        (activeChatId === notifConvId || activeChatId.includes(notifConvId) || notifConvId.includes(activeChatId)) && 
+        document.visibilityState === 'visible'
+      );
+      if (isMessage && isActiveChatOpen) {
+        api.notifications.markRead(n.id).catch(() => {});
         return;
       }
 
-      snap.docChanges().forEach(change => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          // Only show toast for notifications that actually arrived AFTER we started listening
-          const createdAt = data.createdAt?.toMillis 
-            ? data.createdAt.toMillis() 
-            : (data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0);
-          if (createdAt >= listenerStartTime) {
-            // Skip notifications from myself or blocked users
-            const senderId = data.fromUser?.uid || data.fromUser?.id || data.senderId || data.fromUserId || data.actorId;
-            const isFromMe = (senderId && (senderId === profile.id || senderId === user.uid || senderId === user.id || (profile as any)?.userId === senderId)) ||
-                             (data.fromUserId && (data.fromUserId === profile.id || data.fromUserId === user.uid));
-            if (isFromMe) return;
+      // Suppress alerts for muted inbox or muted conversations
+      const isInboxMuted = profile?.messagingSettings?.muteNotifications || localStorage.getItem('aeirmist_inbox_muted') === 'true';
+      if (isMessage && isInboxMuted) {
+        return;
+      }
+      const mutedChats: Set<string> = (window as any).__aeirmistMutedChats || new Set();
+      if (isMessage && meta.conversationId && mutedChats.has(meta.conversationId)) {
+        return;
+      }
 
-            const isFromBlockedUser = senderId ? (profile.social?.blocked || []).includes(senderId) : false;
-            if (isFromBlockedUser) return;
+      playNotificationSound();
 
-            playNotificationSound();
-
-            // Internal Toast Notification for all types
-            addToast({
-              title: data.type ? String(data.type).toUpperCase().replace('_', ' ') : 'Notification',
-              message: data.message,
-              type: 'info'
-            });
-
-            const type = String(data.type).toLowerCase();
-            const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
-
-            // Dispatch system/device/browser notification across all platforms (Android & Web)
-            const senderDisplayName = data.user?.name || data.user?.displayName || data.metadata?.senderName || data.fromUser?.displayName;
-            const senderHandle = data.user?.username || data.metadata?.senderUsername;
-            const title = senderDisplayName 
-              ? (senderHandle ? `${senderDisplayName} (@${senderHandle})` : senderDisplayName)
-              : (isMessage ? 'New Aeirmist Message' : 'Aeirmist Notification');
-            const rawSenderAvatar = data.user?.avatar || data.user?.photoURL || data.metadata?.senderPhoto || data.metadata?.photoURL || data.fromUser?.photoURL || data.fromUser?.avatar || '';
-            const avatar = getAvatarUrl(rawSenderAvatar, senderDisplayName || 'Aeirmist');
-            const targetUrl = data.metadata?.postId 
-              ? `/post/${data.metadata.postId}` 
-              : (data.metadata?.conversationId ? `/messenger` : '/');
-
-            showSystemNotification({
-              title,
-              body: data.message || '',
-              avatarUrl: avatar,
-              targetUrl,
-              type: type,
-              tag: data.metadata?.conversationId || `notif_${change.doc.id}`,
-            }).catch((err) => logger.warn("System notification dispatch failed:", err));
-          }
-        }
+      addToast({
+        title: n.title || (type ? type.toUpperCase().replace('_', ' ') : 'Notification'),
+        message: n.body || n.message || '',
+        type: 'info'
       });
 
-      // Filter messages out of the activity unread notifications count (they already have unreadMessagesCount)
-      let nonMessageUnreadCount = 0;
-      snap.docs.forEach(doc => {
-        const d = doc.data();
-        const type = String(d.type).toLowerCase();
-        const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
-        if (!isMessage) {
-          nonMessageUnreadCount++;
-        }
-      });
+      const senderDisplayName = meta.senderName || n.title;
+      const senderHandle = meta.senderUsername;
+      const title = senderDisplayName
+        ? (senderHandle ? `${senderDisplayName} (@${senderHandle})` : senderDisplayName)
+        : (isMessage ? 'New Aeirmist Message' : 'Aeirmist Notification');
+      const avatar = getAvatarUrl(meta.senderPhoto || '', senderDisplayName || 'Aeirmist');
+      const targetUrl = meta.postId
+        ? `/post/${meta.postId}`
+        : (meta.conversationId ? `/messenger` : (n.actionUrl || '/'));
 
-      setUnreadNotificationsCount(nonMessageUnreadCount);
-    }, (error) => logger.warn("Notifications unread count sync failed", error));
+      showSystemNotification({
+        title,
+        body: n.body || n.message || '',
+        avatarUrl: avatar,
+        targetUrl,
+        type,
+        tag: meta.conversationId || `notif_${n.id}`,
+      }).catch((err) => logger.warn("System notification dispatch failed:", err));
+    };
 
-    return () => unsubscribe();
-  }, [db, profile?.id, user?.uid]);
+    const onReconnect = () => { syncUnreadCount(); };
+    const onChanged = () => { syncUnreadCount(); };
+
+    if (socket) {
+      socket.on('new_notification', onNewNotification);
+      socket.on('connect', onReconnect);
+    }
+    window.addEventListener('aeirmist_notifications_changed', onChanged);
+
+    return () => {
+      cancelled = true;
+      if (socket) {
+        socket.off('new_notification', onNewNotification);
+        socket.off('connect', onReconnect);
+      }
+      window.removeEventListener('aeirmist_notifications_changed', onChanged);
+    };
+  }, [profile?.id, user?.uid]);
 
   // Listen for Message Requests (Sound & Toast)
   useEffect(() => {
-    if (!db || !profile) return;
+    if (!db || !profile || !_auth.currentUser) return;
 
     const q = query(
       collection(db, 'conversations'),
@@ -3074,7 +3411,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           }
         }
       });
-    }, (error) => logger.warn("Requests sync failed", error));
+    }, (error: any) => {
+      if (!error?.message?.includes('permission') && !error?.code?.includes('permission')) {
+        logger.warn("Requests sync notice", error?.message || error);
+      }
+    });
 
     return () => unsubscribe();
   }, [db, profile?.id]);
@@ -3095,7 +3436,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           'profile_kaisol'
         ];
         
-        logger.info("[AeirmistContext] Audit initiated: Purging residual hardcoded demo profiles from database...");
         const batch = writeBatch(db);
         
         for (const id of demoIds) {
@@ -3104,10 +3444,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           batch.delete(doc(db, 'usernames', username));
         }
         
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-        logger.info("[AeirmistContext] Audit complete: Any residual hardcoded demo profiles successfully purged.");
-      } catch (err) {
-        logger.warn("[AeirmistContext] Purging residual demo profiles encountered errors:", err);
+        await batch.commit();
+      } catch (err: any) {
+        if (!err?.message?.includes('permission') && !err?.code?.includes('permission')) {
+          logger.warn("[AeirmistContext] Purging residual demo profiles encountered errors:", err);
+        }
       }
     };
     
@@ -3118,7 +3459,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [db, user]);
 
   useEffect(() => {
-    if (!db || !user || !profile) return;
+    if (!db || !_auth.currentUser || !profile) return;
     
     // Listen to all online profiles in real time
     const q = query(
@@ -3126,6 +3467,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       where('status', '==', 'online'),
       limit(100)
     );
+
+    const socket = getSocket();
 
     const unsubscribe = onSnapshot(q, (snap) => {
       const now = Date.now();
@@ -3138,14 +3481,96 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const lastSeen = extractTimestampMs(data.lastSeen) || extractTimestampMs(data.lastActiveAt);
           // Threshold: 75s (heartbeat is 30s → 2.5 missed beats = definitely offline)
           if (lastSeen > 0 && (now - lastSeen < 75000)) {
-            onlineUsersMap.current.set(docSnap.id, lastSeen);
-            active.add(docSnap.id);
+            const allDocIds = [
+              docSnap.id,
+              data.userId,
+              data.uid,
+              data.ownerUid,
+              data.profileId,
+              data.username,
+              data.usernameNormalized
+            ].filter(Boolean);
+            allDocIds.forEach((id: string) => {
+              onlineUsersMap.current.set(id, lastSeen);
+              active.add(id);
+            });
           }
         }
       });
 
-      setOnlineUsers(active);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'online_profiles'));
+      setOnlineUsers(prev => {
+        const merged = new Set([...prev, ...active]);
+        return merged;
+      });
+    }, (error: any) => {
+      if (!error?.code?.includes('permission') && !error?.message?.includes('permission')) {
+        logger.warn('[Online Profiles] Listener notice:', error?.code);
+      }
+    });
+
+    const handleUserStatus = (payload: any) => {
+      if (!payload) return;
+      const ids = [payload.userId, payload.firebaseUid, payload.profileId, payload.username].filter(Boolean);
+      const now = Date.now();
+      setOnlineUsers(prev => {
+        const next = new Set(prev);
+        if (payload.status === 'online') {
+          ids.forEach(id => {
+            next.add(id);
+            onlineUsersMap.current.set(id, now);
+          });
+        } else if (payload.status === 'offline') {
+          ids.forEach(id => {
+            next.delete(id);
+            onlineUsersMap.current.delete(id);
+          });
+        }
+        return next;
+      });
+    };
+
+    const handleOnlineUsersList = (payload: any) => {
+      if (!payload?.users || !Array.isArray(payload.users)) return;
+      const now = Date.now();
+      setOnlineUsers(prev => {
+        const next = new Set(prev);
+        payload.users.forEach((id: string) => {
+          if (id) {
+            next.add(id);
+            onlineUsersMap.current.set(id, now);
+          }
+        });
+        return next;
+      });
+    };
+
+    if (socket) {
+      socket.on('force_logout', (data: any) => {
+        logger.warn('🚨 [Security] Received force_logout event from server:', data);
+        handleForceLogout(data?.reason || 'socket_force_logout');
+      });
+      socket.on('auth_revoked', (data: any) => {
+        logger.warn('🚨 [Security] Received auth_revoked event from server:', data);
+        handleForceLogout('auth_revoked');
+      });
+      socket.on('user_status', handleUserStatus);
+      socket.on('online_users_list', handleOnlineUsersList);
+      socket.on('user_follow_updated', (data: any) => {
+        if (!data) return;
+        setProfile((prev: any) => {
+          if (!prev) return prev;
+          const isTarget = prev.id === data.targetUserId || prev.uid === data.targetUserId || prev.userId === data.targetUserId;
+          if (isTarget) {
+            const nextFollowers = typeof data.followersCount === 'number'
+              ? data.followersCount
+              : Math.max(0, (prev.followersCount || 0) + (data.isFollowing ? 1 : -1));
+            return { ...prev, followersCount: nextFollowers };
+          }
+          return prev;
+        });
+      });
+      socket.emit('get_online_users');
+    }
 
     const cleanupInterval = setInterval(() => {
       let changed = false;
@@ -3166,6 +3591,10 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     return () => {
       unsubscribe();
+      if (socket) {
+        socket.off('user_status', handleUserStatus);
+        socket.off('online_users_list', handleOnlineUsersList);
+      }
       clearInterval(cleanupInterval);
     };
   }, [db, user?.uid, profile?.id]);
@@ -3173,7 +3602,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const lastPresenceStatus = useRef<string>('');
 
   const goOnline = async () => {
-    if (!db || !profile || !user || isSafeMode) return;
+    if (!profile || isSafeMode) return;
     
     const wantsOnline = profile.messagingSettings?.onlineStatus !== false;
     const status = wantsOnline ? 'online' : 'offline';
@@ -3181,35 +3610,65 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Optimization: Don't write if already in desired state
     if (lastPresenceStatus.current === status) return;
 
-    // Throttle: max once per 30s (was 60s — too slow, causes stale "Active now")
-    if (!canWrite('presence', 30000)) return; 
+    // Throttle: max once per 20s
+    if (!canWrite('presence', 20000)) return; 
     
+    lastPresenceStatus.current = status;
+
+    // 1. Device server native presence (Socket.IO & Redis)
     try {
-      lastPresenceStatus.current = status;
-      await updateDoc(doc(db, 'profiles', profile.id), {
-        status: status,
-        lastSeen: serverTimestamp(),
-        lastActiveAt: serverTimestamp()
-      });
-    } catch (e) {
-      logger.warn("Presence status update failed", e);
-      lastPresenceStatus.current = '';
+      api.users.updatePresence?.(status).catch(() => {});
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        socket.emit('set_status', { status });
+      }
+    } catch {}
+
+    // 2. Firestore optional sync (silently catch permission errors)
+    if (db && profile.id) {
+      try {
+        await updateDoc(doc(db, 'profiles', profile.id), {
+          status: status,
+          lastSeen: serverTimestamp(),
+          lastActiveAt: serverTimestamp()
+        });
+      } catch (e: any) {
+        // Silently ignore permission-denied / offline errors on Firebase
+        if (!e?.message?.includes('permission') && !e?.code?.includes('permission')) {
+          logger.warn("Presence status sync notice", e?.message || e);
+        }
+      }
     }
   };
 
   const goOffline = async () => {
-    if (!db || !profile || !user || isSafeMode) return;
+    if (!profile || isSafeMode) return;
     
-    // Always allow going offline on logout/close
+    lastPresenceStatus.current = 'offline';
+
+    // 1. Device server native presence (Socket.IO & Redis)
     try {
-      lastPresenceStatus.current = 'offline';
-      await updateDoc(doc(db, 'profiles', profile.id), {
-        status: 'offline',
-        lastSeen: serverTimestamp(),
-        lastActiveAt: serverTimestamp()
-      });
-    } catch (e) {
-      logger.warn("Offline status update failed", e);
+      api.users.updatePresence?.('offline').catch(() => {});
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        socket.emit('set_status', { status: 'offline' });
+      }
+    } catch {}
+
+    // 2. Firestore optional sync (silently catch permission errors)
+    if (db && profile.id) {
+      try {
+        await updateDoc(doc(db, 'profiles', profile.id), {
+          status: 'offline',
+          lastSeen: serverTimestamp(),
+          lastActiveAt: serverTimestamp()
+        });
+      } catch (e: any) {
+        // Silently ignore permission-denied / offline errors on Firebase
+        if (!e?.message?.includes('permission') && !e?.code?.includes('permission')) {
+          logger.warn("Offline status sync notice", e?.message || e);
+        }
+      }
     }
   };
 
@@ -3222,7 +3681,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Call Signaling Listener
   useEffect(() => {
-    if (!db || !user?.uid) return;
+    if (!db || !user?.uid || !_auth.currentUser) return;
     
     // 1. Listen for calls in conversations (Strict limit)
     const convQ = query(
@@ -3231,7 +3690,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       limit(5)
     );
 
-    const unsubConv = onSnapshot(convQ, () => {}, (err) => logger.warn("Calls conv sync delayed", err));
+    const unsubConv = onSnapshot(convQ, () => {}, (err: any) => {
+      if (!err?.message?.includes('permission') && !err?.code?.includes('permission')) {
+        logger.warn("Calls conv sync notice", err?.message || err);
+      }
+    });
     
     // 2. Listen for calls (Both Incoming & Outgoing)
     const callsQ = query(
@@ -3506,7 +3969,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return err instanceof Error ? err : new Error(errorMessage);
   };
 
-  const loginWithEmail = async (identifier: string, pass: string, remember: boolean = true) => {
+  const loginWithEmail = async (identifier: string, pass: string, remember: boolean = true, locationData?: any) => {
     const input = identifier.trim();
     logger.info("[Diagnostics - Auth] loginWithEmail: Started routine for identifier:", input);
     
@@ -3734,8 +4197,19 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Primary: Authenticate with Device Database (PostgreSQL on device)
     let backendAuthSuccess = false;
     let backendUser: any = null;
+    let bRes: any = null;
     try {
-      const bRes: any = await api.auth.login(targetEmail, pass);
+      bRes = await api.auth.login({
+        identifier: targetEmail,
+        email: targetEmail,
+        password: pass,
+        location: locationData?.displayLocation || locationData?.location,
+        latitude: locationData?.latitude,
+        longitude: locationData?.longitude,
+      });
+      if (bRes && bRes.requires2FA) {
+        return bRes;
+      }
       if (bRes && (bRes.token || bRes.user)) {
         backendAuthSuccess = true;
         backendUser = bRes.user;
@@ -4165,9 +4639,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setUser(null);
     setActiveProfileId(null);
     setAllProfiles([]);
+    setLoading(false);
+    setAuthToken(null);
     try {
       localStorage.removeItem('aeirmist_active_profile_id');
       localStorage.removeItem('aeirmist_session');
+      localStorage.removeItem('aeirmist_user_profile');
+      localStorage.removeItem('aeirmist_cached_profile');
+      localStorage.removeItem('aeirmist_auth_token');
+      localStorage.removeItem('aeirmist_jwt_token');
+      localStorage.removeItem('aeirmist_saved_username');
       if (typeof window !== 'undefined') {
         window.history.replaceState({ activeTab: 'feed', _appNav: true }, '', '/');
         window.dispatchEvent(new CustomEvent('aeirmist-reset-to-feed'));
@@ -4394,8 +4875,98 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           localStorage.setItem('aeirmist_user_profile', JSON.stringify(freshCached));
           LocalSqlService.saveProfile(freshCached).catch(() => {});
         } catch (cacheErr) {}
+
+        // Immediate sync to backend PostgreSQL database
+        try {
+          const pgUpdatePayload: any = {};
+          if (data.username !== undefined) pgUpdatePayload.username = data.username;
+          if (data.displayName !== undefined) pgUpdatePayload.displayName = data.displayName;
+          if (data.bio !== undefined) pgUpdatePayload.bio = data.bio;
+          if (data.location !== undefined) pgUpdatePayload.location = data.location;
+          if (data.website !== undefined) pgUpdatePayload.website = data.website;
+          if (data.photoURL !== undefined || data.avatarKey !== undefined) pgUpdatePayload.avatarKey = data.avatarKey || data.photoURL;
+          if (data.coverURL !== undefined || data.bannerURL !== undefined || data.bannerKey !== undefined) pgUpdatePayload.bannerKey = data.bannerKey || data.bannerURL || data.coverURL;
+          if (data.socialLinks !== undefined) pgUpdatePayload.socialLinks = data.socialLinks;
+          if (data.privacySettings !== undefined) pgUpdatePayload.privacySettings = data.privacySettings;
+          // Extended personal info — now synced to PostgreSQL device server
+          if (data.phoneNumber !== undefined) pgUpdatePayload.phoneNumber = data.phoneNumber;
+          if (data.phoneCountryCode !== undefined) pgUpdatePayload.phoneCountryCode = data.phoneCountryCode;
+          if (data.phoneVerified !== undefined) pgUpdatePayload.phoneVerified = data.phoneVerified;
+          if (data.dateOfBirth !== undefined) pgUpdatePayload.dateOfBirth = data.dateOfBirth;
+          if (data.gender !== undefined) pgUpdatePayload.gender = data.gender;
+          if (data.relationshipStatus !== undefined) pgUpdatePayload.relationshipStatus = data.relationshipStatus;
+          if (data.relationshipStatusVisibility !== undefined) pgUpdatePayload.relationshipStatusVisibility = data.relationshipStatusVisibility;
+          if (data.pronouns !== undefined) pgUpdatePayload.pronouns = Array.isArray(data.pronouns) ? data.pronouns.join(' · ') : (data.pronouns || null);
+          if (data.tagline !== undefined) pgUpdatePayload.tagline = data.tagline;
+          if (data.fullName !== undefined) pgUpdatePayload.fullName = data.fullName;
+          if (data.personalEmail !== undefined) pgUpdatePayload.personalEmail = data.personalEmail;
+          if (data.recoveryEmail !== undefined) pgUpdatePayload.recoveryEmail = data.recoveryEmail;
+          if (data.recoveryPhone !== undefined) pgUpdatePayload.recoveryPhone = data.recoveryPhone;
+          if (data.isProfessional !== undefined) pgUpdatePayload.isProfessional = data.isProfessional;
+          if (data.isProfileLocked !== undefined) pgUpdatePayload.isProfileLocked = data.isProfileLocked;
+          if (data.category !== undefined) pgUpdatePayload.category = data.category;
+          if (data.themeSettings !== undefined) pgUpdatePayload.themeSettings = data.themeSettings;
+          if (data.locationData !== undefined) pgUpdatePayload.locationData = data.locationData;
+
+          if (Object.keys(pgUpdatePayload).length > 0) {
+            api.users.updateProfile(pgUpdatePayload).catch((pgErr) => {
+              logger.warn("[AeirmistContext] PostgreSQL profile sync notice:", pgErr);
+            });
+          }
+        } catch (sqlSyncErr) {}
       } catch (e: any) {
-        const errStr = String(e);
+        const errStr = String(e?.message || e || '');
+        const isPermissionError = errStr.includes('permission') || errStr.includes('Missing or insufficient') || errStr.includes('PERMISSION_DENIED') || errStr.includes('unauthenticated');
+        if (isPermissionError) {
+          logger.warn("[AeirmistContext] Firestore permission error — falling back to PostgreSQL + local cache only.", errStr);
+          try {
+            const freshCached = {
+              id: targetProfileId,
+              uid: user.uid,
+              ownerUid: user.uid,
+              isActive: true,
+              ...(profile || {}),
+              ...updateData
+            };
+            localStorage.setItem('aeirmist_cached_profile', JSON.stringify(freshCached));
+            localStorage.setItem('aeirmist_user_profile', JSON.stringify(freshCached));
+            LocalSqlService.saveProfile(freshCached).catch(() => {});
+          } catch (_cacheErr) {}
+          try {
+            const pgFbPayload: any = {};
+            if (data.username !== undefined) pgFbPayload.username = data.username;
+            if (data.displayName !== undefined) pgFbPayload.displayName = data.displayName;
+            if (data.bio !== undefined) pgFbPayload.bio = data.bio;
+            if (data.location !== undefined) pgFbPayload.location = data.location;
+            if (data.website !== undefined) pgFbPayload.website = data.website;
+            if (data.photoURL !== undefined || data.avatarKey !== undefined) pgFbPayload.avatarKey = data.avatarKey || data.photoURL;
+            if (data.coverURL !== undefined || data.bannerURL !== undefined || data.bannerKey !== undefined) pgFbPayload.bannerKey = data.bannerKey || data.bannerURL || data.coverURL;
+            if (data.socialLinks !== undefined) pgFbPayload.socialLinks = data.socialLinks;
+            if (data.privacySettings !== undefined) pgFbPayload.privacySettings = data.privacySettings;
+            if (data.phoneNumber !== undefined) pgFbPayload.phoneNumber = data.phoneNumber;
+            if (data.phoneCountryCode !== undefined) pgFbPayload.phoneCountryCode = data.phoneCountryCode;
+            if (data.phoneVerified !== undefined) pgFbPayload.phoneVerified = data.phoneVerified;
+            if (data.dateOfBirth !== undefined) pgFbPayload.dateOfBirth = data.dateOfBirth;
+            if (data.gender !== undefined) pgFbPayload.gender = data.gender;
+            if (data.relationshipStatus !== undefined) pgFbPayload.relationshipStatus = data.relationshipStatus;
+            if (data.relationshipStatusVisibility !== undefined) pgFbPayload.relationshipStatusVisibility = data.relationshipStatusVisibility;
+            if (data.pronouns !== undefined) pgFbPayload.pronouns = Array.isArray(data.pronouns) ? data.pronouns.join(' · ') : (data.pronouns || null);
+            if (data.tagline !== undefined) pgFbPayload.tagline = data.tagline;
+            if (data.fullName !== undefined) pgFbPayload.fullName = data.fullName;
+            if (data.personalEmail !== undefined) pgFbPayload.personalEmail = data.personalEmail;
+            if (data.recoveryEmail !== undefined) pgFbPayload.recoveryEmail = data.recoveryEmail;
+            if (data.recoveryPhone !== undefined) pgFbPayload.recoveryPhone = data.recoveryPhone;
+            if (data.isProfessional !== undefined) pgFbPayload.isProfessional = data.isProfessional;
+            if (data.isProfileLocked !== undefined) pgFbPayload.isProfileLocked = data.isProfileLocked;
+            if (data.category !== undefined) pgFbPayload.category = data.category;
+            if (data.themeSettings !== undefined) pgFbPayload.themeSettings = data.themeSettings;
+            if (data.locationData !== undefined) pgFbPayload.locationData = data.locationData;
+            if (Object.keys(pgFbPayload).length > 0) {
+              api.users.updateProfile(pgFbPayload).catch(() => {});
+            }
+          } catch (_pgFbErr) {}
+          return; // Don't throw — optimistic update applied, PG save attempted
+        }
         if (errStr.includes('exceeds the maximum allowed size') || errStr.includes('size')) {
           logger.error("[AeirmistContext] CRITICAL: Profile document size limit exceeded. Initiating Storage Cleanup...");
           
@@ -5840,8 +6411,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const checkUsernameAvailable = async (rawUsername: string, excludeUid?: string) => {
     const norm = normalizeUsername(rawUsername);
     if (!norm || norm.length < 3) return { available: false, error: "Username must be at least 3 characters." };
-    if (!db) return { available: false, error: "Database service unavailable." };
     if (isSafeMode) return { available: true };
+
+    // Check backend PostgreSQL database first
+    try {
+      const apiRes = await api.auth.checkUsername(norm);
+      if (apiRes && apiRes.available === false) {
+        return { available: false, error: apiRes.error || "Username is already taken." };
+      }
+    } catch (_) {}
+
+    if (!db) return { available: true };
 
     try {
       // 1. Lock document check in 'usernames' collection
@@ -5991,7 +6571,13 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return { available: true };
     } catch (err) {
       logger.warn("Username availability check warning:", err);
-      return { available: false, error: "Database error checking username availability. Please retry." };
+      try {
+        const apiRes = await api.auth.checkUsername(norm);
+        if (apiRes && typeof apiRes.available === 'boolean') {
+          return apiRes;
+        }
+      } catch (_) {}
+      return { available: true };
     }
   };
 
@@ -6185,6 +6771,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const getFollowers = async (targetId: string) => {
+    try {
+      const res = await api.users.getFollowers(targetId);
+      if (res?.followers && Array.isArray(res.followers) && res.followers.length > 0) {
+        return res.followers.map((f: any) => ({
+          ...f,
+          photoURL: f.avatarKey ? (f.avatarKey.startsWith('http') || f.avatarKey.startsWith('data:') ? f.avatarKey : `/media/${f.avatarKey.replace(/^\/+media\/+/, '')}`) : null,
+        }));
+      }
+    } catch {}
+
     if (!db) return [];
     try {
       const q = query(collection(db, 'profiles'), where('social.following', 'array-contains', targetId));
@@ -6199,6 +6795,16 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const getFollowing = async (targetId: string) => {
+    try {
+      const res = await api.users.getFollowing(targetId);
+      if (res?.following && Array.isArray(res.following) && res.following.length > 0) {
+        return res.following.map((f: any) => ({
+          ...f,
+          photoURL: f.avatarKey ? (f.avatarKey.startsWith('http') || f.avatarKey.startsWith('data:') ? f.avatarKey : `/media/${f.avatarKey.replace(/^\/+media\/+/, '')}`) : null,
+        }));
+      }
+    } catch {}
+
     if (!db) return [];
     try {
       const targetDoc = await getDoc(doc(db, 'profiles', targetId));
@@ -6226,149 +6832,146 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const isFollowPending = (targetId: string) => profile?.social?.pendingFollowing?.includes(targetId) || false;
   
-  const isFollowing = (targetId: string) => profile?.social?.following?.includes(targetId) || false;
+  const isFollowing = (targetId: string) => {
+    if (!targetId || !profile?.social?.following) return false;
+    const list = profile.social.following;
+    const clean = String(targetId).replace(/^profile_/, '');
+    return list.includes(targetId) || list.includes(clean) || list.includes(`profile_${clean}`);
+  };
 
   const toggleFollow = async (targetId: string, targetProfileData?: any) => {
     logger.info("Toggle follow called:", { targetId, profileId: profile?.id });
-    if (!db || !profile || !user) {
-      logger.info("Toggle follow aborted: Missing db, profile, or user", { db: !!db, profile: !!profile, user: !!user });
+    if (!profile || !targetId) {
+      logger.info("Toggle follow aborted: Missing profile or targetId");
+      return;
+    }
+
+    const cleanTarget = String(targetId).replace(/^profile_/, '');
+    const myId = String(profile.id).replace(/^profile_/, '');
+    const myUid = String(user?.uid || '').replace(/^profile_/, '');
+    if (cleanTarget === myId || cleanTarget === myUid) {
+      addToast({
+        title: "Notice",
+        message: "You cannot follow your own account",
+        type: "info"
+      });
       return;
     }
     
-    if (!canWrite(`follow_${targetId}`, 2000)) {
+    if (!canWrite(`follow_${cleanTarget}`, 1000)) {
       logger.info("Toggle follow aborted: Throttled");
       return;
     }
     
-    const isFollowing = (profile.social?.following || []).includes(targetId);
-    const isPending = (profile.social?.pendingFollowing || []).includes(targetId);
-    logger.info("Toggle follow state:", { isFollowing, isPending });                
+    const isCurrentlyFollowing = isFollowing(targetId);
+    const nextFollowing = !isCurrentlyFollowing;
+    logger.info("Toggle follow state:", { isCurrentlyFollowing, nextFollowing, targetId });                
     
+    // 1. Optimistic Instant UI Update (0ms)
+    setProfile((prev: any) => {
+      if (!prev) return prev;
+      const currentList = prev.social?.following || [];
+      const updatedList = nextFollowing
+        ? [...currentList.filter((id: string) => id !== targetId && id !== cleanTarget), targetId]
+        : currentList.filter((id: string) => id !== targetId && id !== cleanTarget && id !== `profile_${cleanTarget}`);
+      const updated = {
+        ...prev,
+        social: {
+          ...prev.social,
+          following: updatedList
+        },
+        followingCount: Math.max(0, (prev.followingCount || 0) + (nextFollowing ? 1 : -1))
+      };
+      try {
+        localStorage.setItem('aeirmist_user_profile', JSON.stringify(updated));
+        localStorage.setItem('aeirmist_cached_profile', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // 2. Authoritative PostgreSQL Backend Execution
     try {
-      if (isFollowing) {
-        // Optimistic Unfollow
-        setProfile((prev: any) => ({
-          ...prev,
-          social: {
-            ...prev?.social,
-            following: (prev?.social?.following || []).filter((id: string) => id !== targetId)
-          },
-          followingCount: Math.max(0, (prev?.followingCount || 1) - 1)
-        }));
+      const res = await api.users.toggleFollow(targetId);
+      const actualFollowing = res?.following ?? nextFollowing;
 
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'profiles', profile.id), {
-          'social.following': arrayRemove(targetId),
-          followingCount: increment(-1)
-        });
-        batch.update(doc(db, 'profiles', targetId), {
-          'social.followers': arrayRemove(profile.id),
-          followersCount: increment(-1)
-        });
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-        return;
-      }
-
-      // Check if target follows me (for follow back notification)
-      const targetFollowsMe = (profile.social?.followers || []).includes(targetId);
-
-      // 2. Already pending -> Cancel request
-      if (isPending) {
-        // Optimistic Cancel Pending
-        setProfile((prev: any) => ({
-          ...prev,
-          social: {
-            ...prev?.social,
-            pendingFollowing: (prev?.social?.pendingFollowing || []).filter((id: string) => id !== targetId)
-          }
-        }));
-
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'profiles', profile.id), {
-          'social.pendingFollowing': arrayRemove(targetId)
-        });
-        const requestId = `req_${profile.id}_${targetId}`;
-        batch.delete(doc(db, 'follow_requests', requestId));
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-        return;
-      }
-
-      // 3. New Follow -> Check privacy
-      let snap = await getDoc(doc(db, 'profiles', targetId));
-      const targetInfo = snap.exists() ? snap.data() : (targetProfileData || {});
-
-      // requiresApproval should be true if either isPrivate, isProfileLocked, or privacySettings.privateProfile is set
-      const requiresApproval = targetInfo?.isPrivate || targetInfo?.isProfileLocked || targetInfo?.privacySettings?.privateProfile;
-
-      if (requiresApproval) {
-        // Optimistic Pending Request
-        setProfile((prev: any) => ({
-          ...prev,
-          social: {
-            ...prev?.social,
-            pendingFollowing: [...(prev?.social?.pendingFollowing || []), targetId]
-          }
-        }));
-
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'profiles', profile.id), {
-          'social.pendingFollowing': arrayUnion(targetId)
-        });
-        
-        const requestId = `req_${profile.id}_${targetId}`;
-        batch.set(doc(db, 'follow_requests', requestId), {
-          fromId: profile.id,
-          toId: targetId,
-          user: {
-            name: profile.displayName || profile.username || 'User',
-            avatar: profile.photoURL || '',
-            username: profile.username || '',
-            isVerified: profile.isVerified || false
-          },
-          status: 'pending',
-          createdAt: serverTimestamp()
-        });
-
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-        await createNotification(targetId, 'follow_request', `${profile.displayName || 'Someone'} requested to follow you.`, { profileId: profile.id, requestId });
-      } else {
-        // Optimistic Instant Follow
-        setProfile((prev: any) => ({
-          ...prev,
-          social: {
-            ...prev?.social,
-            following: [...(prev?.social?.following || []), targetId]
-          },
-          followingCount: (prev?.followingCount || 0) + 1
-        }));
-
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'profiles', profile.id), {
-          'social.following': arrayUnion(targetId),
-          followingCount: increment(1),
-          aeirmistLevel: increment(REWARDS.FOLLOW_GIVEN)
-        });
-        
-        batch.update(doc(db, 'profiles', targetId), {
-          'social.followers': arrayUnion(profile.id),
-          followersCount: increment(1)
-        });
-
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-        if (targetFollowsMe) {
-          await createNotification(targetId, 'follow_back', `${profile.displayName || 'Someone'} followed you back! Link established.`, { profileId: profile.id });
-        } else {
-          await createNotification(targetId, 'follow', `${profile.displayName || 'Someone'} started following you.`, { profileId: profile.id });
+      // Ensure local state exactly matches backend authority
+      setProfile((prev: any) => {
+        if (!prev) return prev;
+        const currentList = prev.social?.following || [];
+        const isPresent = currentList.some((id: string) => id === targetId || id === cleanTarget);
+        if (actualFollowing && !isPresent) {
+          const updated = {
+            ...prev,
+            social: { ...prev.social, following: [...currentList, targetId] },
+            followingCount: (prev.followingCount || 0) + 1
+          };
+          try {
+            localStorage.setItem('aeirmist_user_profile', JSON.stringify(updated));
+            localStorage.setItem('aeirmist_cached_profile', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        } else if (!actualFollowing && isPresent) {
+          const updated = {
+            ...prev,
+            social: { ...prev.social, following: currentList.filter((id: string) => id !== targetId && id !== cleanTarget) },
+            followingCount: Math.max(0, (prev.followingCount || 1) - 1)
+          };
+          try {
+            localStorage.setItem('aeirmist_user_profile', JSON.stringify(updated));
+            localStorage.setItem('aeirmist_cached_profile', JSON.stringify(updated));
+          } catch {}
+          return updated;
         }
+        return prev;
+      });
+
+      // Best-effort non-blocking sync to Firestore
+      if (db && profile?.id) {
+        try {
+          const batch = writeBatch(db);
+          if (actualFollowing) {
+            batch.update(doc(db, 'profiles', profile.id), {
+              'social.following': arrayUnion(targetId),
+              followingCount: increment(1)
+            });
+            batch.update(doc(db, 'profiles', targetId), {
+              'social.followers': arrayUnion(profile.id),
+              followersCount: increment(1)
+            });
+          } else {
+            batch.update(doc(db, 'profiles', profile.id), {
+              'social.following': arrayRemove(targetId),
+              followingCount: increment(-1)
+            });
+            batch.update(doc(db, 'profiles', targetId), {
+              'social.followers': arrayRemove(profile.id),
+              followersCount: increment(-1)
+            });
+          }
+          await batch.commit().catch(() => {});
+        } catch {}
       }
-    } catch (e) {
-      logger.error("Follow system update failed:", { targetId, error: e });
+      return res;
+    } catch (e: any) {
+      logger.error("Follow system API update failed:", { targetId, error: e });
+      // Revert optimistic update only on actual network/API failure
+      setProfile((prev: any) => {
+        if (!prev) return prev;
+        const currentList = prev.social?.following || [];
+        const reverted = isCurrentlyFollowing
+          ? [...currentList.filter((id: string) => id !== targetId && id !== cleanTarget), targetId]
+          : currentList.filter((id: string) => id !== targetId && id !== cleanTarget);
+        return {
+          ...prev,
+          social: { ...prev.social, following: reverted },
+          followingCount: Math.max(0, (prev.followingCount || 0) + (isCurrentlyFollowing ? 1 : -1))
+        };
+      });
       addToast({
         title: "Connection Error",
-        message: "Failed to update follow status — please check your connection and try again",
+        message: e?.message || "Failed to update follow status — please try again",
         type: "warning"
       });
-      logger.warn("Quota error in follow system", e);
     }
   };
 
@@ -6471,42 +7074,54 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const recalculateFollowCounts = async (profileId?: string) => {
     const targetId = profileId || profile?.id;
-    if (!db || !targetId) return;
+    if (!targetId) return;
     try {
-      // Get alive followers
+      // 1. Check PostgreSQL backend authoritative profile counts
+      let backendFollowers = 0;
+      let backendFollowing = 0;
+      try {
+        const cleanTarget = String(targetId).replace(/^profile_/, '');
+        const res = await api.users.getProfile(cleanTarget);
+        if (res?.profile) {
+          backendFollowers = Number(res.profile.followersCount || 0);
+          backendFollowing = Number(res.profile.followingCount || 0);
+        }
+      } catch {}
+
+      // 2. Get followers & following lists
       const followers = await getFollowers(targetId);
       const aliveFollowerIds = followers.map(f => f.id);
       
-      // Get target profile doc to get following list
-      const targetDoc = await getDoc(doc(db, 'profiles', targetId));
-      if (!targetDoc.exists()) return;
-      const targetData = targetDoc.data();
-      const rawFollowing = targetData?.social?.following || [];
-
-      // Filter alive following
       let aliveFollowingIds: string[] = [];
-      if (rawFollowing.length > 0) {
+      try {
         const followingProfiles = await getFollowing(targetId);
         aliveFollowingIds = followingProfiles.map(f => f.id);
-      }
+      } catch {}
 
-      await updateDoc(doc(db, 'profiles', targetId), {
-        'social.followers': aliveFollowerIds,
-        'social.following': aliveFollowingIds,
-        followersCount: aliveFollowerIds.length,
-        followingCount: aliveFollowingIds.length
-      });
+      const finalFollowersCount = Math.max(backendFollowers, aliveFollowerIds.length);
+      const finalFollowingCount = Math.max(backendFollowing, aliveFollowingIds.length);
+
+      if (db) {
+        try {
+          await updateDoc(doc(db, 'profiles', targetId), {
+            ...(aliveFollowerIds.length > 0 ? { 'social.followers': aliveFollowerIds } : {}),
+            ...(aliveFollowingIds.length > 0 ? { 'social.following': aliveFollowingIds } : {}),
+            followersCount: finalFollowersCount,
+            followingCount: finalFollowingCount
+          });
+        } catch {}
+      }
 
       if (targetId === profile?.id) {
         setProfile((prev: any) => ({
           ...prev,
           social: {
             ...prev?.social,
-            followers: aliveFollowerIds,
-            following: aliveFollowingIds
+            followers: aliveFollowerIds.length > 0 ? aliveFollowerIds : (prev?.social?.followers || []),
+            following: aliveFollowingIds.length > 0 ? aliveFollowingIds : (prev?.social?.following || [])
           },
-          followersCount: aliveFollowerIds.length,
-          followingCount: aliveFollowingIds.length
+          followersCount: finalFollowersCount,
+          followingCount: finalFollowingCount
         }));
       }
     } catch (e) {
@@ -6953,43 +7568,51 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const clearChat = async (conversationId: string, clearType: 'me' | 'both') => {
     logger.info(`[Clear Chat Initiated] Type: ${clearType}`, { conversationId });
-    if (!db || !profile) return;
-    if (isSafeMode) {
-      logger.info(`[Clear Chat Sandbox Bypass / No DB] Type: ${clearType}`, { conversationId });
-      return;
-    }
-    if (!canWrite(`clearChat_${conversationId}`, 1000)) {
-      logger.warn(`[Clear Chat Throttled]`, { conversationId });
-      return;
-    }
+    if (!conversationId) return;
+
+    // 1. Dispatch custom event for 0ms UI update
+    window.dispatchEvent(new CustomEvent('aeirmist_chat_cleared', {
+      detail: { conversationId, clearType }
+    }));
+
+    // 2. PostgreSQL Backend Sync
     try {
-      if (clearType === 'me') {
-        await updateDoc(doc(db, 'conversations', conversationId), {
-          [`clearedAt.${profile.id}`]: serverTimestamp(),
-          [`unreadCount.${profile.id}`]: 0
-        });
-        logger.info(`[Clear Chat Successful] Type: ${clearType}`, { conversationId });
-      } else {
-        const msgCol = collection(db, 'conversations', conversationId, 'messages');
-        const snap = await getDocs(msgCol);
-        const batch = writeBatch(db);
-        snap.docs.forEach((d) => {
-          batch.delete(d.ref);
-        });
-        batch.update(doc(db, 'conversations', conversationId), {
-          lastMessage: {
-            text: 'Buffer cleared.',
-            senderId: profile.id,
-            timestamp: serverTimestamp(),
-            type: 'text'
-          }
-        });
-        await batch.commit(); logger.security("User Ban Toggled", { action: "toggle_ban" });
-        logger.info(`[Clear Chat Successful] Type: ${clearType} (All messages deleted, metadata updated)`, { conversationId });
+      await api.chat.clearChat(conversationId, clearType);
+      logger.info(`[Clear Chat Backend Success] Type: ${clearType}`, { conversationId });
+    } catch (apiErr) {
+      logger.warn('[Clear Chat Backend Notice]', apiErr);
+    }
+
+    // 3. Firestore fallback
+    if (db && profile?.id) {
+      try {
+        if (clearType === 'me') {
+          await updateDoc(doc(db, 'conversations', conversationId), {
+            [`clearedAt.${profile.id}`]: serverTimestamp(),
+            [`unreadCount.${profile.id}`]: 0
+          });
+          logger.info(`[Clear Chat Successful] Type: ${clearType}`, { conversationId });
+        } else {
+          const msgCol = collection(db, 'conversations', conversationId, 'messages');
+          const snap = await getDocs(msgCol);
+          const batch = writeBatch(db);
+          snap.docs.forEach((d) => {
+            batch.delete(d.ref);
+          });
+          batch.update(doc(db, 'conversations', conversationId), {
+            lastMessage: {
+              text: 'Buffer cleared.',
+              senderId: profile.id,
+              timestamp: serverTimestamp(),
+              type: 'text'
+            }
+          });
+          await batch.commit();
+          logger.info(`[Clear Chat Successful] Type: ${clearType} (All messages deleted, metadata updated)`, { conversationId });
+        }
+      } catch (e) {
+        // Safe bypass
       }
-    } catch (e) {
-      logger.error(`[Clear Chat Failed] Type: ${clearType}`, e);
-      handleFirestoreError(e, OperationType.UPDATE, `conversations/${conversationId}`);
     }
   };
 
@@ -7127,30 +7750,40 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const addReaction = async (conversationId: string, messageId: string, newEmoji: string, oldEmoji?: string) => {
-    if (!db || !profile || !canWrite(`reaction_${messageId}_${newEmoji}`, 5000)) return;
+    if (!profile || !canWrite(`reaction_${messageId}_${newEmoji}`, 500)) return;
     try {
-      const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
-      const updates: any = {
-        [`userReactions.${profile.uid}`]: newEmoji,
-        [`reactions.${newEmoji}`]: increment(1)
-      };
-      if (oldEmoji) {
-        updates[`reactions.${oldEmoji}`] = increment(-1);
+      if (messageId) {
+        await api.chat.addReaction(messageId, newEmoji).catch(() => {});
       }
-      await updateDoc(msgRef, updates);
+      if (db && conversationId && messageId) {
+        const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
+        const updates: any = {
+          [`userReactions.${profile.uid}`]: newEmoji,
+          [`reactions.${newEmoji}`]: increment(1)
+        };
+        if (oldEmoji) {
+          updates[`reactions.${oldEmoji}`] = increment(-1);
+        }
+        await updateDoc(msgRef, updates).catch(() => {});
+      }
     } catch (e) {
       logger.warn("Reaction addition failed", e);
     }
   };
 
   const removeReaction = async (conversationId: string, messageId: string, emoji: string) => {
-    if (!db || !profile || !canWrite(`reaction_remove_${messageId}_${emoji}`, 5000)) return;
+    if (!profile || !canWrite(`reaction_remove_${messageId}_${emoji}`, 500)) return;
     try {
-      const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
-      await updateDoc(msgRef, {
-        [`reactions.${emoji}`]: increment(-1),
-        [`userReactions.${profile.uid}`]: ""
-      });
+      if (messageId) {
+        await api.chat.removeReaction(messageId, emoji).catch(() => {});
+      }
+      if (db && conversationId && messageId) {
+        const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
+        await updateDoc(msgRef, {
+          [`reactions.${emoji}`]: increment(-1),
+          [`userReactions.${profile.uid}`]: ""
+        }).catch(() => {});
+      }
     } catch (e) {
       logger.warn("Reaction removal failed", e);
     }
@@ -7327,6 +7960,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     floatingChatHead,
     setFloatingChatHead,
     floatingChatHeads,
+    setFloatingChatHeads,
     removeFloatingChatHead,
     featureFlags,
     updateFeatureFlag,
@@ -7359,7 +7993,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     isSafeMode, setIsSafeMode, needsPasswordOnboarding, setNeedsPasswordOnboarding,
     isVaultOpen, setIsVaultOpen, isVaultUnlocked, setIsVaultUnlocked, openVault,
     showVerificationCelebration, setShowVerificationCelebration,
-    floatingChatHead, floatingChatHeads
+    floatingChatHead, floatingChatHeads, setFloatingChatHeads
   ]);
 
   return (

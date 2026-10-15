@@ -195,8 +195,8 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
         setIsHovered(false);
         if (isPlaying) setShowControls(false);
       }}
-      className={`relative w-full aspect-video bg-black rounded-xl overflow-hidden shadow-2xl group select-none ${
-        isFullscreen ? 'rounded-none h-screen w-screen flex items-center justify-center' : ''
+      className={`relative w-full aspect-video bg-black rounded-none sm:rounded-2xl overflow-hidden shadow-2xl group select-none ${
+        isFullscreen ? 'h-screen w-screen flex items-center justify-center' : ''
       }`}
     >
       {/* Video Element */}
@@ -261,7 +261,7 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
             <h3 className="text-lg font-semibold text-white mb-1">Couldn't load this video.</h3>
             <p className="text-xs text-white/60 mb-6">
               {video.videoURL?.startsWith('blob:') 
-                ? 'This video was saved locally before cloud storage was configured. Please re-upload with Cloudinary connected.'
+                ? 'This video was saved as a temporary local preview. Please re-upload to store it on the Aeirmist server.'
                 : 'Please check your connection or try refreshing the stream.'}
             </p>
             <div className="flex items-center gap-3">

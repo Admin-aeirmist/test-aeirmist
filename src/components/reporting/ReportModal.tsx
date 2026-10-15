@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, AlertTriangle, ChevronRight, Loader2, CheckCircle, Upload, Shield } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { db, storage } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { api } from '../../services/api/client';
 import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { logger } from '@/src/utils/logger';
 
 
@@ -78,7 +78,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       }
 
       let attachmentObj = null;
-      if (file && storage) {
+      if (file) {
         if (!file.type || !file.type.startsWith('image/')) {
           addToast({ title: 'Invalid File', message: 'Only image files are supported.', type: 'warning' });
           setIsSubmitting(false);
@@ -90,22 +90,32 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           return;
         }
 
-        const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
-        const base = file.name.split('.').slice(0, -1).join('.').toLowerCase().replace(/[^a-z0-9_-]/g, '_').substring(0, 30);
-        const rand = Math.random().toString(36).substring(2, 8);
-        const safeName = `${base || 'screenshot'}_${Date.now()}_${rand}.${ext}`;
+        try {
+          const uploaded = await api.media.upload(file, 'reports');
+          const downloadUrl = uploaded.url || `/media/${uploaded.key}`;
 
-        const fileRef = ref(storage, `reports/${user.uid}/${safeName}`);
-        await uploadBytes(fileRef, file, { contentType: file.type || 'image/png' });
-        const downloadUrl = await getDownloadURL(fileRef);
-
-        attachmentObj = {
-          url: downloadUrl,
-          name: file.name,
-          contentType: file.type || 'image/png',
-          size: file.size,
-          uploadedAt: new Date().toISOString()
-        };
+          attachmentObj = {
+            url: downloadUrl,
+            name: file.name,
+            contentType: file.type || 'image/png',
+            size: file.size,
+            uploadedAt: new Date().toISOString()
+          };
+        } catch (uploadErr) {
+          logger.warn('[ReportModal] Native upload failed, falling back to data URL:', uploadErr);
+          const reader = new FileReader();
+          const dataUrl = await new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+          attachmentObj = {
+            url: dataUrl,
+            name: file.name,
+            contentType: file.type || 'image/png',
+            size: file.size,
+            uploadedAt: new Date().toISOString()
+          };
+        }
       }
 
       const priority = AUTO_PRIORITIES[selectedReason] || 'low';

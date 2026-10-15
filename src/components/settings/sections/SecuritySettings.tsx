@@ -33,6 +33,7 @@ import { DevicesAndSessions } from './security/DevicesAndSessions';
 import { EmailChangeModal } from './security/EmailChangeModal';
 import { SecurityTimeline } from './security/SecurityTimeline';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../../services/api/client';
 
 
 const SectionHeader = ({ title, desc }: { title: string, desc: string }) => (
@@ -42,8 +43,8 @@ const SectionHeader = ({ title, desc }: { title: string, desc: string }) => (
   </div>
 );
 
-const Card = ({ children, className = "" }: { children: React.ReactNode, className?: string }) => (
-  <div className={`p-6 rounded-[2rem] bg-white/[0.03] border border-white/5 space-y-4 ${className}`}>
+const Card = ({ children, className = "", id }: { children: React.ReactNode, className?: string, id?: string }) => (
+  <div id={id} className={`p-6 rounded-[2rem] bg-white/[0.03] border border-white/5 space-y-4 ${className}`}>
     {children}
   </div>
 );
@@ -96,6 +97,7 @@ const SecuritySettings = () => {
   const [recoveryEmail, setRecoveryEmail] = useState(profile?.recoveryEmail || '');
   const [recoveryPhone, setRecoveryPhone] = useState(profile?.recoveryPhone || '');
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(profile?.twoFactorEnabled || false);
+  const [isSavingRecovery, setIsSavingRecovery] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -144,22 +146,26 @@ const SecuritySettings = () => {
     return () => unsubscribe();
   }, [db, user]);
 
-  // Active sessions count listener
+  // Active sessions count listener (100% native server, 0% Firebase)
   useEffect(() => {
-    if (!db || !user) return;
-
-    const q = query(
-      collection(db, 'login_sessions'),
-      where('userId', '==', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const activeDocs = snapshot.docs.filter(d => !d.data().revoked);
-      setSessionsCount(activeDocs.length || 1);
-    });
-
-    return () => unsubscribe();
-  }, [db, user]);
+    let mounted = true;
+    const fetchSessionCount = async () => {
+      try {
+        const res = await api.auth.getSessions();
+        if (mounted && res && Array.isArray(res.sessions)) {
+          setSessionsCount(res.sessions.length || 1);
+        }
+      } catch {
+        if (mounted) setSessionsCount(1);
+      }
+    };
+    fetchSessionCount();
+    const interval = setInterval(fetchSessionCount, 30000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [user]);
 
   const handleConfirmDelete = async () => {
     if (!user) return;
@@ -277,12 +283,67 @@ const SecuritySettings = () => {
     }
   };
 
+  const handleSaveRecovery = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!recoveryEmail.trim() && !recoveryPhone.trim()) {
+      addToast({
+        title: 'Input Required',
+        message: 'Please provide at least a recovery email or phone number.',
+        type: 'warning'
+      });
+      return;
+    }
+    setIsSavingRecovery(true);
+    try {
+      await updateProfile({
+        recoveryEmail: recoveryEmail.trim(),
+        recoveryPhone: recoveryPhone.trim()
+      });
+      await logActivity('recovery_contact_updated', `Recovery contact set to ${recoveryEmail.trim() || recoveryPhone.trim()}`);
+      addToast({
+        title: 'Recovery Contact Saved',
+        message: 'Your backup contact details have been securely updated.',
+        type: 'success'
+      });
+    } catch (err: any) {
+      addToast({
+        title: 'Save Failed',
+        message: err.message || 'Could not save recovery contact.',
+        type: 'warning'
+      });
+    } finally {
+      setIsSavingRecovery(false);
+    }
+  };
+
   const handleActionClick = (actionKey: string) => {
-    if (actionKey === 'password_set') setActiveSubSection('password');
-    else if (actionKey === 'two_factor') setActiveSubSection('2fa');
-    else if (actionKey === 'email_verified') handleVerifyEmail();
-    else if (actionKey === 'devices_reviewed') setActiveSubSection('devices');
-    else if (actionKey === 'recovery_set') setActiveSubSection('recovery');
+    if (actionKey === 'password_set') {
+      setActiveSubSection('password');
+      setTimeout(() => {
+        const el = document.getElementById('password-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 60);
+    } else if (actionKey === 'two_factor') {
+      const el = document.getElementById('2fa-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!twoFactorEnabled) {
+        handleToggle2FA();
+      }
+    } else if (actionKey === 'email_verified') {
+      const el = document.getElementById('email-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      handleVerifyEmail();
+    } else if (actionKey === 'devices_reviewed') {
+      const el = document.getElementById('devices-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else if (actionKey === 'recovery_set') {
+      const el = document.getElementById('recovery-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => {
+        const input = document.getElementById('recovery-email-input');
+        if (input) (input as HTMLElement).focus();
+      }, 300);
+    }
   };
 
   return (
@@ -304,10 +365,12 @@ const SecuritySettings = () => {
       />
 
       {/* Devices & Sessions Management */}
-      <DevicesAndSessions />
+      <div id="devices-section">
+        <DevicesAndSessions />
+      </div>
 
       {/* Section 1: Password */}
-      <Card>
+      <Card id="password-section">
         <CardHeader 
           icon={Lock} 
           title="Password Management" 
@@ -344,7 +407,7 @@ const SecuritySettings = () => {
       </Card>
 
       {/* Section 2: Email Verification & Change */}
-      <Card>
+      <Card id="email-section">
         <CardHeader 
           icon={Mail} 
           title="Email & Identity" 
@@ -375,7 +438,7 @@ const SecuritySettings = () => {
       </Card>
 
       {/* Section 3: 2FA */}
-      <Card>
+      <Card id="2fa-section">
         <CardHeader 
           icon={Shield} 
           title="Two-Factor Authentication" 
@@ -393,8 +456,66 @@ const SecuritySettings = () => {
         </button>
       </Card>
 
-      {/* Section 4: Biometric / Fingerprint App Lock */}
-      <Card>
+      {/* Section 4: Account Recovery Contact */}
+      <Card id="recovery-section">
+        <CardHeader 
+          icon={Phone} 
+          title="Account Recovery Contact" 
+          desc="Backup email address and phone number used for account restoration."
+          status={profile?.recoveryEmail || profile?.recoveryPhone ? 'Configured' : 'Not Set'}
+          statusColor={profile?.recoveryEmail || profile?.recoveryPhone ? 'bg-[var(--color-aeirmist-cyan)]' : 'bg-orange-500'}
+        />
+        <div className="space-y-4 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest flex items-center gap-1.5">
+                <Mail size={12} className="text-[var(--color-aeirmist-cyan)]" />
+                Recovery Email
+              </label>
+              <input
+                id="recovery-email-input"
+                type="email"
+                value={recoveryEmail}
+                onChange={(e) => setRecoveryEmail(e.target.value)}
+                placeholder="backup@example.com"
+                className="w-full h-11 px-4 rounded-xl bg-white/[0.03] border border-white/10 text-white text-xs font-mono focus:outline-none focus:border-[var(--color-aeirmist-cyan)]/50 transition-colors"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest flex items-center gap-1.5">
+                <Phone size={12} className="text-[var(--color-aeirmist-cyan)]" />
+                Recovery Phone
+              </label>
+              <input
+                type="tel"
+                value={recoveryPhone}
+                onChange={(e) => setRecoveryPhone(e.target.value)}
+                placeholder="+880 1XXX-XXXXXX"
+                className="w-full h-11 px-4 rounded-xl bg-white/[0.03] border border-white/10 text-white text-xs font-mono focus:outline-none focus:border-[var(--color-aeirmist-cyan)]/50 transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+            <span className="text-[10px] text-white/40 font-mono">
+              {profile?.recoveryEmail || profile?.recoveryPhone 
+                ? 'Protected by encrypted backup credentials.' 
+                : 'No recovery contact set. Recommended to add at least one.'}
+            </span>
+            <button
+              type="button"
+              onClick={handleSaveRecovery}
+              disabled={isSavingRecovery}
+              className="px-5 py-2.5 rounded-xl bg-[var(--color-aeirmist-cyan)] text-black font-bold uppercase text-[10px] tracking-widest hover:bg-[var(--color-aeirmist-cyan)]/90 transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-[var(--color-aeirmist-cyan)]/10"
+            >
+              {isSavingRecovery ? 'Saving...' : 'Save Contact'}
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Section 5: Biometric / Fingerprint App Lock */}
+      <Card id="biometric-section">
         <CardHeader 
           icon={Fingerprint} 
           title="Biometric App Lock" 

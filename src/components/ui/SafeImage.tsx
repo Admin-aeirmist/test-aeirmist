@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ImageIcon } from 'lucide-react';
 import { mediaService } from '../../services/MediaService';
 import { logger } from '@/src/utils/logger';
+import { normalizeMediaUrl } from '@/src/utils/mediaUtils';
 
 
 interface SafeImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
@@ -23,7 +24,8 @@ export const SafeImage: React.FC<SafeImageProps> = ({
   onError,
   ...props 
 }) => {
-  const [currentSrc, setCurrentSrc] = useState<string | undefined>(blurThumbnail || src);
+  const normalizedInitial = normalizeMediaUrl(src);
+  const [currentSrc, setCurrentSrc] = useState<string | undefined>(blurThumbnail || normalizedInitial);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isError, setIsError] = useState(false);
 
@@ -36,11 +38,12 @@ export const SafeImage: React.FC<SafeImageProps> = ({
 
     const loadImage = async () => {
       try {
-        let finalSrc = src;
+        const normalized = normalizeMediaUrl(src);
+        let finalSrc = normalized;
         
-        if (useCache && !src.startsWith('data:') && !src.startsWith('blob:')) {
+        if (useCache && !normalized.startsWith('data:') && !normalized.startsWith('blob:')) {
           // Attempt to get cached version or fetch and cache
-          finalSrc = await mediaService.getCachedMediaURL(src, 'image/webp');
+          finalSrc = await mediaService.getCachedMediaURL(normalized, 'image/webp');
         }
 
         if (isMounted) {
@@ -48,7 +51,7 @@ export const SafeImage: React.FC<SafeImageProps> = ({
         }
       } catch (err) {
         logger.warn("[SafeImage] Cache/Fetch failed, using direct URL", err);
-        if (isMounted) setCurrentSrc(src);
+        if (isMounted) setCurrentSrc(normalizeMediaUrl(src));
       }
     };
 

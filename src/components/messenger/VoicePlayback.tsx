@@ -4,6 +4,7 @@ import { Play, Pause, Mic } from 'lucide-react';
 import { aeirmistCache } from '../../services/CacheService';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { logger } from '@/src/utils/logger';
+import { normalizeMediaUrl } from '@/src/utils/mediaUtils';
 
 
 interface VoicePlaybackProps {
@@ -15,23 +16,26 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [audioUrl, setAudioUrl] = useState(url);
+  const [audioUrl, setAudioUrl] = useState(() => normalizeMediaUrl(url));
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    let currentUrl = url;
+    const resolvedUrl = normalizeMediaUrl(url);
+    let currentUrl = resolvedUrl;
     let isMounted = true;
 
     async function loadAudio() {
-      if (url.startsWith('blob:') || url.startsWith('http')) {
-         const cached = await aeirmistCache.getMedia(url);
+      if (resolvedUrl.startsWith('blob:') || resolvedUrl.startsWith('http')) {
+         const cached = await aeirmistCache.getMedia(resolvedUrl);
          if (cached && isMounted) {
             currentUrl = URL.createObjectURL(cached);
             setAudioUrl(currentUrl);
-         } else {
-            setAudioUrl(url);
+         } else if (isMounted) {
+            setAudioUrl(resolvedUrl);
          }
+      } else if (isMounted) {
+         setAudioUrl(resolvedUrl);
       }
     }
     
@@ -39,7 +43,7 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
 
     return () => {
       isMounted = false;
-      if (currentUrl.startsWith('blob:') && currentUrl !== url) {
+      if (currentUrl.startsWith('blob:') && currentUrl !== resolvedUrl) {
         URL.revokeObjectURL(currentUrl);
       }
     };
@@ -50,11 +54,27 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
     if (!audio) return;
 
     const handleTimeUpdate = () => {
-      setProgress((audio.currentTime / audio.duration) * 100);
+      const dur = isFinite(audio.duration) && audio.duration > 0 ? audio.duration : duration;
+      if (dur > 0 && isFinite(dur)) {
+        setProgress(Math.min(100, Math.max(0, (audio.currentTime / dur) * 100)));
+      }
     };
 
     const handleLoadedMetadata = () => {
-      setDuration(audio.duration);
+      if (isFinite(audio.duration) && !isNaN(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+      } else {
+        // Workaround for MediaRecorder WebM files in Chromium without duration header
+        const fixChromeWebmDuration = () => {
+          if (isFinite(audio.duration) && !isNaN(audio.duration) && audio.duration > 0) {
+            setDuration(audio.duration);
+            audio.removeEventListener('timeupdate', fixChromeWebmDuration);
+            audio.currentTime = 0;
+          }
+        };
+        audio.addEventListener('timeupdate', fixChromeWebmDuration);
+        audio.currentTime = 1e101;
+      }
     };
 
     const handleEnded = () => {
@@ -70,16 +90,20 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('durationchange', handleLoadedMetadata);
+    audio.addEventListener('canplay', handleLoadedMetadata);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('durationchange', handleLoadedMetadata);
+      audio.removeEventListener('canplay', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
     };
-  }, []);
+  }, [duration]);
 
   // Simple static waveform representation
   useEffect(() => {
@@ -124,19 +148,41 @@ export const VoicePlayback: React.FC<VoicePlaybackProps> = ({ url, isMe }) => {
     }
   }, [progress, isMe, isPlaying]);
 
-  const togglePlay = () => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
+  const togglePlay = async (e?: React.SyntheticEvent) => {
+    if (e) e.stopPropagation();
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (isPlaying) {
+      audio.pause();
+      setIsPlaying(false);
+      return;
+    }
+
+    try {
+      if (!isFinite(audio.duration) && (audio.currentTime > 1000 || isNaN(audio.currentTime))) {
+        audio.currentTime = 0;
       }
-      setIsPlaying(!isPlaying);
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
+      setIsPlaying(true);
+    } catch (err: any) {
+      logger.warn("[VoicePlayback] Standard play failed, attempting audio.load():", err);
+      try {
+        audio.load();
+        await audio.play();
+        setIsPlaying(true);
+      } catch (retryErr) {
+        logger.error("[VoicePlayback] Audio play failed:", retryErr);
+        setIsPlaying(false);
+      }
     }
   };
 
   const formatTime = (time: number) => {
-    if (isNaN(time)) return '0:00';
+    if (isNaN(time) || !isFinite(time) || time < 0) return '0:00';
     const mins = Math.floor(time / 60);
     const secs = Math.floor(time % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;

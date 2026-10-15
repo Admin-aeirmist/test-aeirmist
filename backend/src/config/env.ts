@@ -30,4 +30,10 @@ export const env = {
   S3_BUCKET: process.env.S3_BUCKET || 'aeirmist-media',
   S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID,
   S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
+
+  // Web Push
+  VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY || 'BNryHw3FO3swns16FHD4xcpkd051iViGj_b9l0ZRXd6mgUM7EreUSU_BVopIBwbZ2Lt0_PRPshg86LJ8-p7-4rc',
+  VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY || 'lCstp138rTwtnn6Q6FjPY3EjMj9xBiWjS9Je8zOGv7w',
+  VAPID_SUBJECT: process.env.VAPID_SUBJECT || 'mailto:admin.aeirmist@gmail.com',
 };
+

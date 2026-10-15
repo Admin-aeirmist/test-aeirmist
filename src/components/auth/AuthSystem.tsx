@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Eye, EyeOff, Loader2, AlertCircle, Check, ArrowLeft, QrCode,
   Sparkles, ShieldCheck, Mail, User, Lock, Layers, ArrowRight, ShieldAlert,
-  HelpCircle, WifiOff, Settings
+  HelpCircle, WifiOff, Settings, RotateCw, CheckCircle2
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -12,6 +12,7 @@ import { AeirmistLogo } from '../ui/AeirmistLogo';
 import { confirmPasswordReset, sendPasswordResetEmail, getAuth, applyActionCode } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
 import { handleForgotPassword } from '../../services/forgotPassword';
+import { api } from '../../services/api/client';
 import { applyEmailVerificationCode, verifyResetCode } from '../../services/authActionService';
 import { collection, addDoc, serverTimestamp, getDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { mapAuthError } from '../../utils/authErrorMapper';
@@ -89,6 +90,19 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [isVerifying2FA, setIsVerifying2FA] = useState(false);
+  const [twoFactorTempToken, setTwoFactorTempToken] = useState<string | null>(null);
+  const [twoFactorMaskedEmail, setTwoFactorMaskedEmail] = useState<string | null>(null);
+  const [trustThisDevice, setTrustThisDevice] = useState<boolean>(true);
+  const [resendCooldown, setResendCooldown] = useState<number>(0);
+  const [isResending, setIsResending] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   const resetRouteToHomeFeed = () => {
     if (typeof window !== 'undefined') {
@@ -169,10 +183,38 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
   const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<SavedAccount | null>(null);
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
-  const [view, setView] = useState<AuthView>('login');
+  const [view, setView] = useState<AuthView>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const mode = params.get('mode') || sessionStorage.getItem('aeirmist_pending_reset_mode');
+      const token = params.get('resetToken') || params.get('oobCode') || sessionStorage.getItem('aeirmist_pending_reset_token');
+      if (mode === 'resetPassword' && token) {
+        try {
+          sessionStorage.setItem('aeirmist_pending_reset_mode', 'resetPassword');
+          sessionStorage.setItem('aeirmist_pending_reset_token', token);
+        } catch {}
+        return 'reset';
+      }
+      if (mode === 'verifyEmail' && token) return 'verify_email';
+    }
+    return 'login';
+  });
 
   // Set initial view based on saved accounts in localStorage or initialMode on mount
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const mode = params.get('mode') || sessionStorage.getItem('aeirmist_pending_reset_mode');
+      const token = params.get('resetToken') || params.get('oobCode') || sessionStorage.getItem('aeirmist_pending_reset_token');
+      if (mode === 'resetPassword' && token) {
+        setView('reset');
+        return;
+      }
+      if (mode === 'verifyEmail' && token) {
+        setView('verify_email');
+        return;
+      }
+    }
     if (initialMode) {
       setView(initialMode);
       return;
@@ -227,6 +269,18 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
     try {
       const userCredential = await loginWithEmail(selectedAccount.username, password, true);
+
+      if (userCredential && (userCredential as any).requires2FA) {
+        setTwoFactorTempToken((userCredential as any).tempToken);
+        setTwoFactorMaskedEmail((userCredential as any).maskedEmail);
+        setTwoFactorCode('');
+        setTwoFactorError(null);
+        setResendCooldown(45);
+        setView('two_factor');
+        setLoading(false);
+        return;
+      }
+
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
       
       if (userUid) {
@@ -266,49 +320,106 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
   const handleVerify2FA = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db || !pendingUserUid || !twoFactorCode) return;
-    
+    if (loading || isVerifying2FA) return;
+
     setError(null);
     setTwoFactorError(null);
-    setLoading(true);
-    
+    setIsVerifying2FA(true);
+
     try {
-      // 1. Fetch user profile
-      const profileSnap = await getDoc(doc(db, 'profiles', `profile_${pendingUserUid}`));
-      if (!profileSnap.exists()) {
-        throw new Error("Profile Sync failed.");
-      }
-      
-      const profileData = profileSnap.data();
-      const hashes = profileData.backupCodeHashes || [];
-      const used = profileData.backupCodesUsed || [];
-      
-      // 2. Hash the entered code
-      const msgUint8 = new TextEncoder().encode(twoFactorCode.trim().toUpperCase());
-      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-      
-      // 3. Check validity
-      if (hashes.includes(hashHex) && !used.includes(hashHex)) {
-        // Valid code
-        await updateDoc(doc(db, 'profiles', `profile_${pendingUserUid}`), {
-          backupCodesUsed: arrayUnion(hashHex)
+      const cleanOtp = twoFactorCode.replace(/\D/g, '').trim();
+
+      // 1. Backend Meta-style 2FA verification
+      if (twoFactorTempToken) {
+        if (cleanOtp.length !== 6) {
+          setTwoFactorError("Please enter the complete 6-digit verification code.");
+          setIsVerifying2FA(false);
+          return;
+        }
+
+        const res = await api.auth.verifyLogin2FA({
+          tempToken: twoFactorTempToken,
+          otp: cleanOtp,
+          trustDevice: trustThisDevice,
+          deviceInfo: navigator.userAgent
         });
-        
-        await trackLoginSession(pendingUserUid);
-        resetRouteToHomeFeed();
-        setIsSuccess(true);
-        if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
-        await new Promise(resolve => setTimeout(resolve, 1200));
-      } else {
-        setTwoFactorError("Invalid or expired backup code.");
+
+        if (res && res.token) {
+          if (res.user?.id) {
+            try {
+              await trackLoginSession(res.user.id);
+            } catch (e) {}
+          }
+          analytics.trackAuth('login', 'email_2fa');
+          resetRouteToHomeFeed();
+          setIsSuccess(true);
+          if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
+          setTimeout(() => {
+            window.location.reload();
+          }, 800);
+          return;
+        }
       }
+
+      // 2. Legacy Firestore backup code check fallback
+      if (pendingUserUid && db) {
+        const profileSnap = await getDoc(doc(db, 'profiles', `profile_${pendingUserUid}`));
+        if (!profileSnap.exists()) {
+          throw new Error("Profile Sync failed.");
+        }
+        
+        const profileData = profileSnap.data();
+        const hashes = profileData.backupCodeHashes || [];
+        const used = profileData.backupCodesUsed || [];
+        
+        const msgUint8 = new TextEncoder().encode(twoFactorCode.trim().toUpperCase());
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        
+        if (hashes.includes(hashHex) && !used.includes(hashHex)) {
+          await updateDoc(doc(db, 'profiles', `profile_${pendingUserUid}`), {
+            backupCodesUsed: arrayUnion(hashHex)
+          });
+          
+          await trackLoginSession(pendingUserUid);
+          resetRouteToHomeFeed();
+          setIsSuccess(true);
+          if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
+          setTimeout(() => {
+            window.location.reload();
+          }, 800);
+          return;
+        } else {
+          setTwoFactorError("Invalid or expired backup code.");
+          return;
+        }
+      }
+
+      setTwoFactorError("Verification session expired. Please log in again.");
     } catch (err: any) {
       logger.error("2FA Verification Error:", err);
-      setTwoFactorError(err.message || "Connection failed.");
+      setTwoFactorError(err.message || "Verification failed. Please check the code or try again.");
     } finally {
-      setLoading(false);
+      setIsVerifying2FA(false);
+    }
+  };
+
+  const handleResend2FA = async () => {
+    if (resendCooldown > 0 || isResending) return;
+    setIsResending(true);
+    setTwoFactorError(null);
+    try {
+      await api.auth.resendOtp({
+        type: 'login',
+        tempToken: twoFactorTempToken || undefined,
+      });
+      setResendCooldown(45);
+      if (navigator.vibrate) navigator.vibrate(50);
+    } catch (err: any) {
+      setTwoFactorError(err.message || "Failed to resend code. Please wait a moment.");
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -320,7 +431,17 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
   const [signupStep, setSignupStep] = useState(1);
   const [forgotStep, setForgotStep] = useState(1);
   const [resetStep, setResetStep] = useState(1);
-  const [resetCode, setResetCode] = useState<string | null>(null);
+  const [resetCode, setResetCode] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('resetToken') || params.get('oobCode') || sessionStorage.getItem('aeirmist_pending_reset_token');
+      if (token) {
+        try { sessionStorage.setItem('aeirmist_pending_reset_token', token); } catch {}
+        return token;
+      }
+    }
+    return null;
+  });
   const [resetEmail, setResetEmail] = useState<string | null>(null);
   const [verifyEmailStatus, setVerifyEmailStatus] = useState<'verifying' | 'success' | 'error'>('verifying');
   const [verifyEmailMessage, setVerifyEmailMessage] = useState<string | null>(null);
@@ -409,7 +530,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     const handleAuthActionCode = async () => {
       try {
         const params = new URLSearchParams(window.location.search);
-        const oobCode = params.get('oobCode');
+        const oobCode = params.get('oobCode') || params.get('resetToken');
         const mode = params.get('mode');
 
         if (!oobCode || !mode) return;
@@ -419,9 +540,12 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
           setView('reset');
           setResetStep(1);
           try {
-            const targetEmail = await verifyResetCode(oobCode);
-            if (targetEmail) {
-              setResetEmail(targetEmail);
+            // Native (device database) reset links carry ?resetToken=...; it is validated when the password is submitted.
+            if (!params.get('resetToken')) {
+              const targetEmail = await verifyResetCode(oobCode);
+              if (targetEmail) {
+                setResetEmail(targetEmail);
+              }
             }
           } catch (codeErr: any) {
             logger.warn("Password reset code expired or invalid:", codeErr);
@@ -546,7 +670,20 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     }
 
     try {
-      const userCredential = await loginWithEmail(identifier, password, true);
+      const userCredential = await loginWithEmail(identifier, password, true, acquiredLoc);
+
+      // Check if backend 2FA email verification is requested
+      if (userCredential && (userCredential as any).requires2FA) {
+        setTwoFactorTempToken((userCredential as any).tempToken);
+        setTwoFactorMaskedEmail((userCredential as any).maskedEmail);
+        setTwoFactorCode('');
+        setTwoFactorError(null);
+        setResendCooldown(45);
+        setView('two_factor');
+        setLoading(false);
+        return;
+      }
+
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
       
       if (userUid) {
@@ -647,12 +784,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     setLoading(true);
     try {
       const trimmed = identifier.trim();
-      if (trimmed.includes('@')) {
-        await handleForgotPassword(trimmed);
-      } else {
-        await resetPassword(trimmed);
-        setSuccess("Password reset link sent to your email. Please check your inbox.");
-      }
+      await api.auth.forgotPassword(trimmed);
+      setSuccess("If an account exists, a password reset link has been sent to your registered email address.");
       setForgotStep(2);
       analytics.trackEvent({ action: 'password_reset_request', category: 'Auth' });
     } catch (err: any) {
@@ -664,11 +797,20 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
   const handleDirectResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loading || !resetCode || strength < 5 || password !== confirmPassword) return;
+    const tokenToUse = resetCode || (typeof window !== 'undefined' ? (sessionStorage.getItem('aeirmist_pending_reset_token') || new URLSearchParams(window.location.search).get('resetToken')) : null);
+    if (loading || !tokenToUse || strength < 5 || password !== confirmPassword) return;
     setError(null);
     setLoading(true);
     try {
-      await confirmPasswordReset(auth, resetCode, password);
+      if (new URLSearchParams(window.location.search).has('resetToken') || (typeof window !== 'undefined' && sessionStorage.getItem('aeirmist_pending_reset_token'))) {
+        await api.auth.resetPassword({ token: tokenToUse, newPassword: password });
+      } else {
+        await confirmPasswordReset(auth, tokenToUse, password);
+      }
+      try {
+        sessionStorage.removeItem('aeirmist_pending_reset_token');
+        sessionStorage.removeItem('aeirmist_pending_reset_mode');
+      } catch {}
       setResetStep(2);
       if (navigator.vibrate) navigator.vibrate([50, 100]);
     } catch (err: any) {
@@ -1189,71 +1331,124 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
-                    className="space-y-8"
+                    className="space-y-6"
                   >
-                    <div className="space-y-2">
-                      <h2 className="text-3xl font-black uppercase tracking-widest text-white">Connection</h2>
-                      <p className="text-xs text-white/40 uppercase tracking-[0.2em] font-bold">Multi-factor authorization required</p>
+                    <div className="space-y-2 text-center">
+                      <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mx-auto mb-2 shadow-[0_0_20px_rgba(0,242,255,0.15)]">
+                        <Mail size={22} />
+                      </div>
+                      <h2 className="text-xl sm:text-2xl font-black uppercase tracking-wider text-white">
+                        Enter Security Code
+                      </h2>
+                      <p className="text-xs text-white/50 leading-relaxed max-w-sm mx-auto">
+                        We sent a 6-digit confirmation code to{' '}
+                        <span className="text-cyan-400 font-semibold">{twoFactorMaskedEmail || 'your email'}</span>.
+                        Enter it below to confirm your login.
+                      </p>
                     </div>
 
-                    <form onSubmit={handleVerify2FA} className="space-y-6">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold uppercase text-white/40 tracking-wider">Digital Backup Code</label>
-                          <div className="relative group">
-                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-white/20 group-focus-within:text-aeirmist-cyan transition-colors">
-                              <ShieldCheck size={18} />
-                            </div>
-                            <input 
-                              type="text"
-                              required
-                              value={twoFactorCode}
-                              onChange={(e) => {
-                                let val = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
-                                if (val.length === 4 && !val.includes('-')) val = val + '-';
-                                setTwoFactorCode(val);
-                              }}
-                              placeholder="XXXX-XXXX"
-                              maxLength={9}
-                              className="w-full h-14 pl-12 pr-4 rounded-2xl bg-white/[0.03] border border-white/10 text-white focus:outline-none focus:border-aeirmist-cyan/40 transition-all font-mono tracking-widest text-center text-lg uppercase"
-                            />
-                          </div>
-                          {twoFactorError && (
-                            <motion.div 
-                              initial={{ opacity: 0, y: -10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className="flex items-center gap-2 text-red-400 text-[10px] font-bold uppercase tracking-wider"
-                            >
-                              <ShieldAlert size={12} />
-                              <span>{twoFactorError}</span>
-                            </motion.div>
-                          )}
+                    <form onSubmit={handleVerify2FA} className="space-y-4">
+                      <div className="space-y-2">
+                        <div className="relative rounded-2xl bg-[#161a26] border border-white/20 focus-within:border-[var(--color-aeirmist-cyan)] focus-within:ring-2 focus-within:ring-[var(--color-aeirmist-cyan)]/25 transition-all shadow-inner">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            autoComplete="one-time-code"
+                            required
+                            autoFocus
+                            value={twoFactorCode}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                              setTwoFactorCode(val);
+                            }}
+                            placeholder="••••••"
+                            maxLength={6}
+                            className="w-full py-4 text-center text-2xl font-black font-mono tracking-[0.5em] text-white bg-transparent outline-none placeholder:text-slate-600"
+                          />
                         </div>
+
+                        {twoFactorError && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: -6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-semibold"
+                          >
+                            <ShieldAlert size={14} className="shrink-0 text-red-400" />
+                            <span>{twoFactorError}</span>
+                          </motion.div>
+                        )}
                       </div>
 
-                      <div className="space-y-4">
-                        <button 
-                          type="submit"
-                          disabled={loading || twoFactorCode.length < 9}
-                          className="w-full h-14 rounded-2xl bg-aeirmist-cyan text-black font-black uppercase tracking-[0.2em] text-xs shadow-[0_0_20px_rgba(0,242,255,0.3)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-3"
-                        >
-                          {loading ? <Loader2 className="animate-spin" size={18} /> : (
-                            <>
-                              <ShieldCheck size={18} />
-                              <span>Authorize Access</span>
-                            </>
-                          )}
-                        </button>
-                        
-                        <button 
+                      {/* Trust this device for 30 days (Meta-style) */}
+                      <label className="flex items-start gap-3 p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-colors cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={trustThisDevice}
+                          onChange={(e) => setTrustThisDevice(e.target.checked)}
+                          className="mt-0.5 rounded border-white/20 text-cyan-400 focus:ring-0 focus:ring-offset-0 bg-white/10 w-4 h-4 cursor-pointer"
+                        />
+                        <div className="space-y-0.5">
+                          <span className="text-xs font-bold text-white block">Trust this device for 30 days</span>
+                          <span className="text-[11px] text-white/40 block leading-snug">
+                            You won't be asked for a verification code on this device for the next 30 days.
+                          </span>
+                        </div>
+                      </label>
+
+                      {/* Resend OTP & Switch Account Options */}
+                      <div className="flex items-center justify-between text-xs px-1">
+                        {resendCooldown > 0 ? (
+                          <span className="text-white/40">
+                            Resend code in <span className="text-cyan-400 font-mono font-bold">{resendCooldown}s</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleResend2FA}
+                            disabled={isResending}
+                            className="text-cyan-400 hover:text-cyan-300 font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                          >
+                            {isResending ? (
+                              <>
+                                <RotateCw size={12} className="animate-spin" />
+                                <span>Sending...</span>
+                              </>
+                            ) : (
+                              <span>Resend Code</span>
+                            )}
+                          </button>
+                        )}
+
+                        <button
                           type="button"
                           onClick={() => {
                             logout();
+                            setTwoFactorCode('');
+                            setTwoFactorError(null);
+                            setTwoFactorTempToken(null);
                             setView('login');
                           }}
-                          className="w-full py-4 rounded-2xl border border-white/5 text-white/40 font-bold uppercase tracking-widest text-[10px] hover:bg-white/5 transition-all"
+                          className="text-white/40 hover:text-white/70 transition-colors font-medium cursor-pointer"
                         >
-                          Cancel Connection
+                          Use another account
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 pt-2">
+                        <button 
+                          type="submit"
+                          disabled={isVerifying2FA || loading || twoFactorCode.replace(/\D/g, '').length < 6}
+                          className="w-full py-3.5 rounded-2xl bg-[var(--color-aeirmist-cyan)] text-black font-black uppercase tracking-widest text-xs hover:opacity-95 disabled:opacity-40 shadow-[0_0_20px_rgba(0,242,255,0.25)] flex items-center justify-center gap-2 cursor-pointer transition-all"
+                        >
+                          {isVerifying2FA || loading ? (
+                            <Loader2 className="animate-spin text-black" size={18} />
+                          ) : (
+                            <>
+                              <ShieldCheck size={16} />
+                              <span>Confirm & Log In</span>
+                            </>
+                          )}
                         </button>
                       </div>
                     </form>
@@ -1514,8 +1709,13 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
                         try {
                           const url = new URL(window.location.href);
                           url.searchParams.delete('oobCode');
+                          url.searchParams.delete('resetToken');
                           url.searchParams.delete('mode');
                           window.history.replaceState({}, document.title, url.toString());
+                        } catch {}
+                        try {
+                          sessionStorage.removeItem('aeirmist_pending_reset_token');
+                          sessionStorage.removeItem('aeirmist_pending_reset_mode');
                         } catch {}
                       }}
                       className="mt-4 flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-wider text-white/50 hover:text-white transition-colors w-full py-3.5 border border-white/5 hover:bg-white/5 rounded-2xl cursor-pointer"
@@ -1574,6 +1774,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
                             try {
                               const url = new URL(window.location.href);
                               url.searchParams.delete('oobCode');
+                              url.searchParams.delete('resetToken');
                               url.searchParams.delete('mode');
                               window.history.replaceState({}, document.title, url.toString());
                             } catch {}
@@ -1607,6 +1808,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
                             try {
                               const url = new URL(window.location.href);
                               url.searchParams.delete('oobCode');
+                              url.searchParams.delete('resetToken');
                               url.searchParams.delete('mode');
                               window.history.replaceState({}, document.title, url.toString());
                             } catch {}

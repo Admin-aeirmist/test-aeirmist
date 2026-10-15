@@ -72,8 +72,10 @@ export const useNGL = (profileId?: string) => {
       setMessages(msgs);
       setLoading(false);
     }, (err) => {
-      logger.error('[useNGL] Fetch Error:', err);
-      setError(err.message);
+      if (!err?.message?.includes('permission') && !(err as any)?.code?.includes('permission')) {
+        logger.warn('[useNGL] Fetch Notice:', err);
+      }
+      setError(null);
       setLoading(false);
     });
 

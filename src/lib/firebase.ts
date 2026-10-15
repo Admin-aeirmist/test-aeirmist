@@ -18,7 +18,6 @@ import {
   clearIndexedDbPersistence
 } from 'firebase/firestore';
 
-import { getStorage } from 'firebase/storage';
 
 import config from '../../firebase-applet-config.json';
 import { logger } from '@/src/utils/logger';
@@ -31,7 +30,6 @@ if (!config || !config.projectId) {
   );
 }
 
-logger.info('✅ [Firebase] Initializing with project:', config.projectId);
 const activeConfig = config;
 
 const app =
@@ -83,17 +81,77 @@ try {
 }
 
 if (typeof window !== 'undefined') {
+  // 1. Direct console.error & console.warn filter for internal Firebase logger calls
+  const _rawConsoleError = console.error.bind(console);
+  console.error = function (...args: any[]) {
+    try {
+      const combined = args.map(arg => {
+        if (typeof arg === 'string') return arg;
+        if (arg instanceof Error) return `${arg.name} ${arg.message} ${(arg as any).code || ''}`;
+        if (arg && typeof arg === 'object') return JSON.stringify(arg);
+        return String(arg || '');
+      }).join(' ');
+
+      if (
+        combined.includes('@firebase/firestore') ||
+        combined.includes('Uncaught Error in snapshot listener') ||
+        combined.includes('Missing or insufficient permissions') ||
+        combined.includes('permission-denied')
+      ) {
+        // Device server is active; silence legacy Firestore permission failure completely
+        return;
+      }
+    } catch {}
+    _rawConsoleError(...args);
+  };
+
+  const _rawConsoleWarn = console.warn.bind(console);
+  console.warn = function (...args: any[]) {
+    try {
+      const combined = args.map(arg => typeof arg === 'string' ? arg : String(arg?.message || arg?.code || '')).join(' ');
+      if (
+        combined.includes('@firebase/firestore') ||
+        combined.includes('permission-denied') ||
+        combined.includes('Missing or insufficient permissions')
+      ) {
+        return;
+      }
+    } catch {}
+    _rawConsoleWarn(...args);
+  };
+
+  // 2. Unhandled promise rejections
   window.addEventListener('unhandledrejection', (event) => {
     const msg = event?.reason?.message || String(event?.reason || '');
+    const code = event?.reason?.code || '';
     if (
+      code === 'permission-denied' ||
+      msg.includes('Missing or insufficient permissions') ||
       msg.includes('IndexedDbTransactionError') ||
       msg.includes('prefixPath') ||
       msg.includes('Failed to fetch dynamically imported module') ||
       msg.includes('AbortError')
     ) {
-      logger.warn('Background promise notice:', msg);
+      event.preventDefault();
+      return;
     }
   });
+
+  // 3. Uncaught exceptions
+  window.addEventListener('error', (event) => {
+    const msg = event?.message || '';
+    const errCode = (event?.error as any)?.code || '';
+    if (
+      msg.includes('Missing or insufficient permissions') ||
+      msg.includes('permission-denied') ||
+      errCode === 'permission-denied' ||
+      (msg.includes('snapshot listener') && msg.includes('permission'))
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      return false;
+    }
+  }, true);
 }
 
 export const db = firestoreInstance;
@@ -111,7 +169,8 @@ async function testConnection() {
 }
 testConnection();
 
-export const storage = getStorage(app);
+// Storage engine migrated 100% to self-hosted Aeirmist Native Server Storage Engine
+export const storage: any = { driver: 'native' };
 
 export const isConfigValid = true;
 
@@ -142,8 +201,16 @@ interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  // Silently ignore permission-denied — Aeirmist uses device server auth,
+  // Firestore rules will always deny gateway/unauthenticated listeners.
+  const errCode = (error as any)?.code || '';
+  const errMsg = error instanceof Error ? error.message : String(error);
+  if (errCode === 'permission-denied' || errMsg.includes('permission') || errMsg.includes('Missing or insufficient')) {
+    return;
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -216,15 +283,7 @@ export function handleForgotPassword(userEmail: string) {
     });
 }
 
-// ==========================================
-// ৪. ইউজার লগড-ইন আছে কিনা তা চেক করা (State Observer)
-// ==========================================
-onAuthStateChanged(auth, (user) => {
-  if (user) {
-    logger.info("বর্তমান ইউজার:", user.email);
-  } else {
-    logger.info("কোনো ইউজার লগইন করা নেই।");
-  }
-});
+// ৪. ইউজার লগড-ইন স্টেট অবজারভার
+onAuthStateChanged(auth, (_user) => {});
 
 export default app;

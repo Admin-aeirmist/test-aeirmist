@@ -43,24 +43,17 @@ export const AccountSecurityScore: React.FC<SecurityScoreProps> = ({
       recommendation: 'Enable 2FA backup codes to prevent unauthorized access.'
     },
     {
-      key: 'google_linked',
-      label: 'Google Account Linked',
-      passed: user?.providerData.some((p: any) => p.providerId === 'google.com'),
-      weight: 15,
-      recommendation: 'Link Google OAuth for seamless encrypted single sign-on.'
-    },
-    {
       key: 'recovery_set',
       label: 'Recovery Email / Phone Added',
       passed: !!(profile?.recoveryEmail || profile?.recoveryPhone),
-      weight: 15,
+      weight: 20,
       recommendation: 'Add a recovery email or phone number for account restoration.'
     },
     {
       key: 'devices_reviewed',
       label: 'Active Sessions Reviewed',
       passed: sessionsCount > 0,
-      weight: 10,
+      weight: 20,
       recommendation: 'Review your active devices and revoke unknown logins.'
     }
   ];

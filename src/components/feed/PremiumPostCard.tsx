@@ -139,7 +139,8 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     sendMessage
   } = useAeirmist();
 
-  const postAuthorId = post.userId || post.authorId || (post as any).author?.id || (post as any).author?.uid || (post as any).ownerUid;
+  const postAuthor = (post as any).author;
+  const postAuthorId = post.userId || post.authorId || postAuthor?.id || postAuthor?.uid || (post as any).ownerUid;
   const isOwnPost = Boolean(profile?.id && postAuthorId && (postAuthorId === profile.id || postAuthorId === profile.uid || (user?.uid && postAuthorId === user.uid)));
 
   const type = (post.mediaItems?.length || 0) > 1 ? 'collage' : (post.mediaItems?.length === 1 ? (post.mediaType || 'photo') : 'text') as any;
@@ -147,53 +148,50 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
 
   const postMusicData = getPostMusicData(post);
 
-  const isDeletedAuthor = Boolean(
-    (post as any).isDeletedAuthor || 
-    post.userName === 'Aeirmist User' || 
-    post.authorName === 'Aeirmist User' || 
-    (post as any).author?.displayName === 'Aeirmist User' || 
-    !postAuthorId
+  const resolvedName = (
+    postAuthor?.displayName || 
+    postAuthor?.name ||
+    post.authorName || 
+    post.userName || 
+    postAuthor?.username || 
+    (isOwnPost ? (profile?.displayName || profile?.username) : '') ||
+    'Aeirmist Member'
   );
 
-  const initialAuthor = {
-    name: isDeletedAuthor ? 'Aeirmist User' : (post.userName || post.authorName || (post as any).author?.displayName || 'Aeirmist User'),
-    avatar: isDeletedAuthor ? BLANK_DP : getAvatarUrl(isOwnPost ? (localAvatarURL || profile?.photoURL || post.userAvatar || post.authorAvatar || (post as any).author?.photoURL) : (post.userAvatar || post.authorAvatar || (post as any).author?.photoURL)),
-    isVerified: isDeletedAuthor ? false : ((post as any).author?.isVerified || false)
-  };
+  const resolvedAvatar = (
+    isOwnPost 
+      ? (localAvatarURL || profile?.photoURL || postAuthor?.avatarKey || post.userAvatar || post.authorAvatar)
+      : (postAuthor?.avatarKey || post.userAvatar || post.authorAvatar || postAuthor?.photoURL || '')
+  );
 
-  const [author, setAuthor] = useState<any>(initialAuthor);
+  const resolvedVerified = Boolean(
+    postAuthor?.isVerified ?? 
+    (post as any).isVerified ?? 
+    (isOwnPost ? profile?.isVerified : false)
+  );
 
-  // Live profile status check for post author
+  const isDeletedAuthor = Boolean(
+    (post as any).isDeletedAuthor || 
+    (!postAuthorId && resolvedName === 'Aeirmist User')
+  );
+
+  const [author, setAuthor] = useState<any>({
+    name: resolvedName,
+    avatar: getAvatarUrl(resolvedAvatar, resolvedName),
+    isVerified: resolvedVerified,
+    username: postAuthor?.username || '',
+    id: postAuthorId
+  });
+
   useEffect(() => {
-    if (!db || !postAuthorId || isDeletedAuthor) return;
-    const unsub = onSnapshot(doc(db, 'profiles', postAuthorId), (snap) => {
-      if (snap.exists()) {
-        const pData = snap.data();
-        if (pData.isDeleted === true || pData.status === 'deleted') {
-          setAuthor({
-            name: 'Aeirmist User',
-            avatar: BLANK_DP,
-            isVerified: false
-          });
-        } else {
-          setAuthor({
-            name: pData.displayName || pData.username || 'Aeirmist User',
-            avatar: getAvatarUrl(pData.photoURL),
-            isVerified: pData.isVerified || false
-          });
-        }
-      } else {
-        setAuthor({
-          name: 'Aeirmist User',
-          avatar: BLANK_DP,
-          isVerified: false
-        });
-      }
-    }, (err) => {
-      // Ignored
+    setAuthor({
+      name: resolvedName,
+      avatar: getAvatarUrl(resolvedAvatar, resolvedName),
+      isVerified: resolvedVerified,
+      username: postAuthor?.username || '',
+      id: postAuthorId
     });
-    return () => unsub();
-  }, [db, postAuthorId, isDeletedAuthor]);
+  }, [post.id, postAuthorId, resolvedName, resolvedAvatar, resolvedVerified]);
 
   const [liveComments, setLiveComments] = useState<any[]>([]);
   const [commentText, setCommentText] = useState('');
@@ -740,24 +738,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
     }
   };
 
-  // Fetch Author profile (including photo/avatar) dynamically
-  useEffect(() => {
-    if (!db || !postAuthorId) return;
-    
-    // Use one-time getDoc fetch to avoid listener quota exhaustion in high-traffic feed
-    getDoc(doc(db, 'profiles', postAuthorId)).then((docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setAuthor({
-          name: data.displayName || data.username || 'Aeirmist User',
-          avatar: getAvatarUrl(data.photoURL),
-          isVerified: !!data.isVerified
-        });
-      }
-    }).catch((err) => {
-      logger.warn("Author profile fetch failed:", err);
-    });
-  }, [postAuthorId, db]);
+
 
   // Sync like and bookmark indicators
   useEffect(() => {
@@ -1455,14 +1436,14 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
             type="button"
             role="link"
             aria-label={`View profile of ${author.name}`}
-            className={`relative group/avatar ${isDeletedAuthor || author.name === 'Aeirmist User' ? 'cursor-default' : 'cursor-pointer'} shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan rounded-xl`}
+            className={`relative group/avatar ${isDeletedAuthor ? 'cursor-default' : 'cursor-pointer'} shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan rounded-xl`}
             onClick={() => {
-              if (isDeletedAuthor || author.name === 'Aeirmist User') {
+              if (isDeletedAuthor || !postAuthorId) {
                 addToast?.({ title: 'Unavailable', message: 'This account is unavailable on Aeirmist.', type: 'info' });
                 return;
               }
               postAnalytics.trackProfileClick(post.id);
-              onUserClick?.({ id: postAuthorId, displayName: author.name, photoURL: author.avatar });
+              onUserClick?.({ id: postAuthorId, displayName: author.name, photoURL: author.avatar, username: author.username });
             }}
           >
             <img 
@@ -1476,18 +1457,18 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
               className="w-10 h-10 sm:w-11 sm:h-11 aspect-square rounded-xl object-cover bg-neutral-900 border border-white/10 shadow-sm transition-transform duration-200 group-hover/avatar:scale-105" 
             />
             
-            {!(isDeletedAuthor || author.name === 'Aeirmist User') && (
+            {!isDeletedAuthor && (
               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-aeirmist-cyan rounded-full border-2 border-[#000d1c] shadow-[0_0_8px_#00f2ff]" />
             )}
           </button>
           
-          <div className={`${isDeletedAuthor || author.name === 'Aeirmist User' ? 'cursor-default' : 'cursor-pointer'} text-left min-w-0`} onClick={() => {
-            if (isDeletedAuthor || author.name === 'Aeirmist User') {
+          <div className={`${isDeletedAuthor ? 'cursor-default' : 'cursor-pointer'} text-left min-w-0`} onClick={() => {
+            if (isDeletedAuthor || !postAuthorId) {
               addToast?.({ title: 'Unavailable', message: 'This account is unavailable on Aeirmist.', type: 'info' });
               return;
             }
             postAnalytics.trackProfileClick(post.id);
-            onUserClick?.({ id: postAuthorId, displayName: author.name, photoURL: author.avatar });
+            onUserClick?.({ id: postAuthorId, displayName: author.name, photoURL: author.avatar, username: author.username });
           }}>
             <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 leading-none">
               <h3 className="text-xs sm:text-sm font-black text-white hover:text-aeirmist-cyan transition-colors flex items-center gap-1.5 truncate">

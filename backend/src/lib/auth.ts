@@ -37,7 +37,7 @@ export async function comparePassword(password: string, hash: string, algorithm:
 }
 
 export function generateAccessToken(payload: TokenPayload): string {
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '1d' });
 }
 
 export function generateRefreshToken(): string {

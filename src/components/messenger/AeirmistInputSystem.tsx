@@ -181,6 +181,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
   const timerRef = useRef<number | null>(null);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
   const [showContactModal, setShowContactModal] = useState(false);
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
@@ -335,6 +336,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
 
     try {
       const stream = micRes.stream;
+      audioStreamRef.current = stream;
       setAudioStream(stream);
 
       // Detect best supported audio mimeType across WebView and browsers
@@ -362,14 +364,6 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
 
-      recorder.onstop = () => {
-        const actualMime = recorder.mimeType || mimeType || 'audio/webm';
-        const blob = new Blob(chunksRef.current, { type: actualMime });
-        setAudioBlob(blob);
-        stream.getTracks().forEach(track => track.stop());
-        setAudioStream(null);
-      };
-
       // Collect data every 250ms for consistent chunk buffering
       recorder.start(250);
       setIsRecording(true);
@@ -383,7 +377,7 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
       addToast({
         title: "Recording Failed",
         message: "Could not initialize audio recorder on this device.",
-        type: "error"
+        type: "warning"
       });
     }
   };
@@ -396,6 +390,10 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
       } catch (e) {
         logger.warn("Error stopping recorder on cancel:", e);
       }
+    }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(t => t.stop());
+      audioStreamRef.current = null;
     }
     if (audioStream) {
       audioStream.getTracks().forEach(t => t.stop());
@@ -419,22 +417,36 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
           logger.warn("Error stopping recorder on unmount:", e);
         }
       }
-      if (audioStream) {
-        audioStream.getTracks().forEach(t => t.stop());
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(t => t.stop());
+        audioStreamRef.current = null;
       }
     };
-  }, [audioStream]);
+  }, []);
 
   const stopAndSendRecording = () => {
     const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.onstop = () => {
-        const actualMime = recorder.mimeType || 'audio/webm';
+
+    let executed = false;
+    const finalizeAndSend = () => {
+      if (executed) return;
+      executed = true;
+
+      try {
+        const actualMime = (recorder && recorder.mimeType) || 'audio/webm';
         const ext = actualMime.includes('mp4') || actualMime.includes('aac') ? 'm4a' : (actualMime.includes('ogg') ? 'ogg' : 'webm');
         const blob = new Blob(chunksRef.current, { type: actualMime });
         
         if (blob.size > 0 && onSendMedia) {
-          const file = new File([blob], `voice_${Date.now()}.${ext}`, { type: actualMime });
+          let file: File;
+          try {
+            file = new File([blob], `voice_${Date.now()}.${ext}`, { type: actualMime });
+          } catch {
+            file = Object.assign(blob, {
+              name: `voice_${Date.now()}.${ext}`,
+              lastModified: Date.now()
+            }) as any;
+          }
           onSendMedia(file, false, replyingTo);
           onCancelReply?.();
         } else if (blob.size === 0) {
@@ -444,25 +456,42 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
             type: "warning"
           });
         }
-        
+      } catch (err) {
+        logger.error("Error finalizing voice recording:", err);
+      } finally {
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach(track => track.stop());
+          audioStreamRef.current = null;
+        }
         if (audioStream) {
           audioStream.getTracks().forEach(track => track.stop());
         }
         setIsRecording(false);
+        setIsPaused(false);
         setAudioBlob(null);
         setAudioStream(null);
         setRecordingTime(0);
         chunksRef.current = [];
+      }
+    };
+
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = () => {
+        finalizeAndSend();
       };
       
       try {
-        if (typeof recorder.requestData === 'function') {
-          recorder.requestData();
-        }
         recorder.stop();
       } catch (err) {
         logger.error("Error stopping recorder:", err);
+        finalizeAndSend();
       }
+
+      // 100% Guaranteed Fail-Safe:
+      // If browser/device fails to fire onstop within 200ms, force finalize and dispatch!
+      setTimeout(finalizeAndSend, 200);
+    } else {
+      finalizeAndSend();
     }
   };
 
@@ -577,7 +606,12 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
     setShowEmoji(false);
   };
 
-  const handleVoiceSend = () => {
+  const handleVoiceSend = (e?: React.SyntheticEvent) => {
+    if (e) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    }
+    triggerNativeHaptic('medium');
     stopAndSendRecording();
   };
 
@@ -765,16 +799,30 @@ export const AeirmistInputSystem: React.FC<AeirmistInputSystemProps> = React.mem
             </div>
             <div className="flex items-center gap-2">
                <button 
-                 onClick={cancelRecording}
-                 className="w-10 h-10 rounded-full flex items-center justify-center text-white/40 hover:text-red-500"
+                 type="button"
+                 onClick={(e) => {
+                   e.preventDefault();
+                   e.stopPropagation();
+                   cancelRecording();
+                 }}
+                 onTouchEnd={(e) => {
+                   e.preventDefault();
+                   e.stopPropagation();
+                   cancelRecording();
+                 }}
+                 className="w-10 h-10 rounded-full flex items-center justify-center text-white/40 hover:text-red-500 active:scale-90 transition-transform cursor-pointer select-none"
+                 title="Delete voice message"
                >
-                 <Trash2 size={20} />
+                 <Trash2 size={20} className="pointer-events-none" />
                </button>
                <button 
+                 type="button"
                  onClick={handleVoiceSend}
-                 className="w-12 h-12 rounded-full bg-[#11D4FF] flex items-center justify-center text-[#1A1B22] shadow-lg"
+                 onTouchEnd={handleVoiceSend}
+                 className="w-12 h-12 rounded-full bg-[#11D4FF] hover:bg-[#00f2ff] flex items-center justify-center text-[#1A1B22] shadow-[0_0_20px_rgba(17,212,255,0.4)] active:scale-95 transition-all cursor-pointer select-none"
+                 title="Send voice message"
                >
-                 <Send size={20} fill="currentColor" />
+                 <Send size={20} fill="currentColor" className="pointer-events-none" />
                </button>
             </div>
           </motion.div>

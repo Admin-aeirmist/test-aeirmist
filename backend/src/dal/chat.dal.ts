@@ -1,5 +1,6 @@
-import { eq, and, desc, sql, isNull, inArray } from 'drizzle-orm';
+import { eq, and, or, desc, sql, isNull, inArray } from 'drizzle-orm';
 import { db } from '../db';
+import { redis } from '../db/redis';
 import {
   conversations,
   conversationMembers,
@@ -11,6 +12,9 @@ import {
 
 export class ChatDAL {
   static async isParticipant(conversationId: string, userId: string): Promise<boolean> {
+    if (!conversationId || typeof conversationId !== 'string') return false;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return false;
     const [member] = await db
       .select({ conversationId: conversationMembers.conversationId })
       .from(conversationMembers)
@@ -131,12 +135,14 @@ export class ChatDAL {
         .select({
           userId: conversationMembers.userId,
           role: conversationMembers.role,
+          lastReadAt: conversationMembers.lastReadAt,
           username: profiles.username,
           displayName: profiles.displayName,
           avatarKey: profiles.avatarKey,
           isVerified: profiles.isVerified,
           firebaseUid: users.firebaseUid,
           profileId: profiles.id,
+          updatedAt: profiles.updatedAt,
         })
         .from(conversationMembers)
         .innerJoin(users, eq(conversationMembers.userId, users.id))
@@ -144,14 +150,43 @@ export class ChatDAL {
         .where(eq(conversationMembers.conversationId, row.conversation.id));
 
       const otherParticipant = participants.find((p) => p.userId !== userId) || null;
+      let isOtherOnline = false;
+      if (otherParticipant) {
+        try {
+          const isOnline = (await redis.sismember('online_users', otherParticipant.userId)) ||
+                           (otherParticipant.firebaseUid ? await redis.sismember('online_users', otherParticipant.firebaseUid) : 0) ||
+                           (otherParticipant.profileId ? await redis.sismember('online_users', otherParticipant.profileId) : 0);
+          isOtherOnline = Boolean(isOnline);
+          (otherParticipant as any).isOnline = isOtherOnline;
+          const lastSeenStr = await redis.get(`last_seen:${otherParticipant.userId}`);
+          (otherParticipant as any).lastSeen = isOtherOnline ? Date.now() : (lastSeenStr ? Number(lastSeenStr) : null);
+        } catch {}
+      }
+
+      // lastRead map (epoch ms) keyed by every identifier the client may use.
+      // Drives persistent "Seen" state and accurate unread detection after reload.
+      const lastRead: Record<string, number> = {};
+      for (const p of participants) {
+        if (!p.lastReadAt) continue;
+        const ms = new Date(p.lastReadAt).getTime();
+        for (const key of [p.userId, p.firebaseUid, p.profileId]) {
+          if (key) lastRead[key] = ms;
+        }
+      }
 
       result.push({
         ...row.conversation,
         unreadCount: row.member.unreadCount,
+        unread: (row.member.unreadCount ?? 0) > 0,
         isMuted: row.member.isMuted,
         isPinned: row.member.isPinned,
         participants,
         otherParticipant,
+        otherParticipantId: otherParticipant?.profileId || otherParticipant?.userId || otherParticipant?.firebaseUid || null,
+        otherParticipantUid: otherParticipant?.firebaseUid || null,
+        otherProfile: otherParticipant,
+        online: isOtherOnline,
+        lastRead,
       });
     }
 
@@ -159,6 +194,10 @@ export class ChatDAL {
   }
 
   static async getMessages(conversationId: string, limit: number = 50, beforeDate?: Date) {
+    if (!conversationId || typeof conversationId !== 'string') return [];
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return [];
+
     const conditions = [
       eq(messages.conversationId, conversationId),
       isNull(messages.deletedAt),
@@ -188,6 +227,47 @@ export class ChatDAL {
       .orderBy(desc(messages.createdAt))
       .limit(limit);
 
+    const msgIds = rows.map((r) => r.message.id);
+    const reactionsMap = new Map<string, Record<string, number>>();
+    const userReactionsMap = new Map<string, Record<string, string>>();
+
+    if (msgIds.length > 0) {
+      try {
+        const rxRows = await db
+          .select({
+            messageId: messageReactions.messageId,
+            emoji: messageReactions.emoji,
+            userId: messageReactions.userId,
+            firebaseUid: users.firebaseUid,
+            profileId: profiles.id,
+          })
+          .from(messageReactions)
+          .innerJoin(users, eq(messageReactions.userId, users.id))
+          .leftJoin(profiles, eq(users.id, profiles.userId))
+          .where(inArray(messageReactions.messageId, msgIds));
+
+        const countedUserReactionsByMsg = new Set<string>();
+        for (const rx of rxRows) {
+          if (!reactionsMap.has(rx.messageId)) reactionsMap.set(rx.messageId, {});
+          if (!userReactionsMap.has(rx.messageId)) userReactionsMap.set(rx.messageId, {});
+
+          const rxUserKey = `${rx.messageId}_${rx.userId}_${rx.emoji}`;
+          if (!countedUserReactionsByMsg.has(rxUserKey)) {
+            countedUserReactionsByMsg.add(rxUserKey);
+            const rObj = reactionsMap.get(rx.messageId)!;
+            rObj[rx.emoji] = (rObj[rx.emoji] || 0) + 1;
+          }
+
+          const uObj = userReactionsMap.get(rx.messageId)!;
+          if (rx.userId) uObj[rx.userId] = rx.emoji;
+          if (rx.firebaseUid) uObj[rx.firebaseUid] = rx.emoji;
+          if (rx.profileId) uObj[rx.profileId] = rx.emoji;
+        }
+      } catch (e) {
+        console.warn('[ChatDAL] Failed to load message reactions:', e);
+      }
+    }
+
     return rows.reverse().map((r) => ({
       ...r.message,
       sender: r.sender,
@@ -195,6 +275,8 @@ export class ChatDAL {
       senderUid: r.sender?.firebaseUid || r.message.senderId,
       senderProfileId: r.sender?.profileId,
       senderDbId: r.sender?.id || r.message.senderId,
+      reactions: reactionsMap.get(r.message.id) || {},
+      userReactions: userReactionsMap.get(r.message.id) || {},
     }));
   }
 
@@ -296,6 +378,26 @@ export class ChatDAL {
       ...(optId ? { optimisticId: optId, clientMessageId: optId } : {})
     };
 
+    let isDelivered = false;
+    try {
+      const otherMembers = await executor
+        .select({ userId: conversationMembers.userId })
+        .from(conversationMembers)
+        .where(
+          and(
+            eq(conversationMembers.conversationId, data.conversationId),
+            sql`${conversationMembers.userId} != ${data.senderId}`
+          )
+        );
+      for (const m of otherMembers) {
+        const isOnline = await redis.sismember('online_users', m.userId);
+        if (isOnline) {
+          isDelivered = true;
+          break;
+        }
+      }
+    } catch {}
+
     const [msg] = await executor
       .insert(messages)
       .values({
@@ -309,6 +411,7 @@ export class ChatDAL {
         duration: data.duration,
         replyToId: data.replyToId,
         metadata: mergedMetadata,
+        isDelivered,
       })
       .returning();
 
@@ -358,7 +461,26 @@ export class ChatDAL {
     };
   }
 
+  static async markDelivered(conversationId: string, recipientUserId: string): Promise<boolean> {
+    const updated = await db
+      .update(messages)
+      .set({ isDelivered: true })
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          sql`${messages.senderId} != ${recipientUserId}`,
+          eq(messages.isDelivered, false)
+        )
+      )
+      .returning({ id: messages.id });
+    return updated.length > 0;
+  }
+
   static async markSeen(conversationId: string, userId: string) {
+    if (!conversationId || typeof conversationId !== 'string') return;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return;
+
     await db
       .update(conversationMembers)
       .set({ unreadCount: 0, lastReadAt: new Date() })
@@ -371,22 +493,43 @@ export class ChatDAL {
 
     await db
       .update(messages)
-      .set({ isSeen: true })
+      .set({ isSeen: true, isDelivered: true })
       .where(
         and(
           eq(messages.conversationId, conversationId),
           sql`${messages.senderId} != ${userId}`,
-          eq(messages.isSeen, false)
+          or(eq(messages.isSeen, false), eq(messages.isDelivered, false))
+        )
+      );
+  }
+
+  static async markUnread(conversationId: string, userId: string) {
+    if (!conversationId || typeof conversationId !== 'string') return;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return;
+
+    await db
+      .update(conversationMembers)
+      .set({ unreadCount: sql`GREATEST(${conversationMembers.unreadCount}, 1)` })
+      .where(
+        and(
+          eq(conversationMembers.conversationId, conversationId),
+          eq(conversationMembers.userId, userId)
         )
       );
   }
 
   static async getConversationMembers(conversationId: string) {
+    if (!conversationId || typeof conversationId !== 'string') return [];
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return [];
+
     return db
       .select({
         userId: conversationMembers.userId,
         firebaseUid: users.firebaseUid,
         profileId: profiles.id,
+        isMuted: conversationMembers.isMuted,
       })
       .from(conversationMembers)
       .innerJoin(users, eq(conversationMembers.userId, users.id))
@@ -404,9 +547,17 @@ export class ChatDAL {
   }
 
   static async editMessage(messageId: string, userId: string, newContent: string) {
+    const existing = await this.getMessageById(messageId);
+    if (!existing || existing.senderId !== userId) return null;
+    const existingMeta = (typeof existing.metadata === 'object' && existing.metadata !== null) ? existing.metadata : {};
+    const updatedMeta = { ...existingMeta, edited: true, editedAt: new Date().toISOString() };
     const [msg] = await db
       .update(messages)
-      .set({ content: newContent, updatedAt: new Date() })
+      .set({ 
+        content: newContent, 
+        updatedAt: new Date(),
+        metadata: updatedMeta
+      })
       .where(and(eq(messages.id, messageId), eq(messages.senderId, userId)))
       .returning();
     return msg;
@@ -431,5 +582,144 @@ export class ChatDAL {
       .where(eq(conversations.id, conversationId))
       .limit(1);
     return conv || null;
+  }
+
+  static async deleteConversation(conversationId: string, userId: string) {
+    if (!conversationId || typeof conversationId !== 'string') return false;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return false;
+    await db
+      .delete(conversationMembers)
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+
+    // Clean up conversation if no remaining members exist
+    const [remaining] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.conversationId, conversationId));
+
+    if (!remaining || remaining.count === 0) {
+      await db.delete(conversations).where(eq(conversations.id, conversationId));
+    }
+    return true;
+  }
+
+  static async togglePin(conversationId: string, userId: string): Promise<boolean> {
+    if (!conversationId || typeof conversationId !== 'string') return false;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return false;
+    const [member] = await db
+      .select({ isPinned: conversationMembers.isPinned })
+      .from(conversationMembers)
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+    const nextVal = !member?.isPinned;
+    await db
+      .update(conversationMembers)
+      .set({ isPinned: nextVal })
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+    return nextVal;
+  }
+
+  static async toggleMute(conversationId: string, userId: string): Promise<boolean> {
+    if (!conversationId || typeof conversationId !== 'string') return false;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return false;
+    const [member] = await db
+      .select({ isMuted: conversationMembers.isMuted })
+      .from(conversationMembers)
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+    const nextVal = !member?.isMuted;
+    await db
+      .update(conversationMembers)
+      .set({ isMuted: nextVal })
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+    return nextVal;
+  }
+
+  static async toggleArchive(conversationId: string, userId: string): Promise<boolean> {
+    if (!conversationId || typeof conversationId !== 'string') return false;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) return false;
+    const [member] = await db
+      .select({ isArchived: conversationMembers.isArchived })
+      .from(conversationMembers)
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+    const nextVal = !member?.isArchived;
+    await db
+      .update(conversationMembers)
+      .set({ isArchived: nextVal })
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+    return nextVal;
+  }
+
+  static async getMessageReactions(messageId: string) {
+    if (!messageId || typeof messageId !== 'string') return { reactions: {}, userReactions: {} };
+    const rows = await db
+      .select({
+        emoji: messageReactions.emoji,
+        userId: messageReactions.userId,
+        firebaseUid: users.firebaseUid,
+        profileId: profiles.id,
+      })
+      .from(messageReactions)
+      .innerJoin(users, eq(messageReactions.userId, users.id))
+      .leftJoin(profiles, eq(users.id, profiles.userId))
+      .where(eq(messageReactions.messageId, messageId));
+
+    const reactions: Record<string, number> = {};
+    const userReactions: Record<string, string> = {};
+    const countedUserReactions = new Set<string>();
+    for (const r of rows) {
+      const userEmojiKey = `${r.userId}_${r.emoji}`;
+      if (!countedUserReactions.has(userEmojiKey)) {
+        countedUserReactions.add(userEmojiKey);
+        reactions[r.emoji] = (reactions[r.emoji] || 0) + 1;
+      }
+      if (r.userId) userReactions[r.userId] = r.emoji;
+      if (r.firebaseUid) userReactions[r.firebaseUid] = r.emoji;
+      if (r.profileId) userReactions[r.profileId] = r.emoji;
+    }
+    return { reactions, userReactions };
+  }
+
+  static async addReaction(messageId: string, userId: string, emoji: string) {
+    if (!messageId || !userId || !emoji) return { reactions: {}, userReactions: {} };
+    // Remove any previous reaction from this user on this message
+    await db.delete(messageReactions).where(
+      and(eq(messageReactions.messageId, messageId), eq(messageReactions.userId, userId))
+    );
+    await db.insert(messageReactions).values({
+      messageId,
+      userId,
+      emoji,
+    });
+    return this.getMessageReactions(messageId);
+  }
+
+  static async removeReaction(messageId: string, userId: string, emoji?: string) {
+    if (!messageId || !userId) return { reactions: {}, userReactions: {} };
+    const conditions = [
+      eq(messageReactions.messageId, messageId),
+      eq(messageReactions.userId, userId),
+    ];
+    if (emoji) conditions.push(eq(messageReactions.emoji, emoji));
+    await db.delete(messageReactions).where(and(...conditions));
+    return this.getMessageReactions(messageId);
+  }
+
+  static async updateConversationThemeSettings(conversationId: string, userId: string, themeSettings: any) {
+    const isMember = await this.isParticipant(conversationId, userId);
+    if (!isMember) {
+      throw new Error('Unauthorized to update conversation theme');
+    }
+    const [updated] = await db
+      .update(conversations)
+      .set({
+        themeSettings: themeSettings || {},
+        updatedAt: new Date()
+      })
+      .where(eq(conversations.id, conversationId))
+      .returning();
+    return updated;
   }
 }

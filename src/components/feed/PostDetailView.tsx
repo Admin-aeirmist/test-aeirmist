@@ -37,6 +37,7 @@ import { formatAeirmistTimestamp } from '../../lib/date';
 import { SafeImage } from '../ui/SafeImage';
 import { VideoPlayer } from './VideoPlayer';
 import { PostMusicPlayer } from './PostMusicPlayer';
+import { api } from '../../services/api/client';
 import { logger } from '@/src/utils/logger';
 
 interface MediaItem {
@@ -121,64 +122,59 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Fetch Post Document
+  // Fetch Post Document from Device Server
   useEffect(() => {
-    if (!db || !postId) return;
+    if (!postId) return;
 
     setLoading(true);
     setError(null);
 
-    const unsubPost = onSnapshot(doc(db, 'posts', postId), (postDoc) => {
-      if (postDoc.exists()) {
-        const data = postDoc.data();
-        const authorId = data.userId || data.authorId || data.author?.id || data.author?.uid || data.ownerUid;
-        const postData = {
-          id: postDoc.id,
-          ...data,
-          authorId,
-          author: {
-            id: authorId,
-            name: data.userName || data.authorName || data.author?.displayName || data.author?.username || 'Aeirmist User',
-            avatar: getAvatarUrl(data.author?.photoURL || data.userAvatar || data.authorAvatar),
-            isVerified: Boolean(data.author?.isVerified || data.isVerified || data.verified),
-            verificationPlan: data.author?.verificationPlan || data.verificationPlan
-          },
-          likesCount: data.likesCount || 0,
-          commentsCount: data.commentsCount || 0,
-          likedBy: data.likedBy || [],
-          savedBy: data.savedBy || [],
-          createdAt: data.createdAt
-        };
-        setPost(postData);
-        setLikesCount(postData.likesCount);
+    api.posts.getById(postId)
+      .then((res: any) => {
+        if (res?.post) {
+          const p = res.post;
+          const authorDisplayName = p.author?.displayName || p.author?.username || 'Aeirmist Member';
+          const authorAvatar = p.author?.avatarKey || '';
+          const isVerified = Boolean(p.author?.isVerified);
 
-        // Broadcast author details for Instagram-style logged-out preview modal
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('aeirmist-preview-author', {
-            detail: {
-              name: postData.author.name,
-              username: data.author?.username || data.userName || data.authorName,
-              avatar: postData.author.avatar
-            }
-          }));
+          const postData = {
+            id: p.id,
+            ...p,
+            authorId: p.userId,
+            author: {
+              id: p.author?.id || p.userId,
+              name: authorDisplayName,
+              displayName: authorDisplayName,
+              username: p.author?.username || '',
+              avatar: getAvatarUrl(authorAvatar, authorDisplayName),
+              isVerified,
+              badge: p.author?.badge || null
+            },
+            mediaUrls: (p.mediaKeys || []).map((k: string) => 
+              k.startsWith('http') || k.startsWith('data:') ? k : `/media/${k.replace(/^\/+media\/+/, '')}`
+            ),
+            likesCount: p.likesCount || 0,
+            commentsCount: p.commentsCount || 0,
+            isLiked: Boolean(p.isLiked),
+            isBookmarked: Boolean(p.isBookmarked),
+            createdAt: p.createdAt
+          };
+          setPost(postData);
+          setLikesCount(postData.likesCount);
+          setIsLiked(postData.isLiked);
+          setIsBookmarked(postData.isBookmarked);
+          setLoading(false);
+        } else {
+          setError('Post not found');
+          setLoading(false);
         }
-
-        if (profile?.id) {
-          setIsLiked(Boolean(postData.likedBy?.includes(profile.id)));
-          setIsBookmarked(Boolean(postData.savedBy?.includes(profile.id)));
-        }
-      } else {
-        setError('Post not found');
-      }
-      setLoading(false);
-    }, (err) => {
-      logger.error('Error fetching post:', err);
-      setError('Failed to load post');
-      setLoading(false);
-    });
-
-    return () => unsubPost();
-  }, [db, postId, profile?.id]);
+      })
+      .catch((err) => {
+        logger.error('Error fetching post:', err);
+        setError('Failed to load post');
+        setLoading(false);
+      });
+  }, [postId]);
 
   // Subscribe to live comments
   useEffect(() => {
@@ -212,7 +208,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
     if (post.mediaUrls && post.mediaUrls.length > 0) {
       return post.mediaUrls.map((url: string) => ({
         url,
-        type: (url.endsWith('.mp4') || url.includes('video')) ? 'video' : 'image'
+        type: (post.mediaType === 'video' || url.endsWith('.mp4') || url.includes('.mp4') || url.includes('video')) ? 'video' : 'image'
       }));
     }
     if (post.mediaUrl) {
@@ -378,6 +374,9 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
       };
 
       await addDoc(commentsRef, newComment);
+
+      // Also persist to PostgreSQL backend
+      api.posts.addComment(post.id, txt, activeParentId || undefined).catch(() => {});
 
       const postRef = doc(db, 'posts', post.id);
       await updateDoc(postRef, {

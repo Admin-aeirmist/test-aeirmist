@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   Palette,
   MoreVertical,
+  MoreHorizontal,
   Plus,
   Search,
   Filter,
@@ -40,13 +41,14 @@ import {
   Clock
 } from 'lucide-react';
 const EmojiPicker = React.lazy(() => import('emoji-picker-react'));
+import { doc, getDoc } from 'firebase/firestore';
 import { CallModal } from './CallModal';
 import { ForwardModal } from './messenger/ForwardModal';
 import { ChatContextMenu } from './messenger/ChatContextMenu';
 import { AccountSwitcher } from './messenger/AccountSwitcher';
 import { SettingsModal } from './messenger/SettingsModal';
 import ProfileSystem from './profile/ProfileSystem';
-import { getAvatarUrl, BLANK_DP } from '../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc, BLANK_DP } from '../lib/avatar';
 import { Avatar } from './ui/Avatar';
 import { RequestsSection } from './messenger/RequestsSection';
 import { ChatInfoPanel } from './messenger/ChatInfoPanel';
@@ -63,22 +65,6 @@ import { ChatWallpaperLayer } from './messenger/ChatWallpaperLayer';
 import { ChatWallpaperController } from './messenger/ChatWallpaperController';
 import { GroupCreationModal } from './messenger/GroupCreationModal';
 import { GroupInfoPanel } from './messenger/GroupInfoPanel';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  orderBy, 
-  addDoc, 
-  serverTimestamp, 
-  doc, 
-  getDoc,
-  updateDoc,
-  limit,
-  deleteDoc,
-  arrayUnion
-} from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { Chat, Message } from '../types/messenger';
 import { 
   formatAeirmistTimestamp, 
@@ -99,6 +85,8 @@ import { aeirmistCall } from '../modules/calls/CallService';
 import { logger } from '@/src/utils/logger';
 import { useBackHandler } from '../utils/backNavigation';
 import { useSharedProfile } from '../hooks/useSharedProfile';
+import { getSocket } from '../services/socket';
+import { api } from '../services/api/client';
 
 export const getChatActivityMs = (chat: any): number => {
   if (!chat) return 0;
@@ -142,8 +130,151 @@ export const getChatActivityMs = (chat: any): number => {
   return 0;
 };
 
-export const sortChatsDeterministic = (chatsList: any[], activeProfileId?: string): any[] => {
-  return [...chatsList].sort((a, b) => {
+export const isUuidString = (id: any): boolean => Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id)));
+
+export function getDirectChatPartnerIdentifiers(chat: any, myIdentifiers?: Set<string>): Set<string> {
+  const pids = new Set<string>();
+  if (!chat || chat.isGroup || chat.type === 'group' || chat.type === 'self') return pids;
+
+  const rawCandidates = [
+    chat.otherParticipantId,
+    chat.otherParticipantUid,
+    chat.otherProfile?.id,
+    chat.otherProfile?.userId,
+    chat.otherProfile?.firebaseUid,
+    chat.otherProfile?.profileId,
+    chat.otherProfile?.username,
+    chat.otherParticipant?.id,
+    chat.otherParticipant?.userId,
+    chat.otherParticipant?.firebaseUid,
+    chat.otherParticipant?.profileId,
+    chat.otherParticipant?.username
+  ].filter(Boolean).map(id => String(id).toLowerCase().trim());
+
+  if (chat.id) {
+    const sId = String(chat.id);
+    if (sId.startsWith('new_')) {
+      rawCandidates.push(sId.slice(4).toLowerCase().trim());
+    } else if (sId.includes('_') && !isUuidString(sId)) {
+      rawCandidates.push(...sId.split('_').map(p => p.toLowerCase().trim()));
+    }
+  }
+
+  for (const id of rawCandidates) {
+    if (id && (!myIdentifiers || !myIdentifiers.has(id))) {
+      pids.add(id);
+    }
+  }
+  return pids;
+}
+
+export function mergeChatPair(a: any, b: any): any {
+  if (!a) return b;
+  if (!b) return a;
+  const idA = String(a.id || '');
+  const idB = String(b.id || '');
+  let preferredId = idA;
+  if (isUuidString(idB) && !isUuidString(idA)) {
+    preferredId = idB;
+  } else if (!isUuidString(idB) && !isUuidString(idA)) {
+    if (idA.startsWith('new_') && !idB.startsWith('new_')) {
+      preferredId = idB;
+    } else {
+      preferredId = idA;
+    }
+  }
+
+  const actA = getChatActivityMs(a);
+  const actB = getChatActivityMs(b);
+  const newer = actB >= actA ? b : a;
+  const older = actB >= actA ? a : b;
+
+  // Best Photo resolution
+  const isValidPhoto = (p: any) => Boolean(p && typeof p === 'string' && p.trim() !== '' && p !== BLANK_DP && p !== 'null' && p !== 'undefined');
+  const photoA = a.photo;
+  const photoB = b.photo;
+  const bestPhoto = isValidPhoto(photoA) ? photoA : (isValidPhoto(photoB) ? photoB : (photoA || photoB || null));
+
+  // Best Display Name resolution
+  const isGeneric = (n: any) => !n || typeof n !== 'string' || ['aeirmist user', 'aeirmist member', 'chat', 'user'].includes(n.trim().toLowerCase());
+  const bestName = !isGeneric(a.name) ? a.name : (!isGeneric(b.name) ? b.name : (a.name || b.name || 'Chat'));
+
+  return {
+    ...older,
+    ...newer,
+    id: preferredId,
+    name: bestName,
+    photo: bestPhoto,
+    otherParticipantId: a.otherParticipantId || b.otherParticipantId,
+    otherParticipantUid: a.otherParticipantUid || b.otherParticipantUid,
+    otherProfile: { ...(a.otherProfile || {}), ...(b.otherProfile || {}) },
+    _optimisticBumpAt: Math.max(a._optimisticBumpAt || 0, b._optimisticBumpAt || 0) || undefined,
+    unread: Boolean(a.unread || b.unread),
+    unreadCount: Math.max(
+      typeof a.unreadCount === 'number' ? a.unreadCount : 0,
+      typeof b.unreadCount === 'number' ? b.unreadCount : 0
+    )
+  };
+}
+
+export function deduplicateChats(chatsList: any[], myIdentifiers?: Set<string>): any[] {
+  const result: any[] = [];
+  const directClusters: { partnerIds: Set<string>; chat: any }[] = [];
+
+  for (const c of chatsList) {
+    if (!c || !c.id) continue;
+
+    if (c.isGroup || c.type === 'group') {
+      const idx = result.findIndex(x => x.id === c.id);
+      if (idx >= 0) {
+        result[idx] = mergeChatPair(result[idx], c);
+      } else {
+        result.push(c);
+      }
+      continue;
+    }
+
+    if (c.type === 'self') {
+      const idx = result.findIndex(x => x.type === 'self' || x.id === c.id);
+      if (idx >= 0) {
+        result[idx] = mergeChatPair(result[idx], c);
+      } else {
+        result.push(c);
+      }
+      continue;
+    }
+
+    // Direct 1-on-1 chat
+    const pids = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+
+    const cluster = directClusters.find(cl => {
+      if (cl.chat.id === c.id) return true;
+      if (pids.size > 0 && cl.partnerIds.size > 0) {
+        for (const id of pids) {
+          if (cl.partnerIds.has(id)) return true;
+        }
+      }
+      return false;
+    });
+
+    if (cluster) {
+      for (const id of pids) cluster.partnerIds.add(id);
+      cluster.chat = mergeChatPair(cluster.chat, c);
+    } else {
+      directClusters.push({ partnerIds: pids, chat: c });
+    }
+  }
+
+  for (const cl of directClusters) {
+    result.push(cl.chat);
+  }
+
+  return result;
+}
+
+export const sortChatsDeterministic = (chatsList: any[], activeProfileId?: string, myIdentifiers?: Set<string>): any[] => {
+  const deduped = deduplicateChats(chatsList, myIdentifiers);
+  return [...deduped].sort((a, b) => {
     const pinA = typeof a.isPinned === 'boolean' ? a.isPinned : !!a.isPinned?.[activeProfileId || ''];
     const pinB = typeof b.isPinned === 'boolean' ? b.isPinned : !!b.isPinned?.[activeProfileId || ''];
     if (pinA && !pinB) return -1;
@@ -188,10 +319,16 @@ const LiveParticipantAvatar = ({
   const profileData = useSharedProfile(db, participantId);
   
   const isDeleted = profileData?.isDeleted === true;
-  const isFallbackPhotoValid = Boolean(fallbackPhoto && fallbackPhoto !== BLANK_DP);
+  const resolvedFallback = resolveAvatarSrc(fallbackPhoto);
+  const isFallbackPhotoValid = Boolean(resolvedFallback && resolvedFallback !== BLANK_DP);
+  
+  // Prioritize live loaded photo from shared cache, but seamlessly retain fallbackPhoto
+  const livePhotoCandidate = profileData?.photoURL ? getAvatarUrl(profileData.photoURL) : null;
   const livePhoto = isDeleted 
     ? BLANK_DP 
-    : (profileData?.photoURL ? getAvatarUrl(profileData.photoURL) : (isFallbackPhotoValid ? getAvatarUrl(fallbackPhoto) : BLANK_DP));
+    : (livePhotoCandidate && livePhotoCandidate !== BLANK_DP
+        ? livePhotoCandidate 
+        : (isFallbackPhotoValid ? getAvatarUrl(resolvedFallback) : (livePhotoCandidate || BLANK_DP)));
 
   return (
     <Avatar 
@@ -226,20 +363,8 @@ export const LiveParticipantName = ({ participantId, fallbackName, className = "
     : (profileData?.displayName || profileData?.username || (isFallbackValid ? fallbackName : '') || 'Chat');
 
   useEffect(() => {
-    if (!db || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
-    // Nickname listener (separate collection — cannot be shared via profile cache)
-    const unsubNickname = onSnapshot(doc(db, 'chat_settings', chatId.trim()), (docSnap) => {
-      if (docSnap.exists()) {
-        const nicks = docSnap.data().nicknames || {};
-        setNickname(nicks[participantId] || '');
-      } else {
-        setNickname('');
-      }
-    }, (err) => {
-      logger.error("Error listening for shared nickname:", err);
-    });
-    return () => unsubNickname();
-  }, [db, participantId, chatId]);
+    setNickname('');
+  }, [participantId, chatId]);
 
   return <span className={className}>{isDeleted ? 'Aeirmist User' : (nickname || profileName)}</span>;
 };
@@ -276,30 +401,34 @@ const LiveParticipantSubDetails = ({ participantId, chatId }: { participantId: s
   const isOnlineStatusOn = profileData?.messagingSettings?.onlineStatus !== false;
 
   useEffect(() => {
-    if (!db || !participantId || !chatId || typeof chatId !== 'string' || !chatId.trim()) return;
+    if (!chatId || !participantId) return;
+    const socket = getSocket();
+    if (!socket) return;
+    let timer: any = null;
 
-    const indicatorId = `${chatId.trim()}_${participantId.trim()}`;
-    const unsubTyping = onSnapshot(doc(db, 'typing_indicators', indicatorId), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.updatedAt) {
-          try {
-            const date = typeof data.updatedAt.toDate === 'function' ? data.updatedAt.toDate() : new Date(data.updatedAt);
-            const isCurrentlyTyping = (Date.now() - date.getTime()) < 4000;
-            setIsTyping(isCurrentlyTyping);
-          } catch (e) {
-            setIsTyping(false);
-          }
-        } else {
-          setIsTyping(false);
-        }
-      } else {
+    const onTyping = (data: any) => {
+      if (data && (data.conversationId === chatId || !data.conversationId) && (data.userId === participantId || data.username === username)) {
+        setIsTyping(true);
+        clearTimeout(timer);
+        timer = setTimeout(() => setIsTyping(false), 4000);
+      }
+    };
+
+    const onStopTyping = (data: any) => {
+      if (data && (data.conversationId === chatId || !data.conversationId) && (data.userId === participantId || data.username === username)) {
         setIsTyping(false);
       }
-    });
+    };
 
-    return () => unsubTyping();
-  }, [db, participantId, chatId]);
+    socket.on?.('user_typing', onTyping);
+    socket.on?.('user_stop_typing', onStopTyping);
+
+    return () => {
+      clearTimeout(timer);
+      socket.off?.('user_typing', onTyping);
+      socket.off?.('user_stop_typing', onStopTyping);
+    };
+  }, [chatId, participantId, username]);
 
   const isOnline = !!onlineUsers?.has?.(participantId);
 
@@ -330,7 +459,7 @@ const LiveParticipantSubDetails = ({ participantId, chatId }: { participantId: s
   );
 };
 
-const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, onUserClick?: (user: any) => void }) => {
+const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialRecipient?: any, onUserClick?: (user: any) => void, onOpenSettings?: () => void }) => {
   const { 
     db, 
     storage, 
@@ -354,9 +483,41 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     localAvatarURL,
     toggleNotification,
     deleteConversation,
-    addToast
+    addToast,
+    markAsRead
   } = useAeirmist();
   const { settings } = useAppearance();
+
+  const myIdentifiers = useMemo(() => {
+    const ids = new Set<string>();
+    const add = (v: any) => { if (v) ids.add(String(v).toLowerCase().trim()); };
+    add(user?.uid);
+    add(user?.id);
+    add((user as any)?.userId);
+    add(profile?.id);
+    add(profile?.uid);
+    add(profile?.ownerUid);
+    add(profile?.userId);
+    add(profile?.username);
+    if (typeof window !== 'undefined') {
+      add(localStorage.getItem('aeirmist_user_id'));
+      add(localStorage.getItem('user_id'));
+    }
+    return ids;
+  }, [
+    user?.uid,
+    user?.id,
+    (user as any)?.userId,
+    profile?.id,
+    profile?.uid,
+    profile?.ownerUid,
+    profile?.userId,
+    profile?.username
+  ]);
+
+  const myIdentifiersRef = useRef(myIdentifiers);
+  myIdentifiersRef.current = myIdentifiers;
+
   const [chats, setChats] = useState<Chat[]>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -364,12 +525,25 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         const raw = (uid && localStorage.getItem(`aeirmist_chats_${uid}`)) || localStorage.getItem('aeirmist_cached_inbox_chats');
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) return deduplicateChats(parsed);
         }
       } catch (e) {}
     }
     return [];
   });
+
+  // Instant persistent cache sync for Messenger chats
+  useEffect(() => {
+    if (chats.length > 0) {
+      try {
+        const uid = profile?.ownerUid || profile?.uid || user?.uid || '';
+        const safeChats = chats.slice(0, 50);
+        if (uid) localStorage.setItem(`aeirmist_chats_${uid}`, JSON.stringify(safeChats));
+        localStorage.setItem('aeirmist_cached_inbox_chats', JSON.stringify(safeChats));
+      } catch (e) {}
+    }
+  }, [chats, profile?.ownerUid, profile?.uid, user?.uid]);
+
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -448,11 +622,15 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
   // Manage Nav Visibility
   useEffect(() => {
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
     const checkMobile = () => {
       const isMobile = window.innerWidth < 768;
       if (isMobile && !isMobileList) {
-        setIsNavHidden(true);
+        // Small delay to prevent nav flicker on first render / refresh
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => setIsNavHidden(true), 200);
       } else {
+        if (hideTimer) clearTimeout(hideTimer);
         setIsNavHidden(false);
       }
     };
@@ -461,6 +639,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     window.addEventListener('resize', checkMobile);
     return () => {
       window.removeEventListener('resize', checkMobile);
+      if (hideTimer) clearTimeout(hideTimer);
       setIsNavHidden(false);
     };
   }, [isMobileList, setIsNavHidden]);
@@ -473,6 +652,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     isUnlocked: false,
     activeVaultChatId: null,
   });
+  const [isOfflineBannerDismissed, setIsOfflineBannerDismissed] = useState(false);
 
   const vaultedParticipantIds = useMemo(() => {
     const ids = new Set<string>();
@@ -618,7 +798,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
   // Global chats filtering logic - strictly mutually exclusive to prevent duplicated inboxes
   const mainChats = useMemo(() => {
-    return chats.filter(data => {
+    const raw = chats.filter(data => {
       // Hide Vaulted conversations from Main Inbox
       if (data.isVaulted?.[profile?.id || ''] === true) return false;
 
@@ -631,7 +811,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       
       return true;
     });
-  }, [chats, isBlocked, profile?.id]);
+    return deduplicateChats(raw, myIdentifiers);
+  }, [chats, isBlocked, profile?.id, myIdentifiers]);
 
   const requestChats = useMemo(() => {
     return chats.filter(data => {
@@ -691,6 +872,148 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
   }, [initialRecipient, user, profile]);
 
   useEffect(() => {
+    const handleUnreadChanged = (e: any) => {
+      const cId = e.detail?.conversationId;
+      if (!cId) return;
+      const isUnread = e.detail?.unread !== false;
+      const count = typeof e.detail?.unreadCount === 'number' 
+        ? e.detail.unreadCount 
+        : (isUnread ? 1 : 0);
+      const targetKey = String(cId).toLowerCase();
+
+      setChats(prev => prev.map(c => {
+        const partnerIds = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+        const isMatch = (
+          c.id === cId ||
+          c.id.toLowerCase() === targetKey ||
+          partnerIds.has(targetKey)
+        );
+        if (isMatch) {
+          return { 
+            ...c, 
+            unread: isUnread, 
+            unreadCount: count,
+            _unreadOptimisticAt: Date.now()
+          };
+        }
+        return c;
+      }));
+    };
+    window.addEventListener('aeirmist_chat_unread_changed', handleUnreadChanged);
+    return () => window.removeEventListener('aeirmist_chat_unread_changed', handleUnreadChanged);
+  }, [myIdentifiers]);
+
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleSettingChanged = (e: any) => {
+      const { conversationId, type, value } = e.detail || {};
+      if (!conversationId || !type) return;
+      const targetKey = String(conversationId).toLowerCase();
+
+      if (type === 'delete') {
+        setChats(prev => prev.filter(c => {
+          const partnerIds = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+          const isMatch = (
+            c.id === conversationId ||
+            c.id.toLowerCase() === targetKey ||
+            partnerIds.has(targetKey)
+          );
+          return !isMatch;
+        }));
+        setActiveChatId(curr => (curr === conversationId || curr?.toLowerCase() === targetKey ? null : curr));
+        return;
+      }
+
+      setChats(prev => {
+        const updated = prev.map(c => {
+          const partnerIds = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+          const isMatch = (
+            c.id === conversationId ||
+            c.id.toLowerCase() === targetKey ||
+            partnerIds.has(targetKey)
+          );
+          if (isMatch) {
+            if (type === 'pin') return { ...c, isPinned: value };
+            if (type === 'mute') return { ...c, isMuted: value };
+            if (type === 'archive') return { ...c, isArchived: value };
+            if (type === 'vault') {
+              return {
+                ...c,
+                isVaulted: {
+                  ...(typeof c.isVaulted === 'object' ? c.isVaulted : {}),
+                  [profile?.id || '']: value
+                }
+              };
+            }
+          }
+          return c;
+        });
+        const deduped = deduplicateChats(updated, myIdentifiers);
+        return sortChatsDeterministic(deduped, profile?.id, myIdentifiers);
+      });
+    };
+
+    const handleChatDeleted = (e: any) => {
+      const { conversationId } = e.detail || {};
+      if (!conversationId) return;
+      const targetKey = String(conversationId).toLowerCase();
+
+      setChats(prev => prev.filter(c => {
+        const partnerIds = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+        const isMatch = (
+          c.id === conversationId ||
+          c.id.toLowerCase() === targetKey ||
+          partnerIds.has(targetKey)
+        );
+        return !isMatch;
+      }));
+
+      setActiveChatId(curr => (curr === conversationId || curr?.toLowerCase() === targetKey ? null : curr));
+    };
+
+    const handleSocketConvDeleted = (payload: any) => {
+      const cid = payload?.conversationId || payload?.rawConversationId;
+      if (cid) {
+        window.dispatchEvent(new CustomEvent('aeirmist_chat_deleted', { detail: { conversationId: cid } }));
+      }
+    };
+
+    const handleThemeUpdatedEvent = (e: any) => {
+      const { conversationId, themeSettings } = e.detail || {};
+      if (!conversationId) return;
+      setChats(prev => prev.map(c => {
+        if (c.id === conversationId) {
+          return {
+            ...c,
+            themeSettings
+          };
+        }
+        return c;
+      }));
+    };
+
+    window.addEventListener('aeirmist_chat_setting_changed', handleSettingChanged);
+    window.addEventListener('aeirmist_chat_deleted', handleChatDeleted);
+    window.addEventListener('aeirmist_chat_theme_updated', handleThemeUpdatedEvent);
+    socket?.on?.('conversation_deleted', handleSocketConvDeleted);
+
+    return () => {
+      window.removeEventListener('aeirmist_chat_setting_changed', handleSettingChanged);
+      window.removeEventListener('aeirmist_chat_deleted', handleChatDeleted);
+      window.removeEventListener('aeirmist_chat_theme_updated', handleThemeUpdatedEvent);
+      socket?.off?.('conversation_deleted', handleSocketConvDeleted);
+    };
+  }, [myIdentifiers, profile?.id]);
+
+  // Expose muted conversation IDs to window so the global notification handler
+  // can suppress toasts and push notifications for muted conversations.
+  useEffect(() => {
+    const mutedIds = new Set(chats.filter(c => c.isMuted).map(c => c.id));
+    (window as any).__aeirmistMutedChats = mutedIds;
+  }, [chats]);
+
+  useEffect(() => {
     if (!user || !profile?.id) return;
 
     const unsubscribe = messagingService.subscribeToChats(db, user.uid, profile.id, (fetchedChats) => {
@@ -735,6 +1058,15 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         let otherParticipantUid = (data.otherParticipantUid && !isSelfId(data.otherParticipantUid))
           ? data.otherParticipantUid
           : '';
+
+        if (!otherParticipantId && data.otherParticipant) {
+          const op = data.otherParticipant;
+          otherParticipantId = (!isSelfId(op.profileId) && op.profileId) || (!isSelfId(op.userId) && op.userId) || (!isSelfId(op.firebaseUid) && op.firebaseUid) || '';
+        }
+        if (!otherParticipantUid && data.otherParticipant) {
+          const op = data.otherParticipant;
+          otherParticipantUid = (!isSelfId(op.firebaseUid) && op.firebaseUid) || (!isSelfId(op.userId) && op.userId) || '';
+        }
 
         if (!otherParticipantId && data.profileIds && Array.isArray(data.profileIds)) {
           otherParticipantId = data.profileIds.find((id: string) => !isSelfId(id)) || '';
@@ -816,19 +1148,29 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           otherParticipantUid,
           otherProfile: data.otherProfile || details,
           name: (data.isGroup || data.type === 'group') ? (data.groupName || data.name || 'Group Chat') : cleanDisplayName,
-          photo: (data.isGroup || data.type === 'group') ? getAvatarUrl(data.groupPhotoURL || data.photo) : getAvatarUrl(details.photoURL || (details.avatarKey ? `/media/${details.avatarKey}` : data.photo)),
+          photo: (data.isGroup || data.type === 'group') ? getAvatarUrl(data.groupPhotoURL || data.photo) : getAvatarUrl(details.photoURL || resolveAvatarSrc(details.avatarKey) || data.photo),
           rawLastMessage: rawLastMsg,
           lastMessage: typeof displayLastMsg === 'string' ? displayLastMsg : (displayLastMsg?.text || (rawLastMsg?.mediaUrl ? 'Sent an attachment' : 'No messages yet')),
           time: timeString,
-          unread: typeof data.unreadCount === 'number' ? data.unreadCount > 0 : (data.unreadCount?.[profile.id] || 0) > 0,
+          unreadCount: typeof data.unreadCount === 'number' ? data.unreadCount : (data.unread === false ? 0 : (data.unreadCount?.[profile.id] ?? data.unreadCount?.[user.uid] ?? 0)),
+          unread: typeof data.unread === 'boolean' ? data.unread : (typeof data.unreadCount === 'number' ? data.unreadCount > 0 : ((data.unreadCount?.[profile.id] ?? data.unreadCount?.[user.uid] ?? 0) > 0)),
           isPinned: typeof data.isPinned === 'boolean' ? data.isPinned : !!data.isPinned?.[profile.id],
           isMuted: typeof data.isMuted === 'boolean' ? data.isMuted : !!data.isMuted?.[profile.id],
           isArchived: typeof data.isArchived === 'boolean' ? data.isArchived : !!data.isArchived?.[profile.id],
           isVanishMode: !!data.isVanishMode,
           theme: data.theme || 'neural',
-          themeSettings: data.themeSettings,
-          online: !!onlineUsers?.has?.(otherParticipantId),
-          lastMessageSenderId: lastSenderId,
+          online: Boolean(
+            data.online ||
+            data.otherProfile?.isOnline ||
+            [
+              otherParticipantId, 
+              otherParticipantUid, 
+              data.otherProfile?.userId, 
+              data.otherProfile?.firebaseUid,
+              data.otherProfile?.profileId,
+              data.otherProfile?.username
+            ].some(id => Boolean(id) && onlineUsers?.has(id))
+          ),
           lastMessageMood: data.lastMessage?.mood,
           latestMessageAtMs: calculatedActivityMs,
           updatedAtMs: calculatedActivityMs
@@ -846,29 +1188,52 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
               activity = prev._optimisticBumpAt;
             }
           }
+          let unread = chat.unread;
+          let unreadCount = chat.unreadCount;
+          if (prev?._unreadOptimisticAt && (Date.now() - prev._unreadOptimisticAt < 5000)) {
+            unread = prev.unread;
+            unreadCount = prev.unreadCount;
+          }
           return {
             ...chat,
+            unread,
+            unreadCount,
             updatedAtMs: activity,
             latestMessageAtMs: activity,
-            _optimisticBumpAt: prev?._optimisticBumpAt
+            _optimisticBumpAt: prev?._optimisticBumpAt,
+            _unreadOptimisticAt: prev?._unreadOptimisticAt
           };
         });
 
         // Retain pending optimistic / newly created chats not yet present in server snapshot
         const serverIds = new Set(processedChats.map(c => c.id));
-        const pendingChats = prevChats.filter(c => 
-          !serverIds.has(c.id) && 
-          (c.isOptimistic || c.hasPendingWrites || (c._optimisticBumpAt && Date.now() - c._optimisticBumpAt < 20000))
-        );
+        const serverPartnerIds = new Set<string>();
+        for (const sc of processedChats) {
+          for (const pid of getDirectChatPartnerIdentifiers(sc, myIdentifiers)) {
+            serverPartnerIds.add(pid);
+          }
+        }
+
+        const pendingChats = prevChats.filter(c => {
+          if (serverIds.has(c.id)) return false;
+          // If server snapshot already has a conversation representing this partner, drop optimistic placeholder
+          const cPids = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+          if (cPids.size > 0) {
+            for (const pid of cPids) {
+              if (serverPartnerIds.has(pid)) return false;
+            }
+          }
+          return Boolean(c.isOptimistic || c.hasPendingWrites || (c._optimisticBumpAt && Date.now() - c._optimisticBumpAt < 20000));
+        });
 
         const allChats = [...merged, ...pendingChats];
-        const uniqueChats = Array.from(new Map(allChats.map(c => [c.id, c])).values());
-        return sortChatsDeterministic(uniqueChats, profile.id);
+        const deduped = deduplicateChats(allChats, myIdentifiersRef.current);
+        return sortChatsDeterministic(deduped, profile.id, myIdentifiersRef.current);
       });
     });
 
     return () => unsubscribe();
-  }, [db, user?.uid, profile?.id]); // Removed onlineUsers from deps to prevent excessive re-subscribes. Online status is handled via live onlineUsers set in render.
+  }, [db, user?.uid, profile?.id]);
 
   // Auto-close active chat if it has been deleted, archived, or recipient blocked
   useEffect(() => {
@@ -911,6 +1276,30 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
   const handleUserClick = (userData: any, autoCallType?: 'audio' | 'video') => {
     if (!userData || !profile?.id) return;
 
+    // Direct conversation lookup if passed conversationId or matching chatId
+    const targetChatId = userData.conversationId || userData.chatId || userData.id;
+    if (targetChatId) {
+      const directChat = chats.find(c => c.id === targetChatId);
+      if (directChat) {
+        if (directChat.isVaulted?.[profile.id] === true && !vaultState.isUnlocked) {
+          setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: directChat.id });
+          setActiveChatId(directChat.id);
+          setTempChat(null);
+          setIsMobileList(false);
+          setSearchQuery('');
+          setSearchResults([]);
+          return;
+        }
+        handleChatSelect(directChat);
+        if (autoCallType) {
+          setTimeout(() => setPendingCall({ conversationId: directChat.id, type: autoCallType }), 100);
+        }
+        setSearchQuery('');
+        setSearchResults([]);
+        return;
+      }
+    }
+
     // Current user's candidate identifiers
     const myUserId = (user as any)?.userId || user?.id || (profile as any)?.userId;
     const myAuthUid = user?.uid;
@@ -937,16 +1326,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       }
       if (c.type === 'self') return false;
 
-      const partnerIds = [
-        c.otherParticipantId,
-        c.otherParticipantUid,
-        c.otherProfile?.userId,
-        c.otherProfile?.id,
-        c.otherProfile?.username,
-        c.otherProfile?.firebaseUid,
-      ].filter(Boolean).map(id => String(id).toLowerCase());
-
-      return partnerIds.some(pid => !myIdentifiers.has(pid) && targetIdentifiers.includes(pid));
+      const pids = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+      return targetIdentifiers.some(tid => pids.has(tid));
     });
 
     if (existingChat) {
@@ -970,7 +1351,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       const newTempChat: Chat = {
         id: 'new_' + canonicalTargetId,
         name: userData.displayName || userData.name || userData.username || 'User',
-        photo: userData.photoURL || userData.photo || (userData.avatarKey ? `/media/${userData.avatarKey}` : null),
+        photo: userData.photoURL || userData.photo || resolveAvatarSrc(userData.avatarKey) || null,
         lastMessage: 'Tap to chat',
         time: '',
         unread: false,
@@ -1029,6 +1410,22 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     } else {
       setTempChat(null);
     }
+    if (chat.unread || (typeof chat.unreadCount === 'number' && chat.unreadCount > 0)) {
+      setChats(prev => prev.map(c => {
+        const partnerIds = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+        const isMatch = (
+          c.id === chat.id ||
+          c.id.toLowerCase() === chat.id.toLowerCase() ||
+          partnerIds.has(chat.id.toLowerCase())
+        );
+        return isMatch ? { ...c, unread: false, unreadCount: 0, _unreadOptimisticAt: Date.now() } : c;
+      }));
+    }
+    try {
+      if (typeof markAsRead === 'function') {
+        markAsRead(chat.id);
+      }
+    } catch {}
     setMessageSearchQuery('');
     setIsInfoOpen(false);
     setIsMobileList(false);
@@ -1038,23 +1435,29 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
     const now = Date.now();
     const isNew = chatId.startsWith('new_');
     const targetId = isNew ? chatId.replace('new_', '') : null;
-    const canonicalId = (isNew && targetId && profile?.id) 
-      ? [profile.id, targetId].sort().join('_') 
-      : chatId;
+    const currentPartnerIds = currentChatObj ? getDirectChatPartnerIdentifiers(currentChatObj, myIdentifiers) : new Set<string>();
+    if (targetId && !myIdentifiers.has(targetId.toLowerCase())) {
+      currentPartnerIds.add(targetId.toLowerCase());
+    }
 
     setChats(prevChats => {
       let found = false;
       const updated = prevChats.map(c => {
-        const isPartnerMatch = currentChatObj && !c.isGroup && !currentChatObj.isGroup && (
-          (currentChatObj.otherParticipantId && c.otherParticipantId && currentChatObj.otherParticipantId === c.otherParticipantId) ||
-          (currentChatObj.otherParticipantUid && c.otherParticipantUid && currentChatObj.otherParticipantUid === c.otherParticipantUid) ||
-          (currentChatObj.otherProfile?.firebaseUid && c.otherProfile?.firebaseUid && currentChatObj.otherProfile.firebaseUid === c.otherProfile.firebaseUid)
-        );
-        if (c.id === chatId || c.id === canonicalId || isPartnerMatch) {
+        let isMatch = (c.id === chatId);
+        if (!isMatch && currentPartnerIds.size > 0 && !c.isGroup && c.type !== 'group') {
+          const cPids = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+          for (const pid of currentPartnerIds) {
+            if (cPids.has(pid)) {
+              isMatch = true;
+              break;
+            }
+          }
+        }
+
+        if (isMatch) {
           found = true;
           return {
             ...c,
-            id: c.id,
             lastMessage: text.startsWith('You: ') ? text : `You: ${text}`,
             latestMessagePreview: text,
             updatedAtMs: now,
@@ -1069,9 +1472,11 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       });
 
       if (!found && currentChatObj) {
+        const canonicalPhoto = resolveAvatarSrc(currentChatObj.photo || currentChatObj.otherProfile?.avatarKey) || currentChatObj.photo || null;
         const newEntry = {
           ...currentChatObj,
-          id: canonicalId,
+          id: chatId,
+          photo: canonicalPhoto,
           lastMessage: text.startsWith('You: ') ? text : `You: ${text}`,
           latestMessagePreview: text,
           updatedAtMs: now,
@@ -1084,10 +1489,10 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         updated.unshift(newEntry);
       }
 
-      const unique = Array.from(new Map(updated.map(c => [c.id, c])).values());
-      return sortChatsDeterministic(unique, profile?.id);
+      const deduped = deduplicateChats(updated, myIdentifiers);
+      return sortChatsDeterministic(deduped, profile?.id, myIdentifiers);
     });
-  }, [profile?.id]);
+  }, [profile?.id, myIdentifiers]);
 
   const handleGroupCreated = (groupId: string, groupData?: any) => {
     setIsGroupCreationOpen(false);
@@ -1108,6 +1513,38 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       } as any);
     }
   };
+
+  const handleOpenMySpace = useCallback(() => {
+    const existing = chats.find(c => 
+      c.id.startsWith('myspace_') || 
+      c.name === 'My Space' || 
+      (c.type === 'self' && c.participants?.includes(user?.uid))
+    );
+    if (existing) {
+      setActiveChatId(existing.id);
+      setTempChat(null);
+    } else {
+      const spaceId = `myspace_${profile?.id || user?.uid}`;
+      const newChat: Chat = {
+        id: spaceId,
+        name: 'My Space',
+        photo: profile?.photoURL || '',
+        lastMessage: 'Personal Workspace & Saved Notes',
+        time: 'Just now',
+        unread: false,
+        isGroup: false,
+        type: 'self',
+        participants: [user?.uid],
+        profileIds: [profile?.id],
+        isTemporary: true
+      } as any;
+      setTempChat(newChat);
+      setActiveChatId(spaceId);
+    }
+    setView('chats');
+    setIsMobileList(false);
+    setIsSettingsOpen(false);
+  }, [chats, profile, user]);
 
   const handleContextMenu = (e: React.MouseEvent, chatId: string) => {
     e.preventDefault();
@@ -1136,7 +1573,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
          online: !!onlineUsers?.has?.(c.otherParticipantId || '')
       }));
 
-      if (activeFilter === 'unread') list = list.filter(c => c.unread);
+      if (activeFilter === 'unread') list = list.filter(c => Boolean(c.unread || (typeof c.unreadCount === 'number' && c.unreadCount > 0)));
       if (activeFilter === 'personal') list = list.filter(c => !c.isGroup && c.type !== 'group');
       if (activeFilter === 'groups') list = list.filter(c => c.isGroup || c.type === 'group');
       if (activeFilter === 'marketplace') list = list.filter(c => c.isMarketplace || c.type === 'marketplace');
@@ -1156,8 +1593,8 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       );
     }
 
-    return sortChatsDeterministic(list, profile?.id);
-  }, [chats, mainChats, requestChats, activeFilter, onlineUsers, searchQuery]);
+    return sortChatsDeterministic(list, profile?.id, myIdentifiers);
+  }, [chats, mainChats, requestChats, activeFilter, onlineUsers, searchQuery, myIdentifiers]);
 
   const themeStyles = {
     neural: { bg: 'bg-aeirmist-bg', accent: 'text-aeirmist-cyan', border: 'border-white/10', glow: 'shadow-[0_0_20px_rgba(0,204,255,0.1)]' },
@@ -1168,7 +1605,13 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
 
   const currentTheme = (currentChat?.theme as keyof typeof themeStyles) || 'neural';
   const styles = themeStyles[currentTheme];
-  const activeChatTheme = currentChat ? (profile?.themeSettings?.perChatWallpapers?.[currentChat.id] || currentChat.themeSettings) : undefined;
+  const activeChatTheme = currentChat ? (profile?.themeSettings?.perChatWallpapers?.[currentChat.id] || currentChat.themeSettings || (() => {
+    try {
+      const s = typeof window !== 'undefined' ? localStorage.getItem(`chat_settings_${currentChat.id}`) : null;
+      if (s) return JSON.parse(s);
+    } catch {}
+    return undefined;
+  })()) : undefined;
   const hasActiveWallpaper = Boolean(activeChatTheme?.wallpaperURL || profile?.themeSettings?.chatWallpaper?.wallpaperURL || settings?.globalBgValue);
 
   return (
@@ -1206,7 +1649,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       </div>
 
       <AnimatePresence>
-        {isOffline && (
+        {isOffline && !isOfflineBannerDismissed && (
           <motion.div 
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -1219,7 +1662,14 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                  {isOffline ? 'Connection Lost: Operating in local mode. Signals will sync on reconnect.' : 'Aeirmist Overload: Realtime frequency busy. Signals will sync automatically.'}
                </span>
             </div>
-            <button onClick={() => logger.info("Action coming soon")} className="text-white/40 hover:text-white transition-colors"><X size={14}/></button>
+            <button 
+              type="button"
+              aria-label="Dismiss offline banner"
+              onClick={() => setIsOfflineBannerDismissed(true)} 
+              className="text-white/40 hover:text-white transition-colors cursor-pointer"
+            >
+              <X size={14}/>
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1229,7 +1679,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         {isSearchFocused ? (
           <div className="flex-1 flex flex-col h-full overflow-hidden">
             {/* Dedicated Search Header & Input */}
-            <div className="p-4 md:p-6 pb-2 space-y-4 min-w-0 relative">
+            <div className="p-4 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] md:p-6 pb-2 space-y-3 min-w-0 relative">
               <div className="flex items-center gap-3">
                 <button 
                   onClick={() => {
@@ -1792,7 +2242,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
         ) : (
           /* Normal Sidebar View starts here */
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-            <div className="pt-[calc(0.875rem+var(--sat,env(safe-area-inset-top,0px)))] md:pt-4 px-3.5 md:px-4 pb-1.5 space-y-2.5 min-w-0 relative">
+            <div className="pt-[calc(0.375rem+env(safe-area-inset-top,0px))] md:pt-4 px-3.5 md:px-4 pb-1.5 space-y-2 min-w-0 relative">
               <div className="flex items-center justify-between gap-3">
                 <div 
                   className="flex flex-col cursor-pointer group min-w-0 flex-1" 
@@ -1951,7 +2401,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                       : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
                   }`}
                 >
-                  Unread {chats.some(c => c.unread) && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-magenta shadow-[0_0_6px_rgba(255,0,234,0.8)] animate-pulse" />}
+                  Unread {chats.some(c => Boolean(c.unread || (typeof c.unreadCount === 'number' && c.unreadCount > 0))) && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-magenta shadow-[0_0_6px_rgba(255,0,234,0.8)] animate-pulse" />}
                 </button>
                 <button 
                   onClick={() => setActiveFilter('personal')}
@@ -2046,17 +2496,37 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                 </div>
               )}
               {filteredChats.map((chat) => {
-                const isOnline = !!onlineUsers?.has?.(chat.otherParticipantId);
+                const isOnline = Boolean(
+                  chat.online ||
+                  chat.otherProfile?.isOnline ||
+                  [
+                    chat.otherParticipantId,
+                    chat.otherParticipantUid,
+                    chat.otherProfile?.userId,
+                    chat.otherProfile?.firebaseUid,
+                    chat.otherProfile?.profileId,
+                    chat.otherProfile?.id,
+                    chat.otherProfile?.username
+                  ].some(id => Boolean(id) && onlineUsers?.has(id))
+                );
                 const isSelected = currentChat?.id === chat.id;
                 const activityTimestamp = getChatActivityMs(chat);
                 const metaTime = formatConversationTime(activityTimestamp) || (chat.createdAt ? formatConversationTime(chat.createdAt) : '');
+                const isUnread = Boolean(chat.unread || (typeof chat.unreadCount === 'number' && chat.unreadCount > 0));
+                const messagePreview = typeof chat.lastMessage === 'string'
+                  ? chat.lastMessage
+                  : (chat.lastMessage?.text || chat.latestMessagePreview || 'No messages yet');
 
                 return (
                   <div 
                     key={chat.id} 
+                    role="button"
+                    tabIndex={0}
                     data-conversation-id={chat.id}
                     onClick={() => handleChatSelect(chat)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleChatSelect(chat)}
                     onContextMenu={(e) => handleContextMenu(e, chat.id)}
+                    style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
                     className={`w-full h-[72px] px-3.5 md:px-4 flex items-center gap-3 cursor-pointer hover:bg-aeirmist-cyan/[0.05] transition-all relative group ${isSelected ? 'bg-aeirmist-cyan/[0.08]' : ''}`}
                   >
                     {/* Avatar */}
@@ -2084,27 +2554,49 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                       {/* Top Row: Name + Pin badge + Meta timestamp */}
                       <div className="flex items-center justify-between gap-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <h3 className={`text-[13px] md:text-[14px] font-bold truncate ${chat.unread ? 'text-slate-900 dark:text-white' : 'text-slate-700 dark:text-white/90'}`}>
+                          <h3 className={`text-[13px] md:text-[14px] font-bold truncate ${isUnread ? 'text-slate-900 dark:text-white' : 'text-slate-700 dark:text-white/90'}`}>
                             {chat.isGroup || chat.type === 'group' ? (chat.name || chat.groupName || 'Group Chat') : (chat.otherParticipantId === profile?.id ? 'My Space' : <LiveParticipantName participantId={chat.otherParticipantId} fallbackName={chat.name} chatId={chat.id} />)}
                           </h3>
                           {chat.isPinned && (
                             <Pin size={11} className="text-aeirmist-cyan shrink-0 rotate-45" />
                           )}
                         </div>
-                        {metaTime ? (
-                          <span className={`text-[10px] md:text-[11px] shrink-0 font-medium text-right whitespace-nowrap pl-1 ${chat.unread ? 'text-aeirmist-cyan font-bold' : 'text-slate-400 dark:text-white/40'}`}>
-                            {metaTime}
-                          </span>
-                        ) : null}
+                        <div className="flex items-center gap-1.5 shrink-0 pl-1">
+                          {metaTime ? (
+                            <span className={`text-[10px] md:text-[11px] font-medium text-right whitespace-nowrap ${isUnread ? 'text-aeirmist-cyan font-bold' : 'text-slate-400 dark:text-white/40'}`}>
+                              {metaTime}
+                            </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setContextMenu({ x: rect.right, y: rect.bottom + 4, chatId: chat.id });
+                            }}
+                            className="p-1 -mr-1 rounded-full text-white/40 hover:text-white hover:bg-white/10 transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 shrink-0"
+                            title="More options"
+                            aria-label="More options"
+                          >
+                            <MoreHorizontal size={15} />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Bottom Row: Last message preview + Unread badge */}
                       <div className="flex items-center justify-between gap-2 min-w-0 mt-0.5">
-                        <p className={`text-[12px] truncate flex-1 min-w-0 ${chat.unread ? 'text-slate-800 dark:text-white font-semibold' : 'text-slate-400 dark:text-white/50'}`}>
-                          {typeof chat.lastMessage === 'string' ? chat.lastMessage : (chat.lastMessage?.text || 'No messages yet')}
+                        <p className={`text-[12px] truncate flex-1 min-w-0 ${isUnread ? 'text-slate-800 dark:text-white font-semibold' : 'text-slate-400 dark:text-white/50'}`}>
+                          {messagePreview}
                         </p>
-                        {chat.unread && (
-                          <div className="w-2.5 h-2.5 rounded-full bg-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.5)] shrink-0" />
+                        {isUnread && (
+                          (typeof chat.unreadCount === 'number' && chat.unreadCount > 1) ? (
+                            <div className="min-w-[18px] h-[18px] px-1 rounded-full bg-aeirmist-cyan text-black text-[10px] font-extrabold flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(0,242,255,0.5)]">
+                              {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+                            </div>
+                          ) : (
+                            <div className="w-2.5 h-2.5 rounded-full bg-aeirmist-cyan shadow-[0_0_10px_rgba(0,242,255,0.5)] shrink-0" />
+                          )
                         )}
                       </div>
                     </div>
@@ -2137,9 +2629,15 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
             <CallHistorySection 
               onBack={() => { setView('chats'); setIsMobileList(true); }} 
               onRedial={async (pid, type) => {
-                const profileDoc = await getDoc(doc(db, 'profiles', pid));
-                if (profileDoc.exists()) {
-                  handleUserClick({ id: pid, ...profileDoc.data() }, type);
+                try {
+                  const res = await api.users.getProfile(pid);
+                  if (res && res.profile) {
+                    handleUserClick(res.profile, type);
+                  } else {
+                    handleUserClick({ id: pid }, type);
+                  }
+                } catch {
+                  handleUserClick({ id: pid }, type);
                 }
               }}
               onUserClick={onUserClick}
@@ -2191,7 +2689,7 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
           ) : (
             <div className="flex-1 flex flex-row h-full min-h-0 overflow-hidden relative">
               <ChatWindow 
-                key={currentChat.id}
+                key={currentChat.isGroup ? currentChat.id : (currentChat.otherParticipantId || currentChat.otherParticipantUid || currentChat.id)}
                 chat={currentChat} 
                 isVaultMode={currentChat.isVaulted?.[profile?.id || ''] === true}
                 onBack={() => setIsMobileList(true)} 
@@ -2201,10 +2699,28 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
                   setActiveChatId(newChat.id);
                   setTempChat(newChat);
                   setChats(prevChats => {
-                    if (prevChats.some(c => c.id === newChat.id)) {
-                      return prevChats.map(c => c.id === newChat.id ? { ...c, ...newChat } : c);
-                    }
-                    return [newChat, ...prevChats];
+                    const newPartnerIds = getDirectChatPartnerIdentifiers(newChat, myIdentifiers);
+                    let replaced = false;
+                    const updated = prevChats.map(c => {
+                      let isMatch = (c.id === newChat.id);
+                      if (!isMatch && newPartnerIds.size > 0 && !c.isGroup && c.type !== 'group') {
+                        const cPids = getDirectChatPartnerIdentifiers(c, myIdentifiers);
+                        for (const pid of newPartnerIds) {
+                          if (cPids.has(pid)) {
+                            isMatch = true;
+                            break;
+                          }
+                        }
+                      }
+                      if (isMatch) {
+                        replaced = true;
+                        return mergeChatPair(c, newChat);
+                      }
+                      return c;
+                    });
+                    const list = replaced ? updated : [newChat, ...updated];
+                    const deduped = deduplicateChats(list, myIdentifiers);
+                    return sortChatsDeterministic(deduped, profile?.id, myIdentifiers);
                   });
                 }}
                 onForwardMessage={handleForward}
@@ -2308,33 +2824,41 @@ const Messenger = ({ initialRecipient, onUserClick }: { initialRecipient?: any, 
       </div>
 
       <AnimatePresence>
-        {contextMenu && (
-          <ChatContextMenu 
-            x={contextMenu.x} 
-            y={contextMenu.y} 
-            onClose={() => setContextMenu(null)}
-            chatId={contextMenu.chatId}
-            isPinned={chats.find(c => c.id === contextMenu.chatId)?.isPinned}
-            isMuted={chats.find(c => c.id === contextMenu.chatId)?.isMuted}
-            isArchived={chats.find(c => c.id === contextMenu.chatId)?.isArchived}
-            isUnread={chats.find(c => c.id === contextMenu.chatId)?.unread}
-            isCloseFriend={isCloseFriend(chats.find(c => c.id === contextMenu.chatId)?.otherParticipantId || '')}
-            otherParticipantId={chats.find(c => c.id === contextMenu.chatId)?.otherParticipantId}
-            onViewProfile={() => {
-              const chatObj = chats.find(c => c.id === contextMenu.chatId);
-              const otherParticipantId = chatObj?.otherParticipantId;
-              const otherParticipant = otherParticipantId ? chatObj?.participantDetails?.[otherParticipantId] : null;
-              if (otherParticipant) {
-                onUserClick?.({
-                  id: otherParticipantId,
-                  username: otherParticipant.username || otherParticipant.name || '',
-                  photoURL: otherParticipant.photoURL || '',
-                  displayName: otherParticipant.displayName || otherParticipant.name || ''
-                });
-              }
-            }}
-          />
-        )}
+        {contextMenu && (() => {
+          const chatObj = chats.find(c => (
+            c.id === contextMenu.chatId ||
+            c.id.toLowerCase() === String(contextMenu.chatId).toLowerCase() ||
+            getDirectChatPartnerIdentifiers(c, myIdentifiers).has(String(contextMenu.chatId).toLowerCase())
+          ));
+          const otherParticipantId = chatObj?.otherParticipantId;
+          const isUnread = Boolean(chatObj?.unread || (typeof chatObj?.unreadCount === 'number' && chatObj.unreadCount > 0));
+
+          return (
+            <ChatContextMenu 
+              x={contextMenu.x} 
+              y={contextMenu.y} 
+              onClose={() => setContextMenu(null)}
+              chatId={chatObj?.id || contextMenu.chatId}
+              isPinned={chatObj?.isPinned}
+              isMuted={chatObj?.isMuted}
+              isArchived={chatObj?.isArchived}
+              isUnread={isUnread}
+              isCloseFriend={isCloseFriend(otherParticipantId || '')}
+              otherParticipantId={otherParticipantId}
+              onViewProfile={() => {
+                const otherParticipant = otherParticipantId ? chatObj?.participantDetails?.[otherParticipantId] : null;
+                if (otherParticipant) {
+                  onUserClick?.({
+                    id: otherParticipantId,
+                    username: otherParticipant.username || otherParticipant.name || '',
+                    photoURL: otherParticipant.photoURL || '',
+                    displayName: otherParticipant.displayName || otherParticipant.name || ''
+                  });
+                }
+              }}
+            />
+          );
+        })()}
       </AnimatePresence>
 
       <AccountSwitcher 
@@ -2451,6 +2975,8 @@ const ChatWindow = ({
     togglePinMessage, 
     clearChat, 
     toggleFollow, 
+    toggleRestrictUser,
+    deleteConversation,
     startCall,
     addToast,
     setFloatingChatHead
@@ -2601,40 +3127,36 @@ const ChatWindow = ({
       return;
     }
 
-    if (chat.otherProfile && (chat.otherProfile.displayName || chat.otherProfile.username || chat.otherProfile.id)) {
-      setOtherProfile(chat.otherProfile);
-      setOtherProfileLoaded(true);
-      return;
+    if (chat.otherProfile) {
+      setOtherProfile((prev: any) => ({ ...(prev || {}), ...chat.otherProfile }));
     }
 
-    if (!db) {
-      setOtherProfileLoaded(true);
-      return;
-    }
-    
-    // Subscribe to other user's profile to check if they are private or deleted (Firestore fallback)
-    const unsub = onSnapshot(doc(db, 'profiles', otherId), (snap) => {
-      setOtherProfileLoaded(true);
-      if (snap.exists()) {
-        const pData = snap.data();
-        if (pData.isDeleted === true || pData.status === 'deleted') {
-          setOtherProfile({ id: snap.id, ...pData, isDeleted: true });
-        } else {
-          setOtherProfile({ id: snap.id, ...pData });
+    // Always hydrate full profile details in background (so lastSeen, messagingSettings, status are populated)
+    const lookupId = chat.otherParticipantUid || chat.otherProfile?.username || otherId;
+    api.users.getProfile(lookupId).then((res: any) => {
+      if (res && res.profile) {
+        const resolvedPhoto = resolveAvatarSrc(res.profile.avatarKey || res.profile.photoURL || res.profile.avatarUrl);
+        setOtherProfile((prev: any) => ({
+          ...(prev || {}),
+          ...res.profile,
+          photoURL: resolvedPhoto || res.profile.photoURL || prev?.photoURL,
+        }));
+      }
+    }).catch(() => {
+      if (db) {
+        const candidates = [otherId, chat.otherParticipantUid, chat.otherProfile?.userId].filter(Boolean);
+        for (const cid of candidates) {
+          getDoc(doc(db, 'profiles', cid as string)).then(snap => {
+            if (snap.exists()) {
+              setOtherProfile((prev: any) => ({ ...(prev || {}), ...snap.data(), id: snap.id }));
+            }
+          }).catch(() => {});
         }
-      } else {
-        setOtherProfile(chat.otherProfile || null);
       }
-    }, (err) => {
-      logger.warn("Could not listen to other profile:", err);
+    }).finally(() => {
       setOtherProfileLoaded(true);
-      if (chat.otherProfile) {
-        setOtherProfile(chat.otherProfile);
-      }
     });
-    
-    return () => unsub();
-  }, [db, chat.otherParticipantId, chat.profileIds, profile?.id, chat.otherProfile]);
+  }, [db, chat.otherParticipantId, chat.otherParticipantUid, chat.profileIds, profile?.id, chat.otherProfile]);
 
   const handleReply = (msg: any) => {
     setReplyingTo(msg);
@@ -2709,32 +3231,33 @@ const ChatWindow = ({
       addToast?.({
         title: 'Call Failed',
         message: err.message || 'Unable to establish call connection.',
-        type: 'error'
+        type: 'warning'
       });
     }
   };
 
-  // Intersection Observer for Seen Status
+  // Tell the global notification listener which chat is open (suppresses duplicate toasts/push for it)
   useEffect(() => {
-    if (!chat.id || !user || chat.id.startsWith('new_') || chat.status === 'request') return;
+    const isVisible = Boolean(
+      chat.id && 
+      !chat.id.startsWith('new_') && 
+      (typeof window === 'undefined' || window.innerWidth >= 768 || !isMobileList)
+    );
 
-    // Check if there are any unread messages from the other user
-    const hasUnread = messages.some(m => {
-      const isFromMe = m.senderId === profile?.id || m.senderId === user?.uid || (m.senderId && profile?.id && m.senderId.replace(/^profile_/, '') === profile.id.replace(/^profile_/, ''));
-      if (isFromMe) return false;
-      const lastReadTs = chat.lastRead?.[profile.id];
-      const lastReadMs = lastReadTs?.toMillis ? lastReadTs.toMillis() : (lastReadTs || 0);
-      return m.timestampMs > lastReadMs;
-    });
-    
-    if (hasUnread) {
-      // Debounce: wait 2 seconds before marking as read to batch updates during rapid chat
-      const timer = setTimeout(() => {
-        updateSeenStatus(chat.id);
-      }, 2000);
-      return () => clearTimeout(timer);
+    if (!isVisible) {
+      if ((window as any).__aeirmistActiveChatId === chat.id) {
+        delete (window as any).__aeirmistActiveChatId;
+      }
+      return;
     }
-  }, [messages, chat.id, user?.uid, chat.lastRead]);
+
+    (window as any).__aeirmistActiveChatId = chat.id;
+    return () => {
+      if ((window as any).__aeirmistActiveChatId === chat.id) {
+        delete (window as any).__aeirmistActiveChatId;
+      }
+    };
+  }, [chat.id, isMobileList]);
 
   // Message Listener
   useEffect(() => {
@@ -2743,16 +3266,21 @@ const ChatWindow = ({
       return;
     }
 
-    // Instant Cache Hydration: Never wipe messages if cache exists
+    // Instant Cache Hydration: Never wipe messages if cache exists or messages already in state
     const cached = messagingService.getCachedMessages(chat.id);
     if (cached && cached.length > 0) {
       setMessages(cached);
       setLoading(false);
     } else {
-      setMessages([]);
-      setLoading(true);
+      setMessages(prev => {
+        if (prev && prev.length > 0) {
+          setLoading(false);
+          return prev;
+        }
+        setLoading(true);
+        return [];
+      });
     }
-    setOptimistic([]);
 
     // Safety timeout: Never keep user stuck on skeletons longer than 1.2s even on slow/offline networks
     const fallbackTimer = setTimeout(() => {
@@ -2777,6 +3305,16 @@ const ChatWindow = ({
   }, [db, chat.id, user?.uid, profile?.id, scrollToBottom]);
 
   const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
+  const sharedOtherProfile = useSharedProfile(db, otherParticipantId);
+
+  const otherResolvedPhoto = resolveAvatarSrc(
+    otherProfile?.photoURL ||
+    (otherProfile?.avatarKey ? (otherProfile.avatarKey.startsWith('/media/') ? otherProfile.avatarKey : `/media/${otherProfile.avatarKey}`) : null) ||
+    sharedOtherProfile?.photoURL ||
+    chat.otherProfile?.photoURL ||
+    (chat.otherProfile?.avatarKey ? (chat.otherProfile.avatarKey.startsWith('/media/') ? chat.otherProfile.avatarKey : `/media/${chat.otherProfile.avatarKey}`) : null) ||
+    chat.photo
+  );
 
   // Universal Sender Identity Matcher (Strict exact matching, no partial split inference)
   const isSenderMe = useCallback((senderId?: string | null, senderUid?: string | null, isOptimistic?: boolean, msgObj?: any): boolean => {
@@ -2832,6 +3370,111 @@ const ChatWindow = ({
     return false;
   }, [profile?.id, profile?.username, (profile as any)?.userId, user?.uid, user?.id, (user as any)?.userId, chat.isGroup, chat.type, otherParticipantId, otherProfile, (chat as any)?.otherParticipantUid]);
 
+  const [liveLastRead, setLiveLastRead] = useState<number>(0);
+  const [liveLastDelivered, setLiveLastDelivered] = useState<number>(0);
+
+  useEffect(() => {
+    setLiveLastRead(0);
+    setLiveLastDelivered(0);
+  }, [chat.id]);
+
+  const lastMarkSeenTimestampRef = useRef<number>(0);
+
+  // Mark Seen when active chat is opened or has unread messages
+  useEffect(() => {
+    if (!chat.id || !user || chat.id.startsWith('new_') || chat.status === 'request') return;
+
+    // If on mobile and currently viewing conversation list, DO NOT mark seen automatically!
+    const isChatVisible = (typeof window === 'undefined' || window.innerWidth >= 768 || !isMobileList);
+    if (!isChatVisible) return;
+
+    const hasUnread = Boolean(
+      chat.unread ||
+      (typeof chat.unreadCount === 'number' && chat.unreadCount > 0) ||
+      messages.some(m => {
+        const fromMe = isSenderMe(m.senderId, m.senderUid, m.isOptimistic, m);
+        if (fromMe) return false;
+        return !m.isSeen;
+      })
+    );
+
+    if (hasUnread) {
+      const now = Date.now();
+      if (now - lastMarkSeenTimestampRef.current > 3000) {
+        lastMarkSeenTimestampRef.current = now;
+        updateSeenStatus(chat.id);
+        // Immediately mark local incoming messages as seen to eliminate re-triggering
+        setMessages(prev => prev.map(m => {
+          const fromMe = isSenderMe(m.senderId, m.senderUid, m.isOptimistic, m);
+          if (!fromMe && !m.isSeen) {
+            return { ...m, isSeen: true, isDelivered: true };
+          }
+          return m;
+        }));
+      }
+    }
+  }, [messages, chat.id, chat.unread, chat.unreadCount, chat.status, user?.uid, isSenderMe, updateSeenStatus, isMobileList]);
+
+  // Real-time socket updates for seen and delivered events
+  useEffect(() => {
+    const socket = getSocket();
+    const handleSeenUpdate = (payload: any) => {
+      if (!payload) return;
+      const targetConvId = String(payload.conversationId || '');
+      const rawConvId = String(payload.rawConversationId || '');
+      if (targetConvId === chat.id || rawConvId === chat.id) {
+        const ms = payload.seenAt ? new Date(payload.seenAt).getTime() : Date.now();
+        setLiveLastRead(prev => Math.max(prev, ms));
+        setLiveLastDelivered(prev => Math.max(prev, ms));
+
+        const isSeenByMe = payload.userId === user?.uid || 
+                           payload.userId === (user as any)?.userId || 
+                           payload.userId === profile?.id || 
+                           payload.readerUid === user?.uid || 
+                           payload.readerProfileId === profile?.id;
+
+        setMessages(prev => prev.map(m => {
+          const fromMe = isSenderMe(m.senderId, m.senderUid, m.isOptimistic, m);
+          if (isSeenByMe) {
+            if (!fromMe && !m.isSeen) {
+              return { ...m, isSeen: true, isDelivered: true };
+            }
+          } else {
+            if (fromMe && (!m.isSeen || !m.isDelivered)) {
+              return { ...m, isSeen: true, isDelivered: true };
+            }
+          }
+          return m;
+        }));
+      }
+    };
+
+    const handleDeliveredUpdate = (payload: any) => {
+      if (!payload) return;
+      const targetConvId = String(payload.conversationId || '');
+      const rawConvId = String(payload.rawConversationId || '');
+      if (targetConvId === chat.id || rawConvId === chat.id) {
+        const ms = payload.deliveredAt ? new Date(payload.deliveredAt).getTime() : Date.now();
+        setLiveLastDelivered(prev => Math.max(prev, ms));
+        setMessages(prev => prev.map(m => {
+          const fromMe = isSenderMe(m.senderId, m.senderUid, m.isOptimistic, m);
+          if (fromMe && !m.isDelivered) {
+            return { ...m, isDelivered: true };
+          }
+          return m;
+        }));
+      }
+    };
+
+    socket.on?.('seen_update', handleSeenUpdate);
+    socket.on?.('messages_delivered', handleDeliveredUpdate);
+
+    return () => {
+      socket.off?.('seen_update', handleSeenUpdate);
+      socket.off?.('messages_delivered', handleDeliveredUpdate);
+    };
+  }, [chat.id, isSenderMe]);
+
   // Derive processed messages with live read/delivered status and guaranteed stable chronological order
   const displayedMessages = useMemo(() => {
     const parseTimestampMs = (val: any): number => {
@@ -2847,8 +3490,56 @@ const ChatWindow = ({
       return 0;
     };
 
-    const lastRead = parseTimestampMs(chat.lastRead?.[otherParticipantId || '']);
-    const lastDelivered = parseTimestampMs(chat.lastDelivered?.[otherParticipantId || '']);
+    const candidateIds = [
+      otherParticipantId,
+      (chat as any)?.otherParticipantUid,
+      (chat as any)?.otherParticipant?.userId,
+      (chat as any)?.otherParticipant?.profileId,
+      (chat as any)?.otherParticipant?.firebaseUid,
+      otherProfile?.id,
+      otherProfile?.userId,
+      (otherProfile as any)?.firebaseUid,
+    ].filter(Boolean) as string[];
+
+    let lastRead = liveLastRead;
+    let lastDelivered = liveLastDelivered;
+
+    const myIdentifiers = new Set([
+      profile?.id,
+      user?.uid,
+      (user as any)?.userId || user?.id || (profile as any)?.userId,
+      profile?.username
+    ].filter(Boolean).map(id => String(id).toLowerCase()));
+
+    if (chat.lastRead) {
+      for (const id of candidateIds) {
+        const val = parseTimestampMs(chat.lastRead[id]);
+        if (val > lastRead) lastRead = val;
+      }
+      if (typeof chat.lastRead === 'object') {
+        for (const [k, v] of Object.entries(chat.lastRead)) {
+          if (!myIdentifiers.has(String(k).toLowerCase())) {
+            const val = parseTimestampMs(v);
+            if (val > lastRead) lastRead = val;
+          }
+        }
+      }
+    }
+
+    if (chat.lastDelivered) {
+      for (const id of candidateIds) {
+        const val = parseTimestampMs(chat.lastDelivered[id]);
+        if (val > lastDelivered) lastDelivered = val;
+      }
+      if (typeof chat.lastDelivered === 'object') {
+        for (const [k, v] of Object.entries(chat.lastDelivered)) {
+          if (!myIdentifiers.has(String(k).toLowerCase())) {
+            const val = parseTimestampMs(v);
+            if (val > lastDelivered) lastDelivered = val;
+          }
+        }
+      }
+    }
 
     const confirmedOptIds = new Set<string>();
     messages.forEach(m => {
@@ -2876,12 +3567,14 @@ const ChatWindow = ({
          ? m.timestampMs
          : (parseTimestampMs(m.createdAt) || parseTimestampMs(m.timestamp) || (m.isOptimistic ? Date.now() : Date.now()));
        const fromMe = isSenderMe(m.senderId, (m as any).senderUid, m.isOptimistic, m);
+       const isSeen = Boolean(m.isSeen || (fromMe && lastRead > 0 && timestampMs <= lastRead));
+       const isDelivered = Boolean(m.isDelivered || isSeen || (fromMe && ((lastDelivered > 0 && timestampMs <= lastDelivered) || (lastRead > 0 && timestampMs <= lastRead))));
        return {
          ...m,
          timestampMs,
          _originalIndex: originalIndex,
-         isSeen: m.isSeen || (fromMe && timestampMs <= lastRead),
-         isDelivered: m.isDelivered || (fromMe && timestampMs <= lastDelivered),
+         isSeen,
+         isDelivered,
          isFailed: failedMessages.has(m.id)
        };
     }).sort((a, b) => {
@@ -2898,7 +3591,7 @@ const ChatWindow = ({
         isNewSender: i === 0 || sorted[i-1].senderId !== m.senderId
       }
     }));
-  }, [messages, optimistic, chat.lastRead, chat.lastDelivered, chat.id, profile?.id, failedMessages, otherParticipantId, isSenderMe]);
+  }, [messages, optimistic, chat.lastRead, chat.lastDelivered, chat.id, profile?.id, failedMessages, otherParticipantId, isSenderMe, liveLastRead, liveLastDelivered]);
 
   // Reconcile pending optimistic messages and failed messages when canonical server messages arrive
   useEffect(() => {
@@ -3031,35 +3724,50 @@ const ChatWindow = ({
 
   // Separate Typing Effect to avoid rebuilding message listener
   useEffect(() => {
-    if (!db || !chat.id || chat.id.startsWith('new_')) return;
-    
-    const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
-    if (!otherParticipantId) return;
+    if (!chat.id || chat.id.startsWith('new_')) return;
+    const socket = getSocket();
+    if (!socket) return;
+    let timer: any = null;
 
-    const indicatorId = `${chat.id}_${otherParticipantId}`;
-    const indicatorRef = doc(db, 'typing_indicators', indicatorId);
-    
-    const unsubscribe = onSnapshot(indicatorRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.updatedAt) {
-          try {
-            const date = typeof data.updatedAt.toDate === 'function' ? data.updatedAt.toDate() : new Date(data.updatedAt);
-            const isCurrentlyTyping = (Date.now() - date.getTime()) < 4000;
-            setRemoteTyping(isCurrentlyTyping);
-          } catch (e) {
-            setRemoteTyping(false);
-          }
-        } else {
-          setRemoteTyping(false);
-        }
-      } else {
-        setRemoteTyping(false);
-      }
-    }, (err) => logger.warn("Typing sync delayed", err));
+    const isMeEvent = (data: any) => {
+      const myId = user?.uid;
+      const myProfile = profile?.id;
+      const myDbId = (user as any)?.userId;
+      return Boolean(
+        (data.userId && (data.userId === myId || data.userId === myDbId)) ||
+        (data.profileId && data.profileId === myProfile) ||
+        (data.firebaseUid && data.firebaseUid === myId)
+      );
+    };
 
-    return () => unsubscribe();
-  }, [db, chat.id, profile?.id]);
+    const isChatMatch = (data: any) => {
+      if (!data) return false;
+      const target = String(data.conversationId || '');
+      const raw = String(data.rawConversationId || '');
+      return !target || target === chat.id || raw === chat.id;
+    };
+
+    const onTyping = (data: any) => {
+      if (!data || isMeEvent(data) || !isChatMatch(data)) return;
+      setRemoteTyping(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setRemoteTyping(false), 4000);
+    };
+
+    const onStopTyping = (data: any) => {
+      if (!data || isMeEvent(data) || !isChatMatch(data)) return;
+      setRemoteTyping(false);
+    };
+
+    socket.on?.('user_typing', onTyping);
+    socket.on?.('user_stop_typing', onStopTyping);
+
+    return () => {
+      clearTimeout(timer);
+      socket.off?.('user_typing', onTyping);
+      socket.off?.('user_stop_typing', onStopTyping);
+    };
+  }, [chat.id]);
 
   // Auto-retry failed messages when coming back online
   useEffect(() => {
@@ -3152,7 +3860,7 @@ const ChatWindow = ({
         return next;
       });
 
-      if (chat.isTemporary && newId) {
+      if (newId && (chat.isTemporary || chat.id.startsWith('new_') || chat.id !== newId)) {
         onChatUpdate({
           ...chat,
           id: newId,
@@ -3279,12 +3987,16 @@ const ChatWindow = ({
 
     try {
       let type: 'image' | 'video' | 'voice' | 'media' | 'file' = 'media';
-      const isLiveVoiceMemo = file.name.startsWith('voice_');
+      const isLiveVoiceMemo = file.name.startsWith('voice_') || (file.type.startsWith('audio/') && file.name.startsWith('voice_'));
 
-      if (file.type.startsWith('image/')) type = 'image';
-      else if (file.type.startsWith('video/')) type = 'video';
-      else if (file.type.startsWith('audio/')) {
-        type = isLiveVoiceMemo ? 'voice' : 'media';
+      if (isLiveVoiceMemo) {
+        type = 'voice';
+      } else if (file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|svg|avif|bmp)$/i.test(file.name)) {
+        type = 'image';
+      } else if (file.type.startsWith('video/') || /\.(mp4|webm|mov|mkv)$/i.test(file.name)) {
+        type = 'video';
+      } else if (file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac)$/i.test(file.name)) {
+        type = 'media';
       } else {
         type = 'file';
       }
@@ -3293,14 +4005,14 @@ const ChatWindow = ({
       const localUrl = URL.createObjectURL(file);
       let thumbnail = '';
       if (type === 'image' || type === 'video') {
-        thumbnail = await mediaService.generateThumbnail(file);
+        thumbnail = await mediaService.generateThumbnail(file) || '';
       }
 
       const optimisticMsg: any = {
         id: optimisticId,
-        text: type === 'file' ? file.name : (useHD ? 'Sending Ultra HD Connections...' : `Sending ${type}...`),
+        text: type === 'file' ? file.name : (type === 'voice' ? 'Voice note' : (useHD ? 'Sending Ultra HD Connections...' : `Sending ${type}...`)),
         senderId: profile.id,
-        type: type === 'voice' ? 'voice' : (type === 'file' ? 'file' : 'media'),
+        type: type,
         mediaUrl: localUrl,
         thumbnail: thumbnail,
         fileName: file.name,
@@ -3314,6 +4026,7 @@ const ChatWindow = ({
         progress: 0,
         uploadStatus: 'PREPARING',
         metadata: {
+          mediaType: type,
           fileName: file.name,
           fileSize: file.size,
           fileType: file.type,
@@ -3323,10 +4036,11 @@ const ChatWindow = ({
 
       messageOutboxService.enqueue(chat.id, {
         id: optimisticId,
-        text: type === 'file' ? file.name : `Sent a ${type}`,
+        text: type === 'file' ? file.name : (type === 'voice' ? 'Voice note' : `Sent a ${type}`),
         type,
         mediaUrl: localUrl,
         metadata: {
+          mediaType: type,
           fileName: file.name,
           fileSize: file.size,
           fileType: file.type
@@ -3346,7 +4060,7 @@ const ChatWindow = ({
       const otherProfileId = chat.otherParticipantId || chat.otherProfile?.id;
       const otherUid = chat.otherParticipantUid || chat.otherProfile?.userId || chat.participants?.find((uid: string) => uid !== user.uid);
 
-      const newId = await sendMessage(chat.id, type === 'file' ? file.name : `Sent a ${type}`, type === 'voice' ? 'voice' : (type === 'file' ? 'file' : 'media'), mediaUrl, { 
+      const newId = await sendMessage(chat.id, type === 'file' ? file.name : (type === 'voice' ? 'Voice note' : `Sent a ${type}`), type, mediaUrl, { 
         mediaType: type,
         fileName: file.name,
         fileSize: file.size,
@@ -3373,7 +4087,7 @@ const ChatWindow = ({
       URL.revokeObjectURL(localUrl);
       setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
 
-      if (chat.isTemporary && newId) {
+      if (newId && (chat.isTemporary || chat.id.startsWith('new_') || chat.id !== newId)) {
         onChatUpdate({
           ...chat,
           id: newId,
@@ -3452,8 +4166,9 @@ const ChatWindow = ({
         next.delete(optimisticId);
         return next;
       });
+      setOptimistic(prev => prev.filter(m => m.id !== optimisticId));
 
-      if (chat.isTemporary && newId) {
+      if (newId && (chat.isTemporary || chat.id.startsWith('new_') || chat.id !== newId)) {
         onChatUpdate({
           ...chat,
           id: newId,
@@ -3475,8 +4190,77 @@ const ChatWindow = ({
   };
 
   const currentChatTheme = useMemo(() => {
-    return profile?.themeSettings?.perChatWallpapers?.[chat.id] || chat.themeSettings;
+    let localCfg: any = null;
+    try {
+      const s = typeof window !== 'undefined' ? localStorage.getItem(`chat_settings_${chat.id}`) : null;
+      if (s) localCfg = JSON.parse(s);
+    } catch {}
+    return profile?.themeSettings?.perChatWallpapers?.[chat.id] || chat.themeSettings || localCfg;
   }, [profile?.themeSettings?.perChatWallpapers, chat.id, chat.themeSettings]);
+
+
+
+  // Comprehensive multi-id presence resolution for other chat participant
+  const isOtherOnline = useMemo(() => {
+    const otherCandidates = [
+      chat.otherParticipantId,
+      chat.otherParticipantUid,
+      chat.otherProfile?.userId,
+      chat.otherProfile?.firebaseUid,
+      chat.otherProfile?.profileId,
+      chat.otherProfile?.id,
+      chat.otherProfile?.username,
+      otherProfile?.id,
+      otherProfile?.userId,
+      otherProfile?.uid,
+      otherProfile?.firebaseUid,
+      otherProfile?.username,
+      ...(chat.profileIds || []),
+      ...(chat.participants || [])
+    ].filter(id => Boolean(id) && id !== profile?.id && id !== user?.uid && id !== (user as any)?.userId) as string[];
+
+    const matchInSet = otherCandidates.some(id => onlineUsers?.has(id));
+    return Boolean(
+      matchInSet ||
+      otherProfile?.status === 'online' ||
+      otherProfile?.isOnline ||
+      chat.otherProfile?.isOnline ||
+      chat.online
+    ) && otherProfile?.messagingSettings?.onlineStatus !== false && (otherProfile?.privacySettings as any)?.showOnlineStatus !== false;
+  }, [chat, otherProfile, onlineUsers, profile?.id, user?.uid]);
+
+  const showStatus = otherProfile?.messagingSettings?.onlineStatus !== false && 
+                     (otherProfile?.privacySettings as any)?.showOnlineStatus !== false && 
+                     profile?.messagingSettings?.onlineStatus !== false;
+
+  const lastSeenCandidate = useMemo(() => {
+    // 1. Explicit user presence last seen / last active (from Redis or user status)
+    const pLastSeen = extractTimestampMs(otherProfile?.lastSeen || chat.otherProfile?.lastSeen);
+    if (pLastSeen > 0) return pLastSeen;
+
+    const pLastActive = extractTimestampMs(otherProfile?.lastActiveAt || chat.otherProfile?.lastActiveAt);
+    if (pLastActive > 0) return pLastActive;
+
+    // 2. Real activity from other participant in this chat (most recent message sent by them)
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      const fromMe = isSenderMe(m.senderId, m.senderUid, m.isOptimistic, m);
+      if (!fromMe) {
+        const t = extractTimestampMs(m.timestampMs || m.timestamp || m.createdAt);
+        if (t > 0) return t;
+      }
+    }
+
+    // 3. Last read timestamp by the other participant
+    const pLastRead = extractTimestampMs(chat.otherProfile?.lastReadAt);
+    if (pLastRead > 0) return pLastRead;
+
+    // 4. Conversation latest activity
+    const latestMsgMs = extractTimestampMs(chat.latestMessageAtMs);
+    if (latestMsgMs > 0) return latestMsgMs;
+
+    return null;
+  }, [otherProfile, chat, messages, isSenderMe]);
 
   return (
     <div className={`flex-1 flex flex-col min-w-0 w-full max-w-[1400px] mx-auto h-full min-h-0 overflow-hidden relative z-10 ${isVaultMode ? 'bg-[#030107]/98' : 'bg-transparent'}`}>
@@ -3489,14 +4273,14 @@ const ChatWindow = ({
       {/* Centered Column for Desktop */}
       <div className="flex-1 flex flex-col w-full h-full min-h-0 relative min-w-0 overflow-hidden z-10">
         {/* Header */}
-        <header className="flex-shrink-0 w-full px-4 pt-[calc(0.625rem+var(--sat,env(safe-area-inset-top,0px)))] md:pt-3 pb-2 md:pb-3 md:px-6 border-b border-slate-200/80 dark:border-white/10 flex items-center justify-between bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-header-glass z-[40] relative min-h-0 min-h-[calc(4.25rem+var(--sat,env(safe-area-inset-top,0px)))] md:h-[64px]">
+        <header className="flex-shrink-0 w-full px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] md:pt-3 pb-2.5 md:pb-3 md:px-6 border-b border-slate-200/80 dark:border-white/10 flex items-center justify-between bg-white/75 dark:bg-aeirmist-bg/85 backdrop-blur-2xl messenger-header-glass z-[40] relative min-h-0 min-h-[calc(3.75rem+env(safe-area-inset-top,0px))] md:h-[64px]">
         <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
           <button onClick={onBack} className="md:hidden p-1 -ml-1 text-white/60 hover:text-white transition-colors shrink-0">
             <ChevronLeft size={22} />
           </button>
           <div className={`relative group flex-shrink-0 ${!isPrivateSpace && !isOtherUnavailable ? 'cursor-pointer' : ''}`} onClick={!isPrivateSpace && !isOtherUnavailable ? (chat?.isGroup ? toggleInfo : handleVisitProfile) : undefined}>
             <Avatar
-              src={isPrivateSpace ? profile?.photoURL : (chat?.isGroup ? chat.photo : (isOtherUnavailable ? BLANK_DP : (otherProfile?.photoURL || chat.photo)))}
+              src={isPrivateSpace ? (localAvatarURL || profile?.photoURL) : (chat?.isGroup ? chat.photo : (isOtherUnavailable ? BLANK_DP : (otherResolvedPhoto || otherProfile?.photoURL || chat.photo)))}
               alt={isPrivateSpace ? "My Space" : (chat?.isGroup ? chat.name : (isOtherUnavailable ? "Aeirmist User" : (otherProfile?.displayName || chat.name)))}
               sizeClassName="w-10 h-10 md:w-12 md:h-12"
               roundedClassName="rounded-[14px] md:rounded-2xl"
@@ -3505,7 +4289,7 @@ const ChatWindow = ({
               userId={!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable ? chat.otherParticipantId : undefined}
               className="group-hover:border-aeirmist-cyan transition-colors"
             />
-            {!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable && !!onlineUsers?.has?.(chat.otherParticipantId || '') && showTheirPresence && (
+            {!isPrivateSpace && !chat?.isGroup && !isOtherUnavailable && isOtherOnline && showTheirPresence && (
               <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-aeirmist-lime rounded-full border-2 border-aeirmist-bg z-10" />
             )}
           </div>
@@ -3532,23 +4316,18 @@ const ChatWindow = ({
                 <div className="flex items-center gap-1 mt-0.5">
                   <span className={`text-[8px] uppercase tracking-widest font-black italic ${isVaultMode ? 'text-[#c77dff]' : 'text-aeirmist-cyan'}`}>Typing...</span>
                 </div>
-              ) : (() => {
-                const otherId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || otherProfile?.id;
-                const isOtherOnline = (otherProfile?.status === 'online' || !!onlineUsers?.has(otherId || '')) && otherProfile?.messagingSettings?.onlineStatus !== false;
-                const showStatus = otherProfile?.messagingSettings?.onlineStatus !== false && profile?.messagingSettings?.onlineStatus !== false;
-                return (
-                  <div className="flex items-center gap-1 mt-0.5 min-w-0">
-                    <p className={`text-[8px] uppercase tracking-widest font-bold ${isOtherOnline && showStatus ? 'text-aeirmist-lime flex items-center gap-1' : 'text-white/40'} truncate`}>
-                      {isOtherOnline && showStatus && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-lime animate-pulse inline-block" />}
-                      {formatActiveStatus(
-                        isOtherOnline && showStatus, 
-                        otherProfile?.lastSeen || otherProfile?.updatedAt, 
-                        !showStatus
-                      )}
-                    </p>
-                  </div>
-                );
-              })()
+              ) : (
+                <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                  <p className={`text-[8px] uppercase tracking-widest font-bold ${isOtherOnline && showStatus ? 'text-aeirmist-lime flex items-center gap-1' : 'text-white/40'} truncate`}>
+                    {isOtherOnline && showStatus && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-lime animate-pulse inline-block" />}
+                    {formatActiveStatus(
+                      isOtherOnline && showStatus, 
+                      lastSeenCandidate, 
+                      !showStatus
+                    )}
+                  </p>
+                </div>
+              )
             )}
           </div>
         </div>
@@ -3573,7 +4352,7 @@ const ChatWindow = ({
           {profile?.messagingSettings?.enableChatHeads !== false && (
             <button 
               onClick={() => {
-                const headPhoto = isPrivateSpace ? profile?.photoURL : (chat?.isGroup ? chat.photo : (otherProfile?.photoURL || chat.photo));
+                const headPhoto = isPrivateSpace ? (localAvatarURL || profile?.photoURL) : (chat?.isGroup ? chat.photo : (otherResolvedPhoto || otherProfile?.photoURL || chat.photo));
                 const headName = isPrivateSpace ? 'My Space' : (chat?.isGroup ? chat.name : (otherProfile?.displayName || chat.name || 'Chat'));
                 setFloatingChatHead({
                   id: chat.id,
@@ -3681,7 +4460,7 @@ const ChatWindow = ({
                   isMe={isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic, msg)} 
                   theme={chat.theme}
                   bubbleGradient={currentChatTheme?.bubbleGradient}
-                  senderPhoto={isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic, msg) ? (localAvatarURL || profile?.photoURL) : (otherProfile?.photoURL || chat.photo)}
+                  senderPhoto={isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic, msg) ? (localAvatarURL || profile?.photoURL) : (msg.senderPhoto || otherResolvedPhoto || otherProfile?.photoURL || chat.photo)}
                   onRetry={() => handleRetry(msg)} 
                   conversationId={chat.id}
                   onImageClick={(url, imgIdx, allUrls) => {
@@ -3779,10 +4558,6 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
-                          await updateDoc(doc(db, 'conversations', chat.id), {
-                            status: 'active',
-                            acceptedAt: serverTimestamp()
-                          });
                           onChatUpdate?.({ ...chat, status: 'active' });
                           if (otherId) {
                             try {
@@ -3812,7 +4587,7 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
-                          await deleteDoc(doc(db, 'conversations', chat.id));
+                          await api.chat.deleteConversation(chat.id);
                           onBack();
                           addToast?.({
                             title: 'Deleted',
@@ -3835,23 +4610,18 @@ const ChatWindow = ({
                     <button
                       onClick={async () => {
                         try {
-                          if (otherId) {
-                            await updateDoc(doc(db, 'profiles', profile.id), {
-                              'social.blocked': arrayUnion(otherId)
-                            });
-                          }
-                          await deleteDoc(doc(db, 'conversations', chat.id));
+                          await api.chat.deleteConversation(chat.id);
                           onBack();
                           addToast?.({
                             title: 'Connection Severed',
-                            message: 'Successfully blocked user and deleted request.',
+                            message: 'Successfully deleted request.',
                             type: 'info'
                           });
                         } catch (e) {
                           logger.error("Block request failed", e);
                           addToast?.({
                             title: 'Block Error',
-                            message: 'Failed to block user and delete request.',
+                            message: 'Failed to delete request.',
                             type: 'warning'
                           });
                         }
@@ -3897,6 +4667,69 @@ const ChatWindow = ({
                   <span className="text-white/60 text-xs">
                     You have blocked this user. Unblock this user to resume conversation.
                   </span>
+                </div>
+              );
+            }
+
+            // Instagram-Style Restricted Action Bar at the bottom of the conversation
+            if (otherParticipantId && isRestricted(otherParticipantId)) {
+              return (
+                <div className="w-full p-4 md:p-5 bg-[#0e1019]/95 border border-white/10 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-2xl shadow-2xl flex flex-col items-center gap-3">
+                  <div className="space-y-1">
+                    <span className="text-white font-bold text-sm block">You restricted this account</span>
+                    <span className="text-white/50 text-xs block leading-relaxed max-w-sm">
+                      They won't know when you've read their messages or when you're active.
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-center gap-3 w-full max-w-xs pt-1">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await toggleRestrictUser(otherParticipantId);
+                          addToast?.({
+                            title: 'Unrestricted',
+                            message: 'Account has been unrestricted.',
+                            type: 'success'
+                          });
+                        } catch (e) {
+                          addToast?.({
+                            title: 'Error',
+                            message: 'Failed to unrestrict account.',
+                            type: 'warning'
+                          });
+                        }
+                      }}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white text-xs font-bold transition-all border border-white/15 cursor-pointer shadow-sm"
+                    >
+                      Unrestrict
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm('Delete this conversation? This will permanently remove all messages for you.')) {
+                          try {
+                            await deleteConversation(chat.id);
+                            onBack();
+                            addToast?.({
+                              title: 'Chat Deleted',
+                              message: 'Conversation removed successfully.',
+                              type: 'info'
+                            });
+                          } catch (e) {
+                            addToast?.({
+                              title: 'Error',
+                              message: 'Failed to delete conversation.',
+                              type: 'warning'
+                            });
+                          }
+                        }
+                      }}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 active:scale-95 text-rose-400 hover:text-rose-300 text-xs font-bold transition-all border border-rose-500/30 cursor-pointer shadow-sm"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               );
             }

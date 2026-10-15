@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Play, MessageSquare, Heart, Zap, Sparkles, Loader2 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { collection, query, where, limit, onSnapshot, orderBy } from 'firebase/firestore';
-
+import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
 
@@ -14,74 +13,57 @@ interface ExploreGridProps {
 }
 
 export const ExploreGrid: React.FC<ExploreGridProps> = ({ category, onUserClick }) => {
-  const { db, user, profile, addToast } = useAeirmist();
+  const { profile, addToast } = useAeirmist();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    if (!db || !user) return;
-
     setLoading(true);
-    // Fetch posts that have media
-    const q = query(
-      collection(db, 'posts'),
-      where('mediaUrls', '!=', []),
-      limit(20)
-    );
+    api.posts.getFeed(30)
+      .then((res: any) => {
+        if (res?.posts && Array.isArray(res.posts)) {
+          const blockedList = new Set(profile?.social?.blocked || []);
+          const fetchedItems = res.posts
+            .filter((p: any) => {
+              if (!p || p.isArchived || p.deletedAt) return false;
+              const authorId = p.userId || p.author?.id || '';
+              if (blockedList.has(authorId)) return false;
+              const name = p.author?.displayName || p.author?.username || '';
+              if (name.toLowerCase() === 'aeirmist user' || name.toLowerCase().startsWith('aeirmistuser')) return false;
+              const mediaList = p.mediaKeys && p.mediaKeys.length > 0 ? p.mediaKeys : (p.mediaUrls || []);
+              return mediaList.length > 0;
+            })
+            .map((p: any) => {
+              const mediaList = p.mediaKeys && p.mediaKeys.length > 0 ? p.mediaKeys : (p.mediaUrls || []);
+              const firstMedia = mediaList[0] || '';
+              const url = firstMedia.startsWith('http') || firstMedia.startsWith('data:') ? firstMedia : `/media/${firstMedia.replace(/^\/+media\/+/, '')}`;
+              const authorName = p.author?.displayName || p.author?.username || 'Aeirmist Member';
+              const authorAvatar = p.author?.avatarKey || '';
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const blockedList = new Set(profile?.social?.blocked || []);
-      const fetchedItems = snapshot.docs.map(doc => {
-        const data = doc.data();
-        const authorId = data.authorId || data.userId || data.author?.id || '';
-        const authorUid = data.authorUid || data.author?.uid || '';
-
-        if (blockedList.has(authorId) || blockedList.has(authorUid)) {
-          return null;
+              return {
+                id: p.id,
+                type: p.mediaType || 'image',
+                url,
+                likes: p.likesCount || 0,
+                comments: p.commentsCount || 0,
+                author: p.author?.username || authorName,
+                authorDisplayName: authorName,
+                authorId: p.userId,
+                authorAvatar: getAvatarUrl(authorAvatar, authorName),
+                isVerified: Boolean(p.author?.isVerified)
+              };
+            });
+          setItems(fetchedItems);
         }
-
-        const isDeleted = Boolean(
-          data.isDeletedAuthor ||
-          data.scheduledForPurge ||
-          data.isDeleted ||
-          data.hidden ||
-          data.authorName === 'Aeirmist User' ||
-          data.userName === 'Aeirmist User' ||
-          data.author?.name === 'Aeirmist User'
-        );
-        if (isDeleted) return null;
-        return {
-          id: doc.id,
-          type: data.mediaType || 'image',
-          url: data.mediaUrls?.[0] || '',
-          likes: data.likesCount || 0,
-          comments: data.commentsCount || 0,
-          author: data.author?.username || data.userName || 'Anonymous',
-          authorDisplayName: data.author?.displayName || data.author?.username || 'User',
-          authorId: data.authorId || data.userId || '',
-          authorAvatar: getAvatarUrl(data.author?.photoURL || data.userAvatar || '', data.author?.username || data.userName || 'Anonymous')
-        };
-      }).filter(Boolean) as any[];
-      setItems(fetchedItems);
-      setLoading(false);
-    }, (error) => {
-      logger.error("Explore grid fetch error:", error);
-      setLoading(false);
-      addToast({
-        title: "Explore Sync Interrupted",
-        message: "Failed to fetch grid media. Retrying Link...",
-        type: "warning"
+      })
+      .catch((error) => {
+        logger.error("Explore grid fetch error:", error);
+      })
+      .finally(() => {
+        setLoading(false);
       });
-      if (retryCount < 5) {
-        setTimeout(() => {
-          setRetryCount(prev => prev + 1);
-        }, 5000);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [db, user, category, retryCount]);
+  }, [profile?.social?.blocked, retryCount]);
 
   if (loading) {
     return (

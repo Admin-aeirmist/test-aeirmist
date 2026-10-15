@@ -7,10 +7,16 @@ const SENSITIVE_KEYS = [
   'billing', 'stripe', 'auth', '2fa'
 ];
 
-const sanitize = (data: any): any => {
+const sanitize = (data: any, seen?: WeakSet<object>, depth = 0): any => {
   if (data === undefined || data === null) return data;
   if (typeof data !== 'object') return data;
-  if (Array.isArray(data)) return data.map(sanitize);
+  if (depth > 4) return '[MaxDepth]';
+
+  const safeSeen = (seen && typeof (seen as any).has === 'function') ? seen : new WeakSet<object>();
+  if (safeSeen.has(data)) return '[Circular]';
+  safeSeen.add(data);
+
+  if (Array.isArray(data)) return data.map(item => sanitize(item, safeSeen, depth + 1));
   if (data instanceof Error) {
     return {
       message: data.message,
@@ -32,7 +38,7 @@ const sanitize = (data: any): any => {
         ? { id: (value as any).uid || (value as any).id, role: (value as any).role }
         : value;
     } else {
-      sanitized[key] = sanitize(value);
+      sanitized[key] = sanitize(value, safeSeen, depth + 1);
     }
   }
   return sanitized;
@@ -41,21 +47,21 @@ const sanitize = (data: any): any => {
 export const logger = {
   debug: (message: any, ...args: any[]) => {
     if (!isProd) {
-      console.debug(`[DEBUG] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(sanitize));
+      console.debug(`[DEBUG] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(x => sanitize(x)));
     }
   },
   info: (message: any, ...args: any[]) => {
     if (!isProd) {
-      console.info(`[INFO] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(sanitize));
+      console.info(`[INFO] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(x => sanitize(x)));
     }
   },
   warn: (message: any, ...args: any[]) => {
-    console.warn(`[WARN] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(sanitize));
+    console.warn(`[WARN] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(x => sanitize(x)));
   },
   error: (message: any, ...args: any[]) => {
-    console.error(`[ERROR] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(sanitize));
+    console.error(`[ERROR] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(x => sanitize(x)));
   },
   security: (message: any, ...args: any[]) => {
-    console.info(`[SECURITY] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(sanitize));
+    console.info(`[SECURITY] ${typeof message === 'string' ? message : ''}`, ...[typeof message === 'string' ? undefined : message, ...args].filter(Boolean).map(x => sanitize(x)));
   }
 };

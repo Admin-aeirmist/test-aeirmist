@@ -76,7 +76,7 @@ export interface Chat {
   typing?: { [userId: string]: any };
   deletedFor?: { [userId: string]: any };
   participantDetails?: { [userId: string]: any };
-  unreadCount?: { [userId: string]: number };
+  unreadCount?: number | { [userId: string]: number };
   updatedAt?: any;
   updatedAtMs?: number;
   latestMessageAt?: any;
@@ -90,5 +90,7 @@ export interface Chat {
   rawLastMessage?: any;
   messagingSettings?: any;
   otherProfile?: any;
+  otherParticipant?: any;
+  _unreadOptimisticAt?: number;
   lastMessageAt?: any;
 }

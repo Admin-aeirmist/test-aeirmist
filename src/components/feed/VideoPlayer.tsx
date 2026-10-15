@@ -40,10 +40,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const derivedPoster = useMemo(() => {
     if (poster && poster.trim()) return poster;
     if (!src) return undefined;
-    if (src.includes('/video/upload/')) {
-      return src
-        .replace('/video/upload/', '/video/upload/so_0.5,f_jpg,q_auto/')
-        .replace(/\.[a-zA-Z0-9]+(\?.*)?$/, '.jpg$1');
+    if (src.includes('cloudinary.com')) {
+      return src.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2');
     }
     return undefined;
   }, [poster, src]);

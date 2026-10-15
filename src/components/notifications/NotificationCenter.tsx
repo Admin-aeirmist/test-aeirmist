@@ -27,8 +27,10 @@ import {
 import { NotificationItem } from './NotificationItem';
 import type { Notification } from '../../types/notifications';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
+import { getSocket } from '../../services/api/socket';
 
 import { 
   collection, 
@@ -222,150 +224,94 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const senderStatusCache = useRef<Map<string, { exists: boolean; isBanned: boolean }>>(new Map());
 
-  // Real-time Firestore sync listener with Meta-style ban/deletion filter
+  // Real-time notifications: PostgreSQL REST + Socket.IO
   useEffect(() => {
-    if (!db || !user) return;
-    
+    if (!user) return;
     let isCancelled = false;
-    let fallbackUnsub: (() => void) | null = null;
-    const targetUserIds = Array.from(new Set([profile?.id, user.uid].filter(Boolean)));
-    if (targetUserIds.length === 0) return;
 
-    const processDocs = (docsList: any[]) => {
-      // 1. Immediately map and render notifications (0 latency!)
-      const mapped = docsList
-        .map(docSnap => {
-          const d = docSnap.data();
-          const type = String(d.type).toLowerCase();
-          const isMessage = ['message', 'message_media', 'message_voice', 'message_video', 'store_message'].includes(type) || type.includes('msg') || type === 'store_message_received' || type.includes('call');
-          
-          if (isMessage) return null;
+    const mapNotification = (n: any) => {
+      const type = String(n.type || '').toLowerCase();
+      const meta = n.metadata || {};
+      const directMessageTypes = [
+        'message',
+        'message_media',
+        'message_voice',
+        'message_video',
+        'store_message',
+        'store_message_received',
+        'chat_message'
+      ];
+      const isDirectMessage = directMessageTypes.includes(type) && !type.includes('request');
+      if (isDirectMessage) return null;
 
-          const isSecurityAlert = String(d.type || '').toLowerCase().includes('security') || 
-                                  String(d.type || '').toLowerCase().includes('device') ||
-                                  String(d.type || '').toLowerCase().includes('login');
+      const isSecurityAlert = type.includes('security') || type.includes('device') || type.includes('login');
+      const isVerification = type.includes('verification');
+      const read = Boolean(n.isRead ?? n.read);
 
-          const isSystem = ['verification', 'system', 'system_verification', 'security'].some(t => type.includes(t)) ||
-                           d.fromUserId === 'aeirmist_system' ||
-                           d.user?.username === 'aeirmist' ||
-                           d.user?.username === 'security' ||
-                           isSecurityAlert;
-
-          // Check if sender is banned
-          if (!isSystem) {
-            const senderId = d.fromUserId || d.fromUserUid || d.metadata?.senderId;
-            if (senderId && senderStatusCache.current.has(senderId)) {
-              const status = senderStatusCache.current.get(senderId)!;
-              if (status.isBanned) {
-                return null;
-              }
-            }
-            if (d.user?.isBanned || d.metadata?.isBanned || d.fromUser?.isBanned) {
-              return null;
-            }
-          }
-
-          return {
-            id: docSnap.id,
-            ...d,
-            isRead: d.read,
-            timestampMs: d.createdAt?.toMillis ? d.createdAt.toMillis() : (d.createdAt ? new Date(d.createdAt).getTime() : Date.now()),
-            user: isSecurityAlert ? {
-              name: 'Security Alert',
-              avatar: null,
-              username: 'security',
-              isVerified: true
-            } : type.includes('verification') ? {
-              name: 'Aeirmist',
-              avatar: '/favicon.png',
-              username: 'aeirmist',
-              isVerified: true
-            } : {
-              name: d.user?.name || d.fromUser?.displayName || d.metadata?.senderName || 'Aeirmist User',
-              avatar: d.user?.avatar || d.fromUser?.photoURL || d.metadata?.senderPhoto || null,
-              username: d.user?.username || (d.fromUser?.displayName ? d.fromUser.displayName.toLowerCase().replace(/\s+/g, '') : (d.metadata?.senderUsername || 'user')),
-              isVerified: Boolean(d.user?.isVerified || d.user?.verified || d.fromUser?.isVerified)
-            }
-          };
-        })
-        .filter(Boolean) as any[];
-
-      // Sort in-memory to guarantee correct descending timeline instantly
-      mapped.sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0));
-
-      if (!isCancelled) {
-        setNotifications(mapped);
-        setIsLoading(false);
-        memoryNotificationCache = mapped.slice(0, 50);
-        try {
-          localStorage.setItem('aeirmist_cached_notifications', JSON.stringify(memoryNotificationCache));
-        } catch (e) {}
-      }
-
-      // 2. Resolve unknown sender statuses asynchronously in background without blocking
-      const pendingSenderIds = new Set<string>();
-      docsList.forEach(docSnap => {
-        const d = docSnap.data();
-        const senderId = d.fromUserId || d.fromUserUid || d.metadata?.senderId;
-        if (senderId && !senderStatusCache.current.has(senderId)) {
-          pendingSenderIds.add(senderId);
+      return {
+        ...n,
+        id: n.id,
+        message: n.message || n.body || '',
+        read,
+        isRead: read,
+        fromUserId: n.fromUserId || n.actorId || meta.senderId,
+        timestampMs: n.createdAt ? new Date(n.createdAt).getTime() : Date.now(),
+        user: isSecurityAlert ? {
+          name: 'Security Alert', avatar: null, username: 'security', isVerified: true
+        } : isVerification ? {
+          name: 'Aeirmist', avatar: '/favicon.png', username: 'aeirmist', isVerified: true
+        } : {
+          name: meta.senderName || n.title || 'Aeirmist User',
+          avatar: meta.senderPhoto || null,
+          username: meta.senderUsername || 'user',
+          isVerified: Boolean(meta.senderVerified)
         }
-      });
-
-      if (pendingSenderIds.size > 0 && db) {
-        Promise.all(
-          Array.from(pendingSenderIds).map(async (sId) => {
-            try {
-              const pSnap = await getDoc(doc(db, 'profiles', sId));
-              if (pSnap.exists()) {
-                const pData = pSnap.data();
-                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
-                senderStatusCache.current.set(sId, { exists: true, isBanned });
-                return;
-              }
-              const pAltSnap = await getDoc(doc(db, 'profiles', `profile_${sId}`));
-              if (pAltSnap.exists()) {
-                const pData = pAltSnap.data();
-                const isBanned = Boolean(pData.isBanned || pData.status === 'BANNED' || pData.status === 'DELETED');
-                senderStatusCache.current.set(sId, { exists: true, isBanned });
-                return;
-              }
-              senderStatusCache.current.set(sId, { exists: true, isBanned: false });
-            } catch (e) {
-              senderStatusCache.current.set(sId, { exists: true, isBanned: false });
-            }
-          })
-        ).then(() => {
-          if (!isCancelled) {
-            setNotifications(prev => prev.filter(n => {
-              const sId = n.fromUserId || n.fromUserUid || n.metadata?.senderId;
-              if (sId && senderStatusCache.current.get(sId)?.isBanned) return false;
-              return true;
-            }));
-          }
-        });
-      }
+      };
     };
 
-    // Query notifications directly without requiring a composite index
-    const qNotifications = query(
-      collection(db, 'notifications'),
-      where('userId', 'in', targetUserIds),
-      limit(60)
-    );
-
-    const unsubscribe = onSnapshot(qNotifications, (snapshot) => {
-      processDocs(snapshot.docs);
-    }, (error: any) => {
-      logger.warn("Notification center query failed:", error);
+    const commit = (list: any[]) => {
+      if (isCancelled) return;
+      list.sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0));
+      setNotifications(list);
       setIsLoading(false);
-    });
+      memoryNotificationCache = list.slice(0, 50);
+      try {
+        localStorage.setItem('aeirmist_cached_notifications', JSON.stringify(memoryNotificationCache));
+      } catch (e) {}
+    };
+
+    const load = async () => {
+      try {
+        const res = await api.notifications.get(60);
+        const mapped = (res?.notifications || []).map(mapNotification).filter(Boolean) as any[];
+        commit(mapped);
+      } catch (error: any) {
+        logger.warn("Notification center load failed:", error);
+        if (!isCancelled) setIsLoading(false);
+      }
+    };
+    load();
+
+    const socket = getSocket();
+    const onNew = (payload: any) => {
+      const mapped = mapNotification(payload?.notification || payload);
+      if (!mapped || isCancelled) return;
+      setNotifications(prev => {
+        if (prev.some(p => p.id === mapped.id)) return prev;
+        const next = [mapped, ...prev];
+        memoryNotificationCache = next.slice(0, 50);
+        return next;
+      });
+    };
+    socket.on('new_notification', onNew);
+    socket.on('connect', load);
 
     return () => {
       isCancelled = true;
-      unsubscribe();
+      socket.off('new_notification', onNew);
+      socket.off('connect', load);
     };
-  }, [db, user?.uid, profile?.id]);
+  }, [user?.uid, profile?.id]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -492,15 +438,10 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true, isRead: true })));
-    if (!db || !user || !canWrite('mark_all_read', 5000)) return;
+    if (!canWrite('mark_all_read', 5000)) return;
     try {
-      const batch = writeBatch(db);
-      notifications.forEach(n => {
-        if (!n.read && !n.isRead) {
-          batch.update(doc(db, 'notifications', n.id), { read: true });
-        }
-      });
-      await batch.commit();
+      await api.notifications.markAllRead();
+      window.dispatchEvent(new CustomEvent('aeirmist_notifications_changed'));
     } catch (e) {
       logger.error("Mark all read failed:", e);
     }
@@ -508,9 +449,10 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const markRead = async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true, isRead: true } : n));
-    if (!db || !canWrite(`mark_read_${id}`, 2000)) return;
+    if (!canWrite(`mark_read_${id}`, 2000)) return;
     try {
-      await updateDoc(doc(db, 'notifications', id), { read: true });
+      await api.notifications.markRead(id);
+      window.dispatchEvent(new CustomEvent('aeirmist_notifications_changed'));
     } catch (e) {
       logger.error("Mark read failed:", e);
     }
@@ -518,9 +460,9 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const deleteNotification = async (id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
-    if (!db) return;
     try {
-      await deleteDoc(doc(db, 'notifications', id));
+      await api.notifications.delete(id);
+      window.dispatchEvent(new CustomEvent('aeirmist_notifications_changed'));
     } catch (e) {
       logger.error("Delete notification failed:", e);
     }
@@ -560,6 +502,47 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
       onClose();
       return;
     }
+
+    if (notif.actionUrl) {
+      const url = notif.actionUrl;
+      if (url.startsWith('/post/')) {
+        const pId = url.split('/post/')[1]?.split('?')[0];
+        if (pId && onPostClick) {
+          onPostClick(pId);
+          onClose();
+          return;
+        }
+      } else if (url.startsWith('/profile/') || url.startsWith('/@') || url.startsWith('/u/')) {
+        const uId = url.replace('/profile/', '').replace('/@', '').replace('/u/', '').split('?')[0];
+        if (uId && onUserClick) {
+          onUserClick({ id: uId, username: uId });
+          onClose();
+          return;
+        }
+      } else if (url.startsWith('/messages') || url.startsWith('/chat')) {
+        onNavigate?.('messenger');
+        onClose();
+        return;
+      } else if (url.startsWith('/videos') || url.startsWith('/reel')) {
+        onNavigate?.('videos');
+        onClose();
+        return;
+      }
+    }
+
+    const fromId = notif.fromUserId || notif.user?.id || notif.user?.uid;
+    const isProfileEvent = ['follow', 'follow_accept', 'follow_back', 'mention', 'tag'].some(x => String(notif.type || '').toLowerCase().includes(x));
+    if (isProfileEvent && fromId && onUserClick) {
+      onUserClick({
+        id: fromId,
+        displayName: notif.user?.name || notif.user?.displayName || 'Aeirmist User',
+        username: notif.user?.username || 'user',
+        photoURL: notif.user?.avatar || notif.user?.photoURL
+      });
+      onClose();
+      return;
+    }
+
     if (!onNavigate) return;
     
     const cat = getCategoryForType(notif.type);

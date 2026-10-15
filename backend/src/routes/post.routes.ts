@@ -7,6 +7,8 @@ import { NotificationDAL } from '../dal/notification.dal';
 import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
 import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
+import { broadcastNotification } from './notification.routes';
+import { redis } from '../db/redis';
 
 const router = Router();
 
@@ -25,6 +27,9 @@ const AddCommentSchema = z.object({
 });
 
 async function resolveUserId(rawId: string): Promise<string> {
+  if (!rawId || typeof rawId !== 'string') return rawId;
+  const resolved = await UserDAL.resolveToUserId(rawId);
+  if (resolved) return resolved;
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
   if (isUuid) return rawId;
   const user = await UserDAL.findByEmailOrUsername(rawId) || await UserDAL.findByFirebaseUid(rawId);
@@ -36,7 +41,25 @@ router.get('/', optionalAuthToken, async (req: AuthenticatedRequest, res: Respon
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
     const offset = parseInt(req.query.offset as string) || 0;
+    const isPublicAnonymous = !req.user?.userId && offset === 0;
+
+    if (isPublicAnonymous) {
+      try {
+        const cached = await redis.get(`public_feed_${limit}`);
+        if (cached) {
+          return res.json({ posts: JSON.parse(cached) });
+        }
+      } catch {}
+    }
+
     const feed = await PostDAL.getFeed(req.user?.userId, limit, offset);
+
+    if (isPublicAnonymous && feed.length > 0) {
+      try {
+        await redis.set(`public_feed_${limit}`, JSON.stringify(feed), 'EX', 20); // 20 seconds cache
+      } catch {}
+    }
+
     res.json({ posts: feed });
   } catch (err) {
     console.error('[Feed Error]', err);
@@ -81,6 +104,10 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
       location: data.location,
       pollData: data.pollData,
     });
+    try {
+      await redis.del('public_feed_20');
+      await redis.del('public_feed_50');
+    } catch {}
     io.emit('new_post', { post });
     res.status(201).json({ post });
   } catch (err: any) {
@@ -138,6 +165,27 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res: 
   }
 });
 
+// Archive / Unarchive Post
+router.patch('/:id/archive', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id);
+    if (!isUuid) {
+      return res.status(400).json({ error: 'Invalid post ID' });
+    }
+    const archive = Boolean(req.body.archive);
+    const result = await PostDAL.toggleArchive(req.params.id, req.user!.userId, archive);
+    if (!result) {
+      return res.status(403).json({ error: 'Post not found or unauthorized' });
+    }
+    res.json({ success: true, isArchived: result.isArchived });
+  } catch (err) {
+    console.error('[Archive Post Error]', err);
+    res.status(500).json({ error: 'Failed to toggle archive' });
+  }
+});
+
+
+
 // Like / Unlike Post
 router.post('/:id/like', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -160,7 +208,7 @@ router.post('/:id/like', authenticateToken, async (req: AuthenticatedRequest, re
         body: `${myProfile?.displayName || myProfile?.username || 'Someone'} liked your post.`,
         actionUrl: `/post/${post.id}`,
       });
-      io.to(`user:${post.userId}`).emit('new_notification', { notification: notif });
+      await broadcastNotification(post.userId, notif);
     }
 
     const updated = await PostDAL.getById(req.params.id);
@@ -221,7 +269,7 @@ router.post('/:id/comments', authenticateToken, async (req: AuthenticatedRequest
         body: `${myProfile?.displayName || myProfile?.username || 'Someone'} commented on your post: "${data.content.slice(0, 30)}..."`,
         actionUrl: `/post/${post.id}`,
       });
-      io.to(`user:${post.userId}`).emit('new_notification', { notification: notif });
+      await broadcastNotification(post.userId, notif);
     }
 
     res.status(201).json({ comment });

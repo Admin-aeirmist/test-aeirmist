@@ -36,6 +36,7 @@ import { AeirmistCreatorStudio } from './AeirmistCreatorStudio';
 import { getAvatarUrl } from '../../lib/avatar';
 import { formatDuration, formatTimeLeft, getPlaybackProgressMap, getWatchHistory, clearWatchHistory, getLocalPlaylists } from '../../utils/videoStorage';
 import { logger } from '@/src/utils/logger';
+import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 
 
 interface VideoFeedProps {
@@ -62,9 +63,21 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
 
   const [selectedCategory, setSelectedCategory] = useState<VideoCategory | 'All'>('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   
-  // Real DB state
-  const [dbVideos, setDbVideos] = useState<Video[]>([]);
+  // Real DB state (hydrated instantly from local cache)
+  const [dbVideos, setDbVideos] = useState<Video[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('aeirmist_cached_videos');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+    }
+    return [];
+  });
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
 
   // Modals
@@ -74,14 +87,18 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   // Listen to Firestore 'videos' collection in real-time
   useEffect(() => {
     if (!db) {
-      setDbVideos([]);
       return;
     }
     const q = collection(db, 'videos');
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as Video);
       list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setDbVideos(list);
+      if (list.length > 0) {
+        setDbVideos(list);
+        try {
+          localStorage.setItem('aeirmist_cached_videos', JSON.stringify(list.slice(0, 30)));
+        } catch {}
+      }
     }, (error) => {
       logger.error('[VideoFeed] Real-time snap error:', error);
     });
@@ -213,51 +230,73 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
     );
   }
 
+  // Unified YouTube Filter Chips
+  const filterChips: { id: string; label: string; icon?: React.ReactNode; isTab?: boolean; category?: VideoCategory }[] = [
+    { id: 'all', label: 'All', isTab: true },
+    { id: 'trending', label: 'Trending', isTab: true, icon: <Flame size={13} className="text-orange-500 fill-orange-500" /> },
+    { id: 'following', label: 'Following', isTab: true },
+    ...VIDEO_CATEGORIES.map(cat => ({ id: `cat_${cat}`, label: cat, category: cat })),
+    { id: 'saved', label: 'Saved', isTab: true, icon: <Bookmark size={13} /> },
+    { id: 'history', label: 'History', isTab: true, icon: <Clock size={13} /> },
+  ];
+
   return (
-    <div className={`flex flex-col h-full ${isGlobalBgActive ? 'bg-[#050505]/40 backdrop-blur-xl' : 'bg-[#050505]'} relative overflow-y-auto overflow-x-hidden no-scrollbar font-sans text-white pb-28 min-w-0 w-full`}>
+    <div className={`flex flex-col h-full ${isGlobalBgActive ? 'bg-[#050505]/80 backdrop-blur-xl' : 'bg-[#050505]'} relative overflow-y-auto overflow-x-hidden no-scrollbar font-sans text-white pb-24 min-w-0 w-full`}>
       
-      {/* Header */}
+      {/* 1. AEIRMIST APP HEADER */}
       <header 
-        className="sticky top-0 z-40 bg-[#050505]/90 backdrop-blur-3xl border-b border-white/5 px-3.5 pb-3 sm:px-6 flex flex-row items-center justify-between gap-2.5 sm:gap-4 w-full max-w-full overflow-hidden transition-all"
-        style={{ paddingTop: 'calc(0.75rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
+        className={`sticky top-0 z-40 ${isGlobalBgActive ? 'bg-black/30 backdrop-blur-xl' : 'bg-[#050505]/95 backdrop-blur-md'} border-b border-white/5 px-3 py-2 sm:px-6 flex flex-row items-center justify-between gap-2.5 w-full max-w-full overflow-hidden transition-all`}
+        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 0.35rem)' }}
       >
-        <div className="flex items-center gap-2.5 sm:gap-3 shrink min-w-0">
-          <motion.button 
-            whileHover={{ x: -2 }}
+        <div className="flex items-center gap-2 sm:gap-3 shrink min-w-0">
+          <button 
             onClick={onBack}
-            className="p-2 rounded-full bg-white/5 border border-white/10 text-white/60 hover:text-white transition-colors shrink-0"
+            className="p-1.5 -ml-1 rounded-full text-white/80 hover:text-white active:bg-white/10 transition-colors shrink-0"
             aria-label="Back to feed"
           >
-            <ArrowLeft size={18} />
-          </motion.button>
+            <ArrowLeft size={19} />
+          </button>
           
-          <div className="flex items-center gap-2 min-w-0">
-             <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-aeirmist-cyan/20 to-blue-600/20 items-center justify-center border border-aeirmist-cyan/30 text-aeirmist-cyan flex shadow-[0_0_15px_rgba(0,242,255,0.15)] shrink-0">
-               <Film size={18} className="sm:hidden" />
-               <Film size={20} className="hidden sm:block" />
-             </div>
-             <div className="min-w-0">
-                <h1 className="text-sm sm:text-lg font-bold tracking-tight text-white uppercase tracking-wider truncate">Aeirmist Cinema</h1>
-                <p className="text-[9px] sm:text-[10px] text-white/40 font-medium truncate hidden sm:block">Long-Form Video Experience</p>
-             </div>
+          {/* Aeirmist Signature Cinema Logo */}
+          <div 
+            className="flex items-center gap-2 select-none cursor-pointer" 
+            onClick={() => { 
+              setActiveTab('featured'); 
+              setSelectedCategory('All'); 
+              setSearchTerm(''); 
+            }}
+          >
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-aeirmist-cyan/20 to-blue-600/20 items-center justify-center border border-aeirmist-cyan/30 text-aeirmist-cyan flex shadow-[0_0_15px_rgba(0,242,255,0.2)] shrink-0">
+              <Film size={18} />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm sm:text-base font-bold tracking-tight text-white uppercase tracking-wider truncate">
+                Aeirmist Cinema
+              </h1>
+              <p className="text-[9px] text-white/40 font-medium truncate hidden sm:block">
+                Long-Form Video Experience
+              </p>
+            </div>
           </div>
         </div>
 
-        {/* Desktop Video Search */}
-        <div className="flex-1 max-w-md mx-4 hidden md:block">
-           <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30" size={16} />
+        {/* Desktop Video Search Bar */}
+        <div className="flex-1 max-w-lg mx-6 hidden md:block">
+           <div className="relative flex items-center">
               <input 
                 type="text" 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search videos, creators, or topics..." 
-                className="w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/50 transition-all font-medium"
+                className="w-full bg-white/5 border border-white/10 rounded-full py-2 pl-4 pr-10 text-xs text-white placeholder-white/40 focus:outline-none focus:border-aeirmist-cyan/50 transition-all font-normal"
               />
+              <div className="absolute right-0 top-0 bottom-0 px-3.5 bg-white/[0.03] border-l border-white/10 rounded-r-full flex items-center justify-center text-white/50">
+                <Search size={15} />
+              </div>
               {searchTerm && (
                 <button 
                   onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/40 hover:text-slate-900 dark:hover:text-white"
+                  className="absolute right-12 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
                 >
                   <X size={14} />
                 </button>
@@ -265,8 +304,17 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
            </div>
         </div>
 
-        {/* Creator Actions */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Header Right Actions */}
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          {/* Mobile Search Icon Toggle */}
+          <button
+            onClick={() => setIsMobileSearchOpen(!isMobileSearchOpen)}
+            className="p-2 text-white/80 hover:text-white active:bg-white/10 rounded-full transition-colors md:hidden"
+            aria-label="Search"
+          >
+            <Search size={19} />
+          </button>
+
           {!isCreatorAccount && (
             <button
               onClick={() => {
@@ -277,122 +325,154 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
                 });
                 setShowStudio(true);
               }}
-              className="hidden sm:block px-3 py-1.5 border border-aeirmist-magenta/30 bg-aeirmist-magenta/10 hover:bg-aeirmist-magenta/20 text-xs font-semibold text-white rounded-xl transition-all"
+              className="hidden lg:block px-3 py-1.5 border border-aeirmist-magenta/30 bg-aeirmist-magenta/10 hover:bg-aeirmist-magenta/20 text-xs font-semibold text-white rounded-full transition-all"
             >
               Get Studio
             </button>
           )}
 
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+          {/* Aeirmist Signature Cyan Upload Button */}
+          <button
             onClick={() => setShowUploader(true)}
-            className="px-3 py-1.5 sm:px-3.5 sm:py-1.5 bg-aeirmist-cyan hover:bg-opacity-90 text-black text-xs font-bold rounded-xl transition-all shadow-[0_0_12px_rgba(0,242,255,0.2)] flex items-center gap-1.5 shrink-0"
+            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-1.5 bg-aeirmist-cyan hover:bg-opacity-90 text-black text-xs font-bold rounded-xl transition-all shadow-[0_0_12px_rgba(0,242,255,0.25)] shrink-0"
           >
-            <UploadCloud size={15} /> <span>Upload</span>
-          </motion.button>
+            <UploadCloud size={15} />
+            <span className="hidden sm:inline">Upload</span>
+          </button>
 
           {isCreatorAccount && (
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+            <button
               onClick={() => setShowStudio(true)}
-              className="p-1.5 sm:p-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl transition-all shrink-0"
+              className="p-2 text-white/80 hover:text-white active:bg-white/10 rounded-full transition-colors"
               title="Creator Studio"
             >
-              <Sliders size={16} />
-            </motion.button>
+              <Sliders size={18} />
+            </button>
           )}
         </div>
       </header>
 
-      {/* Mobile Search Bar */}
-      <div className="px-3.5 pt-2.5 pb-0 md:hidden w-full max-w-full">
-         <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30" size={15} />
+      {/* 2. EXPANDABLE MOBILE SEARCH BAR */}
+      {isMobileSearchOpen && (
+        <div className="px-3 py-2 bg-[#050505] border-b border-white/5 md:hidden animate-in fade-in duration-150">
+          <div className="relative flex items-center">
+            <Search className="absolute left-3.5 text-white/40" size={15} />
             <input 
               type="text" 
+              autoFocus
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search videos, creators, or topics..." 
-              className="w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl py-2 pl-9 pr-8 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/50 transition-all font-medium"
+              className="w-full bg-white/5 border border-white/10 rounded-full py-2 pl-9 pr-9 text-xs text-white placeholder-white/40 focus:outline-none focus:border-aeirmist-cyan/50"
             />
-            {searchTerm && (
+            {searchTerm ? (
               <button 
                 onClick={() => setSearchTerm('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/40 hover:text-slate-900 dark:hover:text-white"
+                className="absolute right-3 text-white/40 hover:text-white"
+              >
+                <X size={14} />
+              </button>
+            ) : (
+              <button 
+                onClick={() => setIsMobileSearchOpen(false)}
+                className="absolute right-3 text-white/40 hover:text-white"
               >
                 <X size={14} />
               </button>
             )}
-         </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. AEIRMIST SIGNATURE FILTER CHIPS RIBBON (Sticky Horizontal Scroll) */}
+      <div className="sticky top-[45px] sm:top-[53px] z-30 bg-[#050505] border-b border-white/5 px-3 sm:px-6 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth w-full">
+        {filterChips.map((chip) => {
+          const isActive = chip.id === 'all' 
+            ? (activeTab === 'featured' && selectedCategory === 'All')
+            : chip.isTab 
+              ? (activeTab === chip.id && selectedCategory === 'All')
+              : (selectedCategory === chip.category);
+
+          return (
+            <button
+              key={chip.id}
+              onClick={() => {
+                triggerNativeHaptic('light');
+                if (chip.id === 'all') {
+                  setActiveTab('featured');
+                  setSelectedCategory('All');
+                } else if (chip.isTab) {
+                  setActiveTab(chip.id as any);
+                  setSelectedCategory('All');
+                } else if (chip.category) {
+                  setSelectedCategory(chip.category);
+                  setActiveTab('featured');
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-all ${
+                isActive
+                  ? 'bg-aeirmist-cyan text-black font-bold shadow-[0_0_12px_rgba(0,242,255,0.3)] border border-aeirmist-cyan/50'
+                  : 'bg-white/5 hover:bg-white/10 active:bg-white/15 text-white/70 hover:text-white border border-white/10'
+              }`}
+            >
+              {chip.icon}
+              <span>{chip.label}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Primary Category & Filter Navigation Bar */}
-      <div className="sticky top-[57px] sm:top-[61px] z-30 bg-[#050505]/95 backdrop-blur-2xl border-b border-white/5 px-3.5 sm:px-6 py-2 flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar scroll-smooth w-full max-w-full">
-        <TabButton id="featured" label="Featured" icon={<Sparkles size={14} />} active={activeTab === 'featured'} onClick={() => setActiveTab('featured')} />
-        <TabButton id="trending" label="Trending" icon={<Flame size={14} />} active={activeTab === 'trending'} onClick={() => setActiveTab('trending')} />
-        <TabButton id="recommended" label="Recommended" icon={<Compass size={14} />} active={activeTab === 'recommended'} onClick={() => setActiveTab('recommended')} />
-        <TabButton id="following" label="Following" icon={<UserCheck size={14} />} active={activeTab === 'following'} onClick={() => setActiveTab('following')} />
-        <TabButton id="new" label="New Releases" icon={<Clock size={14} />} active={activeTab === 'new'} onClick={() => setActiveTab('new')} />
-        {continueWatchingVideos.length > 0 && (
-          <TabButton id="continue" label="Continue Watching" icon={<Play size={14} />} active={activeTab === 'continue'} onClick={() => setActiveTab('continue')} />
-        )}
-        <TabButton id="saved" label="Saved" icon={<Bookmark size={14} />} active={activeTab === 'saved'} onClick={() => setActiveTab('saved')} />
-        <TabButton id="history" label="History" icon={<Clock size={14} />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
-      </div>
-
-      {/* Main Container */}
-      <div className="p-3.5 sm:p-6 space-y-6 sm:space-y-8 max-w-7xl mx-auto w-full min-w-0 overflow-x-hidden">
+      {/* 4. MAIN VIDEO CONTENT FEED */}
+      <div className="p-0 sm:p-6 space-y-4 sm:space-y-8 max-w-7xl mx-auto w-full min-w-0 overflow-x-hidden pt-2 sm:pt-0">
         
-        {/* 1. CINEMATIC FEATURED HERO SECTION */}
-        {activeTab === 'featured' && featuredVideo && !searchTerm && (
-          <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden bg-gradient-to-t from-black via-black/60 to-transparent border border-white/10 shadow-2xl group w-full">
-            <div className="aspect-[16/9] sm:aspect-[21/9] w-full relative overflow-hidden bg-black">
+        {/* 4A. CINEMATIC FEATURED HERO SECTION (Desktop Only) */}
+        {activeTab === 'featured' && selectedCategory === 'All' && featuredVideo && !searchTerm && (
+          <div className="hidden sm:block relative rounded-3xl overflow-hidden bg-gradient-to-t from-black via-black/60 to-transparent border border-white/10 shadow-2xl group w-full mb-6">
+            <div className="aspect-[21/9] w-full relative overflow-hidden bg-black">
               <img 
                 src={featuredVideo.thumbnailURL || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1200'}
                 alt={featuredVideo.title || featuredVideo.caption}
                 className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-500"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/40 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f0f] via-[#0f0f0f]/40 to-transparent" />
             </div>
 
             {/* Featured Details Overlay */}
-            <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-8 flex flex-col gap-2 sm:gap-3">
+            <div className="absolute bottom-0 left-0 right-0 p-8 flex flex-col gap-3">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full bg-aeirmist-cyan/20 border border-aeirmist-cyan/40 text-aeirmist-cyan text-[10px] sm:text-xs font-bold uppercase tracking-wider">
-                  Featured
+                <span className="px-3 py-1 rounded-full bg-red-600/20 border border-red-500/40 text-red-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                  <Flame size={12} /> Featured
                 </span>
                 {featuredVideo.category && (
-                  <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-white/10 text-white/80 text-[10px] sm:text-xs font-medium">
+                  <span className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
                     {featuredVideo.category}
                   </span>
                 )}
               </div>
 
-              <h2 className="text-lg sm:text-4xl font-extrabold text-white tracking-tight line-clamp-2 leading-tight">
+              <h2 className="text-3xl lg:text-4xl font-extrabold text-white tracking-tight line-clamp-2 leading-tight">
                 {featuredVideo.title || featuredVideo.caption}
               </h2>
 
-              <p className="text-xs sm:text-sm text-white/70 max-w-2xl line-clamp-2 hidden sm:block">
+              <p className="text-sm text-white/70 max-w-2xl line-clamp-2">
                 {featuredVideo.description || featuredVideo.caption}
               </p>
 
-              <div className="flex items-center gap-3 sm:gap-4 pt-1 sm:pt-2">
+              <div className="flex items-center gap-4 pt-2">
                 <button
                   onClick={() => setSelectedVideo(featuredVideo)}
-                  className="px-4 py-2 sm:px-6 sm:py-3 bg-aeirmist-cyan hover:bg-opacity-90 text-black font-bold text-xs sm:text-sm rounded-xl transition-all shadow-lg flex items-center gap-2"
+                  className="px-6 py-3 bg-white hover:bg-white/90 text-black font-bold text-sm rounded-full transition-all shadow-lg flex items-center gap-2"
                 >
-                  <Play size={16} className="fill-current sm:w-[18px] sm:h-[18px]" /> Watch Now
+                  <Play size={18} className="fill-current" /> Watch Now
                 </button>
 
                 <div className="flex items-center gap-2 text-xs text-white/60">
                   <img 
                     src={getAvatarUrl(featuredVideo.creatorAvatar, featuredVideo.creatorName)} 
                     alt={featuredVideo.creatorName}
-                    className="w-5 h-5 sm:w-6 sm:h-6 rounded-full object-cover border border-white/20"
+                    className="w-6 h-6 rounded-full object-cover border border-white/20"
                   />
-                  <span className="font-medium text-white/90 text-xs truncate max-w-[100px] sm:max-w-none">{featuredVideo.creatorName}</span>
+                  <span className="font-medium text-white/90 text-xs">{featuredVideo.creatorName}</span>
                   {featuredVideo.isVerified && <ShieldCheck size={14} className="text-aeirmist-cyan shrink-0" />}
                 </div>
               </div>
@@ -400,17 +480,21 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
           </div>
         )}
 
-        {/* 2. CONTINUE WATCHING ROW */}
-        {continueWatchingVideos.length > 0 && activeTab === 'featured' && !searchTerm && (
-          <div className="space-y-4">
-            <h2 className="text-base font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <Clock size={18} className="text-aeirmist-cyan" /> Continue Watching
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {continueWatchingVideos.slice(0, 3).map((v) => (
+        {/* 4B. CONTINUE WATCHING SHELF (YouTube Style Horizontal Scroll) */}
+        {continueWatchingVideos.length > 0 && activeTab === 'featured' && selectedCategory === 'All' && !searchTerm && (
+          <div className="space-y-2.5 py-2 sm:py-4 border-b border-[#222] sm:border-0">
+            <div className="flex items-center justify-between px-3.5 sm:px-0">
+              <h2 className="text-sm sm:text-base font-bold text-white tracking-wide flex items-center gap-2">
+                <Clock size={16} className="text-aeirmist-cyan" /> Continue Watching
+              </h2>
+              <span className="text-xs text-white/40 font-mono">{continueWatchingVideos.length} in progress</span>
+            </div>
+            <div className="flex gap-3 overflow-x-auto no-scrollbar px-3.5 sm:px-0 pb-1 scroll-smooth">
+              {continueWatchingVideos.map((v) => (
                 <VideoCard
                   key={v.id}
                   video={v}
+                  layout="compact"
                   onSelect={(video) => setSelectedVideo(video)}
                   onUserClick={onUserClick}
                 />
@@ -419,46 +503,9 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
           </div>
         )}
 
-        {/* 3. CATEGORY SELECTOR CHIPS */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-white/50">Browse Categories</h3>
-            {selectedCategory !== 'All' && (
-              <button onClick={() => setSelectedCategory('All')} className="text-xs text-aeirmist-cyan hover:underline">
-                Clear Category Filter
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
-            <button
-              onClick={() => setSelectedCategory('All')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                selectedCategory === 'All'
-                  ? 'bg-white text-black font-bold'
-                  : 'bg-white/5 border border-white/10 text-white/70 hover:text-white'
-              }`}
-            >
-              All Categories
-            </button>
-            {VIDEO_CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  selectedCategory === cat
-                    ? 'bg-aeirmist-cyan text-black font-bold'
-                    : 'bg-white/5 border border-white/10 text-white/70 hover:text-white'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 4. WATCH HISTORY HEADER CONTROLS */}
+        {/* 4C. WATCH HISTORY CONTROLS */}
         {activeTab === 'history' && displayVideos.length > 0 && (
-          <div className="flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-2xl">
+          <div className="flex items-center justify-between p-4 bg-[#181818] border border-white/5 rounded-2xl mx-3 sm:mx-0">
             <span className="text-xs text-white/60">Your viewing history is private and visible only to you.</span>
             <button
               onClick={() => {
@@ -472,17 +519,17 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
           </div>
         )}
 
-        {/* 5. PRIMARY RESPONSIVE LANDSCAPE VIDEO GRID (2-4 columns) */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-white uppercase tracking-wider capitalize">
-              {activeTab === 'featured' ? 'Discover Videos' : activeTab}
+        {/* 4D. PRIMARY RESPONSIVE VIDEO FEED (YouTube Edge-to-Edge on Mobile) */}
+        <div className="space-y-3 sm:space-y-4">
+          <div className="flex items-center justify-between px-3.5 sm:px-0">
+            <h2 className="text-xs sm:text-sm font-bold text-white/60 uppercase tracking-wider">
+              {selectedCategory !== 'All' ? selectedCategory : (activeTab === 'featured' ? 'Recommended' : activeTab)}
             </h2>
-            <span className="text-xs text-white/40">{displayVideos.length} videos</span>
+            <span className="text-[11px] text-white/40 font-mono">{displayVideos.length} videos</span>
           </div>
 
           {displayVideos.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-0 sm:gap-6">
               {displayVideos.map((video) => (
                 <VideoCard
                   key={video.id}
@@ -493,7 +540,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
               ))}
             </div>
           ) : (
-            <div className="text-center py-16 px-4 bg-white/5 border border-white/5 rounded-3xl space-y-4">
+            <div className="text-center py-16 px-4 bg-[#181818] border border-white/5 rounded-2xl sm:rounded-3xl space-y-4 mx-3 sm:mx-0">
               <div className="w-12 h-12 rounded-full bg-white/10 text-white/40 flex items-center justify-center mx-auto">
                 <Film size={24} />
               </div>
@@ -505,7 +552,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
               </div>
               <button
                 onClick={() => setShowUploader(true)}
-                className="px-5 py-2.5 bg-aeirmist-cyan text-black font-bold text-xs rounded-xl shadow-lg hover:bg-opacity-90 transition-all inline-flex items-center gap-2"
+                className="px-5 py-2.5 bg-aeirmist-cyan hover:bg-opacity-90 text-black font-bold text-xs rounded-xl shadow-[0_0_15px_rgba(0,242,255,0.25)] transition-all inline-flex items-center gap-2"
               >
                 <UploadCloud size={16} /> Upload Video
               </button>
