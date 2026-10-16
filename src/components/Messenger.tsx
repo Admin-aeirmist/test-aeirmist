@@ -472,6 +472,7 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
     isOffline, 
     isFollowing,
     isBlocked,
+    isRestricted,
     isCloseFriend, 
     setIsNavHidden, 
     setCameraConfig, 
@@ -802,17 +803,13 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
       // Hide Vaulted conversations from Main Inbox
       if (data.isVaulted?.[profile?.id || ''] === true) return false;
 
-      // Filter out blocked users
-      const otherId = data.otherParticipantId;
-      if (otherId && isBlocked(otherId)) return false;
-
       // Strictly mutually exclusive: if status is 'request', it belongs only in Requests
       if (data.status === 'request') return false;
       
       return true;
     });
     return deduplicateChats(raw, myIdentifiers);
-  }, [chats, isBlocked, profile?.id, myIdentifiers]);
+  }, [chats, profile?.id, myIdentifiers]);
 
   const requestChats = useMemo(() => {
     return chats.filter(data => {
@@ -1235,22 +1232,20 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
     return () => unsubscribe();
   }, [db, user?.uid, profile?.id]);
 
-  // Auto-close active chat if it has been deleted, archived, or recipient blocked
+  // Auto-close active chat if it has been archived
   useEffect(() => {
     if (activeChatId && !activeChatId.startsWith('new_') && !tempChat) {
       const chatObj = chats.find(c => c.id === activeChatId);
       if (chatObj) {
-        const otherId = chatObj.otherParticipantId;
-        const isUserBlocked = otherId ? isBlocked(otherId) : false;
         const isUserArchived = chatObj.isArchived;
 
-        if (isUserBlocked || (isUserArchived && activeFilter !== 'archived')) {
+        if (isUserArchived && activeFilter !== 'archived') {
           setActiveChatId(null);
           setIsMobileList(true);
         }
       }
     }
-  }, [chats, activeChatId, activeFilter, isBlocked, tempChat]);
+  }, [chats, activeChatId, activeFilter, tempChat]);
 
   useEffect(() => {
     const performSearch = async () => {
@@ -2557,6 +2552,11 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                           <h3 className={`text-[13px] md:text-[14px] font-bold truncate ${isUnread ? 'text-slate-900 dark:text-white' : 'text-slate-700 dark:text-white/90'}`}>
                             {chat.isGroup || chat.type === 'group' ? (chat.name || chat.groupName || 'Group Chat') : (chat.otherParticipantId === profile?.id ? 'My Space' : <LiveParticipantName participantId={chat.otherParticipantId} fallbackName={chat.name} chatId={chat.id} />)}
                           </h3>
+                          {chat.otherParticipantId && isBlocked(chat.otherParticipantId) ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 font-bold border border-rose-500/25 shrink-0">Blocked</span>
+                          ) : chat.otherParticipantId && isRestricted(chat.otherParticipantId) ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/60 font-semibold border border-white/15 shrink-0 flex items-center gap-0.5"><span>❄️</span> Restricted</span>
+                          ) : null}
                           {chat.isPinned && (
                             <Pin size={11} className="text-aeirmist-cyan shrink-0 rotate-45" />
                           )}
@@ -3088,6 +3088,18 @@ const ChatWindow = ({
   const isPrivateSpace = isMySpace || isSelfChat;
 
   const isGroupChat = Boolean(chat.isGroup || (chat as any).type === 'group' || (chat.participants && chat.participants.length > 2));
+  const otherParticipantId = useMemo(() => {
+    return chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id) || '';
+  }, [chat.otherParticipantId, chat.profileIds, profile?.id]);
+
+  const isOtherBlocked = useMemo(() => {
+    return otherParticipantId ? isBlocked(otherParticipantId) : false;
+  }, [otherParticipantId, isBlocked]);
+
+  const isOtherRestricted = useMemo(() => {
+    return otherParticipantId ? isRestricted(otherParticipantId) : false;
+  }, [otherParticipantId, isRestricted]);
+
   const isOtherUnavailable = useMemo(() => {
     if (isPrivateSpace || isGroupChat || !chat.otherParticipantId) return false;
     if (chat.otherProfile && !chat.otherProfile.isDeleted) return false;
@@ -3304,7 +3316,6 @@ const ChatWindow = ({
     };
   }, [db, chat.id, user?.uid, profile?.id, scrollToBottom]);
 
-  const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
   const sharedOtherProfile = useSharedProfile(db, otherParticipantId);
 
   const otherResolvedPhoto = resolveAvatarSrc(
@@ -4311,28 +4322,40 @@ const ChatWindow = ({
             {isOtherUnavailable && (
               <p className="text-[10px] text-white/40 leading-none mt-0.5 truncate font-medium">Unavailable on Aeirmist</p>
             )}
-            {!isPrivateSpace && !isOtherUnavailable && showTheirPresence && (
-              remoteTyping ? (
-                <div className="flex items-center gap-1 mt-0.5">
-                  <span className={`text-[8px] uppercase tracking-widest font-black italic ${isVaultMode ? 'text-[#c77dff]' : 'text-aeirmist-cyan'}`}>Typing...</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1 mt-0.5 min-w-0">
-                  <p className={`text-[8px] uppercase tracking-widest font-bold ${isOtherOnline && showStatus ? 'text-aeirmist-lime flex items-center gap-1' : 'text-white/40'} truncate`}>
-                    {isOtherOnline && showStatus && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-lime animate-pulse inline-block" />}
-                    {formatActiveStatus(
-                      isOtherOnline && showStatus, 
-                      lastSeenCandidate, 
-                      !showStatus
-                    )}
-                  </p>
-                </div>
+            {isOtherRestricted ? (
+              <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                <span className="text-white/60 text-xs">❄️</span>
+                <p className="text-[11px] font-medium text-white/60">Restricted account</p>
+              </div>
+            ) : isOtherBlocked ? (
+              <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                <span className="text-rose-400/80 text-xs">🚫</span>
+                <p className="text-[11px] font-medium text-rose-400/80">Blocked account</p>
+              </div>
+            ) : (
+              !isPrivateSpace && !isOtherUnavailable && showTheirPresence && (
+                remoteTyping ? (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className={`text-[8px] uppercase tracking-widest font-black italic ${isVaultMode ? 'text-[#c77dff]' : 'text-aeirmist-cyan'}`}>Typing...</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                    <p className={`text-[8px] uppercase tracking-widest font-bold ${isOtherOnline && showStatus ? 'text-aeirmist-lime flex items-center gap-1' : 'text-white/40'} truncate`}>
+                      {isOtherOnline && showStatus && <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-lime animate-pulse inline-block" />}
+                      {formatActiveStatus(
+                        isOtherOnline && showStatus, 
+                        lastSeenCandidate, 
+                        !showStatus
+                      )}
+                    </p>
+                  </div>
+                )
               )
             )}
           </div>
         </div>
         <div className="flex items-center gap-1 md:gap-4 shrink-0">
-          {!isPrivateSpace && !isOtherUnavailable && (
+          {!isPrivateSpace && !isOtherUnavailable && !isOtherBlocked && !isOtherRestricted && (
             <>
               <button 
                 onClick={() => handleCallClick('audio')}
@@ -4645,40 +4668,20 @@ const ChatWindow = ({
               );
             }
 
-            if (isOtherBlocked) {
+            if (isOtherBlocked || (otherParticipantId && isBlocked(otherParticipantId))) {
+              const targetBlockedId = otherParticipantId || otherId || '';
+              const blockedUsername = otherProfile?.username || chat.otherProfile?.username || (chat.name && !chat.name.includes(' ') ? chat.name : null);
+              const blockedDisplayName = otherProfile?.displayName || chat.otherProfile?.displayName || chat.name || 'this profile';
+              const displayBlockedTitle = blockedUsername ? blockedUsername : blockedDisplayName;
+
               return (
-                <div className="w-full p-4 md:p-6 bg-red-500/10 border border-red-500/20 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
-                  <span className="text-red-400 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Connections Severed</span>
-                  <span className="text-white/60 text-xs">You have blocked this Profile. Lift the Block in the details panel to resume activity.</span>
-                </div>
-              );
-            }
-
-            const isOtherPrivate = otherProfile?.isPrivate || otherProfile?.isProfileLocked;
-            const amFollowingOther = otherId ? isFollowing(otherId) : false;
-            const isFollowRequestPending = otherId ? isFollowPending(otherId) : false;
-
-            const otherParticipantId = chat.otherParticipantId || chat.profileIds?.find((id: string) => id !== profile?.id);
-
-            if (otherParticipantId && isBlocked(otherParticipantId)) {
-              return (
-                <div className="w-full p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-xl">
-                  <span className="text-white/40 font-bold uppercase tracking-[0.2em] text-[10px] block mb-1">Transmission Suspended</span>
-                  <span className="text-white/60 text-xs">
-                    You have blocked this user. Unblock this user to resume conversation.
-                  </span>
-                </div>
-              );
-            }
-
-            // Instagram-Style Restricted Action Bar at the bottom of the conversation
-            if (otherParticipantId && isRestricted(otherParticipantId)) {
-              return (
-                <div className="w-full p-4 md:p-5 bg-[#0e1019]/95 border border-white/10 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-2xl shadow-2xl flex flex-col items-center gap-3">
+                <div className="w-full p-4 md:p-5 bg-[#0e1017]/95 border border-white/10 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-2xl shadow-2xl flex flex-col items-center gap-3">
                   <div className="space-y-1">
-                    <span className="text-white font-bold text-sm block">You restricted this account</span>
+                    <span className="text-white font-bold text-sm md:text-base block">
+                      You blocked {displayBlockedTitle}
+                    </span>
                     <span className="text-white/50 text-xs block leading-relaxed max-w-sm">
-                      They won't know when you've read their messages or when you're active.
+                      You can't message or call this profile unless you unblock them
                     </span>
                   </div>
                   <div className="flex items-center justify-center gap-3 w-full max-w-xs pt-1">
@@ -4686,23 +4689,23 @@ const ChatWindow = ({
                       type="button"
                       onClick={async () => {
                         try {
-                          await toggleRestrictUser(otherParticipantId);
+                          await toggleBlockUser(targetBlockedId);
                           addToast?.({
-                            title: 'Unrestricted',
-                            message: 'Account has been unrestricted.',
+                            title: 'Unblocked',
+                            message: 'User has been unblocked.',
                             type: 'success'
                           });
                         } catch (e) {
                           addToast?.({
                             title: 'Error',
-                            message: 'Failed to unrestrict account.',
+                            message: 'Failed to unblock user.',
                             type: 'warning'
                           });
                         }
                       }}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white text-xs font-bold transition-all border border-white/15 cursor-pointer shadow-sm"
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/15 active:scale-95 text-white text-xs font-bold transition-all border border-white/15 cursor-pointer shadow-sm text-center"
                     >
-                      Unrestrict
+                      Unblock
                     </button>
                     <button
                       type="button"
@@ -4725,9 +4728,108 @@ const ChatWindow = ({
                           }
                         }
                       }}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 active:scale-95 text-rose-400 hover:text-rose-300 text-xs font-bold transition-all border border-rose-500/30 cursor-pointer shadow-sm"
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-white/10 hover:bg-rose-500/20 active:scale-95 text-rose-500 hover:text-rose-400 text-xs font-bold transition-all border border-white/10 cursor-pointer shadow-sm text-center"
                     >
                       Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
+            const isOtherPrivate = otherProfile?.isPrivate || otherProfile?.isProfileLocked;
+            const amFollowingOther = otherId ? isFollowing(otherId) : false;
+            const isFollowRequestPending = otherId ? isFollowPending(otherId) : false;
+
+            // Instagram-Style Restricted Action Bar at the bottom of the conversation
+            if (isOtherRestricted || (otherParticipantId && isRestricted(otherParticipantId))) {
+              const targetRestrictedId = otherParticipantId || otherId || '';
+              const restrictedUsername = otherProfile?.username || chat.otherProfile?.username || (chat.name && !chat.name.includes(' ') ? chat.name : null);
+              const restrictedDisplayName = otherProfile?.displayName || chat.otherProfile?.displayName || chat.name || '';
+              const displayRestrictedTitle = restrictedUsername ? restrictedUsername : restrictedDisplayName;
+
+              return (
+                <div className="w-full p-4 md:p-5 bg-[#0e1017]/95 border border-white/10 rounded-2xl md:rounded-[2rem] text-center backdrop-blur-2xl shadow-2xl flex flex-col items-center gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span className="text-white font-bold text-sm md:text-base">
+                        You restricted {displayRestrictedTitle}
+                      </span>
+                      <span className="text-xs">❄️</span>
+                    </div>
+                    <span className="text-white/50 text-xs block leading-relaxed max-w-sm">
+                      They can't see when you're online or when you've read their messages.
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-center gap-2.5 w-full max-w-sm pt-1">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await toggleBlockUser(targetRestrictedId);
+                          addToast?.({
+                            title: 'Blocked',
+                            message: 'User has been blocked.',
+                            type: 'info'
+                          });
+                        } catch (e) {
+                          addToast?.({
+                            title: 'Error',
+                            message: 'Failed to block user.',
+                            type: 'warning'
+                          });
+                        }
+                      }}
+                      className="flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-rose-500/20 active:scale-95 text-rose-500 hover:text-rose-400 text-xs font-bold transition-all border border-white/10 cursor-pointer shadow-sm text-center"
+                    >
+                      Block
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm('Delete this conversation? This will permanently remove all messages for you.')) {
+                          try {
+                            await deleteConversation(chat.id);
+                            onBack();
+                            addToast?.({
+                              title: 'Chat Deleted',
+                              message: 'Conversation removed successfully.',
+                              type: 'info'
+                            });
+                          } catch (e) {
+                            addToast?.({
+                              title: 'Error',
+                              message: 'Failed to delete conversation.',
+                              type: 'warning'
+                            });
+                          }
+                        }
+                      }}
+                      className="flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-rose-500/20 active:scale-95 text-rose-500 hover:text-rose-400 text-xs font-bold transition-all border border-white/10 cursor-pointer shadow-sm text-center"
+                    >
+                      Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await toggleRestrictUser(targetRestrictedId);
+                          addToast?.({
+                            title: 'Unrestricted',
+                            message: 'Account has been unrestricted.',
+                            type: 'success'
+                          });
+                        } catch (e) {
+                          addToast?.({
+                            title: 'Error',
+                            message: 'Failed to unrestrict account.',
+                            type: 'warning'
+                          });
+                        }
+                      }}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-white/15 hover:bg-white/20 active:scale-95 text-white text-xs font-bold transition-all border border-white/15 cursor-pointer shadow-sm text-center"
+                    >
+                      Unrestrict
                     </button>
                   </div>
                 </div>
