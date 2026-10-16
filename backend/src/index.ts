@@ -487,10 +487,16 @@ if (effectiveDistPath) {
 // Start Server
 // -------------------------------------------------------------
 const PORT = env.PORT;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`🚀 [Aeirmist API] Server listening on port ${PORT} (${env.NODE_ENV})`);
   console.log(`📡 [Health Check] http://localhost:${PORT}/health`);
   console.log(`📁 [Storage Driver] ${env.STORAGE_DRIVER.toUpperCase()} -> ${env.STORAGE_PATH}`);
+
+  // Purge any ghost/stale online users left from previous crashes or restarts
+  try {
+    await redis.del('online_users');
+    console.log('🧹 [Presence] Cleared stale online_users cache on startup');
+  } catch {}
 });
 
 // Graceful Shutdown

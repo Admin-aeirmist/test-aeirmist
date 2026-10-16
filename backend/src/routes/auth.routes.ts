@@ -581,12 +581,28 @@ router.get('/me', authenticateToken, async (req: AuthenticatedRequest, res: Resp
     }
 
     const profile = await UserDAL.getProfileByUserId(user.id);
+    let socialFollowing: string[] = [];
+    let socialFollowers: string[] = [];
+    try {
+      socialFollowing = await UserDAL.getFollowingIds(user.id);
+      socialFollowers = await UserDAL.getFollowerIds(user.id);
+    } catch {}
+
+    const enrichedProfile = profile ? {
+      ...profile,
+      social: {
+        ...(profile.socialLinks as any || {}),
+        following: socialFollowing,
+        followers: socialFollowers,
+      }
+    } : profile;
+
     res.json({
       user: {
         id: user.id,
         email: user.email,
         role: user.role,
-        profile,
+        profile: enrichedProfile,
       },
     });
   } catch (err) {

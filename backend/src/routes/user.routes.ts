@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { UserDAL } from '../dal/user.dal';
 import { NotificationDAL } from '../dal/notification.dal';
-import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
 import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 import { broadcastNotification } from './notification.routes';
@@ -80,7 +80,7 @@ router.get('/profile', authenticateToken, async (req: AuthenticatedRequest, res:
 });
 
 // Get User Profile by Username, User ID, or Profile ID
-router.get('/:identifier', async (req, res: Response) => {
+router.get('/:identifier', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const identifier = req.params.identifier;
     const cacheKey = `profile_cache:${identifier.toLowerCase()}`;
@@ -116,6 +116,13 @@ router.get('/:identifier', async (req, res: Response) => {
       }
     } catch {}
 
+    let isFollowing = false;
+    if (req.user?.userId && profile.userId && req.user.userId !== profile.userId) {
+      try {
+        isFollowing = await UserDAL.isFollowing(req.user.userId, profile.userId);
+      } catch {}
+    }
+
     const sanitized = { ...profile };
     delete sanitized.email;
     delete sanitized.firebaseUid;
@@ -124,6 +131,7 @@ router.get('/:identifier', async (req, res: Response) => {
       profile: {
         ...sanitized,
         isOnline,
+        isFollowing,
         lastSeen: isOnline ? Date.now() : lastSeen,
       }
     });

@@ -299,8 +299,17 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       return { stories: [] } as any;
     }
 
-    // Notifications Fallback
-    if (path === '/api/v1/notifications') {
+    // Notifications Fallback: Return cached notifications if offline
+    if (path.startsWith('/api/v1/notifications')) {
+      const cached = localStorage.getItem('aeirmist_cached_notifications');
+      if (cached) {
+        try {
+          const list = JSON.parse(cached);
+          if (Array.isArray(list) && list.length > 0) {
+            return { notifications: list, unreadCount: list.filter((n: any) => !n.isRead && !n.read).length } as any;
+          }
+        } catch {}
+      }
       return { notifications: [], unreadCount: 0 } as any;
     }
 

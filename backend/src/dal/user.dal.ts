@@ -740,6 +740,30 @@ export class UserDAL {
     }
   }
 
+  static async getFollowingIds(userId: string): Promise<string[]> {
+    try {
+      const rows = await db
+        .select({ followingId: follows.followingId })
+        .from(follows)
+        .where(eq(follows.followerId, userId));
+      return rows.map(r => r.followingId);
+    } catch {
+      return [];
+    }
+  }
+
+  static async getFollowerIds(userId: string): Promise<string[]> {
+    try {
+      const rows = await db
+        .select({ followerId: follows.followerId })
+        .from(follows)
+        .where(eq(follows.followingId, userId));
+      return rows.map(r => r.followerId);
+    } catch {
+      return [];
+    }
+  }
+
   static async searchUsers(queryText: string, limit = 20) {
     const clean = queryText.trim().replace(/^@+/, '');
     if (!clean) {

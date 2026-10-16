@@ -85,7 +85,8 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     setConnectionError,
     db,
     logout,
-    updateProfile
+    updateProfile,
+    complete2FALogin
   } = useAeirmist();
 
   const [twoFactorCode, setTwoFactorCode] = useState('');
@@ -344,19 +345,17 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
           deviceInfo: navigator.userAgent
         });
 
-        if (res && res.token) {
+        if (res && (res.token || res.user)) {
           if (res.user?.id) {
             try {
               await trackLoginSession(res.user.id);
             } catch (e) {}
           }
+          await complete2FALogin(res);
           analytics.trackAuth('login', 'email_2fa');
           resetRouteToHomeFeed();
           setIsSuccess(true);
           if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
-          setTimeout(() => {
-            window.location.reload();
-          }, 800);
           return;
         }
       }

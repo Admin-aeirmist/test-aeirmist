@@ -194,6 +194,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
           postsCount: Number(p.postsCount ?? 0),
           isVerified: p.isVerified !== undefined ? Boolean(p.isVerified) : true,
           badge: p.badge,
+          isFollowing: typeof p.isFollowing === 'boolean' ? p.isFollowing : undefined,
           social: {
             followers: Array.isArray(p.social?.followers) ? p.social.followers : [],
             following: Array.isArray(p.social?.following) ? p.social.following : [],
@@ -234,7 +235,12 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
   }, [isOwnProfile, profile?.id, profile?.pruningReason, updateProfile]);
 
   const targetCheckId = targetProfile?.id || displayUser?.id || displayUser?.userId;
-  const isFollowingUser = targetCheckId ? (checkIsFollowing(targetCheckId) || checkIsFollowing(displayUser?.id) || checkIsFollowing(displayUser?.userId)) : false;
+  const isFollowingUser = targetCheckId ? (
+    checkIsFollowing(targetCheckId) || 
+    checkIsFollowing(displayUser?.id) || 
+    checkIsFollowing(displayUser?.userId) ||
+    Boolean(displayUser?.isFollowing)
+  ) : false;
   const isMessageLocked = false;
   const isFollowerOfMe = targetCheckId ? (
     (profile?.social?.followers || []).includes(targetCheckId) ||
@@ -275,7 +281,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
       window.dispatchEvent(new CustomEvent('aeirmist-require-auth'));
       return;
     }
-    const targetId = displayUser.id || displayUser.uid || displayUser.userId;
+    const targetId = displayUser.userId || displayUser.id || displayUser.uid;
     if (!targetId) return;
 
     const willFollow = !isFollowingUser;
@@ -293,6 +299,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
       return {
         ...current,
+        isFollowing: willFollow,
         followersCount: newFollowers,
         social: {
           ...current?.social,
@@ -303,11 +310,17 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
 
     try {
       const res: any = await toggleFollow(targetId, displayUser);
-      if (res && typeof res.followersCount === 'number') {
-        setLiveTargetProfile((prev: any) => prev ? ({ ...prev, followersCount: res.followersCount }) : prev);
+      if (res) {
+        setLiveTargetProfile((prev: any) => prev ? ({ 
+          ...prev, 
+          isFollowing: typeof res.following === 'boolean' ? res.following : willFollow,
+          followersCount: typeof res.followersCount === 'number' ? res.followersCount : prev.followersCount 
+        }) : prev);
       }
     } catch (err) {
       logger.error('Failed to toggle follow:', err);
+      // Revert if API failed
+      setLiveTargetProfile((prev: any) => prev ? ({ ...prev, isFollowing: !willFollow }) : prev);
     }
   };
 

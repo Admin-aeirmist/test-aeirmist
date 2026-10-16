@@ -245,8 +245,8 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
     );
   }
 
-  // Unified YouTube Filter Chips
-  const filterChips: { id: string; label: string; icon?: React.ReactNode; isTab?: boolean; category?: VideoCategory }[] = [
+  // Unified Filter Chips for Mobile
+  const mobileFilterChips: { id: string; label: string; icon?: React.ReactNode; isTab?: boolean; category?: VideoCategory }[] = [
     { id: 'all', label: 'All', isTab: true },
     { id: 'trending', label: 'Trending', isTab: true, icon: <Flame size={13} className="text-orange-500 fill-orange-500" /> },
     { id: 'following', label: 'Following', isTab: true },
@@ -399,9 +399,23 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
         </div>
       )}
 
-      {/* 3. AEIRMIST SIGNATURE FILTER CHIPS RIBBON (Sticky Horizontal Scroll) */}
-      <div className="sticky top-[45px] sm:top-[53px] z-30 bg-[#050505] border-b border-white/5 px-3 sm:px-6 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth w-full">
-        {filterChips.map((chip) => {
+      {/* 3A. DESKTOP OTT NAVIGATION TABS (Hidden on Mobile) */}
+      <div className="hidden md:flex sticky top-[53px] z-30 bg-[#050505]/95 backdrop-blur-2xl border-b border-white/5 px-6 py-2.5 items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth w-full">
+        <TabButton id="featured" label="Featured" icon={<Sparkles size={14} />} active={activeTab === 'featured'} onClick={() => { setActiveTab('featured'); setSelectedCategory('All'); }} />
+        <TabButton id="trending" label="Trending" icon={<Flame size={14} />} active={activeTab === 'trending'} onClick={() => { setActiveTab('trending'); setSelectedCategory('All'); }} />
+        <TabButton id="recommended" label="Recommended" icon={<Compass size={14} />} active={activeTab === 'recommended'} onClick={() => { setActiveTab('recommended'); setSelectedCategory('All'); }} />
+        <TabButton id="following" label="Following" icon={<UserCheck size={14} />} active={activeTab === 'following'} onClick={() => { setActiveTab('following'); setSelectedCategory('All'); }} />
+        <TabButton id="new" label="New Releases" icon={<Clock size={14} />} active={activeTab === 'new'} onClick={() => { setActiveTab('new'); setSelectedCategory('All'); }} />
+        {continueWatchingVideos.length > 0 && (
+          <TabButton id="continue" label="Continue Watching" icon={<Play size={14} />} active={activeTab === 'continue'} onClick={() => { setActiveTab('continue'); setSelectedCategory('All'); }} />
+        )}
+        <TabButton id="saved" label="Saved" icon={<Bookmark size={14} />} active={activeTab === 'saved'} onClick={() => { setActiveTab('saved'); setSelectedCategory('All'); }} />
+        <TabButton id="history" label="History" icon={<Clock size={14} />} active={activeTab === 'history'} onClick={() => { setActiveTab('history'); setSelectedCategory('All'); }} />
+      </div>
+
+      {/* 3B. MOBILE QUICK FILTER CHIPS (Hidden on Desktop) */}
+      <div className="flex md:hidden sticky top-[45px] z-30 bg-[#050505] border-b border-white/5 px-3 py-2 items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth w-full">
+        {mobileFilterChips.map((chip) => {
           const isActive = chip.id === 'all' 
             ? (activeTab === 'featured' && selectedCategory === 'All')
             : chip.isTab 
@@ -437,26 +451,28 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
         })}
       </div>
 
-      {/* 4. MAIN VIDEO CONTENT FEED */}
-      <div className="p-0 sm:p-6 space-y-4 sm:space-y-8 max-w-7xl mx-auto w-full min-w-0 overflow-x-hidden pt-2 sm:pt-0">
+      {/* 4. MAIN FEED CONTENT (SEPARATED DESKTOP OTT VS MOBILE FEED) */}
+      
+      {/* 4A. DESKTOP OTT CINEMA INTERFACE (md:block) */}
+      <div className="hidden md:block p-6 space-y-8 max-w-7xl mx-auto w-full min-w-0">
         
-        {/* 4A. CINEMATIC FEATURED HERO SECTION (Desktop Only) */}
-        {activeTab === 'featured' && selectedCategory === 'All' && featuredVideo && !searchTerm && (
-          <div className="hidden sm:block relative rounded-3xl overflow-hidden bg-gradient-to-t from-black via-black/60 to-transparent border border-white/10 shadow-2xl group w-full mb-6">
+        {/* 1. CINEMATIC FEATURED HERO BILLBOARD (OTT Cinema) */}
+        {activeTab === 'featured' && featuredVideo && !searchTerm && (
+          <div className="relative rounded-3xl overflow-hidden bg-gradient-to-t from-black via-black/60 to-transparent border border-white/10 shadow-2xl group w-full">
             <div className="aspect-[21/9] w-full relative overflow-hidden bg-black">
               <img 
                 src={featuredVideo.thumbnailURL || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1200'}
                 alt={featuredVideo.title || featuredVideo.caption}
                 className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-500"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f0f] via-[#0f0f0f]/40 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/40 to-transparent" />
             </div>
 
             {/* Featured Details Overlay */}
             <div className="absolute bottom-0 left-0 right-0 p-8 flex flex-col gap-3">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-3 py-1 rounded-full bg-red-600/20 border border-red-500/40 text-red-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-                  <Flame size={12} /> Featured
+                <span className="px-3 py-1 rounded-full bg-aeirmist-cyan/20 border border-aeirmist-cyan/40 text-aeirmist-cyan text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                  <Sparkles size={12} /> Featured
                 </span>
                 {featuredVideo.category && (
                   <span className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
@@ -476,7 +492,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
               <div className="flex items-center gap-4 pt-2">
                 <button
                   onClick={() => setSelectedVideo(featuredVideo)}
-                  className="px-6 py-3 bg-white hover:bg-white/90 text-black font-bold text-sm rounded-full transition-all shadow-lg flex items-center gap-2"
+                  className="px-6 py-3 bg-aeirmist-cyan hover:bg-opacity-90 text-black font-bold text-sm rounded-xl transition-all shadow-[0_0_15px_rgba(0,242,255,0.3)] flex items-center gap-2"
                 >
                   <Play size={18} className="fill-current" /> Watch Now
                 </button>
@@ -495,21 +511,20 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
           </div>
         )}
 
-        {/* 4B. CONTINUE WATCHING SHELF (YouTube Style Horizontal Scroll) */}
-        {continueWatchingVideos.length > 0 && activeTab === 'featured' && selectedCategory === 'All' && !searchTerm && (
-          <div className="space-y-2.5 py-2 sm:py-4 border-b border-[#222] sm:border-0">
-            <div className="flex items-center justify-between px-3.5 sm:px-0">
-              <h2 className="text-sm sm:text-base font-bold text-white tracking-wide flex items-center gap-2">
-                <Clock size={16} className="text-aeirmist-cyan" /> Continue Watching
+        {/* 2. CONTINUE WATCHING SHELF (Desktop OTT) */}
+        {continueWatchingVideos.length > 0 && (activeTab === 'featured' || activeTab === 'continue') && !searchTerm && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <Clock size={18} className="text-aeirmist-cyan" /> Continue Watching
               </h2>
               <span className="text-xs text-white/40 font-mono">{continueWatchingVideos.length} in progress</span>
             </div>
-            <div className="flex gap-3 overflow-x-auto no-scrollbar px-3.5 sm:px-0 pb-1 scroll-smooth">
-              {continueWatchingVideos.map((v) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {continueWatchingVideos.slice(0, 3).map((v) => (
                 <VideoCard
                   key={v.id}
                   video={v}
-                  layout="compact"
                   onSelect={(video) => setSelectedVideo(video)}
                   onUserClick={onUserClick}
                 />
@@ -518,9 +533,49 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
           </div>
         )}
 
-        {/* 4C. WATCH HISTORY CONTROLS */}
+        {/* 3. DESKTOP BROWSE CATEGORIES CHIPS */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-white/50">Browse Categories</h3>
+            {selectedCategory !== 'All' && (
+              <button 
+                onClick={() => setSelectedCategory('All')} 
+                className="text-xs text-aeirmist-cyan hover:underline"
+              >
+                Clear Category Filter
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+            <button
+              onClick={() => setSelectedCategory('All')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                selectedCategory === 'All'
+                  ? 'bg-white text-black font-bold shadow-md'
+                  : 'bg-white/5 border border-white/10 text-white/70 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              All Categories
+            </button>
+            {VIDEO_CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  selectedCategory === cat
+                    ? 'bg-aeirmist-cyan text-black font-bold shadow-[0_0_12px_rgba(0,242,255,0.3)]'
+                    : 'bg-white/5 border border-white/10 text-white/70 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 4. WATCH HISTORY HEADER CONTROLS */}
         {activeTab === 'history' && displayVideos.length > 0 && (
-          <div className="flex items-center justify-between p-4 bg-[#181818] border border-white/5 rounded-2xl mx-3 sm:mx-0">
+          <div className="flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-2xl">
             <span className="text-xs text-white/60">Your viewing history is private and visible only to you.</span>
             <button
               onClick={() => {
@@ -534,17 +589,17 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
           </div>
         )}
 
-        {/* 4D. PRIMARY RESPONSIVE VIDEO FEED (YouTube Edge-to-Edge on Mobile) */}
-        <div className="space-y-3 sm:space-y-4">
-          <div className="flex items-center justify-between px-3.5 sm:px-0">
-            <h2 className="text-xs sm:text-sm font-bold text-white/60 uppercase tracking-wider">
-              {selectedCategory !== 'All' ? selectedCategory : (activeTab === 'featured' ? 'Recommended' : activeTab)}
+        {/* 5. PRIMARY RESPONSIVE LANDSCAPE VIDEO GRID (2-4 Columns) */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-bold text-white uppercase tracking-wider capitalize">
+              {selectedCategory !== 'All' ? selectedCategory : (activeTab === 'featured' ? 'Discover Videos' : activeTab)}
             </h2>
-            <span className="text-[11px] text-white/40 font-mono">{displayVideos.length} videos</span>
+            <span className="text-xs text-white/40 font-mono">{displayVideos.length} videos</span>
           </div>
 
           {displayVideos.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-0 sm:gap-6">
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {displayVideos.map((video) => (
                 <VideoCard
                   key={video.id}
@@ -555,7 +610,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
               ))}
             </div>
           ) : (
-            <div className="text-center py-16 px-4 bg-[#181818] border border-white/5 rounded-2xl sm:rounded-3xl space-y-4 mx-3 sm:mx-0">
+            <div className="text-center py-16 px-4 bg-white/5 border border-white/5 rounded-3xl space-y-4">
               <div className="w-12 h-12 rounded-full bg-white/10 text-white/40 flex items-center justify-center mx-auto">
                 <Film size={24} />
               </div>
@@ -567,13 +622,74 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
               </div>
               <button
                 onClick={() => setShowUploader(true)}
-                className="px-5 py-2.5 bg-aeirmist-cyan hover:bg-opacity-90 text-black font-bold text-xs rounded-xl shadow-[0_0_15px_rgba(0,242,255,0.25)] transition-all inline-flex items-center gap-2"
+                className="px-5 py-2.5 bg-aeirmist-cyan text-black font-bold text-xs rounded-xl shadow-lg hover:bg-opacity-90 transition-all inline-flex items-center gap-2"
               >
                 <UploadCloud size={16} /> Upload Video
               </button>
             </div>
           )}
         </div>
+      </div>
+
+      {/* 4B. MOBILE FEED INTERFACE (md:hidden) */}
+      <div className="block md:hidden p-0 space-y-3 w-full min-w-0 pt-2">
+        {/* Continue Watching Shelf (Mobile Horizontal Scroller) */}
+        {continueWatchingVideos.length > 0 && activeTab === 'featured' && selectedCategory === 'All' && !searchTerm && (
+          <div className="space-y-2 py-2 border-b border-white/5">
+            <div className="flex items-center justify-between px-3.5">
+              <h2 className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5 uppercase">
+                <Clock size={14} className="text-aeirmist-cyan" /> Continue Watching
+              </h2>
+              <span className="text-[11px] text-white/40 font-mono">{continueWatchingVideos.length}</span>
+            </div>
+            <div className="flex gap-2.5 overflow-x-auto no-scrollbar px-3.5 pb-1 scroll-smooth">
+              {continueWatchingVideos.map((v) => (
+                <VideoCard
+                  key={v.id}
+                  video={v}
+                  layout="compact"
+                  onSelect={(video) => setSelectedVideo(video)}
+                  onUserClick={onUserClick}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Mobile Feed Header Count */}
+        <div className="flex items-center justify-between px-3.5 pt-1">
+          <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider">
+            {selectedCategory !== 'All' ? selectedCategory : (activeTab === 'featured' ? 'Feed' : activeTab)}
+          </h2>
+          <span className="text-[11px] text-white/40 font-mono">{displayVideos.length} videos</span>
+        </div>
+
+        {/* Mobile Edge-to-Edge Video Cards */}
+        {displayVideos.length > 0 ? (
+          <div className="space-y-2">
+            {displayVideos.map((video) => (
+              <VideoCard
+                key={video.id}
+                video={video}
+                onSelect={(v) => setSelectedVideo(v)}
+                onUserClick={onUserClick}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-12 px-4 bg-[#141414] border border-white/5 rounded-2xl space-y-3 mx-3">
+            <div className="w-10 h-10 rounded-full bg-white/10 text-white/40 flex items-center justify-center mx-auto">
+              <Film size={20} />
+            </div>
+            <p className="text-xs text-white/60">No videos found in this section.</p>
+            <button
+              onClick={() => setShowUploader(true)}
+              className="px-4 py-2 bg-aeirmist-cyan text-black font-bold text-xs rounded-xl"
+            >
+              Upload Video
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Uploader Modal */}

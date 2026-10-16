@@ -101,9 +101,10 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
 // Get Notifications
 router.get('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string) || 30, 100);
-    const list = await NotificationDAL.getUserNotifications(req.user!.userId, limit);
-    const unreadCount = await NotificationDAL.getUnreadCount(req.user!.userId);
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const includeMessages = req.query.includeMessages === 'true';
+    const list = await NotificationDAL.getUserNotifications(req.user!.userId, limit, !includeMessages);
+    const unreadCount = await NotificationDAL.getUnreadCount(req.user!.userId, !includeMessages);
     res.json({ notifications: list, unreadCount });
   } catch (err) {
     console.error('[Get Notifications Error]', err);

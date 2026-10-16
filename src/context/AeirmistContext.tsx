@@ -183,6 +183,7 @@ interface AeirmistContextType {
   setPendingLinkCredential: React.Dispatch<React.SetStateAction<any | null>>;
   isScheduledForPurge: boolean;
   loginWithEmail: (identifier: string, pass: string, remember?: boolean, locationData?: any) => Promise<any>;
+  complete2FALogin: (bRes: any) => Promise<void>;
   loginAsGuestSandbox: () => Promise<void>;
   signupWithEmail: (email: string, pass: string) => Promise<any>;
   completeSignup: (email: string, pass: string, username: string, fullName: string, avatarFile: File | null, presetPhotoURL?: string | null) => Promise<User>;
@@ -4285,6 +4286,90 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return credentials;
   };
 
+  const complete2FALogin = async (bRes: any) => {
+    if (!bRes) return;
+    const backendUser = bRes.user;
+    const finalUid = backendUser?.profile?.firebaseUid || backendUser?.id || (auth?.currentUser ? auth.currentUser.uid : `usr_${Date.now()}`);
+    const isMainAdmin = backendUser?.email?.toLowerCase() === 'junaedislamjim180@gmail.com' || backendUser?.role === 'admin';
+    const activeProfile: any = backendUser?.profile || {
+      id: `profile_${finalUid}`,
+      uid: finalUid,
+      ownerUid: finalUid,
+      username: isMainAdmin ? 'junaed_islam_jim9' : (backendUser?.username || 'user'),
+      displayName: isMainAdmin ? 'Junaed Islam Jim' : (backendUser?.displayName || 'Aeirmist User'),
+      email: backendUser?.email || '',
+      photoURL: BLANK_DP,
+      bio: isMainAdmin ? 'Founder & Lead Architect at Aeirmist' : 'Aeirmist Account Active',
+      role: isMainAdmin ? 'admin' : 'member',
+      isAdmin: isMainAdmin,
+      isVerified: true,
+      aeirmistLevel: isMainAdmin ? 9999 : 100,
+      twoFactorEnabled: false,
+      onboardingCompleted: true,
+      onboardingStep: 5,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      await signInWithEmailAndPassword(auth, 'gateway_node@aeirmist.social', 'Aeirmist@12345678');
+    } catch (gErr: any) {
+      logger.warn("[Diagnostics - Auth] Gateway sign in note:", gErr);
+    }
+
+    const canonicalUserId = bRes?.user?.id || bRes?.user?.userId || null;
+    const sessionUser: any = {
+      uid: finalUid,
+      id: canonicalUserId || finalUid,
+      userId: canonicalUserId || finalUid,
+      email: backendUser?.email || '',
+      displayName: activeProfile.displayName || (isMainAdmin ? 'Junaed Islam Jim' : 'Aeirmist User'),
+      photoURL: activeProfile.photoURL || '',
+      emailVerified: true,
+      isAnonymous: false,
+      providerData: [{ providerId: 'password', uid: finalUid, email: backendUser?.email }],
+      getIdToken: async () => auth?.currentUser ? await auth.currentUser.getIdToken() : (bRes?.token || `token_${finalUid}`),
+      reload: async () => {}
+    };
+
+    setUser(sessionUser);
+    setProfile(activeProfile);
+    setAllProfiles([activeProfile]);
+    setActiveProfileId(activeProfile.id);
+    setNeedsUsername(false);
+    setLoading(false);
+
+    if (typeof window !== 'undefined') {
+      const effectiveToken = bRes?.token || getAuthToken() || null;
+      const sessionPayload = {
+        uid: finalUid,
+        id: canonicalUserId || finalUid,
+        userId: canonicalUserId || finalUid,
+        email: backendUser?.email || '',
+        username: activeProfile.username || '',
+        displayName: activeProfile.displayName,
+        activeProfileId: activeProfile.id,
+        token: effectiveToken
+      };
+      localStorage.setItem('aeirmist_session', JSON.stringify(sessionPayload));
+      localStorage.setItem('aeirmist_user_id', canonicalUserId || finalUid);
+      localStorage.setItem('aeirmist_active_profile_id', activeProfile.id);
+      localStorage.setItem('aeirmist_cached_profile', JSON.stringify(activeProfile));
+      localStorage.setItem('aeirmist_user_profile', JSON.stringify(activeProfile));
+      if (effectiveToken) {
+        setAuthToken(effectiveToken);
+      }
+      if (bRes?.refreshToken) {
+        localStorage.setItem('aeirmist_refresh_token', bRes.refreshToken);
+      }
+      if (bRes?.sessionToken) {
+        localStorage.setItem('aeirmist_session_token', bRes.sessionToken);
+      }
+      if (bRes?.trustToken) {
+        localStorage.setItem('aeirmist_device_trust_token', bRes.trustToken);
+      }
+    }
+  };
+
   const loginAsGuestSandbox = async () => {
     setLoading(true);
     // Use a unique guest email per session to avoid profile collisions in the shared sandbox
@@ -7719,6 +7804,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setPendingLinkCredential,
     isScheduledForPurge,
     loginWithEmail,
+    complete2FALogin,
     loginAsGuestSandbox,
     signupWithEmail,
     completeSignup,
@@ -7870,7 +7956,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [
     user, account, profile, allProfiles, activeProfileId, loading, db, auth, storage, lastAuthError,
     featureFlags, updateFeatureFlag, appBranding, updateAppBranding,
-    login, loginWithProvider, linkAccountMethod, unlinkAccountMethod, requestDeleteAccount, cancelDeleteAccount, logActivity, pendingLinkEmail, pendingLinkCredential, isScheduledForPurge, loginWithEmail, loginAsGuestSandbox, signupWithEmail, completeSignup, resetPassword, logout,
+    login, loginWithProvider, linkAccountMethod, unlinkAccountMethod, requestDeleteAccount, cancelDeleteAccount, logActivity, pendingLinkEmail, pendingLinkCredential, isScheduledForPurge, loginWithEmail, complete2FALogin, loginAsGuestSandbox, signupWithEmail, completeSignup, resetPassword, logout,
     refreshProfile, reloadAuthUser,
     updateProfile, deleteAccount, purgeUser, toggleUserBan, toggleVerification, checkUsernameAvailable, registerUsername, switchProfile, toggleFollow, removeFollower, recalculateFollowCounts,
     isFollowing, isFollowPending, acceptFollowRequest, rejectFollowRequest, getFollowers, getFollowing, searchUsers, globalSearch, toggleLike, toggleBookmark, createPost, editPost, deletePost, archivePost, sendMessage,

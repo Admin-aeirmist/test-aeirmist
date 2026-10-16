@@ -2491,19 +2491,15 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                 </div>
               )}
               {filteredChats.map((chat) => {
-                const isOnline = Boolean(
-                  chat.online ||
-                  chat.otherProfile?.isOnline ||
-                  [
-                    chat.otherParticipantId,
-                    chat.otherParticipantUid,
-                    chat.otherProfile?.userId,
-                    chat.otherProfile?.firebaseUid,
-                    chat.otherProfile?.profileId,
-                    chat.otherProfile?.id,
-                    chat.otherProfile?.username
-                  ].some(id => Boolean(id) && onlineUsers?.has(id))
-                );
+                const isOnline = [
+                  chat.otherParticipantId,
+                  chat.otherParticipantUid,
+                  chat.otherProfile?.userId,
+                  chat.otherProfile?.firebaseUid,
+                  chat.otherProfile?.profileId,
+                  chat.otherProfile?.id,
+                  chat.otherProfile?.username
+                ].some(id => Boolean(id) && onlineUsers?.has(id));
                 const isSelected = currentChat?.id === chat.id;
                 const activityTimestamp = getChatActivityMs(chat);
                 const metaTime = formatConversationTime(activityTimestamp) || (chat.createdAt ? formatConversationTime(chat.createdAt) : '');
@@ -4231,13 +4227,7 @@ const ChatWindow = ({
     ].filter(id => Boolean(id) && id !== profile?.id && id !== user?.uid && id !== (user as any)?.userId) as string[];
 
     const matchInSet = otherCandidates.some(id => onlineUsers?.has(id));
-    return Boolean(
-      matchInSet ||
-      otherProfile?.status === 'online' ||
-      otherProfile?.isOnline ||
-      chat.otherProfile?.isOnline ||
-      chat.online
-    ) && otherProfile?.messagingSettings?.onlineStatus !== false && (otherProfile?.privacySettings as any)?.showOnlineStatus !== false;
+    return Boolean(matchInSet) && otherProfile?.messagingSettings?.onlineStatus !== false && (otherProfile?.privacySettings as any)?.showOnlineStatus !== false;
   }, [chat, otherProfile, onlineUsers, profile?.id, user?.uid]);
 
   const showStatus = otherProfile?.messagingSettings?.onlineStatus !== false && 
