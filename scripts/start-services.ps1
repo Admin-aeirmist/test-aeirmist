@@ -45,8 +45,16 @@ if (-not $redisPortOpen) {
     } else {
         Write-Host "Redis executable not found at expected path." -ForegroundColor Red
     }
+    $redisCli = "C:\Users\Junaed Islam Jim\AppData\Local\Microsoft\WinGet\Packages\taizod1024.redis-windows-fork_Microsoft.Winget.Source_8wekyb3d8bbwe\Redis-8.10.1-Windows-x64-msys2\redis-cli.exe"
+    if (Test-Path $redisCli) {
+        & $redisCli config set stop-writes-on-bgsave-error no | Out-Null
+    }
 } else {
     Write-Host "[2/4] Redis is already running (Port 6379)." -ForegroundColor Green
+    $redisCli = "C:\Users\Junaed Islam Jim\AppData\Local\Microsoft\WinGet\Packages\taizod1024.redis-windows-fork_Microsoft.Winget.Source_8wekyb3d8bbwe\Redis-8.10.1-Windows-x64-msys2\redis-cli.exe"
+    if (Test-Path $redisCli) {
+        & $redisCli config set stop-writes-on-bgsave-error no | Out-Null
+    }
 }
 
 # 3. Cloudflare Tunnel
