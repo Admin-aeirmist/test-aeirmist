@@ -450,12 +450,14 @@ io.on('connection', async (socket) => {
 // Serve Frontend SPA Build from dist (Unified Full-Stack Deployment)
 // -------------------------------------------------------------
 const candidateDistPaths = [
+  process.env.DIST_PATH,
   path.resolve(__dirname, '../../dist'),
   path.resolve(__dirname, '../dist'),
   path.resolve(process.cwd(), '../dist'),
   path.resolve(process.cwd(), 'dist'),
+  '/app/dist',
   'D:\\Aeirmist\\dist'
-];
+].filter(Boolean) as string[];
 const effectiveDistPath = candidateDistPaths.find(p => {
   try {
     return fs.existsSync(path.join(p, 'index.html'));

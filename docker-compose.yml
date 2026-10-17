@@ -1,37 +1,107 @@
 services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL 16 Database
+  # ----------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     container_name: aeirmist-postgres
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-aeirmist}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aeirmist_secure_2026}
       POSTGRES_DB: ${POSTGRES_DB:-aeirmist}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - aeirmist_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aeirmist} -d ${POSTGRES_DB:-aeirmist}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - aeirmist_net
 
+  # ----------------------------------------------------------------------------
+  # Redis 7 In-Memory Cache & WebSockets Pub/Sub
+  # ----------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: aeirmist-redis
-    restart: unless-stopped
+    restart: always
     command: redis-server --appendonly yes
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
-      - redisdata:/data
+      - aeirmist_redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - aeirmist_net
+
+  # ----------------------------------------------------------------------------
+  # Aeirmist Full-Stack Universal Application (Vite Frontend SPA + Node.js API)
+  # ----------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aeirmist-app
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-aeirmist}:${POSTGRES_PASSWORD:-aeirmist_secure_2026}@postgres:5432/${POSTGRES_DB:-aeirmist}
+      REDIS_URL: redis://redis:6379
+      API_BASE_URL: ${API_BASE_URL:-https://aeirmist.com}
+      JWT_SECRET: ${JWT_SECRET:-aeirmist_super_secure_production_secret_key_2026}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://aeirmist.com,http://localhost:4000,http://localhost:5173,capacitor://localhost}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      STORAGE_PATH: /app/backend/storage/uploads
+      PUBLIC_MEDIA_URL: ${PUBLIC_MEDIA_URL:-https://aeirmist.com/media}
+      DIST_PATH: /app/dist
+    ports:
+      - "4000:4000"
+    volumes:
+      - aeirmist_uploads:/app/backend/storage/uploads
+    networks:
+      - aeirmist_net
+
+  # ----------------------------------------------------------------------------
+  # Cloudflare Tunnel (Zero-Port Exposure Cloud Routing for aeirmist.com)
+  # Activated automatically when CLOUDFLARE_TUNNEL_TOKEN is provided in .env
+  # ----------------------------------------------------------------------------
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: aeirmist-tunnel
+    restart: always
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - app
+    networks:
+      - aeirmist_net
+    profiles:
+      - tunnel
 
 volumes:
-  pgdata:
-  redisdata:
+  aeirmist_pgdata:
+    name: aeirmist_pgdata
+  aeirmist_redisdata:
+    name: aeirmist_redisdata
+  aeirmist_uploads:
+    name: aeirmist_uploads
+
+networks:
+  aeirmist_net:
+    name: aeirmist_net
+    driver: bridge

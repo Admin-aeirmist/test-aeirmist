@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.gemini
+dist
+android
+ios
+storage/uploads/*
+!storage/uploads/.gitkeep
+temp_*
+*.log
+.DS_Store
+Thumbs.db
