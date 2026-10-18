@@ -38,7 +38,7 @@ if (fs.existsSync(distIndex)) {
 }
 
 const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const args = ['wrangler', 'pages', 'deploy', 'dist', '--project-name=aeirmist', '--branch=main', '--commit-dirty=true'];
+const args = ['--yes', 'wrangler', 'pages', 'deploy', 'dist', '--project-name=aeirmist', '--branch=main', '--commit-dirty=true'];
 
 const child = spawn(npxCmd, args, {
   cwd: rootDir,
