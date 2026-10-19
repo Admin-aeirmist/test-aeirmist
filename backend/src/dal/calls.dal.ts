@@ -25,7 +25,7 @@ export class CallsDAL {
     return call;
   }
 
-  static async updateCallStatus(callId: string, status: string, duration?: number) {
+  static async updateCallStatus(callId: string, userId: string, status: string, duration?: number) {
     const [updated] = await db
       .update(calls)
       .set({
@@ -33,7 +33,7 @@ export class CallsDAL {
         duration: duration !== undefined ? duration : undefined,
         endedAt: ['ended', 'rejected', 'missed', 'busy'].includes(status) ? new Date() : undefined,
       })
-      .where(eq(calls.id, callId))
+      .where(and(eq(calls.id, callId), or(eq(calls.callerId, userId), eq(calls.receiverId, userId))))
       .returning();
 
     return updated;

@@ -250,6 +250,14 @@ async function startServer() {
     }
   };
 
+  const adminMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const role = (req as any).user?.role;
+    if (role === 'admin' || role === 'super_admin' || role === 'owner') {
+      return next();
+    }
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Administrative privileges required.' });
+  };
+
   // 4. Custom CSRF Implementation for neural requests
   // This generates a simple CSRF token that the frontend can read from a cookie and send back in a header
   app.use((req, res, next) => {
@@ -275,19 +283,31 @@ async function startServer() {
     
     const originHeader = req.headers.origin || req.headers.referer || "";
     
-    // Exact matching for origin verification to prevent spoofed header attacks
-    const allowedOrigins = [
-      'ai.studio',
-      'localhost:3000',
-      'localhost:5173'
-    ];
+    // Strict hostname matching for origin verification to prevent spoofed header attacks
+    let isVerifiedLocalOrIframe = false;
+    if (originHeader) {
+      try {
+        const parsedUrl = new URL(originHeader);
+        const host = parsedUrl.hostname;
+        const port = parsedUrl.port;
+        const fullOrigin = `${host}${port ? `:${port}` : ''}`;
+        
+        isVerifiedLocalOrIframe = 
+          host === 'aeirmist.com' ||
+          host === 'www.aeirmist.com' ||
+          host.endsWith('.aeirmist.com') ||
+          host === 'aeirmist-f0m.pages.dev' ||
+          host === 'localhost' ||
+          host === '127.0.0.1' ||
+          fullOrigin === 'localhost:3000' ||
+          fullOrigin === 'localhost:5173' ||
+          parsedUrl.protocol === 'capacitor:';
+      } catch {
+        isVerifiedLocalOrIframe = false;
+      }
+    }
     
-    const isVerifiedLocalOrIframe = 
-      originHeader.includes('.run.app') || 
-      allowedOrigins.some(origin => originHeader.includes(origin)) ||
-      (!isProduction); // safe fallback for development container environment
-    
-    if (hasBearerToken || isVerifiedLocalOrIframe) {
+    if (hasBearerToken || (isVerifiedLocalOrIframe && !isProduction)) {
       return next();
     }
 
@@ -589,7 +609,7 @@ async function startServer() {
   });
 
   // Gemini API Proxy
-  app.post("/api/gemini/generate", async (req, res, next) => {
+  app.post("/api/gemini/generate", authMiddleware, async (req, res, next) => {
     try {
       const { prompt, systemInstruction, image } = req.body;
       
@@ -635,7 +655,7 @@ async function startServer() {
   });
 
   // Writing & Posting Enhancements
-  app.post("/api/writing/refine", async (req, res, next) => {
+  app.post("/api/writing/refine", authMiddleware, async (req, res, next) => {
     try {
       const { text, mode, context } = req.body;
       if (!text && mode !== 'caption' && mode !== 'hashtags') {
@@ -911,10 +931,13 @@ Return JSON object: { "suggestion": string or null }`,
     }
   });
 
-  app.post("/api/admin/sync-logo", async (req: express.Request, res: express.Response) => {
+  app.post("/api/admin/sync-logo", authMiddleware, adminMiddleware, async (req: express.Request, res: express.Response) => {
     try {
       const { logoUrl } = req.body;
       if (logoUrl) {
+        if (typeof logoUrl !== "string" || !logoUrl.startsWith("data:image/")) {
+          return res.status(400).json({ error: "INVALID_LOGO", message: "Logo must be a valid image data URL." });
+        }
         await syncAppBrandingIcons(logoUrl);
       }
       res.json({ success: true });

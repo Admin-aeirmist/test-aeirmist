@@ -52,9 +52,9 @@ router.post('/log', authenticateToken, async (req: AuthenticatedRequest, res: Re
 router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { status, duration } = req.body;
-    const call = await CallsDAL.updateCallStatus(req.params.id, status, duration);
+    const call = await CallsDAL.updateCallStatus(req.params.id, req.user!.userId, status, duration);
     if (!call) {
-      return res.status(404).json({ error: 'Call not found' });
+      return res.status(404).json({ error: 'Call not found or unauthorized' });
     }
     res.json({ call });
   } catch (err) {

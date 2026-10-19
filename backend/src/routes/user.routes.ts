@@ -23,7 +23,6 @@ const UpdateProfileSchema = z.object({
   // Extended personal info fields
   phoneNumber: z.string().max(20).optional().nullable(),
   phoneCountryCode: z.string().max(10).optional().nullable(),
-  phoneVerified: z.boolean().optional(),
   dateOfBirth: z.string().max(20).optional().nullable(),
   gender: z.string().max(50).optional().nullable(),
   relationshipStatus: z.string().max(50).optional().nullable(),
@@ -188,15 +187,37 @@ router.patch('/profile', authenticateToken, async (req: AuthenticatedRequest, re
   }
 });
 
-// Increment User Points
+// Increment User Points (Rate-limited, max 10 per request, max 50 per day)
 router.post('/points', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const pointsToAdd = Math.max(0, Math.min(parseInt(req.body.points || '0', 10), 1000));
-    if (pointsToAdd > 0) {
-      const updated = await UserDAL.incrementPoints(req.user!.userId, pointsToAdd);
-      return res.json({ success: true, points: updated?.points });
+    const rawPoints = parseInt(req.body.points || '0', 10);
+    const pointsToAdd = Math.max(0, Math.min(rawPoints, 10));
+    if (pointsToAdd <= 0) {
+      return res.json({ success: true, points: 0 });
     }
-    res.json({ success: true });
+
+    const userId = req.user!.userId;
+    const today = new Date().toISOString().slice(0, 10);
+    const dailyKey = `user_daily_points:${userId}:${today}`;
+
+    // Atomically increment daily total in Redis and set 24h TTL
+    const currentDaily = await redis.incrby(dailyKey, pointsToAdd);
+    if (currentDaily === pointsToAdd) {
+      await redis.expire(dailyKey, 86400);
+    }
+
+    const MAX_DAILY_POINTS = 50;
+    if (currentDaily > MAX_DAILY_POINTS) {
+      // Revert excess points in Redis
+      await redis.decrby(dailyKey, pointsToAdd);
+      return res.status(429).json({
+        error: 'Daily point accumulation limit reached',
+        maxDaily: MAX_DAILY_POINTS
+      });
+    }
+
+    const updated = await UserDAL.incrementPoints(userId, pointsToAdd);
+    return res.json({ success: true, points: updated?.points });
   } catch (err) {
     console.error('[Add Points Error]', err);
     res.status(500).json({ error: 'Failed to update points' });

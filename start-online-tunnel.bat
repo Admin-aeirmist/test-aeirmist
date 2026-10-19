@@ -5,4 +5,17 @@ echo    Starting Cloudflare Tunnel for aeirmist.com
 echo    Route: https://aeirmist.com -> http://localhost:4000
 echo =========================================================
 cd /d D:\Aeirmist
-"D:\Aeirmist\cloudflared.exe" tunnel run --token eyJhIjoiYmQ3MTI0NmViMDkwMTVmZTczN2U0YjZlYmU2OTRjZTciLCJ0IjoiNjAwNTZmNjktNjkwYy00ZDUzLWE5YWEtNGE5NWEwMjE0ODYyIiwicyI6Ii9PRjdqUTByZGd6NUNkQVhMRVRpUDBZZ2wzV2lJQzZNd0NRdVdJZmVqeTA9In0=
+set TUNNEL_TOKEN=%CLOUDFLARE_TUNNEL_TOKEN%
+if "%TUNNEL_TOKEN%"=="" (
+  if exist .env (
+    for /f "tokens=1,* delims==" %%a in ('type .env ^| findstr /i "^CLOUDFLARE_TUNNEL_TOKEN="') do set TUNNEL_TOKEN=%%b
+  )
+)
+
+if "%TUNNEL_TOKEN%"=="" (
+  echo [ERROR] CLOUDFLARE_TUNNEL_TOKEN not set in environment or .env file!
+  pause
+  exit /b 1
+)
+
+"D:\Aeirmist\cloudflared.exe" tunnel run --token %TUNNEL_TOKEN%

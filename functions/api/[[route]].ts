@@ -223,7 +223,36 @@ function decodeBase64Url(str: string): string {
   }
 }
 
-function createToken(user: any): string {
+const EDGE_TOKEN_SECRET = "aeirmist_edge_secret_v1_9a8f3b2c1e7d4a6b";
+
+async function signTokenPayload(payloadStr: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(EDGE_TOKEN_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payloadStr));
+  return Array.from(new Uint8Array(sigBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyTokenSignature(payloadStr: string, sigHex: string): Promise<boolean> {
+  try {
+    const expectedSig = await signTokenPayload(payloadStr);
+    if (expectedSig.length !== sigHex.length) return false;
+    let mismatch = 0;
+    for (let i = 0; i < expectedSig.length; i++) {
+      mismatch |= expectedSig.charCodeAt(i) ^ sigHex.charCodeAt(i);
+    }
+    return mismatch === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function createToken(user: any): Promise<string> {
   const payload = {
     id: user.id || user.uid,
     uid: user.uid || user.id,
@@ -235,22 +264,38 @@ function createToken(user: any): string {
     profile: user.profile,
     iat: Date.now()
   };
-  const token = `jwt_aeirmist_${user.id || user.uid}_${encodeBase64Url(JSON.stringify(payload))}`;
+  const tokenBase = `jwt_aeirmist_${user.id || user.uid}_${encodeBase64Url(JSON.stringify(payload))}`;
+  const signature = await signTokenPayload(tokenBase);
+  const token = `${tokenBase}.${signature}`;
   tokensMap.set(token, user);
   return token;
 }
 
-function parseUserFromToken(token: string): any | null {
+async function parseUserFromToken(token: string): Promise<any | null> {
   if (!token) return null;
 
-  // 1. In-memory fast path
+  // 1. In-memory fast path (only if signature is present)
+  if (!token.includes('.')) return null;
+
   if (tokensMap.has(token)) {
     return tokensMap.get(token);
   }
 
-  // 2. Decode serialized payload across Cloudflare Worker isolates
+  // 2. Cryptographic signature verification across Cloudflare Worker isolates
   try {
-    const parts = token.split('_');
+    const dotIndex = token.lastIndexOf('.');
+    if (dotIndex === -1) return null;
+
+    const tokenBase = token.substring(0, dotIndex);
+    const signature = token.substring(dotIndex + 1);
+
+    const isValid = await verifyTokenSignature(tokenBase, signature);
+    if (!isValid) {
+      console.warn("[Security] Edge token signature verification failed. Token rejected.");
+      return null;
+    }
+
+    const parts = tokenBase.split('_');
     if (parts.length >= 4) {
       const b64 = parts.slice(3).join('_');
       const jsonStr = decodeBase64Url(b64);
@@ -301,11 +346,9 @@ function parseUserFromToken(token: string): any | null {
         return user;
       }
     }
-  } catch (err) {}
-
-  // 3. Fallback for seeded admin tokens
-  if (token.includes("usr_admin_aeirmist")) return defaultAdminUser;
-  if (token.includes("doViFWfMXcOoas976z6MO216YNg1")) return defaultJunaedUser;
+  } catch (err) {
+    console.warn("[Security] Failed to parse edge token:", err);
+  }
 
   return null;
 }
@@ -394,19 +437,30 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   }
 
   // Auth: Register
+  // Auth: Register
   if (path === "/api/v1/auth/register" && method === "POST") {
     try {
       const body = await request.json() as any;
       const cleanEmail = (body.email || "").toLowerCase().trim();
-      const cleanUsername = (body.username || "").trim() || (cleanEmail ? cleanEmail.split("@")[0] : "user");
+      const cleanUsername = (body.username || "").trim().toLowerCase().replace(/^@+/, '') || (cleanEmail ? cleanEmail.split("@")[0] : "user");
       const cleanDisplayName = (body.displayName || "").trim() || cleanUsername;
-      const isAdmin = cleanEmail === "admin.aeirmist@gmail.com" ||
-                      cleanEmail === "junaedislamjim180@gmail.com" ||
-                      cleanUsername.toLowerCase() === "admin" ||
-                      cleanUsername.toLowerCase() === "admin_aeirmist";
-      const isJunaed = cleanEmail === "junaedislamjim180@gmail.com" || cleanUsername.toLowerCase() === "junaed_islam_jim9";
-      const uid = isJunaed ? "doViFWfMXcOoas976z6MO216YNg1" : (isAdmin ? "usr_admin_aeirmist" : `usr_${Date.now()}`);
 
+      // Strict Access Control: Prevent claiming administrative usernames or emails
+      const isReserved = 
+        cleanEmail === "admin.aeirmist@gmail.com" ||
+        cleanEmail === "official@aeirmist.social" ||
+        cleanEmail === "junaedislamjim180@gmail.com" ||
+        cleanUsername === "admin" ||
+        cleanUsername === "admin_aeirmist" ||
+        cleanUsername === "aeirmist" ||
+        cleanUsername === "system" ||
+        cleanUsername === "junaed_islam_jim9";
+
+      if (isReserved || usersMap.has(cleanEmail) || usersMap.has(cleanUsername)) {
+        return new Response(JSON.stringify({ error: "Username or email is already registered or reserved" }), { status: 400, headers: CORS_HEADERS });
+      }
+
+      const uid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       const clientCity = request.headers.get("CF-IPCity") || "";
       const clientCountry = request.headers.get("CF-IPCountry") || "";
       const detectedLocation = body.location || ((clientCity && clientCountry) 
@@ -415,15 +469,16 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       const clientUa = body.deviceInfo || request.headers.get("User-Agent") || "Web / Mobile Client";
       const nowIso = new Date().toISOString();
 
+      // New users strictly initialize with role 'user' and isAdmin false
       const user = {
         id: uid,
         uid: uid,
         email: cleanEmail,
         username: cleanUsername,
         displayName: cleanDisplayName,
-        role: (isAdmin || isJunaed) ? "admin" : "user",
-        isAdmin: isAdmin || isJunaed,
-        isVerified: isAdmin || isJunaed,
+        role: "user",
+        isAdmin: false,
+        isVerified: false,
         createdAt: nowIso,
         location: detectedLocation,
         createdLocation: detectedLocation,
@@ -436,7 +491,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
           uid: uid,
           ownerUid: uid,
           username: cleanUsername,
-          usernameNormalized: cleanUsername.toLowerCase(),
+          usernameNormalized: cleanUsername,
           displayName: cleanDisplayName,
           fullName: cleanDisplayName,
           name: cleanDisplayName,
@@ -444,14 +499,14 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
           personalEmail: cleanEmail,
           photoURL: "",
           avatarKey: "",
-          role: (isAdmin || isJunaed) ? "admin" : "user",
-          isAdmin: isAdmin || isJunaed,
-          isVerified: isAdmin || isJunaed,
+          role: "user",
+          isAdmin: false,
+          isVerified: false,
           aeirmistLevel: 100,
-          points: 100,
+          points: 10,
           followersCount: 0,
           followingCount: 0,
-          bio: (isAdmin || isJunaed) ? "Aeirmist Administrator" : "",
+          bio: "",
           status: "ACTIVE",
           onboardingCompleted: true,
           onboardingStep: 5,
@@ -467,11 +522,11 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         }
       };
 
-      const token = createToken(user);
+      const token = await createToken(user);
       tokensMap.set(token, user);
       usersMap.set(uid, user);
       if (cleanEmail) usersMap.set(cleanEmail, user);
-      if (cleanUsername) usersMap.set(cleanUsername.toLowerCase(), user);
+      if (cleanUsername) usersMap.set(cleanUsername, user);
       usersMap.set(`profile_${uid}`, user);
 
       return new Response(JSON.stringify({ token, user, profile: user.profile }), { status: 200, headers: CORS_HEADERS });
@@ -485,6 +540,9 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     try {
       const body = await request.json() as any;
       const inputId = (body.email || body.identifier || "").toLowerCase().trim();
+      if (!inputId || !body.password) {
+        return new Response(JSON.stringify({ error: "Missing login credentials" }), { status: 400, headers: CORS_HEADERS });
+      }
 
       // Check existing user in store
       let existing = usersMap.get(inputId);
@@ -513,59 +571,12 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
           existing.profile.lastLoginAt = nowIso;
           existing.profile.deviceInfo = clientUa;
         }
-        const token = createToken(existing);
+        const token = await createToken(existing);
         tokensMap.set(token, existing);
         return new Response(JSON.stringify({ token, user: existing, profile: existing.profile }), { status: 200, headers: CORS_HEADERS });
       }
 
-      // If logging in with admin credentials
-      const isAdmin = inputId === "admin.aeirmist@gmail.com" ||
-                      inputId === "admin" ||
-                      inputId === "admin_aeirmist" ||
-                      inputId === "usr_admin_aeirmist";
-      const isJunaed = inputId === "junaedislamjim180@gmail.com" ||
-                       inputId === "junaed_islam_jim9" ||
-                       inputId === "dovifwfmxcooas976z6mo216yng1";
-
-      if (isAdmin) {
-        const detectedLocation = body.location || defaultAdminUser.location || "Dhaka, Bangladesh";
-        const clientUa = body.deviceInfo || defaultAdminUser.deviceInfo || "Web / Core Admin Dashboard";
-        const nowIso = new Date().toISOString();
-        defaultAdminUser.location = detectedLocation;
-        defaultAdminUser.lastLoginLocation = detectedLocation;
-        defaultAdminUser.activeLocation = detectedLocation;
-        defaultAdminUser.lastLoginAt = nowIso;
-        defaultAdminUser.deviceInfo = clientUa;
-        defaultAdminUser.profile.location = detectedLocation;
-        defaultAdminUser.profile.lastLoginLocation = detectedLocation;
-        defaultAdminUser.profile.activeLocation = detectedLocation;
-        defaultAdminUser.profile.lastLoginAt = nowIso;
-        defaultAdminUser.profile.deviceInfo = clientUa;
-        const token = createToken(defaultAdminUser);
-        tokensMap.set(token, defaultAdminUser);
-        return new Response(JSON.stringify({ token, user: defaultAdminUser, profile: defaultAdminUser.profile }), { status: 200, headers: CORS_HEADERS });
-      }
-
-      if (isJunaed) {
-        const detectedLocation = body.location || defaultJunaedUser.location || "Dhaka, Bangladesh";
-        const clientUa = body.deviceInfo || defaultJunaedUser.deviceInfo || "Capacitor Mobile / Android & Web";
-        const nowIso = new Date().toISOString();
-        defaultJunaedUser.location = detectedLocation;
-        defaultJunaedUser.lastLoginLocation = detectedLocation;
-        defaultJunaedUser.activeLocation = detectedLocation;
-        defaultJunaedUser.lastLoginAt = nowIso;
-        defaultJunaedUser.deviceInfo = clientUa;
-        defaultJunaedUser.profile.location = detectedLocation;
-        defaultJunaedUser.profile.lastLoginLocation = detectedLocation;
-        defaultJunaedUser.profile.activeLocation = detectedLocation;
-        defaultJunaedUser.profile.lastLoginAt = nowIso;
-        defaultJunaedUser.profile.deviceInfo = clientUa;
-        const token = createToken(defaultJunaedUser);
-        tokensMap.set(token, defaultJunaedUser);
-        return new Response(JSON.stringify({ token, user: defaultJunaedUser, profile: defaultJunaedUser.profile }), { status: 200, headers: CORS_HEADERS });
-      }
-
-      // Normal user (non-admin, non-Junaed)
+      // Default safe user provisioning for development/edge session
       const uid = `usr_${Date.now()}`;
       const cleanUsername = inputId.includes("@") ? inputId.split("@")[0] : inputId;
       const cleanDisplayName = cleanUsername;
@@ -622,7 +633,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         }
       };
 
-      const token = createToken(user);
+      const token = await createToken(user);
       tokensMap.set(token, user);
       usersMap.set(uid, user);
       usersMap.set(cleanUsername.toLowerCase(), user);
@@ -646,7 +657,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       }), { status: 401, headers: CORS_HEADERS });
     }
 
-    const authUser = parseUserFromToken(token);
+    const authUser = await parseUserFromToken(token);
     if (!authUser) {
       return new Response(JSON.stringify({
         error: "Unauthorized: Invalid or expired session token"
@@ -676,7 +687,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   if (path === "/api/v1/users/profile" && method === "PATCH") {
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
+    const authUser = await parseUserFromToken(token);
     if (!authUser) {
       return new Response(JSON.stringify({
         error: "Unauthorized: Please log in to update your profile"
@@ -685,6 +696,13 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
 
     try {
       const body = await request.json() as any;
+      // Strip privileged fields from user updates to prevent self-elevation
+      delete body.role;
+      delete body.isAdmin;
+      delete body.isVerified;
+      delete body.uid;
+      delete body.id;
+
       const updatedProfile = {
         ...(authUser.profile || {}),
         ...body,
@@ -699,7 +717,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       if (authUser.username) usersMap.set(authUser.username.toLowerCase(), authUser);
       usersMap.set(`profile_${authUser.id}`, authUser);
 
-      const newToken = createToken(authUser);
+      const newToken = await createToken(authUser);
       tokensMap.set(newToken, authUser);
 
       return new Response(JSON.stringify({
@@ -768,7 +786,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   // Admin: Stats
   if (path === "/api/v1/admin/stats" && method === "GET") {
     const uniqueUsersMap = new Map<string, any>();
-    for (const u of usersMap.values()) {
+    for (const u of Array.from(usersMap.values())) {
       const uid = u?.id || u?.uid;
       if (uid && !uniqueUsersMap.has(uid)) {
         uniqueUsersMap.set(uid, u);
@@ -1025,12 +1043,15 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     try {
       const authHeader = request.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      const authUser = parseUserFromToken(token);
+      const authUser = await parseUserFromToken(token);
+      if (!authUser) {
+        return new Response(JSON.stringify({ error: "Unauthorized: Valid login required to create posts" }), { status: 401, headers: CORS_HEADERS });
+      }
 
       const body = await request.json() as any;
-      const authorId = authUser ? authUser.id : (body.userId || "usr_anonymous");
-      const authorName = authUser ? (authUser.displayName || authUser.username) : "Aeirmist User";
-      const authorUsername = authUser ? authUser.username : "user";
+      const authorId = authUser.id || authUser.uid;
+      const authorName = authUser.displayName || authUser.username || "Aeirmist User";
+      const authorUsername = authUser.username || "user";
       const authorAvatar = authUser?.profile?.avatarKey || authUser?.profile?.photoURL || "";
 
       const newPost = {
@@ -1070,7 +1091,19 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
 
   // Posts: Delete
   if (path.startsWith("/api/v1/posts/") && method === "DELETE") {
+    const authHeader = request.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const authUser = await parseUserFromToken(token);
+    if (!authUser) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: CORS_HEADERS });
+    }
+
     const postId = path.replace("/api/v1/posts/", "");
+    const post = edgePosts.find(p => p.id === postId);
+    if (post && post.userId !== authUser.id && !authUser.isAdmin) {
+      return new Response(JSON.stringify({ error: "Forbidden: You cannot delete another user's post" }), { status: 403, headers: CORS_HEADERS });
+    }
+
     edgePosts = edgePosts.filter(p => p.id !== postId);
     edgeCommentsMap.delete(postId);
     return new Response(JSON.stringify({ success: true, message: "Post deleted" }), { status: 200, headers: CORS_HEADERS });
@@ -1081,7 +1114,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     const postId = path.replace("/api/v1/posts/", "").replace("/like", "");
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
+    const authUser = await parseUserFromToken(token);
     const viewerId = authUser ? authUser.id : "viewer";
 
     const post = edgePosts.find(p => p.id === postId);
@@ -1106,7 +1139,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     const postId = path.replace("/api/v1/posts/", "").replace("/bookmark", "");
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
+    const authUser = await parseUserFromToken(token);
     const viewerId = authUser ? authUser.id : "viewer";
 
     const post = edgePosts.find(p => p.id === postId);
@@ -1158,12 +1191,15 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     const postId = path.replace("/api/v1/posts/", "").replace("/comments", "");
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
+    const authUser = await parseUserFromToken(token);
+    if (!authUser) {
+      return new Response(JSON.stringify({ error: "Unauthorized: Login required to comment" }), { status: 401, headers: CORS_HEADERS });
+    }
 
     try {
       const body = await request.json() as any;
-      const authorId = authUser ? authUser.id : "viewer";
-      const authorName = authUser ? (authUser.displayName || authUser.username) : "Aeirmist User";
+      const authorId = authUser.id || authUser.uid;
+      const authorName = authUser.displayName || authUser.username || "Aeirmist User";
       const authorAvatar = authUser?.profile?.avatarKey || authUser?.profile?.photoURL || "";
 
       const newComment = {
@@ -1223,22 +1259,28 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   if (path === "/api/v1/chat/conversations" && method === "GET") {
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
-    const currentId = authUser ? authUser.id : "viewer";
+    const authUser = await parseUserFromToken(token);
+    if (!authUser) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: CORS_HEADERS });
+    }
+    const currentId = authUser.id || authUser.uid;
 
     const userConvs = edgeConversations.filter(c => 
       !c.participants || c.participants.length === 0 || c.participants.some((p: any) => p.userId === currentId)
     );
-    return new Response(JSON.stringify({ conversations: userConvs.length ? userConvs : edgeConversations }), { status: 200, headers: CORS_HEADERS });
+    return new Response(JSON.stringify({ conversations: userConvs }), { status: 200, headers: CORS_HEADERS });
   }
 
   // Chat: Direct Conversation (Find or Create)
   if (path === "/api/v1/chat/conversations/direct" && method === "POST") {
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
-    const currentId = authUser ? authUser.id : "viewer";
-    const currentName = authUser ? (authUser.displayName || authUser.username) : "User";
+    const authUser = await parseUserFromToken(token);
+    if (!authUser) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: CORS_HEADERS });
+    }
+    const currentId = authUser.id || authUser.uid;
+    const currentName = authUser.displayName || authUser.username || "User";
     const currentAvatar = authUser?.profile?.avatarKey || authUser?.profile?.photoURL || "";
 
     try {
@@ -1286,8 +1328,11 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   if (path === "/api/v1/chat/conversations/group" && method === "POST") {
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
-    const currentId = authUser ? authUser.id : "viewer";
+    const authUser = await parseUserFromToken(token);
+    if (!authUser) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: CORS_HEADERS });
+    }
+    const currentId = authUser.id || authUser.uid;
 
     try {
       const body = await request.json() as any;
@@ -1329,9 +1374,11 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     const rawConvId = path.replace("/api/v1/chat/conversations/", "").replace("/messages", "");
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
-    const headerUserId = request.headers.get("X-User-Id") || request.headers.get("X-Profile-Id");
-    const currentId = authUser ? (authUser.id || authUser.uid) : (headerUserId || "user");
+    const authUser = await parseUserFromToken(token);
+    if (!authUser) {
+      return new Response(JSON.stringify({ error: "Unauthorized: Access to conversation messages requires authentication" }), { status: 401, headers: CORS_HEADERS });
+    }
+    const currentId = authUser.id || authUser.uid;
 
     let msgs = edgeMessagesMap.get(rawConvId);
     if ((!msgs || msgs.length === 0) && rawConvId.startsWith("new_")) {
@@ -1355,13 +1402,15 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     const rawConvId = path.replace("/api/v1/chat/conversations/", "").replace("/messages", "");
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authUser = parseUserFromToken(token);
-    const headerUserId = request.headers.get("X-User-Id") || request.headers.get("X-Profile-Id");
+    const authUser = await parseUserFromToken(token);
+    if (!authUser) {
+      return new Response(JSON.stringify({ error: "Unauthorized: You must be logged in to send messages" }), { status: 401, headers: CORS_HEADERS });
+    }
 
     try {
       const body = await request.json() as any;
-      const currentId = authUser ? (authUser.id || authUser.uid) : (headerUserId || body.metadata?.senderId || body.senderId || "user");
-      const currentUid = authUser?.uid || headerUserId || body.metadata?.senderUid || body.senderUid || currentId;
+      const currentId = authUser.id || authUser.uid;
+      const currentUid = authUser.uid || currentId;
       const nowIso = new Date().toISOString();
       const messageText = body.content || body.text || "";
       const mediaAttachment = body.mediaUrl || (body.mediaKey ? `/media/${body.mediaKey}` : null);
@@ -1377,8 +1426,8 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         conversationId: finalConvId,
         senderId: currentId,
         senderUid: currentUid,
-        senderName: authUser?.displayName || authUser?.username || body.metadata?.senderName || "User",
-        senderPhoto: authUser?.profile?.avatarKey || authUser?.profile?.photoURL || body.metadata?.senderPhoto || "",
+        senderName: authUser?.displayName || authUser?.username || "User",
+        senderPhoto: authUser?.profile?.avatarKey || authUser?.profile?.photoURL || "",
         content: messageText,
         text: messageText,
         type: body.type || "text",
@@ -1463,7 +1512,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   // Chat: Delete Message
   if (path.startsWith("/api/v1/chat/messages/") && method === "DELETE") {
     const msgId = path.replace("/api/v1/chat/messages/", "");
-    for (const [, msgs] of edgeMessagesMap.entries()) {
+    for (const [, msgs] of Array.from(edgeMessagesMap.entries())) {
       const idx = msgs.findIndex(m => m.id === msgId);
       if (idx !== -1) {
         msgs.splice(idx, 1);

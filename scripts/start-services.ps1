@@ -61,8 +61,10 @@ if (-not $redisPortOpen) {
 if (-not $NoTunnel) {
     $cloudflaredRunning = Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue
     if (-not $cloudflaredRunning) {
-        Write-Host "[3/4] Starting Cloudflare Tunnel (aeirmist.com)..." -ForegroundColor Yellow
-        $tunnelToken = "eyJhIjoiYmQ3MTI0NmViMDkwMTVmZTczN2U0YjZlYmU2OTRjZTciLCJ0IjoiNjAwNTZmNjktNjkwYy00ZDUzLWE5YWEtNGE5NWEwMjE0ODYyIiwicyI6Ii9PRjdqUTByZGd6NUNkQVhMRVRpUDBZZ2wzV2lJQzZNd0NRdVdJZmVqeTA9In0="
+        $tunnelToken = $env:CLOUDFLARE_TUNNEL_TOKEN
+        if (-not $tunnelToken -and (Test-Path "D:\Aeirmist\.env")) {
+            $tunnelToken = (Get-Content "D:\Aeirmist\.env" | Where-Object { $_ -match "^CLOUDFLARE_TUNNEL_TOKEN=(.*)" } | ForEach-Object { $Matches[1].Trim() })
+        }
         Start-Process -FilePath "D:\Aeirmist\cloudflared.exe" -ArgumentList "tunnel run --token `"$tunnelToken`"" -WindowStyle Hidden
         Start-Sleep -Seconds 2
     } else {

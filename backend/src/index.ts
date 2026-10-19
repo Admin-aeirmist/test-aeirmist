@@ -38,25 +38,33 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, curl, capacitor)
     if (!origin) return callback(null, true);
-    if (
-      env.CORS_ORIGINS.includes(origin) || 
-      env.CORS_ORIGINS.includes('*') || 
-      origin === 'https://aeirmist.com' ||
-      origin === 'https://www.aeirmist.com' ||
-      origin.endsWith('.aeirmist.com') ||
-      origin.endsWith('.pages.dev')
-    ) {
+
+    let parsedHost: string;
+    try {
+      parsedHost = new URL(origin).hostname;
+    } catch {
+      return callback(new Error('Invalid Origin header'));
+    }
+
+    const isAllowed =
+      env.CORS_ORIGINS.includes(origin) ||
+      parsedHost === 'aeirmist.com' ||
+      parsedHost === 'www.aeirmist.com' ||
+      parsedHost.endsWith('.aeirmist.com') ||
+      parsedHost === 'aeirmist-f0m.pages.dev' ||
+      parsedHost === 'localhost' ||
+      parsedHost === '127.0.0.1' ||
+      origin.startsWith('capacitor://');
+
+    if (isAllowed) {
       return callback(null, true);
     }
-    // Allow all local dev origins
-    if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
-      return callback(null, true);
-    }
-    return callback(null, true); // Permissive for authenticated web API
+    console.warn(`[CORS Security] Denied unauthorized cross-origin request from: ${origin}`);
+    return callback(new Error('Not allowed by CORS policy'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-User-Id', 'X-Profile-Id', 'Cache-Control', 'X-Session-Token', 'X-Device-Trust-Token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-User-Id', 'X-Profile-Id', 'Cache-Control', 'X-Session-Token', 'X-Device-Trust-Token', 'X-XSRF-TOKEN', 'X-CSRF-Token'],
   exposedHeaders: ['Authorization', 'Content-Disposition'],
 }));
 
@@ -70,7 +78,15 @@ if (env.NODE_ENV !== 'test') {
 // Serve Static Media in Local Mode (Local Storage Driver)
 // -------------------------------------------------------------
 const localUploadsPath = path.resolve(process.cwd(), env.STORAGE_PATH);
-app.use('/media', express.static(localUploadsPath));
+app.use('/media', express.static(localUploadsPath, {
+  setHeaders: (res, filePath) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (filePath.endsWith('.html') || filePath.endsWith('.htm') || filePath.endsWith('.svg') || filePath.endsWith('.xml')) {
+      res.setHeader('Content-Security-Policy', "default-src 'none'");
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+  }
+}));
 
 // -------------------------------------------------------------
 // Production / Health Endpoint

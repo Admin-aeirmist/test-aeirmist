@@ -26,7 +26,21 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     }
 
     const folder = (req.body.folder || 'general').replace(/[^a-zA-Z0-9_-]/g, '');
-    const ext = path.extname(file.originalname).toLowerCase() || '.bin';
+    const ext = path.extname(file.originalname).toLowerCase();
+
+    const ALLOWED_EXTENSIONS = new Set([
+      '.jpg', '.jpeg', '.png', '.webp', '.gif',
+      '.mp4', '.webm', '.mov',
+      '.mp3', '.m4a', '.ogg', '.wav',
+      '.pdf'
+    ]);
+
+    if (!ext || !ALLOWED_EXTENSIONS.has(ext)) {
+      return res.status(400).json({ 
+        error: 'Unsupported or unsafe file type. Permitted formats: images (jpg, png, webp, gif), audio (mp3, wav, m4a), video (mp4, webm, mov), and pdf.' 
+      });
+    }
+
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');

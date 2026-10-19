@@ -100,7 +100,7 @@ router.post('/signup/request-otp', authRateLimiter, async (req, res: Response) =
     await redis.setex(`otp_rate:${cleanEmail}`, 45, '1');
 
     await sendOtpEmail(cleanEmail, otp, 'signup');
-    console.log(`✉️ [Signup OTP] Verification code for ${cleanEmail}: ${otp}`);
+    console.log(`✉️ [Signup OTP] Verification code sent to ${cleanEmail} (prefix: ${otp.slice(0, 2)}****)`);
 
     res.json({
       success: true,
@@ -363,7 +363,7 @@ router.post('/login', authRateLimiter, async (req, res: Response) => {
 
       // Send OTP to user's verified email
       await sendOtpEmail(user.email, otp, 'login');
-      console.log(`🛡️ [Login 2FA OTP] Security code for ${user.email}: ${otp}`);
+      console.log(`🛡️ [Login 2FA OTP] Security code sent to ${user.email} (prefix: ${otp.slice(0, 2)}****)`);
 
       return res.json({
         requires2FA: true,
@@ -537,7 +537,7 @@ router.post('/resend-otp', authRateLimiter, async (req, res: Response) => {
       await redis.setex(`otp_rate:${cleanEmail}`, 45, '1');
 
       await sendOtpEmail(cleanEmail, newOtp, 'signup');
-      console.log(`✉️ [Resend Signup OTP] Sent code ${newOtp} to ${cleanEmail}`);
+      console.log(`✉️ [Resend Signup OTP] Sent code (prefix: ${newOtp.slice(0, 2)}****) to ${cleanEmail}`);
       return res.json({ success: true, message: 'New confirmation code sent to your email!' });
     }
 
@@ -561,7 +561,7 @@ router.post('/resend-otp', authRateLimiter, async (req, res: Response) => {
       await redis.setex(`otp_rate:${parsed.email}`, 45, '1');
 
       await sendOtpEmail(parsed.email, newOtp, 'login');
-      console.log(`🛡️ [Resend Login 2FA OTP] Sent code ${newOtp} to ${parsed.email}`);
+      console.log(`🛡️ [Resend Login 2FA OTP] Sent code (prefix: ${newOtp.slice(0, 2)}****) to ${parsed.email}`);
       return res.json({ success: true, message: 'New security code sent to your email!' });
     }
 
