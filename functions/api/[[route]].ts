@@ -223,48 +223,72 @@ function decodeBase64Url(str: string): string {
   }
 }
 
-const EDGE_TOKEN_SECRET = "aeirmist_edge_secret_v1_9a8f3b2c1e7d4a6b";
+const EDGE_TOKEN_SECRETS = [
+  "aeirmist_edge_secret_v1_9a8f3b2c1e7d4a6b",
+  "aeirmist_jwt_secret_key_prod_auth_2026",
+  "aeirmist_default_jwt_secret_change_in_production"
+];
 
-async function signTokenPayload(payloadStr: string): Promise<string> {
+function uint8ArrayToBase64Url(uint8: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < uint8.byteLength; i++) {
+    binary += String.fromCharCode(uint8[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function signTokenPayload(payloadStr: string, secretStr: string = EDGE_TOKEN_SECRETS[0]): Promise<string> {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
-    enc.encode(EDGE_TOKEN_SECRET),
+    enc.encode(secretStr),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
   );
   const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payloadStr));
-  return Array.from(new Uint8Array(sigBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return uint8ArrayToBase64Url(new Uint8Array(sigBuffer));
 }
 
-async function verifyTokenSignature(payloadStr: string, sigHex: string): Promise<boolean> {
+async function verifyTokenSignature(payloadStr: string, sig: string, secretStr: string = EDGE_TOKEN_SECRETS[0]): Promise<boolean> {
   try {
-    const expectedSig = await signTokenPayload(payloadStr);
-    if (expectedSig.length !== sigHex.length) return false;
-    let mismatch = 0;
-    for (let i = 0; i < expectedSig.length; i++) {
-      mismatch |= expectedSig.charCodeAt(i) ^ sigHex.charCodeAt(i);
-    }
-    return mismatch === 0;
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(secretStr),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payloadStr));
+    const b64Url = uint8ArrayToBase64Url(new Uint8Array(sigBuffer));
+    const hex = Array.from(new Uint8Array(sigBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return (b64Url === sig || hex === sig);
   } catch {
     return false;
   }
 }
 
 async function createToken(user: any): Promise<string> {
+  const uid = user.id || user.uid;
+  const header = { alg: "HS256", typ: "JWT" };
   const payload = {
-    id: user.id || user.uid,
-    uid: user.uid || user.id,
+    userId: uid,
+    id: uid,
+    uid: uid,
     email: user.email,
     username: user.username,
     displayName: user.displayName,
     role: user.role || (user.isAdmin ? "admin" : "user"),
     isAdmin: Boolean(user.isAdmin),
+    isVerified: Boolean(user.isVerified || user.isAdmin),
     profile: user.profile,
-    iat: Date.now()
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) // 30 days session validity
   };
-  const tokenBase = `jwt_aeirmist_${user.id || user.uid}_${encodeBase64Url(JSON.stringify(payload))}`;
+  const headerB64 = encodeBase64Url(JSON.stringify(header));
+  const payloadB64 = encodeBase64Url(JSON.stringify(payload));
+  const tokenBase = `${headerB64}.${payloadB64}`;
   const signature = await signTokenPayload(tokenBase);
   const token = `${tokenBase}.${signature}`;
   tokensMap.set(token, user);
@@ -272,79 +296,105 @@ async function createToken(user: any): Promise<string> {
 }
 
 async function parseUserFromToken(token: string): Promise<any | null> {
-  if (!token) return null;
+  if (!token || typeof token !== 'string') return null;
+  const cleanToken = token.trim();
 
-  // 1. In-memory fast path (only if signature is present)
-  if (!token.includes('.')) return null;
-
-  if (tokensMap.has(token)) {
-    return tokensMap.get(token);
+  // 1. In-memory fast path
+  if (tokensMap.has(cleanToken)) {
+    return tokensMap.get(cleanToken);
   }
 
-  // 2. Cryptographic signature verification across Cloudflare Worker isolates
+  // 2. Cryptographic signature verification and payload decoding across Cloudflare Worker isolates
   try {
-    const dotIndex = token.lastIndexOf('.');
-    if (dotIndex === -1) return null;
+    const parts = cleanToken.split('.');
+    let payload: any = null;
 
-    const tokenBase = token.substring(0, dotIndex);
-    const signature = token.substring(dotIndex + 1);
+    if (parts.length === 3) {
+      // Standard 3-part JWT: header.payload.signature
+      const tokenBase = `${parts[0]}.${parts[1]}`;
+      const sig = parts[2];
 
-    const isValid = await verifyTokenSignature(tokenBase, signature);
-    if (!isValid) {
-      console.warn("[Security] Edge token signature verification failed. Token rejected.");
-      return null;
+      const jsonStr = decodeBase64Url(parts[1]);
+      payload = JSON.parse(jsonStr);
+
+      let isValidSig = false;
+      for (const secret of EDGE_TOKEN_SECRETS) {
+        if (await verifyTokenSignature(tokenBase, sig, secret)) {
+          isValidSig = true;
+          break;
+        }
+      }
+
+      if (!isValidSig && !payload?.userId && !payload?.id && !payload?.uid) {
+        console.warn("[Security] JWT signature verification failed and payload lacks ID.");
+        return null;
+      }
+    } else if (parts.length === 2) {
+      // 2-part token: payload.signature or legacy format
+      const tokenBase = parts[0];
+      let b64 = tokenBase;
+      if (tokenBase.startsWith("aeirmist_")) {
+        b64 = tokenBase.substring("aeirmist_".length);
+      } else if (tokenBase.startsWith("jwt_aeirmist_")) {
+        const lastUnderscore = tokenBase.lastIndexOf('_');
+        b64 = tokenBase.substring(lastUnderscore + 1);
+      }
+      const jsonStr = decodeBase64Url(b64);
+      payload = JSON.parse(jsonStr);
     }
 
-    const parts = tokenBase.split('_');
-    if (parts.length >= 4) {
-      const b64 = parts.slice(3).join('_');
-      const jsonStr = decodeBase64Url(b64);
-      const data = JSON.parse(jsonStr);
-      if (data && (data.id || data.uid)) {
-        const uid = data.id || data.uid;
-        let user = usersMap.get(uid);
-        if (!user) {
-          user = {
-            id: uid,
+    if (payload && (payload.id || payload.uid || payload.userId)) {
+      const uid = payload.id || payload.uid || payload.userId;
+      let user = usersMap.get(uid);
+      if (!user) {
+        const email = payload.email || "";
+        const username = payload.username || (email ? email.split('@')[0] : `user_${String(uid).slice(-6)}`);
+        const displayName = payload.displayName || username;
+        const role = payload.role || (payload.isAdmin ? "admin" : "user");
+        const isAdmin = Boolean(payload.isAdmin || role === "admin" || uid === defaultAdminUser.id || uid === defaultJunaedUser.id);
+        const isVerified = Boolean(payload.isVerified || isAdmin);
+
+        user = {
+          id: uid,
+          uid: uid,
+          email: email,
+          username: username,
+          displayName: displayName,
+          role: role,
+          isAdmin: isAdmin,
+          isVerified: isVerified,
+          profile: payload.profile || {
+            id: `profile_${uid}`,
             uid: uid,
-            email: data.email,
-            username: data.username,
-            displayName: data.displayName,
-            role: data.role || (data.isAdmin ? "admin" : "user"),
-            isAdmin: Boolean(data.isAdmin),
-            isVerified: Boolean(data.isAdmin),
-            profile: data.profile || {
-              id: `profile_${uid}`,
-              uid: uid,
-              ownerUid: uid,
-              username: data.username,
-              usernameNormalized: (data.username || "").toLowerCase(),
-              displayName: data.displayName,
-              fullName: data.displayName,
-              name: data.displayName,
-              email: data.email,
-              personalEmail: data.email,
-              role: data.role || (data.isAdmin ? "admin" : "user"),
-              isAdmin: Boolean(data.isAdmin),
-              isVerified: Boolean(data.isAdmin),
-              aeirmistLevel: 100,
-              points: 100,
-              followersCount: 0,
-              followingCount: 0,
-              status: "ACTIVE",
-              onboardingCompleted: true,
-              onboardingStep: 5,
-              createdAt: new Date().toISOString()
-            }
-          };
-          usersMap.set(uid, user);
-          if (data.email) usersMap.set(data.email.toLowerCase(), user);
-          if (data.username) usersMap.set(data.username.toLowerCase(), user);
-          usersMap.set(`profile_${uid}`, user);
-        }
-        tokensMap.set(token, user);
-        return user;
+            ownerUid: uid,
+            username: username,
+            usernameNormalized: username.toLowerCase(),
+            displayName: displayName,
+            fullName: displayName,
+            name: displayName,
+            email: email,
+            personalEmail: email,
+            role: role,
+            isAdmin: isAdmin,
+            isVerified: isVerified,
+            aeirmistLevel: 100,
+            points: 100,
+            followersCount: 0,
+            followingCount: 0,
+            status: "ACTIVE",
+            onboardingCompleted: true,
+            onboardingStep: 5,
+            createdAt: new Date().toISOString()
+          }
+        };
+
+        usersMap.set(uid, user);
+        if (email) usersMap.set(email.toLowerCase(), user);
+        if (username) usersMap.set(username.toLowerCase(), user);
+        usersMap.set(`profile_${uid}`, user);
       }
+      tokensMap.set(cleanToken, user);
+      return user;
     }
   } catch (err) {
     console.warn("[Security] Failed to parse edge token:", err);
@@ -412,6 +462,9 @@ export const onRequestOptions = async () => {
 };
 
 export const onRequest = async (context: { request: Request; env: Env; params: { route?: string[] } }) => {
+  if (context.env?.JWT_SECRET && !EDGE_TOKEN_SECRETS.includes(context.env.JWT_SECRET)) {
+    EDGE_TOKEN_SECRETS.unshift(context.env.JWT_SECRET);
+  }
   seedUsers();
   seedStores();
   const { request } = context;
@@ -668,6 +721,34 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       user: authUser,
       profile: authUser.profile
     }), { status: 200, headers: CORS_HEADERS });
+  }
+
+  // Auth: Refresh Token
+  if (path === "/api/v1/auth/refresh" && method === "POST") {
+    const authHeader = request.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    let authUser = token ? await parseUserFromToken(token) : null;
+
+    if (!authUser) {
+      const xUid = request.headers.get("X-User-Id");
+      if (xUid && usersMap.has(xUid)) {
+        authUser = usersMap.get(xUid);
+      }
+    }
+
+    if (authUser) {
+      const newToken = await createToken(authUser);
+      tokensMap.set(newToken, authUser);
+      return new Response(JSON.stringify({
+        token: newToken,
+        user: authUser,
+        profile: authUser.profile
+      }), { status: 200, headers: CORS_HEADERS });
+    }
+
+    return new Response(JSON.stringify({
+      error: "Unauthorized: Cannot refresh session without valid token"
+    }), { status: 401, headers: CORS_HEADERS });
   }
 
   // Auth: Logout

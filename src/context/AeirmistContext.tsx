@@ -2987,21 +2987,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     api.users.getProfile(identifier)
       .then((res: any) => {
         if (isCancelled) return;
-        if (!res?.profile) {
-          logger.warn('[Session Verification] Profile does not exist in backend. Logging out...');
-          handleForceLogout('profile_not_found');
+        if (res?.profile) {
+          setProfile((prev: any) => ({ ...prev, ...res.profile }));
         }
       })
       .catch((err: any) => {
         if (isCancelled) return;
-        if (err?.status === 404 || err?.status === 401) {
-          logger.warn(`[Session Verification] Backend returned HTTP ${err.status}. Account deleted. Logging out...`);
-          handleForceLogout('account_purged');
-        }
+        logger.warn(`[Session Verification] Profile fetch notice for ${identifier}:`, err?.status || err?.message || err);
       });
 
     return () => { isCancelled = true; };
-  }, [profile?.username, profile?.id, user?.uid, handleForceLogout]);
+  }, [profile?.username, profile?.id, user?.uid]);
 
   // Proactive token initialization: exchange cached session for valid server JWT
   useEffect(() => {

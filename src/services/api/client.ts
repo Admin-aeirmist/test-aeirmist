@@ -216,9 +216,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       httpErr.status = res.status;
       httpErr.isHttpError = true;
 
-      // Broadcast force logout if session was invalidated or account deleted
-      if (res.status === 401 || (res.status === 404 && path === '/api/v1/auth/me')) {
-        if (typeof window !== 'undefined' && path !== '/api/v1/auth/login' && path !== '/api/v1/auth/register') {
+      // Broadcast force logout ONLY if authoritative session verification endpoint explicitly failed
+      if ((res.status === 401 || res.status === 404) && path === '/api/v1/auth/me') {
+        if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('aeirmist:force_logout', { 
             detail: { reason: 'session_invalidated', status: res.status } 
           }));
