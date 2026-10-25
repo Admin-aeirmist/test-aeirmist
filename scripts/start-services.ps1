@@ -57,18 +57,24 @@ if (-not $redisPortOpen) {
     }
 }
 
-# 3. Cloudflare Tunnel
+# 3. Cloudflare Tunnel (Specifically verifying Aeirmist Tunnel ID/Token)
 if (-not $NoTunnel) {
-    $cloudflaredRunning = Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue
-    if (-not $cloudflaredRunning) {
-        $tunnelToken = $env:CLOUDFLARE_TUNNEL_TOKEN
-        if (-not $tunnelToken -and (Test-Path "D:\Aeirmist\.env")) {
-            $tunnelToken = (Get-Content "D:\Aeirmist\.env" | Where-Object { $_ -match "^CLOUDFLARE_TUNNEL_TOKEN=(.*)" } | ForEach-Object { $Matches[1].Trim() })
-        }
+    $tunnelToken = $env:CLOUDFLARE_TUNNEL_TOKEN
+    if (-not $tunnelToken -and (Test-Path "D:\Aeirmist\.env")) {
+        $tunnelToken = (Get-Content "D:\Aeirmist\.env" | Where-Object { $_ -match "^CLOUDFLARE_TUNNEL_TOKEN=(.*)" } | ForEach-Object { $Matches[1].Trim() })
+    }
+
+    $tokenPrefix = if ($tunnelToken -and $tunnelToken.Length -ge 30) { $tunnelToken.Substring(0, 30) } else { "eyJhIjoiYmQ3MTI0NmVi" }
+    $aeirmistTunnel = Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue | Where-Object { 
+        $_.CommandLine -match "60056f69" -or $_.CommandLine -like "*$tokenPrefix*"
+    }
+
+    if (-not $aeirmistTunnel) {
+        Write-Host "[3/4] Starting Aeirmist Cloudflare Tunnel..." -ForegroundColor Yellow
         Start-Process -FilePath "D:\Aeirmist\cloudflared.exe" -ArgumentList "tunnel run --token `"$tunnelToken`"" -WindowStyle Hidden
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 3
     } else {
-        Write-Host "[3/4] Cloudflare Tunnel is already running." -ForegroundColor Green
+        Write-Host "[3/4] Aeirmist Cloudflare Tunnel is already running." -ForegroundColor Green
     }
 }
 

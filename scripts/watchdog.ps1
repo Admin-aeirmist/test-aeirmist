@@ -10,8 +10,13 @@ while ($true) {
     # 1. Local Stack Health Check (Postgres, Redis, Backend API, Cloudflare Tunnel)
     $pgOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 5432 -InformationLevel Quiet -WarningAction SilentlyContinue)
     $redisOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 6379 -InformationLevel Quiet -WarningAction SilentlyContinue)
-    $tunnelRunning = (Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue)
     $apiOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet -WarningAction SilentlyContinue)
+
+    $tunnelToken = (Get-Content "D:\Aeirmist\.env" | Where-Object { $_ -match "^CLOUDFLARE_TUNNEL_TOKEN=(.*)" } | ForEach-Object { $Matches[1].Trim() })
+    $tokenPrefix = if ($tunnelToken -and $tunnelToken.Length -ge 30) { $tunnelToken.Substring(0, 30) } else { "eyJhIjoiYmQ3MTI0NmVi" }
+    $tunnelRunning = (Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue | Where-Object { 
+        $_.CommandLine -match "60056f69" -or $_.CommandLine -like "*$tokenPrefix*"
+    })
 
     if (-not $pgOpen -or -not $redisOpen -or -not $tunnelRunning -or -not $apiOpen) {
         powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "D:\Aeirmist\scripts\start-services.ps1"
@@ -40,8 +45,10 @@ while ($true) {
             netsh wlan connect name="$wifiProfile" | Out-Null
             $failCount = 0
             
-            # Restart cloudflared to force tunnel reconnection over refreshed route
-            Stop-Process -Name "cloudflared" -Force -ErrorAction SilentlyContinue
+            # Restart only the Aeirmist tunnel to force reconnection
+            if ($tunnelRunning) {
+                Stop-Process -Id $tunnelRunning.ProcessId -Force -ErrorAction SilentlyContinue
+            }
             Start-Sleep -Seconds 2
             powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "D:\Aeirmist\scripts\start-services.ps1"
         }
