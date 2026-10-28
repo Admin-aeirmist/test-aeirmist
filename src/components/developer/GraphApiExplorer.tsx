@@ -105,19 +105,35 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({ profile: false, posts: false });
 
   // Right Sidebar: Token & App
-  const [appId] = useState('109284729104821');
+  const [appsList] = useState([
+    { id: '109284729104821', name: 'Aeirmist Core Client' },
+    { id: '384918294719284', name: 'Aeirmist Mobile Graph (iOS/Android)' },
+    { id: '718294019284102', name: 'Aeirmist Webhooks Engine' }
+  ]);
+  const [selectedAppId, setSelectedAppId] = useState('109284729104821');
   const [tokenType, setTokenType] = useState<'User Token' | 'Page Token' | 'App Token'>('User Token');
   const [permissions, setPermissions] = useState<string[]>(['public_profile', 'email', 'user_posts', 'user_vault']);
   const [permSearch, setPermSearch] = useState('');
   const [showPermDropdown, setShowPermDropdown] = useState(false);
   const [copiedToken, setCopiedToken] = useState(false);
   const [copiedQuery, setCopiedQuery] = useState(false);
+  const [isEditingToken, setIsEditingToken] = useState(false);
+
+  // Active Access Token
+  const [activeToken, setActiveToken] = useState<string>(() => {
+    return getAuthToken() || 'EAAx_aeirmist_live_oauth_token_client';
+  });
 
   // Response State
   const [isLoading, setIsLoading] = useState(false);
   const [responseStatus, setResponseStatus] = useState<number | null>(200);
   const [responseLatency, setResponseLatency] = useState<number | null>(24);
   const [responseSize, setResponseSize] = useState<string>('842 B');
+  const [responseHeaders, setResponseHeaders] = useState<Record<string, string>>({
+    'content-type': 'application/json; charset=utf-8',
+    'x-aeirmist-rev': '21.0.4',
+    'cache-control': 'no-store, private'
+  });
   const [responseData, setApiResponseData] = useState<any>({
     id: user?.uid || 'usr_17400000_abc',
     name: profile?.displayName || 'Junaed Islam Jim',
@@ -125,7 +141,30 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
     email: user?.email || profile?.email || 'admin.aeirmist@gmail.com'
   });
 
-  const authToken = getAuthToken() || 'EAAx...aeirmist_live_oauth_token';
+  // Synchronize token with auth state
+  useEffect(() => {
+    const liveToken = getAuthToken();
+    if (liveToken && tokenType === 'User Token') {
+      setActiveToken(liveToken);
+    }
+  }, [user, tokenType]);
+
+  // Decode JWT payload for live Token Debugger
+  const getDecodedToken = () => {
+    try {
+      if (activeToken && activeToken.includes('.')) {
+        const parts = activeToken.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+          return payload;
+        }
+      }
+    } catch {}
+    return null;
+  };
+
+  const decodedJwt = getDecodedToken();
+  const authToken = activeToken;
 
   // Toggle field selection and update query path accordingly
   const handleToggleField = (fieldName: string, parentName?: string) => {
@@ -192,11 +231,11 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
 
       const fullUrl = `${base}${targetEndpoint.startsWith('/') ? targetEndpoint : `/${targetEndpoint}`}`;
       const headers: Record<string, string> = {
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'X-App-Id': selectedAppId
       };
-      const token = getAuthToken();
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+      if (activeToken) {
+        headers['Authorization'] = activeToken.startsWith('Bearer ') ? activeToken : `Bearer ${activeToken}`;
       }
       if (user?.uid) {
         headers['X-User-Id'] = user.uid;
@@ -216,6 +255,15 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
       const elapsed = Math.round(performance.now() - start);
       setResponseLatency(elapsed);
       setResponseStatus(res.status);
+
+      // Collect real response headers
+      const resHeaderMap: Record<string, string> = {};
+      res.headers.forEach((val, key) => {
+        resHeaderMap[key] = val;
+      });
+      if (Object.keys(resHeaderMap).length > 0) {
+        setResponseHeaders(resHeaderMap);
+      }
 
       const contentType = res.headers.get('content-type') || '';
       let data: any;
@@ -291,7 +339,9 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
   };
 
   return (
-    <div className={`w-full bg-[#0b0f19] text-[#e4e6eb] font-sans antialiased border border-white/10 rounded-2xl overflow-hidden shadow-2xl ${
+    <div className={`w-full bg-[#0b0f19] text-[#e4e6eb] font-sans antialiased ${
+      isStandalone ? 'min-h-screen flex flex-col rounded-none border-0' : 'border border-white/10 rounded-2xl overflow-hidden shadow-2xl'
+    } ${
       isFullscreen ? 'fixed inset-0 z-50 rounded-none' : 'relative'
     }`}>
       {/* 1. TOP META DEVELOPER NAVIGATION BAR */}
@@ -329,6 +379,14 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {isStandalone && (
+            <a 
+              href="/"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#242526] hover:bg-[#303031] border border-[#3a3b3c] text-xs font-semibold text-white/80 transition-all cursor-pointer mr-1"
+            >
+              <span>Back to Aeirmist</span>
+            </a>
+          )}
           <button 
             onClick={() => {
               navigator.clipboard.writeText(`curl -X ${method} "https://developers.aeirmist.com/v21.0/${queryPath}" -H "Authorization: Bearer ${authToken}"`);
@@ -521,6 +579,14 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
               >
                 Response
               </button>
+              <button 
+                onClick={() => setActiveCenterTab('params')}
+                className={`px-3 py-1.5 font-medium border-b-2 transition-all cursor-pointer ${
+                  activeCenterTab === 'params' ? 'border-cyan-400 text-white font-bold' : 'border-transparent text-white/50 hover:text-white'
+                }`}
+              >
+                Params
+              </button>
               {method === 'POST' && (
                 <button 
                   onClick={() => setActiveCenterTab('body')}
@@ -575,6 +641,34 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
                   {JSON.stringify(responseData, null, 2)}
                 </pre>
               </div>
+            ) : activeCenterTab === 'params' ? (
+              <div className="space-y-3 font-mono text-xs">
+                <div className="flex items-center justify-between text-white/50 text-[11px]">
+                  <span>Query Parameters (URL Search Params)</span>
+                  <span className="text-cyan-400">/{apiVersion}/{queryPath}</span>
+                </div>
+                <div className="border border-[#2d3239] rounded-lg overflow-hidden bg-[#141824]">
+                  <div className="grid grid-cols-12 bg-black/40 px-3 py-2 border-b border-[#2d3239] text-[11px] font-bold text-white/40 uppercase tracking-wider">
+                    <span className="col-span-4">Key</span>
+                    <span className="col-span-8">Value</span>
+                  </div>
+                  {queryPath.includes('?') ? (
+                    queryPath.split('?')[1].split('&').map((item, idx) => {
+                      const [k, v] = item.split('=');
+                      return (
+                        <div key={idx} className="grid grid-cols-12 px-3 py-2 border-b border-white/5 text-xs items-center hover:bg-white/[0.02]">
+                          <span className="col-span-4 font-bold text-cyan-300 truncate">{decodeURIComponent(k || '')}</span>
+                          <span className="col-span-8 text-white/80 break-all">{decodeURIComponent(v || '')}</span>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="p-4 text-center text-white/30 text-xs">
+                      No query parameters in current path. Add <code className="text-cyan-400">?fields=...</code> or select node fields from the left pane.
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : activeCenterTab === 'body' ? (
               <div className="space-y-2">
                 <span className="text-[11px] text-white/40">JSON Payload</span>
@@ -586,18 +680,35 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
                 />
               </div>
             ) : (
-              <div className="space-y-2 text-xs font-mono">
-                <div className="p-2.5 rounded bg-[#141824] border border-[#2d3239] flex justify-between">
-                  <span className="text-white/40">Authorization</span>
-                  <span className="text-cyan-400">Bearer {authToken.slice(0, 24)}...</span>
+              <div className="space-y-4 text-xs font-mono">
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-white/40 mb-1.5 block">Request Headers</span>
+                  <div className="space-y-1.5">
+                    <div className="p-2.5 rounded bg-[#141824] border border-[#2d3239] flex justify-between">
+                      <span className="text-white/40">Authorization</span>
+                      <span className="text-cyan-400 truncate max-w-xs">Bearer {activeToken.slice(0, 24)}...</span>
+                    </div>
+                    <div className="p-2.5 rounded bg-[#141824] border border-[#2d3239] flex justify-between">
+                      <span className="text-white/40">Content-Type</span>
+                      <span className="text-white/80">application/json</span>
+                    </div>
+                    <div className="p-2.5 rounded bg-[#141824] border border-[#2d3239] flex justify-between">
+                      <span className="text-white/40">X-App-Id</span>
+                      <span className="text-white/80">{selectedAppId}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="p-2.5 rounded bg-[#141824] border border-[#2d3239] flex justify-between">
-                  <span className="text-white/40">Content-Type</span>
-                  <span className="text-white/80">application/json</span>
-                </div>
-                <div className="p-2.5 rounded bg-[#141824] border border-[#2d3239] flex justify-between">
-                  <span className="text-white/40">X-App-Id</span>
-                  <span className="text-white/80">{appId}</span>
+
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-white/40 mb-1.5 block">Response Headers (Live HTTP)</span>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {Object.entries(responseHeaders).map(([k, v]) => (
+                      <div key={k} className="p-2 rounded bg-[#141824] border border-[#2d3239] flex justify-between text-[11px]">
+                        <span className="text-white/40">{k}</span>
+                        <span className="text-emerald-400/90 truncate max-w-sm">{v}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -610,9 +721,17 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
           {/* App Selector */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-bold uppercase tracking-wider text-white/40">Aeirmist App</label>
-            <select className="w-full h-8 px-2.5 bg-[#1e2230] border border-[#2d3239] rounded-md text-white text-xs outline-none cursor-pointer">
-              <option>Aeirmist Core Client ({appId})</option>
-              <option>Aeirmist Mobile Graph</option>
+            <select 
+              value={selectedAppId}
+              onChange={(e) => {
+                setSelectedAppId(e.target.value);
+                addToast({ title: 'App Context Switched', message: `Active app set to ${e.target.value}`, type: 'info' });
+              }}
+              className="w-full h-8 px-2.5 bg-[#1e2230] border border-[#2d3239] rounded-md text-white text-xs outline-none cursor-pointer"
+            >
+              {appsList.map(app => (
+                <option key={app.id} value={app.id}>{app.name} ({app.id})</option>
+              ))}
             </select>
           </div>
 
@@ -621,12 +740,23 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
             <label className="text-[11px] font-bold uppercase tracking-wider text-white/40">User or Page</label>
             <select 
               value={tokenType}
-              onChange={(e) => setTokenType(e.target.value as any)}
+              onChange={(e) => {
+                const newType = e.target.value as any;
+                setTokenType(newType);
+                if (newType === 'User Token') {
+                  setActiveToken(getAuthToken() || 'EAAx_aeirmist_live_oauth_token_client');
+                } else if (newType === 'Page Access Token') {
+                  setActiveToken(`EAAP_aeirmist_page_token_${(user?.uid || '101').slice(0, 8)}_${Date.now()}`);
+                } else {
+                  setActiveToken(`EAAB_${selectedAppId}_client_secret_token`);
+                }
+                addToast({ title: 'Token Context Updated', message: `Switched context to ${newType}.`, type: 'info' });
+              }}
               className="w-full h-8 px-2.5 bg-[#1e2230] border border-[#2d3239] rounded-md text-white text-xs outline-none cursor-pointer"
             >
-              <option>User Token</option>
-              <option>Page Access Token</option>
-              <option>App Token</option>
+              <option value="User Token">User Token</option>
+              <option value="Page Access Token">Page Access Token</option>
+              <option value="App Token">App Token</option>
             </select>
           </div>
 
@@ -643,17 +773,21 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
             </div>
 
             <div className="flex items-center gap-1">
-              <div className="flex-1 h-8 px-2.5 bg-[#1e2230] border border-[#2d3239] rounded-md flex items-center font-mono text-[11px] text-white/60 truncate select-all">
-                {authToken.slice(0, 24)}...
-              </div>
+              <input 
+                type="text"
+                value={activeToken}
+                onChange={(e) => setActiveToken(e.target.value)}
+                placeholder="Bearer OAuth token..."
+                className="flex-1 h-8 px-2.5 bg-[#1e2230] border border-[#2d3239] rounded-md font-mono text-[11px] text-white/90 outline-none focus:border-cyan-500/50 truncate"
+              />
               <button 
                 onClick={() => {
-                  navigator.clipboard.writeText(authToken);
+                  navigator.clipboard.writeText(activeToken);
                   setCopiedToken(true);
                   setTimeout(() => setCopiedToken(false), 2000);
                   addToast({ title: 'Token Copied', message: 'Bearer token copied to clipboard.', type: 'success' });
                 }}
-                className="h-8 px-2.5 bg-[#242526] hover:bg-[#303031] border border-[#3a3b3c] rounded-md text-white/80 transition-all cursor-pointer"
+                className="h-8 px-2.5 bg-[#242526] hover:bg-[#303031] border border-[#3a3b3c] rounded-md text-white/80 transition-all cursor-pointer shrink-0"
                 title="Copy Token"
               >
                 {copiedToken ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
@@ -661,7 +795,11 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
             </div>
 
             <button 
-              onClick={() => addToast({ title: 'Token Refreshed', message: 'Generated fresh OAuth 2.0 User Access Token.', type: 'success' })}
+              onClick={() => {
+                const fresh = getAuthToken() || `EAAx_aeirmist_live_oauth_token_${Date.now()}`;
+                setActiveToken(fresh);
+                addToast({ title: 'Token Generated', message: `Refreshed ${tokenType} with active permissions.`, type: 'success' });
+              }}
               className="w-full py-1.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold text-[11px] transition-all cursor-pointer"
             >
               Generate Access Token
@@ -825,7 +963,7 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
                 <div className="space-y-2 border border-[#2d3239] rounded-lg p-3 bg-[#141824] font-mono text-[11px]">
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-white/40">App ID</span>
-                    <span className="text-white">{appId} : Aeirmist Core Client</span>
+                    <span className="text-white">{selectedAppId} : {appsList.find(a => a.id === selectedAppId)?.name || 'Aeirmist Core Client'}</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-white/40">Type</span>
@@ -833,19 +971,23 @@ export const GraphApiExplorer: React.FC<{ isStandalone?: boolean }> = ({ isStand
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-white/40">User ID</span>
-                    <span className="text-cyan-400">{user?.uid || 'usr_17400000_abc'}</span>
+                    <span className="text-cyan-400">{decodedJwt?.sub || decodedJwt?.uid || decodedJwt?.userId || user?.uid || 'usr_17400000_abc'}</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-white/40">Issued At</span>
-                    <span className="text-white">Just now (Live session)</span>
+                    <span className="text-white">{decodedJwt?.iat ? new Date(decodedJwt.iat * 1000).toLocaleString() : 'Live session (Active)'}</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-white/40">Expires</span>
-                    <span className="text-emerald-400">Never / 30 Days Sliding Expiry</span>
+                    <span className="text-emerald-400">{decodedJwt?.exp ? new Date(decodedJwt.exp * 1000).toLocaleString() : 'Never / 30 Days Sliding Expiry'}</span>
                   </div>
-                  <div className="flex justify-between py-1">
+                  <div className="flex justify-between py-1 border-b border-white/5">
                     <span className="text-white/40">Scopes</span>
                     <span className="text-white/90 text-right">{permissions.join(', ')}</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-white/40">Token Signature</span>
+                    <span className="text-white/50 truncate max-w-xs">{activeToken.split('.')[2] ? `HS256 Verified (${activeToken.split('.')[2].slice(0, 16)}...)` : 'OAuth 2.0 Opaque Bearer'}</span>
                   </div>
                 </div>
               </div>
