@@ -133,6 +133,7 @@ import videoRoutes from './routes/video.routes';
 import notesRoutes from './routes/notes.routes';
 import vaultRoutes from './routes/vault.routes';
 import callsRoutes from './routes/calls.routes';
+import aiRoutes from './routes/ai.routes';
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/posts', postRoutes);
@@ -148,6 +149,7 @@ app.use('/api/v1/videos', videoRoutes);
 app.use('/api/v1/notes', notesRoutes);
 app.use('/api/v1/vault', vaultRoutes);
 app.use('/api/v1/calls', callsRoutes);
+app.use('/api/v1/ai', aiRoutes);
 
 // -------------------------------------------------------------
 // Socket.IO Setup with Redis Pub/Sub & WebRTC Signaling

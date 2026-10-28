@@ -7,10 +7,11 @@ $failCount = 0
 while ($true) {
     Start-Sleep -Seconds 15
 
-    # 1. Local Stack Health Check (Postgres, Redis, Backend API, Cloudflare Tunnel)
+    # 1. Local Stack Health Check (Postgres, Redis, Backend API, Cloudflare Tunnel, Era AI)
     $pgOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 5432 -InformationLevel Quiet -WarningAction SilentlyContinue)
     $redisOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 6379 -InformationLevel Quiet -WarningAction SilentlyContinue)
     $apiOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet -WarningAction SilentlyContinue)
+    $eraOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 5051 -InformationLevel Quiet -WarningAction SilentlyContinue)
 
     $tunnelToken = (Get-Content "D:\Aeirmist\.env" | Where-Object { $_ -match "^CLOUDFLARE_TUNNEL_TOKEN=(.*)" } | ForEach-Object { $Matches[1].Trim() })
     $tokenPrefix = if ($tunnelToken -and $tunnelToken.Length -ge 30) { $tunnelToken.Substring(0, 30) } else { "eyJhIjoiYmQ3MTI0NmVi" }
@@ -18,7 +19,7 @@ while ($true) {
         $_.CommandLine -match "60056f69" -or $_.CommandLine -like "*$tokenPrefix*"
     })
 
-    if (-not $pgOpen -or -not $redisOpen -or -not $tunnelRunning -or -not $apiOpen) {
+    if (-not $pgOpen -or -not $redisOpen -or -not $tunnelRunning -or -not $apiOpen -or -not $eraOpen) {
         powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "D:\Aeirmist\scripts\start-services.ps1"
         Start-Sleep -Seconds 10
     }

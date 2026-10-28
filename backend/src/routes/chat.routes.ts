@@ -10,6 +10,7 @@ import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 import { redis } from '../db/redis';
+import { ERA_AI_USER_ID, triggerEraAssistantReply } from '../lib/eraAi';
 
 const router = Router();
 
@@ -37,6 +38,10 @@ const GroupChatSchema = z.object({
 
 async function resolveUserId(rawId: string): Promise<string | null> {
   if (!rawId || typeof rawId !== 'string') return null;
+  const clean = rawId.trim().toLowerCase();
+  if (clean === 'era' || clean === 'era_ai' || clean === 'usr_aeirmist_era_ai_official' || clean === ERA_AI_USER_ID) {
+    return ERA_AI_USER_ID;
+  }
   return UserDAL.resolveToUserId(rawId);
 }
 
@@ -292,6 +297,15 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
       if (m.profileId) broadcaster = broadcaster.to(`user:${m.profileId}`);
     }
     broadcaster.emit('new_message', broadcastPayload);
+
+    // Trigger Era AI Assistant if this conversation is with Era AI or mentions @Era
+    const isEraParticipant = members.some(m => m.userId === ERA_AI_USER_ID);
+    const mentionsEra = data.content && /@era\b/i.test(data.content);
+    if ((isEraParticipant || mentionsEra) && data.content && req.user!.userId !== ERA_AI_USER_ID) {
+      triggerEraAssistantReply(convId, data.content, req.user!.userId).catch(err => {
+        console.error('⚠️ [Era AI Bridge] Failed to execute Era assistant reply:', err);
+      });
+    }
 
     // Asynchronously dispatch in-app notifications for message recipients
     (async () => {

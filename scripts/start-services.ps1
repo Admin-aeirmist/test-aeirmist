@@ -81,11 +81,21 @@ if (-not $NoTunnel) {
 # 4. Backend API (Port 4000)
 $apiPortOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet -WarningAction SilentlyContinue)
 if (-not $apiPortOpen) {
-    Write-Host "[4/4] Starting Backend Node API (Port 4000)..." -ForegroundColor Yellow
+    Write-Host "[4/5] Starting Backend Node API (Port 4000)..." -ForegroundColor Yellow
     Start-Process -FilePath "cmd.exe" -ArgumentList "/c cd /d D:\Aeirmist\backend && npm start" -WindowStyle Hidden
     Start-Sleep -Seconds 5
 } else {
-    Write-Host "[4/4] Backend API is already running (Port 4000)." -ForegroundColor Green
+    Write-Host "[4/5] Backend API is already running (Port 4000)." -ForegroundColor Green
+}
+
+# 5. Era AI Engine (Port 5051)
+$eraPortOpen = (Test-NetConnection -ComputerName 127.0.0.1 -Port 5051 -InformationLevel Quiet -WarningAction SilentlyContinue)
+if (-not $eraPortOpen) {
+    Write-Host "[5/5] Starting Era AI Autonomous Engine (Port 5051)..." -ForegroundColor Yellow
+    Start-Process -FilePath "python.exe" -ArgumentList "studio_server.py" -WorkingDirectory "D:\ai\Era" -WindowStyle Hidden
+    Start-Sleep -Seconds 3
+} else {
+    Write-Host "[5/5] Era AI Engine is already running (Port 5051)." -ForegroundColor Green
 }
 
 # Verify Health

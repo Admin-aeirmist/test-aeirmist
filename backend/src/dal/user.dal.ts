@@ -223,6 +223,10 @@ export class UserDAL {
     if (!rawId || typeof rawId !== 'string') return null;
     let cleanId = rawId.startsWith('profile_') ? rawId.replace(/^profile_/, '') : rawId;
     cleanId = cleanId.replace(/_\d{10,14}$/, ''); // Strip trailing Unix timestamp if present
+
+    if (cleanId === 'era' || cleanId === 'era_ai' || cleanId === 'usr_aeirmist_era_ai_official' || cleanId === '00000000-0000-4000-a000-000000000001') {
+      return '00000000-0000-4000-a000-000000000001';
+    }
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
     if (isUuid) {
       const u = await this.findById(cleanId);
