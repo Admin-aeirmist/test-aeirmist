@@ -56,7 +56,9 @@ import {
   ArrowLeft,
   Trash2,
   Check,
-  RotateCcw
+  RotateCcw,
+  Briefcase,
+  Code2
 } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useAeirmist } from '../context/AeirmistContext';
@@ -348,6 +350,31 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
                       <Settings size={17} className={settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'} />
                       <span>Settings</span>
                     </button>
+
+                    <a
+                      href="/business"
+                      onClick={() => setIsMoreMenuOpen(false)}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-colors w-full text-left text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10`}
+                    >
+                      <Briefcase size={17} className="text-cyan-400" />
+                      <div className="flex items-center gap-1.5">
+                        <span>Business Suite</span>
+                        <span className="px-1.5 py-0.2 rounded text-[8px] bg-cyan-400 text-black font-black">ERA AI</span>
+                      </div>
+                    </a>
+
+                    <a
+                      href="/tools/explorer"
+                      onClick={() => setIsMoreMenuOpen(false)}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors w-full text-left ${
+                        settings.themeMode === 'light'
+                          ? 'text-slate-800 hover:text-slate-950 hover:bg-slate-100'
+                          : 'text-white/90 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Code2 size={17} className={settings.themeMode === 'light' ? 'text-slate-600' : 'text-white/70'} />
+                      <span>Developer Tools</span>
+                    </a>
 
                     <button
                       onClick={() => {
