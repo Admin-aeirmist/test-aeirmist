@@ -106,6 +106,7 @@ const ProfileSystem = lazyWithRetry(() => import('./components/profile/ProfileSy
 const VideoFeed = lazyWithRetry(() => import('./components/videos/VideoFeed').then((m: any) => ({ default: m.VideoFeed || m.default })));
 const AdminPanel = lazyWithRetry(() => import('./components/admin/AdminPanel').then((m: any) => ({ default: m.AdminPanel || m.default })));
 const CommunityGuidelines = lazyWithRetry(() => import('./components/legal/CommunityGuidelines').then((m: any) => ({ default: m.CommunityGuidelines || m.default })));
+const GraphApiExplorer = lazyWithRetry(() => import('./components/developer/GraphApiExplorer').then((m: any) => ({ default: m.GraphApiExplorer || m.default })));
 
 const CallModal = lazyWithRetry(() => import('./components/CallModal').then((m: any) => ({ default: m.CallModal || m.default })));
 const AeirmistCamera = lazyWithRetry(() => import('./components/ui/AeirmistCamera').then((m: any) => ({ default: m.AeirmistCamera || m.default })));
@@ -397,6 +398,7 @@ function AppContent() {
   const navigationType = useNavigationType();
   const navigate = useNavigate();
   const isGuidelinesPage = location.pathname === '/community-guidelines';
+  const isToolsPage = location.pathname.startsWith('/tools');
   const { 
     loading, 
     user, 
@@ -1297,13 +1299,14 @@ function AppContent() {
     return undefined;
   };
 
-  if (isGuidelinesPage) {
+  if (isGuidelinesPage || isToolsPage) {
     return (
       <div className="flex-1 w-full relative overflow-hidden flex flex-col min-h-0 bg-aeirmist-bg">
         <GlobalAppBackground />
         <Suspense fallback={<LazyFallback />}>
           <Routes>
             <Route path="/community-guidelines" element={<CommunityGuidelines />} />
+            <Route path="/tools/*" element={<GraphApiExplorer isStandalone />} />
           </Routes>
         </Suspense>
       </div>
@@ -1941,6 +1944,7 @@ function AppContent() {
                 <Route path="/payment-success" element={<Suspense fallback={null}><PaymentResult status="success" /></Suspense>} />
                 <Route path="/payment-failure" element={<Suspense fallback={null}><PaymentResult status="failure" /></Suspense>} />
                 <Route path="/community-guidelines" element={<CommunityGuidelines />} />
+            <Route path="/tools/*" element={<GraphApiExplorer isStandalone />} />
                 <Route path="*" element={
                   <div className="w-full h-full flex-1 flex flex-col min-h-0 overflow-hidden relative">
                     {/* 1. Home Feed Tab */}
