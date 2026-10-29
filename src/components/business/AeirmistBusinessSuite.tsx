@@ -203,7 +203,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
       id: 'rule_3',
       name: 'Location & Office',
       keyword: 'location',
-      replyTemplate: 'Our digital headquarters is on Aeirmist Cloud, with regional teams in Dhaka and Singapore.',
+      replyTemplate: 'Aeirmist operates globally with distributed cloud nodes across North America, Europe, and Asia-Pacific.',
       enabled: true,
       triggerCount: 64
     }
@@ -248,10 +248,10 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
   const [productForm, setProductForm] = useState({
     title: '',
     price: '',
-    currency: 'BDT',
+    currency: 'USD',
     category: 'Electronics',
     condition: 'new',
-    location: 'Dhaka, Bangladesh',
+    location: 'San Francisco, CA (Worldwide)',
     description: ''
   });
 
@@ -259,37 +259,37 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
     {
       id: 'prod_1',
       title: 'Aeirmist Neural Audio Pro Headset (ANC 45dB)',
-      price: '8500',
-      currency: 'BDT',
+      price: '249',
+      currency: 'USD',
       category: 'Electronics',
       condition: 'new',
-      location: 'Gulshan 2, Dhaka',
+      location: 'San Francisco, CA (Worldwide)',
       status: 'active',
-      viewsCount: 1420,
+      viewsCount: 4820,
       createdAt: '2 days ago'
     },
     {
       id: 'prod_2',
       title: 'Creator Studio Mechanical Keyboard (Wireless RGB)',
-      price: '5200',
-      currency: 'BDT',
+      price: '129',
+      currency: 'USD',
       category: 'Electronics',
       condition: 'new',
-      location: 'Banani, Dhaka',
+      location: 'Austin, TX (Worldwide)',
       status: 'active',
-      viewsCount: 890,
+      viewsCount: 2340,
       createdAt: '5 days ago'
     },
     {
       id: 'prod_3',
       title: 'Minimalist Matte Creator Desk Mat (900x400mm)',
-      price: '1250',
-      currency: 'BDT',
+      price: '39',
+      currency: 'USD',
       category: 'Accessories',
       condition: 'new',
-      location: 'Dhanmondi, Dhaka',
+      location: 'London, UK (Worldwide)',
       status: 'active',
-      viewsCount: 430,
+      viewsCount: 1150,
       createdAt: '1 week ago'
     }
   ]);
@@ -297,25 +297,36 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
   const [marketplaceOrders, setMarketplaceOrders] = useState<MarketplaceOrder[]>([
     {
       id: 'ord_101',
-      customerName: 'Tanvir Ahmed',
-      customerHandle: '@tanvir_pro',
+      customerName: 'Alex Rivera',
+      customerHandle: '@arivera_tech',
       itemTitle: 'Aeirmist Neural Audio Pro Headset (ANC 45dB)',
-      totalAmount: '8,500',
-      currency: 'BDT',
+      totalAmount: '249.00',
+      currency: 'USD',
       status: 'pending',
-      paymentMethod: 'Cash on Delivery',
-      createdAt: '1 hour ago'
+      paymentMethod: 'Stripe (Visa •••• 4242)',
+      createdAt: '42 mins ago'
     },
     {
       id: 'ord_102',
-      customerName: 'Afsana Mimi',
-      customerHandle: '@mimi_tech',
+      customerName: 'Elena Rostova',
+      customerHandle: '@elena_design',
       itemTitle: 'Creator Studio Mechanical Keyboard (Wireless RGB)',
-      totalAmount: '5,200',
-      currency: 'BDT',
+      totalAmount: '129.00',
+      currency: 'USD',
       status: 'shipped',
-      paymentMethod: 'bKash Merchant',
+      paymentMethod: 'Apple Pay',
       createdAt: 'Yesterday'
+    },
+    {
+      id: 'ord_103',
+      customerName: 'Kenji Sato',
+      customerHandle: '@kenji_dev',
+      itemTitle: 'Minimalist Matte Creator Desk Mat (900x400mm)',
+      totalAmount: '39.00',
+      currency: 'USD',
+      status: 'confirmed',
+      paymentMethod: 'PayPal Express',
+      createdAt: '2 days ago'
     }
   ]);
 
@@ -344,10 +355,10 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
             id: it.id,
             title: it.title,
             price: it.price || '0',
-            currency: it.currency || 'BDT',
+            currency: it.currency || 'USD',
             category: it.category || 'General',
             condition: it.condition || 'new',
-            location: it.location || 'Dhaka',
+            location: it.location || 'Global',
             status: it.status || 'active',
             viewsCount: it.viewsCount || 0,
             createdAt: it.createdAt ? new Date(it.createdAt).toLocaleDateString() : 'Recent'
@@ -417,10 +428,10 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
       setProductForm({
         title: '',
         price: '',
-        currency: 'BDT',
+        currency: 'USD',
         category: 'Electronics',
         condition: 'new',
-        location: 'Dhaka, Bangladesh',
+        location: 'San Francisco, CA (Worldwide)',
         description: ''
       });
     } catch {
@@ -934,7 +945,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
 
                 <div className="p-4 rounded-xl bg-[#121624] border border-[#232b40] space-y-1">
                   <span className="text-[11px] font-medium text-white/40">Total Store Volume</span>
-                  <div className="text-xl md:text-2xl font-black text-white">৳ 13,700</div>
+                  <div className="text-xl md:text-2xl font-black text-white">$4,820 USD</div>
                   <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-0.5">
                     <TrendingUp size={11} /> 0% Platform Fees
                   </span>
@@ -1029,7 +1040,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                         </div>
 
                         <div className="col-span-2 font-mono font-bold text-sm text-emerald-300">
-                          ৳ {Number(prod.price).toLocaleString()} {prod.currency || 'BDT'}
+                          {prod.currency === 'USD' ? '$' : prod.currency === 'EUR' ? '€' : prod.currency === 'GBP' ? '£' : ''}{Number(prod.price).toLocaleString()} {prod.currency || 'USD'}
                         </div>
 
                         <div className="col-span-1 text-center font-mono text-xs text-white/60">
@@ -1076,7 +1087,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                         </div>
 
                         <div className="col-span-2">
-                          <div className="font-mono font-bold text-emerald-300">৳ {ord.totalAmount} {ord.currency}</div>
+                          <div className="font-mono font-bold text-emerald-300">{ord.currency === 'USD' ? '$' : ord.currency === 'EUR' ? '€' : ''}{ord.totalAmount} {ord.currency || 'USD'}</div>
                           <div className="text-[10px] text-white/50">{ord.paymentMethod}</div>
                         </div>
 
@@ -1142,7 +1153,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                           <Check size={14} /> Price & Stock Inquiries
                         </div>
                         <p className="text-[11px] text-white/60">
-                          Instantly quotes listed prices in BDT and checks catalog stock without human delay.
+                          Instantly quotes global multi-currency pricing (USD, EUR, GBP) and checks real-time inventory.
                         </p>
                       </div>
 
@@ -1151,7 +1162,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                           <Check size={14} /> Delivery & Payment Info
                         </div>
                         <p className="text-[11px] text-white/60">
-                          Explains inside Dhaka (60 BDT) / outside Dhaka (120 BDT) delivery and bKash / COD options.
+                          Answers international shipping timelines (FedEx, DHL Worldwide) and payment options (Stripe, Apple Pay, PayPal).
                         </p>
                       </div>
 
@@ -1160,7 +1171,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                           <Check size={14} /> Order Capture
                         </div>
                         <p className="text-[11px] text-white/60">
-                          Collects customer delivery address & contact number and logs the order directly into your Business Suite.
+                          Securely captures international shipping destinations and creates verified orders in Business Suite.
                         </p>
                       </div>
                     </div>
@@ -1171,12 +1182,12 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                         <input 
                           type="text" 
                           readOnly
-                          value="Customer: 'Bhai, Aeirmist Neural Audio Pro headset er price koto r delivery charges ki?'"
+                          value="Customer: 'Hi! Do you offer worldwide express shipping for the Neural Audio Pro headset?'"
                           className="flex-1 bg-[#121624] border border-[#232b40] rounded-xl px-3 py-2 text-xs text-white/80 font-mono outline-none"
                         />
                       </div>
                       <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-500/20 text-xs text-cyan-200 font-mono">
-                        🤖 <strong>Era AI:</strong> "Aeirmist Neural Audio Pro Headset er dam ৳ 8,500 BDT। Dhaka city te delivery charge ৳ 60 (24-48 hours) ebong Dhakar baire ৳ 120 (2-3 din)। Apni ki Cash on Delivery naki bKash e order korte chan? Apnar nam o thikana dile ami ekhoni order confirm kore dicchi!"
+                        🤖 <strong>Era AI:</strong> "Hello! Yes, we ship worldwide via DHL & FedEx Express (2-4 business days). The Neural Audio Pro Headset is $249 USD with complimentary tracked shipping and a 2-year international warranty. We accept Stripe, Apple Pay, and PayPal. Would you like me to reserve one for you?"
                       </div>
                     </div>
                   </div>
@@ -1567,24 +1578,24 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                   <span className="text-xs font-bold text-white uppercase tracking-wider">Reach by Region</span>
                   <div className="space-y-2 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-white/60">Dhaka & Bangladesh</span>
-                      <span className="font-mono text-cyan-300 font-bold">64%</span>
+                      <span className="text-white/60">North America (US & Canada)</span>
+                      <span className="font-mono text-cyan-300 font-bold">48%</span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
-                      <div className="h-full bg-cyan-400 rounded-full" style={{ width: '64%' }} />
+                      <div className="h-full bg-cyan-400 rounded-full" style={{ width: '48%' }} />
                     </div>
 
                     <div className="flex justify-between">
-                      <span className="text-white/60">United States & Canada</span>
-                      <span className="font-mono text-cyan-300 font-bold">22%</span>
+                      <span className="text-white/60">Europe & United Kingdom</span>
+                      <span className="font-mono text-cyan-300 font-bold">31%</span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full" style={{ width: '22%' }} />
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: '31%' }} />
                     </div>
 
                     <div className="flex justify-between">
-                      <span className="text-white/60">Europe & UK</span>
-                      <span className="font-mono text-cyan-300 font-bold">14%</span>
+                      <span className="text-white/60">Asia-Pacific & Global</span>
+                      <span className="font-mono text-cyan-300 font-bold">21%</span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
                       <div className="h-full bg-purple-500 rounded-full" style={{ width: '14%' }} />
@@ -1807,7 +1818,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                     <label className="text-[11px] font-bold text-white/60">Price</label>
                     <input 
                       type="number" 
-                      placeholder="e.g. 4500"
+                      placeholder="e.g. 249.00"
                       value={productForm.price}
                       onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
                       className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none font-mono focus:border-emerald-500/50"
@@ -1820,8 +1831,13 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                       onChange={(e) => setProductForm({ ...productForm, currency: e.target.value })}
                       className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none"
                     >
-                      <option value="BDT">BDT (৳ Taka)</option>
-                      <option value="USD">USD ($ Dollar)</option>
+                      <option value="USD">USD ($ United States Dollar)</option>
+                      <option value="EUR">EUR (€ Euro)</option>
+                      <option value="GBP">GBP (£ British Pound)</option>
+                      <option value="CAD">CAD ($ Canadian Dollar)</option>
+                      <option value="AUD">AUD ($ Australian Dollar)</option>
+                      <option value="JPY">JPY (¥ Japanese Yen)</option>
+                      <option value="BDT">BDT (৳ Bangladeshi Taka)</option>
                     </select>
                   </div>
                 </div>
@@ -1861,7 +1877,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                   <label className="text-[11px] font-bold text-white/60">Location / City</label>
                   <input 
                     type="text" 
-                    placeholder="e.g. Gulshan, Dhaka"
+                    placeholder="e.g. San Francisco, CA (or Worldwide Shipping)"
                     value={productForm.location}
                     onChange={(e) => setProductForm({ ...productForm, location: e.target.value })}
                     className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500/50"
