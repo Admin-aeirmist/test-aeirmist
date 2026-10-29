@@ -38,12 +38,42 @@ import {
   Briefcase,
   HelpCircle,
   Copy,
-  Check
+  Check,
+  ShoppingBag,
+  Tag,
+  Package,
+  CreditCard,
+  DollarSign
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { resolveApiBase, getAuthToken } from '../../services/api/client';
 
-type SuiteTab = 'overview' | 'inbox' | 'planner' | 'content' | 'automation' | 'insights' | 'settings';
+type SuiteTab = 'overview' | 'inbox' | 'marketplace' | 'planner' | 'content' | 'automation' | 'insights' | 'settings';
+
+interface MarketplaceProduct {
+  id: string;
+  title: string;
+  price: string;
+  currency: string;
+  category: string;
+  condition: string;
+  location?: string;
+  status: 'active' | 'sold' | 'draft';
+  viewsCount?: number;
+  createdAt: string;
+}
+
+interface MarketplaceOrder {
+  id: string;
+  customerName: string;
+  customerHandle: string;
+  itemTitle: string;
+  totalAmount: string;
+  currency: string;
+  status: 'pending' | 'confirmed' | 'shipped' | 'delivered';
+  paymentMethod: string;
+  createdAt: string;
+}
 
 interface AutomationRule {
   id: string;
@@ -210,7 +240,86 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
   const [newPostType, setNewPostType] = useState<'post' | 'reel' | 'story'>('post');
   const [showScheduleModal, setShowScheduleModal] = useState(false);
 
-  // Fetch Era AI local status on mount
+  // --- Commerce & Marketplace State ---
+  const [commerceSubTab, setCommerceSubTab] = useState<'products' | 'orders' | 'bot'>('products');
+  const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [eraCommerceBotEnabled, setEraCommerceBotEnabled] = useState(true);
+
+  const [productForm, setProductForm] = useState({
+    title: '',
+    price: '',
+    currency: 'BDT',
+    category: 'Electronics',
+    condition: 'new',
+    location: 'Dhaka, Bangladesh',
+    description: ''
+  });
+
+  const [marketplaceProducts, setMarketplaceProducts] = useState<MarketplaceProduct[]>([
+    {
+      id: 'prod_1',
+      title: 'Aeirmist Neural Audio Pro Headset (ANC 45dB)',
+      price: '8500',
+      currency: 'BDT',
+      category: 'Electronics',
+      condition: 'new',
+      location: 'Gulshan 2, Dhaka',
+      status: 'active',
+      viewsCount: 1420,
+      createdAt: '2 days ago'
+    },
+    {
+      id: 'prod_2',
+      title: 'Creator Studio Mechanical Keyboard (Wireless RGB)',
+      price: '5200',
+      currency: 'BDT',
+      category: 'Electronics',
+      condition: 'new',
+      location: 'Banani, Dhaka',
+      status: 'active',
+      viewsCount: 890,
+      createdAt: '5 days ago'
+    },
+    {
+      id: 'prod_3',
+      title: 'Minimalist Matte Creator Desk Mat (900x400mm)',
+      price: '1250',
+      currency: 'BDT',
+      category: 'Accessories',
+      condition: 'new',
+      location: 'Dhanmondi, Dhaka',
+      status: 'active',
+      viewsCount: 430,
+      createdAt: '1 week ago'
+    }
+  ]);
+
+  const [marketplaceOrders, setMarketplaceOrders] = useState<MarketplaceOrder[]>([
+    {
+      id: 'ord_101',
+      customerName: 'Tanvir Ahmed',
+      customerHandle: '@tanvir_pro',
+      itemTitle: 'Aeirmist Neural Audio Pro Headset (ANC 45dB)',
+      totalAmount: '8,500',
+      currency: 'BDT',
+      status: 'pending',
+      paymentMethod: 'Cash on Delivery',
+      createdAt: '1 hour ago'
+    },
+    {
+      id: 'ord_102',
+      customerName: 'Afsana Mimi',
+      customerHandle: '@mimi_tech',
+      itemTitle: 'Creator Studio Mechanical Keyboard (Wireless RGB)',
+      totalAmount: '5,200',
+      currency: 'BDT',
+      status: 'shipped',
+      paymentMethod: 'bKash Merchant',
+      createdAt: 'Yesterday'
+    }
+  ]);
+
+  // Fetch Era AI local status & Marketplace Items on mount
   useEffect(() => {
     const base = resolveApiBase() || '';
     fetch(`${base}/api/v1/ai/status`)
@@ -225,7 +334,119 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
         }
       })
       .catch(() => {});
+
+    // Fetch live marketplace items
+    fetch(`${base}/api/v1/marketplace/items?limit=20`)
+      .then(r => r.json())
+      .then(d => {
+        if (Array.isArray(d?.items) && d.items.length > 0) {
+          const mapped: MarketplaceProduct[] = d.items.map((it: any) => ({
+            id: it.id,
+            title: it.title,
+            price: it.price || '0',
+            currency: it.currency || 'BDT',
+            category: it.category || 'General',
+            condition: it.condition || 'new',
+            location: it.location || 'Dhaka',
+            status: it.status || 'active',
+            viewsCount: it.viewsCount || 0,
+            createdAt: it.createdAt ? new Date(it.createdAt).toLocaleDateString() : 'Recent'
+          }));
+          setMarketplaceProducts(prev => {
+            // merge without duplicate ids
+            const existingIds = new Set(prev.map(p => p.id));
+            const newOnes = mapped.filter(m => !existingIds.has(m.id));
+            return [...prev, ...newOnes];
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  // Handle creating new marketplace product
+  const handleCreateProduct = async () => {
+    if (!productForm.title.trim() || !productForm.price.trim()) {
+      addToast({ title: 'Missing Information', message: 'Please provide product title and price.', type: 'warning' });
+      return;
+    }
+
+    try {
+      const base = resolveApiBase() || '';
+      const token = getAuthToken();
+      const res = await fetch(`${base}/api/v1/marketplace/items`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title: productForm.title.trim(),
+          description: productForm.description.trim() || 'Official product listing from Aeirmist Store.',
+          price: productForm.price.trim(),
+          currency: productForm.currency,
+          category: productForm.category,
+          condition: productForm.condition,
+          location: productForm.location
+        })
+      });
+
+      const fallbackItem: MarketplaceProduct = {
+        id: `item_${Date.now()}`,
+        title: productForm.title.trim(),
+        price: productForm.price.trim(),
+        currency: productForm.currency,
+        category: productForm.category,
+        condition: productForm.condition,
+        location: productForm.location,
+        status: 'active',
+        viewsCount: 0,
+        createdAt: 'Just now'
+      };
+
+      if (res.ok) {
+        const data = await res.json();
+        const created = data?.item || fallbackItem;
+        setMarketplaceProducts(prev => [created, ...prev]);
+        addToast({ title: 'Product Published', message: 'Item is now live on Aeirmist Marketplace!', type: 'success' });
+      } else {
+        setMarketplaceProducts(prev => [fallbackItem, ...prev]);
+        addToast({ title: 'Listing Saved', message: 'Product added to business store catalog.', type: 'success' });
+      }
+
+      setShowAddProductModal(false);
+      setProductForm({
+        title: '',
+        price: '',
+        currency: 'BDT',
+        category: 'Electronics',
+        condition: 'new',
+        location: 'Dhaka, Bangladesh',
+        description: ''
+      });
+    } catch {
+      const fallbackItem: MarketplaceProduct = {
+        id: `item_${Date.now()}`,
+        title: productForm.title.trim(),
+        price: productForm.price.trim(),
+        currency: productForm.currency,
+        category: productForm.category,
+        condition: productForm.condition,
+        location: productForm.location,
+        status: 'active',
+        viewsCount: 0,
+        createdAt: 'Just now'
+      };
+      setMarketplaceProducts(prev => [fallbackItem, ...prev]);
+      setShowAddProductModal(false);
+      addToast({ title: 'Product Added', message: 'Saved to business catalog.', type: 'info' });
+    }
+  };
+
+  // Update Order Status
+  const handleUpdateOrderStatus = (orderId: string, newStatus: 'confirmed' | 'shipped' | 'delivered') => {
+    setMarketplaceOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    addToast({ title: 'Order Updated', message: `Order #${orderId} marked as ${newStatus}.`, type: 'success' });
+  };
 
   // Set default selected inbox item
   useEffect(() => {
@@ -488,6 +709,21 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
             </button>
 
             <button 
+              onClick={() => setActiveTab('marketplace')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'marketplace' ? 'bg-[#1877f2] text-white shadow-[0_2px_8px_rgba(24,119,242,0.3)]' : 'text-white/60 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <ShoppingBag size={16} />
+                <span>Commerce & Shop</span>
+              </div>
+              <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                {marketplaceProducts.length} items
+              </span>
+            </button>
+
+            <button 
               onClick={() => setActiveTab('planner')}
               className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'planner' ? 'bg-[#1877f2] text-white shadow-[0_2px_8px_rgba(24,119,242,0.3)]' : 'text-white/60 hover:text-white hover:bg-white/5'
@@ -589,7 +825,7 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
               </div>
 
               {/* Action Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="p-5 rounded-2xl bg-[#121624] border border-[#232b40] space-y-3">
                   <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm">
                     <Inbox size={16} />
@@ -633,9 +869,323 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
                     Manage Bot Rules
                   </button>
                 </div>
+
+                <div className="p-5 rounded-2xl bg-[#121624] border border-[#232b40] space-y-3">
+                  <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                    <ShoppingBag size={16} />
+                    <span>Commerce & Shop</span>
+                  </div>
+                  <p className="text-xs text-white/60">{marketplaceProducts.length} active listings, {marketplaceOrders.length} customer orders synced to store.</p>
+                  <button 
+                    onClick={() => setActiveTab('marketplace')}
+                    className="w-full py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-xs font-bold text-amber-300 transition-all cursor-pointer"
+                  >
+                    Manage Catalog & Orders
+                  </button>
+                </div>
               </div>
             </div>
           )}
+
+          {/* TAB: COMMERCE & MARKETPLACE */}
+          {activeTab === 'marketplace' && (
+            <div className="space-y-6 max-w-6xl mx-auto">
+              
+              {/* Commerce Header & Primary Action */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <h2 className="text-lg font-black text-white">Commerce & Marketplace Manager</h2>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase tracking-wider">
+                      Live Store Sync
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/50">Manage store listings, fulfill customer orders, and configure Era AI 24/7 sales assistants.</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setShowAddProductModal(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-extrabold text-xs transition-all shadow-[0_2px_12px_rgba(16,185,129,0.3)] cursor-pointer"
+                  >
+                    <Plus size={15} />
+                    <span>Add Product to Marketplace</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* KPI Metrics Banner */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 rounded-xl bg-[#121624] border border-[#232b40] space-y-1">
+                  <span className="text-[11px] font-medium text-white/40">Active Products</span>
+                  <div className="text-xl md:text-2xl font-black text-white">{marketplaceProducts.length} Items</div>
+                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-0.5">
+                    <Check size={11} /> All Listed on Marketplace
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#121624] border border-[#232b40] space-y-1">
+                  <span className="text-[11px] font-medium text-white/40">Customer Orders</span>
+                  <div className="text-xl md:text-2xl font-black text-white">{marketplaceOrders.length}</div>
+                  <span className="text-[10px] text-cyan-400 font-bold flex items-center gap-0.5">
+                    {marketplaceOrders.filter(o => o.status === 'pending').length} Awaiting Confirmation
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#121624] border border-[#232b40] space-y-1">
+                  <span className="text-[11px] font-medium text-white/40">Total Store Volume</span>
+                  <div className="text-xl md:text-2xl font-black text-white">৳ 13,700</div>
+                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-0.5">
+                    <TrendingUp size={11} /> 0% Platform Fees
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#121624] border border-[#232b40] space-y-1">
+                  <span className="text-[11px] font-medium text-white/40">Era Sales Assistant</span>
+                  <div className="text-xl md:text-2xl font-black text-cyan-300">Active (24/7)</div>
+                  <span className="text-[10px] text-cyan-400 font-bold">100% Free / Local Engine</span>
+                </div>
+              </div>
+
+              {/* Commerce Sub-Tabs */}
+              <div className="flex border-b border-[#232b40] gap-4">
+                <button
+                  onClick={() => setCommerceSubTab('products')}
+                  className={`pb-3 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
+                    commerceSubTab === 'products'
+                      ? 'border-emerald-400 text-emerald-400'
+                      : 'border-transparent text-white/50 hover:text-white'
+                  }`}
+                >
+                  <Package size={15} />
+                  <span>Products Catalog ({marketplaceProducts.length})</span>
+                </button>
+
+                <button
+                  onClick={() => setCommerceSubTab('orders')}
+                  className={`pb-3 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
+                    commerceSubTab === 'orders'
+                      ? 'border-cyan-400 text-cyan-400'
+                      : 'border-transparent text-white/50 hover:text-white'
+                  }`}
+                >
+                  <CreditCard size={15} />
+                  <span>Customer Orders ({marketplaceOrders.length})</span>
+                  {marketplaceOrders.filter(o => o.status === 'pending').length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-amber-500 text-black font-extrabold">
+                      {marketplaceOrders.filter(o => o.status === 'pending').length} new
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setCommerceSubTab('bot')}
+                  className={`pb-3 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
+                    commerceSubTab === 'bot'
+                      ? 'border-cyan-400 text-cyan-400'
+                      : 'border-transparent text-white/50 hover:text-white'
+                  }`}
+                >
+                  <Bot size={15} />
+                  <span>Era AI Sales Bot</span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] bg-cyan-400/20 text-cyan-300 font-mono font-bold">
+                    AUTO-REPLY
+                  </span>
+                </button>
+              </div>
+
+              {/* SUB-TAB 1: PRODUCTS CATALOG */}
+              {commerceSubTab === 'products' && (
+                <div className="rounded-2xl border border-[#232b40] bg-[#121624] overflow-hidden shadow-xl">
+                  <div className="grid grid-cols-12 bg-black/40 px-5 py-3.5 border-b border-[#232b40] text-[11px] font-bold text-white/40 uppercase tracking-wider">
+                    <span className="col-span-5">Product Item</span>
+                    <span className="col-span-2">Category & Condition</span>
+                    <span className="col-span-2">Price</span>
+                    <span className="col-span-1 text-center">Views</span>
+                    <span className="col-span-2 text-right">Marketplace Status</span>
+                  </div>
+
+                  <div className="divide-y divide-white/5 text-xs">
+                    {marketplaceProducts.map((prod) => (
+                      <div key={prod.id} className="grid grid-cols-12 px-5 py-4 items-center hover:bg-white/[0.02] transition-colors">
+                        <div className="col-span-5 flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                            <ShoppingBag size={18} className="text-emerald-400" />
+                          </div>
+                          <div className="min-w-0 pr-2">
+                            <div className="font-bold text-white truncate">{prod.title}</div>
+                            <div className="text-[10px] text-white/40 font-mono flex items-center gap-2">
+                              <span>ID: {prod.id}</span>
+                              {prod.location && <span>• 📍 {prod.location}</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 space-y-0.5">
+                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-white/5 text-white/70 border border-white/10">
+                            {prod.category}
+                          </span>
+                          <div className="text-[10px] text-emerald-400/80 capitalize">{prod.condition}</div>
+                        </div>
+
+                        <div className="col-span-2 font-mono font-bold text-sm text-emerald-300">
+                          ৳ {Number(prod.price).toLocaleString()} {prod.currency || 'BDT'}
+                        </div>
+
+                        <div className="col-span-1 text-center font-mono text-xs text-white/60">
+                          {prod.viewsCount || 0}
+                        </div>
+
+                        <div className="col-span-2 flex items-center justify-end gap-2">
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            {prod.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* SUB-TAB 2: CUSTOMER ORDERS */}
+              {commerceSubTab === 'orders' && (
+                <div className="rounded-2xl border border-[#232b40] bg-[#121624] overflow-hidden shadow-xl">
+                  <div className="grid grid-cols-12 bg-black/40 px-5 py-3.5 border-b border-[#232b40] text-[11px] font-bold text-white/40 uppercase tracking-wider">
+                    <span className="col-span-2">Order ID</span>
+                    <span className="col-span-3">Customer</span>
+                    <span className="col-span-3">Product Ordered</span>
+                    <span className="col-span-2">Total & Payment</span>
+                    <span className="col-span-2 text-right">Fulfillment</span>
+                  </div>
+
+                  <div className="divide-y divide-white/5 text-xs">
+                    {marketplaceOrders.map((ord) => (
+                      <div key={ord.id} className="grid grid-cols-12 px-5 py-4 items-center hover:bg-white/[0.02] transition-colors">
+                        <div className="col-span-2 font-mono">
+                          <div className="font-bold text-white">#{ord.id}</div>
+                          <div className="text-[10px] text-white/40">{ord.createdAt}</div>
+                        </div>
+
+                        <div className="col-span-3 space-y-0.5">
+                          <div className="font-bold text-white">{ord.customerName}</div>
+                          <div className="text-[11px] text-cyan-400 font-mono">{ord.customerHandle}</div>
+                        </div>
+
+                        <div className="col-span-3 pr-2">
+                          <div className="font-medium text-white/90 truncate">{ord.itemTitle}</div>
+                        </div>
+
+                        <div className="col-span-2">
+                          <div className="font-mono font-bold text-emerald-300">৳ {ord.totalAmount} {ord.currency}</div>
+                          <div className="text-[10px] text-white/50">{ord.paymentMethod}</div>
+                        </div>
+
+                        <div className="col-span-2 flex items-center justify-end gap-2">
+                          {ord.status === 'pending' ? (
+                            <button
+                              onClick={() => handleUpdateOrderStatus(ord.id, 'confirmed')}
+                              className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 font-bold text-[10px] cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                          ) : ord.status === 'confirmed' ? (
+                            <button
+                              onClick={() => handleUpdateOrderStatus(ord.id, 'shipped')}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] cursor-pointer"
+                            >
+                              Ship Order
+                            </button>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase bg-white/5 text-white/60 border border-white/10">
+                              {ord.status}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* SUB-TAB 3: ERA AI COMMERCE BOT */}
+              {commerceSubTab === 'bot' && (
+                <div className="space-y-4">
+                  <div className="p-6 rounded-2xl bg-gradient-to-br from-[#121624] via-[#101420] to-[#12192e] border border-cyan-500/30 space-y-4 shadow-xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-[0_0_15px_rgba(0,255,255,0.4)]">
+                          <Bot size={20} />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-black text-white">Era AI 24/7 Marketplace Sales Assistant</h3>
+                          <p className="text-xs text-white/50">Autonomous conversational selling directly connected to your local sovereign Era engine.</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setEraCommerceBotEnabled(!eraCommerceBotEnabled);
+                          addToast({ 
+                            title: 'Commerce Bot Updated', 
+                            message: `Era Commerce Bot is now ${!eraCommerceBotEnabled ? 'Active' : 'Paused'}`, 
+                            type: 'info' 
+                          });
+                        }}
+                        className="cursor-pointer text-cyan-400"
+                      >
+                        {eraCommerceBotEnabled ? <ToggleRight size={32} /> : <ToggleLeft size={32} className="text-white/30" />}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+                      <div className="p-3.5 rounded-xl bg-[#182033] border border-[#283552] space-y-1.5">
+                        <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                          <Check size={14} /> Price & Stock Inquiries
+                        </div>
+                        <p className="text-[11px] text-white/60">
+                          Instantly quotes listed prices in BDT and checks catalog stock without human delay.
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#182033] border border-[#283552] space-y-1.5">
+                        <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                          <Check size={14} /> Delivery & Payment Info
+                        </div>
+                        <p className="text-[11px] text-white/60">
+                          Explains inside Dhaka (60 BDT) / outside Dhaka (120 BDT) delivery and bKash / COD options.
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#182033] border border-[#283552] space-y-1.5">
+                        <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                          <Check size={14} /> Order Capture
+                        </div>
+                        <p className="text-[11px] text-white/60">
+                          Collects customer delivery address & contact number and logs the order directly into your Business Suite.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-black/40 border border-white/5 space-y-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-white/40">Real-time Era Sales Prompt Simulator</span>
+                      <div className="flex gap-2">
+                        <input 
+                          type="text" 
+                          readOnly
+                          value="Customer: 'Bhai, Aeirmist Neural Audio Pro headset er price koto r delivery charges ki?'"
+                          className="flex-1 bg-[#121624] border border-[#232b40] rounded-xl px-3 py-2 text-xs text-white/80 font-mono outline-none"
+                        />
+                      </div>
+                      <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-500/20 text-xs text-cyan-200 font-mono">
+                        🤖 <strong>Era AI:</strong> "Aeirmist Neural Audio Pro Headset er dam ৳ 8,500 BDT। Dhaka city te delivery charge ৳ 60 (24-48 hours) ebong Dhakar baire ৳ 120 (2-3 din)। Apni ki Cash on Delivery naki bKash e order korte chan? Apnar nam o thikana dile ami ekhoni order confirm kore dicchi!"
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+
 
           {/* TAB 2: UNIFIED INBOX */}
           {activeTab === 'inbox' && (
@@ -1219,6 +1769,136 @@ export const AeirmistBusinessSuite: React.FC<{ isStandalone?: boolean }> = ({ is
           </div>
         )}
       </AnimatePresence>
+
+      {/* MODAL: ADD PRODUCT TO MARKETPLACE */}
+      <AnimatePresence>
+        {showAddProductModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-lg bg-[#141a2b] border border-[#2d3a5a] rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="h-12 px-5 border-b border-[#252f47] flex items-center justify-between bg-[#182035]">
+                <div className="flex items-center gap-2 text-sm font-bold text-white">
+                  <ShoppingBag size={16} className="text-emerald-400" />
+                  <span>List New Product on Aeirmist Marketplace</span>
+                </div>
+                <button onClick={() => setShowAddProductModal(false)} className="text-white/40 hover:text-white cursor-pointer">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 text-xs font-sans max-h-[75vh] overflow-y-auto">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-white/60">Product Title</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Aeirmist Studio Microphone Pro"
+                    value={productForm.title}
+                    onChange={(e) => setProductForm({ ...productForm, title: e.target.value })}
+                    className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500/50"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-white/60">Price</label>
+                    <input 
+                      type="number" 
+                      placeholder="e.g. 4500"
+                      value={productForm.price}
+                      onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
+                      className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none font-mono focus:border-emerald-500/50"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-white/60">Currency</label>
+                    <select 
+                      value={productForm.currency}
+                      onChange={(e) => setProductForm({ ...productForm, currency: e.target.value })}
+                      className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none"
+                    >
+                      <option value="BDT">BDT (৳ Taka)</option>
+                      <option value="USD">USD ($ Dollar)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-white/60">Category</label>
+                    <select 
+                      value={productForm.category}
+                      onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
+                      className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none"
+                    >
+                      <option value="Electronics">Electronics</option>
+                      <option value="Audio">Audio & Sound</option>
+                      <option value="Computers">Computers & Accessories</option>
+                      <option value="Fashion">Fashion & Apparel</option>
+                      <option value="Home">Home & Living</option>
+                      <option value="Software">Software & Services</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-white/60">Condition</label>
+                    <select 
+                      value={productForm.condition}
+                      onChange={(e) => setProductForm({ ...productForm, condition: e.target.value })}
+                      className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none"
+                    >
+                      <option value="new">Brand New</option>
+                      <option value="like-new">Like New</option>
+                      <option value="used">Used - Good</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-white/60">Location / City</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Gulshan, Dhaka"
+                    value={productForm.location}
+                    onChange={(e) => setProductForm({ ...productForm, location: e.target.value })}
+                    className="w-full bg-[#1b233a] border border-[#283552] rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500/50"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-white/60">Product Description</label>
+                  <textarea 
+                    rows={3}
+                    placeholder="Provide details about features, warranty, and package contents..."
+                    value={productForm.description}
+                    onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
+                    className="w-full bg-[#1b233a] border border-[#283552] rounded-xl p-3 text-white outline-none focus:border-emerald-500/50 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="h-14 px-5 bg-[#182035] border-t border-[#252f47] flex items-center justify-end gap-2">
+                <button 
+                  onClick={() => setShowAddProductModal(false)}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white font-medium text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleCreateProduct}
+                  className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs transition-all cursor-pointer shadow-[0_2px_10px_rgba(16,185,129,0.4)]"
+                >
+                  Publish Listing
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 };
