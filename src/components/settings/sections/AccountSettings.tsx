@@ -4,7 +4,7 @@ import {
   User, Camera, Mail, ShieldCheck, Phone, Calendar, MapPin, Globe, Info, 
   Trash2, Download, Check, AlertCircle, Save, FileText, CheckCircle2, 
   X, RefreshCw, Eye, Sparkles, AlertTriangle, ShieldAlert, Award, Tag, LogOut, ExternalLink,
-  Heart, Users, Lock, ChevronDown, ChevronRight, ChevronLeft, Clock, PauseCircle, UserX, Edit2
+  Heart, Users, Lock, ChevronDown, ChevronRight, ChevronLeft, Clock, PauseCircle, UserX, Edit2, Briefcase
 } from 'lucide-react';
 import { getAvatarUrl } from '../../../lib/avatar';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -1004,15 +1004,26 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
               </div>
             </div>
 
-            {/* ACCOUNT TYPE BADGE */}
+            {/* ACCOUNT TYPE & PROFESSIONAL BADGES */}
             <div className="flex items-center justify-between mt-4 px-1">
               <span className={`text-[10px] uppercase tracking-wider font-bold ${isLight ? 'text-slate-600' : 'text-white/70'}`}>Account Visibility</span>
               <span className={`text-[9px] font-mono font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full border ${
-                formData.privacySettings?.privateProfile 
+                formData.privacySettings?.privateProfile || formData.isPrivate
                   ? 'bg-aeirmist-magenta/10 border-aeirmist-magenta/30 text-aeirmist-magenta' 
                   : 'bg-aeirmist-cyan/10 border-aeirmist-cyan/30 text-aeirmist-cyan'
               }`}>
-                {formData.privacySettings?.privateProfile ? 'Private' : 'Public'}
+                {formData.privacySettings?.privateProfile || formData.isPrivate ? 'Private' : 'Public'}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between mt-2 px-1">
+              <span className={`text-[10px] uppercase tracking-wider font-bold ${isLight ? 'text-slate-600' : 'text-white/70'}`}>Account Type</span>
+              <span className={`text-[9px] font-mono font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full border ${
+                formData.isProfessional
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                  : 'bg-white/5 border-white/10 text-white/60'
+              }`}>
+                {formData.isProfessional ? 'Professional' : 'Personal'}
               </span>
             </div>
 
@@ -1392,6 +1403,57 @@ const AccountSettings: React.FC<AccountSettingsProps> = ({
                       <option key={cat} value={cat} className={isLight ? 'bg-white' : 'bg-slate-900'}>{cat}</option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* PROFESSIONAL ACCOUNT TOGGLE SWITCH */}
+              <div className={`p-4 rounded-2xl border transition-all ${
+                formData.isProfessional 
+                  ? 'bg-emerald-500/5 border-emerald-500/20' 
+                  : isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-800/50 border-white/5'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Briefcase size={15} className={formData.isProfessional ? 'text-emerald-400' : 'text-cyan-400'} />
+                      <h4 className={`text-xs font-black uppercase tracking-wider ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                        Professional Account
+                      </h4>
+                      <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${
+                        formData.isProfessional
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                          : 'bg-white/5 border-white/10 text-white/50'
+                      }`}>
+                        {formData.isProfessional ? 'ACTIVE' : 'OFF'}
+                      </span>
+                    </div>
+                    <p className={`text-[11px] max-w-md ${isLight ? 'text-slate-600' : 'text-white/60'}`}>
+                      Unlock Aeirmist Business Suite, Era AI Sales &amp; Inbox Bot, Marketplace Commerce store, and unified creator analytics.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextState = !formData.isProfessional;
+                      handleFieldChange('isProfessional', nextState);
+                      // If enabling professional, also ensure account is public
+                      if (nextState) {
+                        handleFieldChange('isPrivate', false);
+                        handleFieldChange('privacySettings', {
+                          ...(formData.privacySettings || {}),
+                          privateProfile: false,
+                          privateAccount: false
+                        });
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      formData.isProfessional
+                        ? 'bg-emerald-500 hover:bg-emerald-600 text-black shadow-lg shadow-emerald-500/20'
+                        : 'bg-cyan-500 hover:bg-cyan-600 text-black shadow-lg shadow-cyan-500/20'
+                    }`}
+                  >
+                    {formData.isProfessional ? 'Switch to Personal' : 'Switch to Professional'}
+                  </button>
                 </div>
               </div>
             </div>
