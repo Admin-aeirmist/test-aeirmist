@@ -75,7 +75,7 @@ export const MemberDetailsSheet: React.FC<MemberDetailsSheetProps> = ({
   const displayName = member.displayName || member.name || 'Aeirmist Member';
   const username = member.username || memberId;
   const photoURL = getAvatarUrl(member.photoURL);
-  const isVerified = member.verified !== false && member.isVerified !== false;
+  const isVerified = Boolean(member.isVerified === true || member.verified === true || member.badge === 'verified' || member.badge === 'admin' || member.isAdmin === true);
 
   // Role permissions checks
   const canSetNickname = isCurrentAdmin || isSelf;
