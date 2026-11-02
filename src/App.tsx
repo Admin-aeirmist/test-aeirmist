@@ -1592,6 +1592,7 @@ function AppContent() {
     location.pathname.startsWith('/reels/') ||
     location.pathname.startsWith('/@') ||
     location.pathname.startsWith('/profile/') ||
+    /^\/\d{11}/.test(location.pathname) ||
     location.pathname.startsWith('/u/') ||
     location.pathname.startsWith('/story/') ||
     location.pathname.startsWith('/stories/') ||

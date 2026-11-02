@@ -180,6 +180,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         const mapped = {
           ...p,
           id: p.id,
+          accountId: p.accountId || (p.userId === profile?.userId ? profile?.accountId : null),
           uid: p.firebaseUid || p.userId,
           ownerUid: p.firebaseUid || p.userId,
           displayName: p.displayName || p.username || 'User',

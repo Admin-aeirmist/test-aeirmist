@@ -362,7 +362,7 @@ router.post('/login', authRateLimiter, async (req, res: Response) => {
       }));
 
       // Send OTP to user's verified email
-      await sendOtpEmail(user.email, otp, 'login');
+      sendOtpEmail(user.email, otp, 'login').catch(e => console.warn('[2FA Email dispatch notice]:', e?.message || e));
       console.log(`🛡️ [Login 2FA OTP] Security code sent to ${user.email} (prefix: ${otp.slice(0, 2)}****)`);
 
       return res.json({

@@ -353,8 +353,10 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
           }
           await complete2FALogin(res);
           analytics.trackAuth('login', 'email_2fa');
-          resetRouteToHomeFeed();
+          setIsVerifying2FA(false);
+          setLoading(false);
           setIsSuccess(true);
+          resetRouteToHomeFeed();
           if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
           return;
         }

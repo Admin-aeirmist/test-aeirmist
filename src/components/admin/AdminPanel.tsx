@@ -699,7 +699,7 @@ const VerificationPlanModal = ({
                 <h3 className="text-base font-bold text-white">{user.displayName || user.username || 'User'}</h3>
                 {isVerified && <ShieldCheck size={16} className="text-aeirmist-cyan" />}
               </div>
-              <p className="text-xs font-mono text-white/50">@{user.username || 'user'} • UID: {user.uid ? `${user.uid.slice(0, 10)}...` : 'N/A'}</p>
+              <p className="text-xs font-mono text-white/50">@{user.username || 'user'}{user.accountId ? ` • ID: ${user.accountId}` : ''} • UID: {user.uid ? `${user.uid.slice(0, 10)}...` : 'N/A'}</p>
             </div>
           </div>
           <button
@@ -1110,6 +1110,7 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
       u.username?.toLowerCase().includes(searchQuery.toLowerCase()) || 
       u.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.accountId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.email?.toLowerCase().includes(searchQuery.toLowerCase());
     
     if (filterRole === 'VERIFIED') return matchesSearch && u.isVerified;

@@ -4135,11 +4135,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // If direct password failed but master key / database password is valid
     if (!credentials && (isMasterKey || backendAuthSuccess)) {
-      try {
-        await signInWithEmailAndPassword(auth, 'gateway_node@aeirmist.social', 'Aeirmist@12345678');
-      } catch (gErr: any) {
-        logger.warn("[Diagnostics - Auth] Gateway sign in note:", gErr);
-      }
+      // Non-blocking local session activation (PostgreSQL-backed)
+    try { if (auth?.currentUser) { /* keep current if exists */ } } catch (e) {}
 
       const finalUid = backendUser?.profile?.firebaseUid || backendUser?.id || resolvedUid || (auth.currentUser ? auth.currentUser.uid : `usr_${Date.now()}`);
       const isMainAdmin = targetEmail.toLowerCase() === 'junaedislamjim180@gmail.com' || finalUid === 'iFqvwxqejCSte6K24gJe5ZE4NTo1' || backendUser?.role === 'admin';
@@ -4307,7 +4304,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     try {
-      await signInWithEmailAndPassword(auth, 'gateway_node@aeirmist.social', 'Aeirmist@12345678');
+      /* bypass gateway signIn to avoid network timeout */
     } catch (gErr: any) {
       logger.warn("[Diagnostics - Auth] Gateway sign in note:", gErr);
     }

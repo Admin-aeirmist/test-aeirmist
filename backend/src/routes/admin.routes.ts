@@ -650,6 +650,7 @@ router.get('/users', authenticateToken, requireAdmin, async (_req: Authenticated
     const allUsers = await db
       .select({
         id: users.id,
+        accountId: users.accountId,
         email: users.email,
         role: users.role,
         status: users.status,

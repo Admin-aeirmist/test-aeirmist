@@ -19,6 +19,7 @@ import { relations } from 'drizzle-orm';
 // -------------------------------------------------------------
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
+  accountId: varchar('account_id', { length: 16 }).unique(),
   firebaseUid: varchar('firebase_uid', { length: 128 }).unique(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   passwordHash: varchar('password_hash', { length: 255 }),
@@ -39,6 +40,7 @@ export const users = pgTable('users', {
 
 export const profiles = pgTable('profiles', {
   id: uuid('id').defaultRandom().primaryKey(),
+  accountId: varchar('account_id', { length: 16 }).unique(),
   userId: uuid('user_id').notNull().unique().references(() => users.id, { onDelete: 'cascade' }),
   username: varchar('username', { length: 32 }).notNull().unique(),
   displayName: varchar('display_name', { length: 100 }).notNull(),
