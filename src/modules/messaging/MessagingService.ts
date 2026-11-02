@@ -924,6 +924,29 @@ class MessagingService {
 
   public async sendSystemEvent(_db: any, conversationId: string, eventText: string) {
     logger.info(`[MessagingService] System event for ${conversationId}: ${eventText}`);
+    try {
+      await api.chat.sendMessage(conversationId, {
+        content: eventText,
+        type: 'system',
+        metadata: { isSystem: true, eventText }
+      });
+    } catch (e) {}
+
+    if (_db) {
+      try {
+        const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
+        const msgRef = collection(_db, 'conversations', conversationId, 'messages');
+        await addDoc(msgRef, {
+          senderId: 'system',
+          senderUid: 'system',
+          type: 'system',
+          text: eventText,
+          createdAt: serverTimestamp(),
+          timestampMs: Date.now(),
+          metadata: { isSystem: true, eventText }
+        });
+      } catch (e) {}
+    }
   }
 
   public async addGroupMembers(_db: any, conversationId: string, _requesterId: string, newMemberIds: string[], _memberDetailsMap?: Record<string, any>, _actorName?: string) {

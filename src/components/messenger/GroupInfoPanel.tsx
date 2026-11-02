@@ -540,9 +540,32 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
             </div>
           )}
 
-          <p className="text-xs text-white/50 font-medium mt-1">
-            {resolvedMembers.length} {resolvedMembers.length === 1 ? 'member' : 'members'}
-          </p>
+          <div className="flex flex-col items-center gap-1 mt-1 text-center">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">
+                {chat.type === 'community' ? 'Community' : chat.type === 'team' ? 'Team' : 'Group'}
+              </span>
+              <span className="text-xs text-white/50 font-medium">
+                {resolvedMembers.length} {resolvedMembers.length === 1 ? 'member' : 'members'}
+              </span>
+            </div>
+            {(() => {
+              const ts = chat.createdAt || chat.timestampMs || chat.created_at;
+              if (!ts) return null;
+              const d = new Date(typeof ts === 'number' ? ts : (ts.seconds ? ts.seconds * 1000 : ts));
+              if (isNaN(d.getTime())) return null;
+              return (
+                <p className="text-[10px] text-white/40 font-mono mt-0.5">
+                  Created on {d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} at {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              );
+            })()}
+            {ownerId && (
+              <p className="text-[10px] text-white/40 flex items-center gap-1">
+                <span>👑 Created by <strong className="text-cyan-400">{resolvedMembers.find(m => (m.id || m.uid) === ownerId)?.displayName || 'Admin'}</strong></span>
+              </p>
+            )}
+          </div>
         </div>
 
         {/* META MESSENGER ACTION ROW */}

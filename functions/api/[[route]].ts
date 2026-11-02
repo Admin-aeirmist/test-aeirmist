@@ -1493,19 +1493,41 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         };
       });
 
+      const convType = body.type || "group";
+      const creatorName = authUser.displayName || authUser.username || "Admin";
+      const channelLabel = convType === 'community' ? 'community' : convType === 'team' ? 'team' : 'group';
+      const creationText = `${creatorName} created the ${channelLabel} "${body.title || 'Group Chat'}".`;
+
       const conv = {
         id: convId,
-        type: "group",
+        type: convType,
         title: body.title || "Group Chat",
         avatarKey: body.avatarKey || "",
-        lastMessagePreview: "Group created",
+        lastMessagePreview: creationText,
         lastMessageAt: new Date().toISOString(),
         unreadCount: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        createdBy: currentId,
+        owner: currentId,
+        admins: [currentId],
         participants
       };
       edgeConversations.unshift(conv);
+
+      const initialSysMsg = {
+        id: `sys_${Date.now()}`,
+        conversationId: convId,
+        senderId: "system",
+        senderUid: "system",
+        senderName: "Aeirmist",
+        type: "system",
+        text: creationText,
+        timestamp: new Date().toISOString(),
+        timestampMs: Date.now(),
+        createdAt: new Date().toISOString()
+      };
+      edgeMessagesMap.set(convId, [initialSysMsg]);
       return new Response(JSON.stringify({ conversation: conv }), { status: 201, headers: CORS_HEADERS });
     } catch {
       return new Response(JSON.stringify({ error: "Failed to create group conversation" }), { status: 400, headers: CORS_HEADERS });
