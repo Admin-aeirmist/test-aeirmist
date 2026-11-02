@@ -44,6 +44,7 @@ import {
   ChevronDown,
   Pin,
   ShoppingBag,
+  Link2,
   Scan,
   Fingerprint,
   Zap,
@@ -287,7 +288,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
         <div className="flex-1 overflow-y-auto py-1 space-y-1.5 min-h-0">
           <NavItem icon={<Home />} label="Home Feed" active={activeTab === 'feed'} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('feed'))} onMouseEnter={() => onPreload?.('feed')} />
           <NavItem icon={<Users />} label="Connections" active={activeTab === 'dashboard'} comingSoon={featureFlags?.discover === false} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('dashboard'))} onMouseEnter={() => onPreload?.('dashboard')} />
-          <NavItem icon={<ShoppingBag />} label="Marketplace" active={activeTab === 'discover'} comingSoon={featureFlags?.marketplace === false} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('discover'))} onMouseEnter={() => onPreload?.('discover')} />
+          <NavItem icon={<Link2 />} label="Bonds" active={activeTab === 'discover'} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('discover'))} onMouseEnter={() => onPreload?.('discover')} />
           <NavItem icon={<Film />} label="Videos" active={activeTab === 'videos'} comingSoon={featureFlags?.videos === false} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('videos'))} onMouseEnter={() => onPreload?.('videos')} />
           <NavItem icon={<MessageSquare />} label="Inbox" active={activeTab === 'messenger'} comingSoon={featureFlags?.inbox === false} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(() => onTabChange('messenger'))} onMouseEnter={() => onPreload?.('messenger')} badge={unreadMessagesCount} />
           <NavItem icon={<Bell />} label="Alerts" active={activeTab === 'notifications'} comingSoon={featureFlags?.notifications === false} isExpanded={isCurrentlyExpanded} onClick={() => handleItemClick(onNotificationsClick)} onMouseEnter={() => onPreload?.('notifications')} badge={unreadNotificationsCount} />

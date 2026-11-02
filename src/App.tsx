@@ -249,7 +249,7 @@ export const getPathForAppState = (
 
   switch (tab) {
     case 'feed': return '/';
-    case 'discover': return '/marketplace';
+    case 'discover': return '/bonds';
     case 'videos': return '/videos';
     case 'messenger': 
       if (vChatUid) return `/messages/${vChatUid}`;
@@ -309,7 +309,7 @@ export const getInitialStateFromPath = (path: string) => {
       : cleanPath.substring('/marketplace/item/'.length)).split('?')[0];
     return { tab: 'discover' as Tab, notifs: false, productId: productId || null };
   }
-  if (lowerPath === '/marketplace' || lowerPath === '/shop') {
+  if (lowerPath === '/bonds' || lowerPath === '/marketplace' || lowerPath === '/shop') {
     return { tab: 'discover' as Tab, notifs: false };
   }
 
@@ -2004,12 +2004,12 @@ function AppContent() {
                       </div>
                     )}
 
-                    {/* 3. Discover / Marketplace Tab */}
+                    {/* 3. Bonds Tab */}
                     {visitedTabs.has('discover') && (
                       <div
                         className={`flex-1 h-full overflow-y-auto overflow-x-hidden scroll-container flex flex-col ${activeTab === 'discover' ? '' : '!hidden'}`}
                       >
-                        {featureFlags?.marketplace === false ? (
+                        {false ? (
                           <ComingSoonScreen sectorName="Marketplace & E-Commerce" onHomeClick={() => setActiveTab('feed')} />
                         ) : (
                           <ErrorBoundary inline>
