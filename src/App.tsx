@@ -224,7 +224,8 @@ export const getPathForAppState = (
   vChatUid: string | null,
   vStoryUserId: string | null = null,
   vSettingsSection: string | null = null,
-  vIsPosting: boolean = false
+  vIsPosting: boolean = false,
+  ownProfile?: any
 ): string => {
   if (vPostId) return `/post/${vPostId}`;
   if (vVideoId) return `/videos/${vVideoId}`;
@@ -235,9 +236,10 @@ export const getPathForAppState = (
   if (vIsPosting) return '/create-post';
 
   if (tab === 'profile') {
-    if (vProfile?.username) return `/@${vProfile.username}`;
-    if (vProfile?.id) return `/profile/${vProfile.id}`;
-    return '/profile';
+    const target = vProfile || ownProfile;
+    const accountId = target?.accountId || (target?.id && /^\d{11}/.test(target.id) ? target.id : (target?.userId === '53c57429-0694-490f-ab2a-c47e2d7929ac' ? '10000000001' : '10000000001'));
+    const uName = target?.username ? `_${target.username}` : '';
+    return `/profile/${accountId}${uName}`;
   }
 
   if (tab === 'settings') {
@@ -334,7 +336,7 @@ export const getInitialStateFromPath = (path: string) => {
   }
 
   // 7. Profiles
-  if (lowerPath.startsWith('/@') || lowerPath.startsWith('/u/') || lowerPath.startsWith('/profile/')) {
+  if (lowerPath.startsWith('/@') || lowerPath.startsWith('/u/') || lowerPath.startsWith('/profile/') || /^\/\d{11}/.test(lowerPath)) {
     let username: string | null = null;
     let userId: string | null = null;
     if (lowerPath.startsWith('/@')) {
@@ -1190,7 +1192,8 @@ function AppContent() {
       messageRecipient?.id || null,
       storyState.activeStoryGroup?.userId || null,
       settingsSection,
-      isPosting
+      isPosting,
+      profile
     );
 
     const hState = window.history.state;
@@ -1584,6 +1587,8 @@ function AppContent() {
     storyState?.activeStoryGroup || 
     viewingStoreId || 
     viewingProductId ||
+    location.pathname === '/profile' ||
+    location.pathname.startsWith('/profile') ||
     location.pathname.startsWith('/post/') ||
     location.pathname.startsWith('/p/') ||
     location.pathname.startsWith('/video/') ||
@@ -1627,7 +1632,7 @@ function AppContent() {
   // If user is not logged in OR an action code (email verification/password reset) needs processing:
   // If they navigated directly to root / search ("aeirmist.com") or requested full auth: show full AuthSystem interface!
   // Only show public preview gateway if an actual shared URL is being viewed!
-  if ((!user || hasAuthActionCode) && (showFullAuth || !isSharedUrl || hasAuthActionCode)) {
+  if ((!user || hasAuthActionCode) && !hasCachedAuth && (showFullAuth || !isSharedUrl || hasAuthActionCode)) {
     // CRITICAL: If the user has a valid cached session, NEVER flash AuthSystem!
     // Instead, continue waiting or showing the fallback screen until Firebase Auth restores or the user explicitly clicks login.
     if (loading && hasCachedAuth && !showFullAuth && !hasAuthActionCode) {

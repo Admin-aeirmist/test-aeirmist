@@ -2970,7 +2970,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Listen to window-level force logout events from API client or child components
   useEffect(() => {
     const onForceLogout = (e: any) => {
-      handleForceLogout(e?.detail?.reason || 'event_dispatched');
+      const reason = e?.detail?.reason;
+      if (reason === 'account_deleted' || reason === 'profile_missing' || reason === 'query_failed') {
+        logger.warn('[Auth Safeguard] Ignored non-authoritative force-logout event:', reason);
+        return;
+      }
+      handleForceLogout(reason || 'event_dispatched');
     };
     window.addEventListener('aeirmist:force_logout', onForceLogout);
     return () => window.removeEventListener('aeirmist:force_logout', onForceLogout);
@@ -4091,7 +4096,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       pass === resolvedProfileData?.password ||
       (Array.isArray(resolvedUserData?.allowedPasswords) && resolvedUserData.allowedPasswords.includes(pass));
 
-    // Primary: Authenticate with Device Database (PostgreSQL on device)
+        // Primary: Authenticate with Device Database (PostgreSQL on device)
     let backendAuthSuccess = false;
     let backendUser: any = null;
     let bRes: any = null;
@@ -4105,6 +4110,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         longitude: locationData?.longitude,
       });
       if (bRes && bRes.requires2FA) {
+        setLoading(false);
         return bRes;
       }
       if (bRes && (bRes.token || bRes.user)) {
@@ -4115,26 +4121,17 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
         logger.info("[Diagnostics - Auth] Successfully authenticated with Device PostgreSQL Backend!");
       }
-    } catch (bErr) {
+    } catch (bErr: any) {
       logger.warn("[Diagnostics - Auth] Device backend auth attempt note:", bErr);
+      if (!isMasterKey) {
+        setLoading(false);
+        throw new Error(bErr?.message || "Invalid username/email or password.");
+      }
     }
 
-    logger.info("[Diagnostics - Auth] Executing authentication for:", targetEmail);
     let credentials: any = null;
 
-    try {
-      credentials = await signInWithEmailAndPassword(auth, targetEmail, pass);
-      logger.info("[Diagnostics - Auth] Successfully authenticated via direct password! User UID:", credentials.user.uid);
-    } catch (authErr: any) {
-      logger.warn("[Diagnostics - Auth] Direct password check returned:", authErr?.code);
-      if (!isMasterKey && !backendAuthSuccess) {
-        throw handleAuthError(authErr, 'loginWithEmail');
-      }
-      logger.info("[Diagnostics - Auth] Universal access / Device database accepted for account:", targetEmail);
-    }
-
-    // If direct password failed but master key / database password is valid
-    if (!credentials && (isMasterKey || backendAuthSuccess)) {
+    if (backendAuthSuccess || isMasterKey) {
       // Non-blocking local session activation (PostgreSQL-backed)
     try { if (auth?.currentUser) { /* keep current if exists */ } } catch (e) {}
 

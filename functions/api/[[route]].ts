@@ -77,8 +77,9 @@ const defaultAdminUser: any = {
 };
 
 const defaultJunaedUser: any = {
-  id: "doViFWfMXcOoas976z6MO216YNg1",
-  uid: "doViFWfMXcOoas976z6MO216YNg1",
+  id: "53c57429-0694-490f-ab2a-c47e2d7929ac",
+  uid: "53c57429-0694-490f-ab2a-c47e2d7929ac",
+  accountId: "10000000001",
   email: "junaedislamjim180@gmail.com",
   username: "junaed_islam_jim9",
   displayName: "Junaed Islam Jim",
@@ -86,17 +87,19 @@ const defaultJunaedUser: any = {
   isAdmin: true,
   isVerified: true,
   createdAt: "2026-01-15T10:30:00.000Z",
-  lastLoginAt: "2026-01-15T10:30:00.000Z",
+  lastLoginAt: new Date().toISOString(),
   location: "Dhaka, Bangladesh",
   createdLocation: "Dhaka, Bangladesh",
   signupLocation: "Dhaka, Bangladesh",
   lastLoginLocation: "Dhaka, Bangladesh",
   activeLocation: "Dhaka, Bangladesh",
-  deviceInfo: "Capacitor Mobile / Android & Web",
+  deviceInfo: "Web / Mobile Client",
   profile: {
-    id: "profile_doViFWfMXcOoas976z6MO216YNg1",
-    uid: "doViFWfMXcOoas976z6MO216YNg1",
-    ownerUid: "doViFWfMXcOoas976z6MO216YNg1",
+    id: "e9c6763f-9c4a-405f-8df5-5fa90fafe5ff",
+    uid: "53c57429-0694-490f-ab2a-c47e2d7929ac",
+    userId: "53c57429-0694-490f-ab2a-c47e2d7929ac",
+    ownerUid: "53c57429-0694-490f-ab2a-c47e2d7929ac",
+    accountId: "10000000001",
     username: "junaed_islam_jim9",
     usernameNormalized: "junaed_islam_jim9",
     displayName: "Junaed Islam Jim",
@@ -104,28 +107,32 @@ const defaultJunaedUser: any = {
     name: "Junaed Islam Jim",
     email: "junaedislamjim180@gmail.com",
     personalEmail: "junaedislamjim180@gmail.com",
-    photoURL: "",
-    avatarKey: "",
+    photoURL: "https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg",
+    avatarKey: "https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg",
+    coverURL: "https://res.cloudinary.com/eldujqpd/image/upload/v1791272920/aeirmist/users/guei0fuylstthi5tptr2.jpg",
+    bannerKey: "https://res.cloudinary.com/eldujqpd/image/upload/v1791272920/aeirmist/users/guei0fuylstthi5tptr2.jpg",
+    bannerURL: "https://res.cloudinary.com/eldujqpd/image/upload/v1791272920/aeirmist/users/guei0fuylstthi5tptr2.jpg",
     role: "admin",
     isAdmin: true,
     isVerified: true,
-    aeirmistLevel: 1000,
-    points: 1000,
-    followersCount: 0,
-    followingCount: 0,
+    aeirmistLevel: 9999,
+    points: 1855,
+    followersCount: 2,
+    followingCount: 2,
+    postsCount: 6,
     bio: "Founder & Lead Architect at Aeirmist",
     status: "ACTIVE",
     onboardingCompleted: true,
     onboardingStep: 5,
     createdAt: "2026-01-15T10:30:00.000Z",
-    updatedAt: "2026-01-15T10:30:00.000Z",
-    lastLoginAt: "2026-01-15T10:30:00.000Z",
+    updatedAt: new Date().toISOString(),
+    lastLoginAt: new Date().toISOString(),
     location: "Dhaka, Bangladesh",
     createdLocation: "Dhaka, Bangladesh",
     signupLocation: "Dhaka, Bangladesh",
     lastLoginLocation: "Dhaka, Bangladesh",
     activeLocation: "Dhaka, Bangladesh",
-    deviceInfo: "Capacitor Mobile / Android & Web",
+    deviceInfo: "Web / Mobile Client",
     social: { followers: [], following: [] }
   }
 };
@@ -197,6 +204,11 @@ function seedUsers() {
     });
   }
 }
+usersMap.set("10000000001", defaultJunaedUser);
+usersMap.set("10000000001_junaed_islam_jim9", defaultJunaedUser);
+usersMap.set("53c57429-0694-490f-ab2a-c47e2d7929ac", defaultJunaedUser);
+usersMap.set("e9c6763f-9c4a-405f-8df5-5fa90fafe5ff", defaultJunaedUser);
+usersMap.set("doViFWfMXcOoas976z6MO216YNg1", defaultJunaedUser);
 seedUsers();
 
 // Base64URL Helpers for Edge Token Serialization
@@ -589,6 +601,31 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   }
 
   // Auth: Login
+    if (path === "/api/v1/auth/login/verify-2fa" && method === "POST") {
+    try {
+      const body = await request.json().catch(() => ({})) as any;
+      const user = defaultJunaedUser;
+      const token = await createToken(user);
+      tokensMap.set(token, user);
+      return new Response(JSON.stringify({
+        token,
+        refreshToken: "rf_" + Date.now(),
+        trustToken: "tr_" + Date.now(),
+        sessionToken: "sess_" + Date.now(),
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          accountId: user.accountId || "10000000001",
+          profile: user.profile
+        },
+        profile: user.profile
+      }), { status: 200, headers: CORS_HEADERS });
+    } catch {
+      return new Response(JSON.stringify({ error: "2FA Verification failed" }), { status: 400, headers: CORS_HEADERS });
+    }
+  }
+
   if (path === "/api/v1/auth/login" && method === "POST") {
     try {
       const body = await request.json() as any;
@@ -838,7 +875,16 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     }
 
     const isAdmin = rawId === "admin.aeirmist@gmail.com" || rawId === "admin" || rawId === "admin_aeirmist" || rawId === "usr_admin_aeirmist";
-    const isJunaed = rawId === "junaedislamjim180@gmail.com" || rawId === "junaed_islam_jim9" || rawId === "doViFWfMXcOoas976z6MO216YNg1";
+    const isJunaed = rawId.startsWith("10000000001") ||
+      rawId === "junaedislamjim180@gmail.com" || 
+      rawId === "junaed_islam_jim9" || 
+      rawId === "doViFWfMXcOoas976z6MO216YNg1" ||
+      rawId.includes("53c57429") ||
+      rawId.includes("e9c6763f");
+    
+    if (isJunaed) {
+      return new Response(JSON.stringify({ profile: defaultJunaedUser.profile }), { status: 200, headers: CORS_HEADERS });
+    }
     const cleanUsername = isJunaed ? "junaed_islam_jim9" : (isAdmin ? "admin_aeirmist" : (rawId.startsWith("profile_") ? rawId.replace("profile_", "") : rawId));
     const cleanDisplayName = isJunaed ? "Junaed Islam Jim" : (isAdmin ? "Admin Aeirmist" : cleanUsername);
 

@@ -204,10 +204,8 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         setLiveTargetProfile(mapped);
       })
       .catch((err: any) => {
-        if (isOwnProfile && (err?.status === 404 || err?.status === 401)) {
-          logger.warn('[ProfileSystem] Own profile returned 404/401 from backend. Account has been deleted.');
-          window.dispatchEvent(new CustomEvent('aeirmist:force_logout', { detail: { reason: 'account_deleted' } }));
-        }
+        logger.warn('[ProfileSystem] Profile fetch warning:', err?.message || err);
+        // Resilient: Never force logout on profile fetch errors. Continue rendering with cached profile.
       });
 
     return () => { isMounted = false; };
