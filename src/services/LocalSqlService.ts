@@ -117,6 +117,47 @@ export class LocalSqlService {
   /**
    * Get database metrics (counts of posts, drafts, messages)
    */
+  /**
+   * Save comprehensive user profile details to SQL database safely and fast.
+   * Stores ID, name, ID number, profile URL, username, and complete metadata.
+   */
+  static async syncUserProfileToSql(profile: any, user?: any): Promise<void> {
+    if (!profile) return;
+    try {
+      const pid = profile.id || profile.uid || user?.uid || user?.id;
+      if (!pid) return;
+
+      const fullSqlProfile = {
+        ...profile,
+        id: pid,
+        userId: user?.uid || profile.userId || pid,
+        displayName: profile.displayName || profile.name || profile.username || 'Aeirmist User',
+        name: profile.displayName || profile.name || profile.username || 'Aeirmist User',
+        username: profile.username || `user_${String(pid).slice(0, 8)}`,
+        accountId: profile.accountId || (user as any)?.accountId || profile.idNumber || `AE-${String(pid).slice(0, 8).toUpperCase()}`,
+        idNumber: profile.accountId || (user as any)?.accountId || profile.idNumber || `AE-${String(pid).slice(0, 8).toUpperCase()}`,
+        photoURL: profile.photoURL || profile.avatarKey || '',
+        avatarKey: profile.avatarKey || profile.photoURL || '',
+        email: profile.email || user?.email || '',
+        updatedAt: Date.now(),
+        cachedAt: Date.now()
+      };
+
+      await aeirmistCache.saveProfile(fullSqlProfile);
+
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('aeirmist_cached_profile', JSON.stringify(fullSqlProfile));
+          localStorage.setItem('aeirmist_user_profile', JSON.stringify(fullSqlProfile));
+          localStorage.setItem('aeirmist_user_id', pid);
+          if (fullSqlProfile.username) localStorage.setItem('aeirmist_username', fullSqlProfile.username);
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('[LocalSqlService] Failed to sync user profile to SQL:', err);
+    }
+  }
+
   static async getDatabaseStats() {
     try {
       return await aeirmistCache.getDatabaseStats();

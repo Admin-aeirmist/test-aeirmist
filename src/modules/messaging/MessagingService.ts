@@ -673,6 +673,8 @@ class MessagingService {
           avatarKey: other.avatarKey,
           isVerified: other.isVerified,
         } : c.otherProfile),
+        isGroup: isGroupLike,
+        groupName: isGroupLike ? (c.groupName || c.name || c.title || resolvedName) : undefined,
         latestMessageAt: c.lastMessageAt || c.latestMessageAt || new Date(ms || Date.now()).toISOString(),
         latestMessagePreview: c.lastMessagePreview || c.lastMessage?.text || '',
         unreadCount: uCount,
@@ -691,7 +693,7 @@ class MessagingService {
         if (!c.id) continue;
 
         // In 1v1 direct chats, check if another entry for the exact same partner already exists
-        const isDirect = !c.isGroup && c.type !== 'group';
+        const isDirect = !c.isGroup && !c.groupName && c.type !== 'group' && c.type !== 'community' && c.type !== 'team' && (!Array.isArray(c.participants) || c.participants.length <= 2);
         const isSelf = c.type === 'self' || c.otherParticipantId === profileId;
         const partnerKey = (isDirect && !isSelf) ? (
           c.otherProfile?.userId ||

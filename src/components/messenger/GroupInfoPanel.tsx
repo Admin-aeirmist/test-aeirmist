@@ -99,21 +99,53 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
 
   // Combine available user profiles to resolve member details
   const resolvedMembers = useMemo(() => {
+    const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    const formatHandle = (mem: any, fallbackId: string) => {
+      const u = String(mem?.username || '').trim();
+      if (u && !isUuid(u) && u !== fallbackId && u !== 'unknown') return u.replace(/^@+/, '');
+      const d = String(mem?.displayName || mem?.name || '').trim();
+      if (d && d !== 'Aeirmist Member') {
+        const slug = d.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+        if (slug) return slug;
+      }
+      return 'member';
+    };
+
     return memberProfileIds.map((memId: string) => {
       const detail = chat.participantDetails?.[memId];
-      if (detail) return { id: memId, ...detail };
+      if (detail && detail.displayName) {
+        return { 
+          id: memId, 
+          ...detail,
+          username: formatHandle(detail, memId)
+        };
+      }
       
       const foundInAll = (allProfiles || []).find((p: any) => p.id === memId || p.uid === memId);
-      if (foundInAll) return foundInAll;
+      if (foundInAll) {
+        return {
+          id: memId,
+          ...foundInAll,
+          username: formatHandle(foundInAll, memId)
+        };
+      }
 
       const foundInSugg = (suggestedUsers || []).find((p: any) => p.id === memId || p.uid === memId);
-      if (foundInSugg) return foundInSugg;
+      if (foundInSugg) {
+        return {
+          id: memId,
+          ...foundInSugg,
+          username: formatHandle(foundInSugg, memId)
+        };
+      }
 
+      const isMe = memId === currentUserId || memId === profile?.id || memId === user?.uid;
+      const myDisplayName = profile?.displayName || profile?.name || 'You';
       return {
         id: memId,
-        displayName: memId === currentUserId ? (profile?.displayName || 'You') : 'Aeirmist Member',
-        photoURL: memId === currentUserId ? profile?.photoURL : null,
-        username: memId
+        displayName: isMe ? myDisplayName : 'Aeirmist Member',
+        photoURL: isMe ? profile?.photoURL : null,
+        username: isMe ? formatHandle(profile, memId) : 'member'
       };
     });
   }, [memberProfileIds, chat.participantDetails, allProfiles, suggestedUsers, currentUserId, profile]);
@@ -149,6 +181,20 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     const isAlreadyMember = (u: any) => {
       const uId = u.id;
       const uUid = u.uid;
+      const idStr = String(uId || uUid || '').toLowerCase();
+      const uname = String(u.username || '').toLowerCase();
+      const dname = String(u.displayName || u.name || '').toLowerCase();
+      if (
+        idStr === '00000000-0000-4000-a000-000000000001' ||
+        idStr === 'system' ||
+        idStr.includes('00000000-0000-4000-a000-000000000001') ||
+        uname === 'era' ||
+        uname === 'system' ||
+        dname === 'era ai' ||
+        dname === 'system'
+      ) {
+        return true; // Exclude system & Era AI from add candidates
+      }
       return (
         (uId && memberProfileIds.includes(uId)) ||
         (uUid && memberProfileIds.includes(uUid)) ||

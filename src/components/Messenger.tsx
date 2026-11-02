@@ -1274,7 +1274,7 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
         setIsSearching(true);
         try {
           const results = await searchUsers(searchQuery);
-          setSearchResults(results.filter(r => r.id !== profile?.id));
+          setSearchResults(results.filter(r => r.id !== profile?.id && r.id !== '00000000-0000-4000-a000-000000000001' && r.id !== 'system' && r.username !== 'era'));
         } catch (e) {
           logger.error("Search failed", e);
         } finally {
@@ -4379,8 +4379,8 @@ const ChatWindow = ({
           </button>
           <div className={`relative group flex-shrink-0 ${!isPrivateSpace && !isOtherUnavailable ? 'cursor-pointer' : ''}`} onClick={!isPrivateSpace && !isOtherUnavailable ? (chat?.isGroup ? toggleInfo : handleVisitProfile) : undefined}>
             <Avatar
-              src={isPrivateSpace ? (localAvatarURL || profile?.photoURL) : (chat?.isGroup ? chat.photo : (isOtherUnavailable ? BLANK_DP : (otherResolvedPhoto || otherProfile?.photoURL || chat.photo)))}
-              alt={isPrivateSpace ? "My Space" : (chat?.isGroup ? chat.name : (isOtherUnavailable ? "Aeirmist User" : (otherProfile?.displayName || chat.name)))}
+              src={isPrivateSpace ? (localAvatarURL || profile?.photoURL) : (isGroupChat ? (chat.photo || chat.groupPhotoURL || (chat as any).avatarKey) : (isOtherUnavailable ? BLANK_DP : (otherResolvedPhoto || otherProfile?.photoURL || chat.photo)))}
+              alt={isPrivateSpace ? "My Space" : (isGroupChat ? (chat.groupName || chat.name || 'Group') : (isOtherUnavailable ? "Aeirmist User" : (otherProfile?.displayName || chat.name)))}
               sizeClassName="w-10 h-10 md:w-12 md:h-12"
               roundedClassName="rounded-[14px] md:rounded-2xl"
               innerRoundedClassName="rounded-[12px] md:rounded-[14px]"
@@ -4395,7 +4395,17 @@ const ChatWindow = ({
           <div className={`group min-w-0 flex-1 ${!isPrivateSpace && !isOtherUnavailable ? 'cursor-pointer' : ''}`} onClick={!isPrivateSpace && !isOtherUnavailable ? (chat?.isGroup ? toggleInfo : handleVisitProfile) : undefined}>
             <div className="flex items-center gap-1.5 min-w-0">
               <h3 className={`font-semibold text-base md:text-lg tracking-tight group-hover:text-aeirmist-cyan transition-colors truncate ${isVaultMode ? 'text-[#e2afff]' : ''}`}>
-                {isMySpace ? 'My Space' : (isSelfChat ? 'Note to self' : (chat?.isGroup ? chat.name : (isOtherUnavailable ? 'Aeirmist User' : <LiveParticipantName participantId={chat.otherParticipantId || ''} fallbackName={chat.name || ''} chatId={chat.id} />)))}
+                {isMySpace 
+                  ? 'My Space' 
+                  : isSelfChat 
+                    ? 'Note to self' 
+                    : (isGroupChat || chat?.isGroup || chat?.type === 'group' || chat?.type === 'community' || chat?.type === 'team')
+                      ? (chat.groupName || chat.name || (chat as any).title || 'Group Chat')
+                      : (isOtherUnavailable 
+                          ? 'Aeirmist User' 
+                          : <LiveParticipantName participantId={chat.otherParticipantId || ''} fallbackName={chat.name || ''} chatId={chat.id} />
+                        )
+                }
               </h3>
               {isPrivateSpace && <Lock size={12} className="text-white/40 shrink-0" />}
               {isVaultMode && (

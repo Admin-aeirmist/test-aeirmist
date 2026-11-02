@@ -67,6 +67,25 @@ const FALLBACK_CONTACTS = [
   { id: 'usr_abdullah', displayName: 'Abdullah Al', username: 'abdullah', photoURL: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&q=80&w=200' }
 ];
 
+const isSystemOrAiUser = (p: any): boolean => {
+  if (!p) return true;
+  const id = String(p.id || p.uid || p.userId || '').toLowerCase().trim();
+  const username = String(p.username || '').toLowerCase().trim();
+  const displayName = String(p.displayName || p.name || '').toLowerCase().trim();
+  return (
+    id === '00000000-0000-4000-a000-000000000001' ||
+    id === 'system' ||
+    id === 'era' ||
+    id.includes('00000000-0000-4000-a000-000000000001') ||
+    username === 'era' ||
+    username === 'system' ||
+    username.includes('00000000-0000-4000-a000-000000000001') ||
+    displayName === 'era ai' ||
+    displayName === 'era' ||
+    displayName === 'system'
+  );
+};
+
 export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose, onGroupCreated, chats = [] }) => {
   const { allProfiles, suggestedUsers, profile, user, db, addToast } = useAeirmist();
   
@@ -163,60 +182,101 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
       FALLBACK_CONTACTS.forEach(p => { if (!unique.has(p.id)) unique.set(p.id, p); });
     }
 
-    return Array.from(unique.values()).filter(p => p.id !== profile?.id && p.uid !== user?.uid);
+    return Array.from(unique.values()).filter(p => p.id !== profile?.id && p.uid !== user?.uid && !isSystemOrAiUser(p));
   }, [suggestedUsers, chatUsers, firestoreProfiles, allProfiles, profile?.id, user?.uid]);
 
   const toggleMember = (id: string) => {
     setSelectedMembers(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
   };
 
+  const getCleanHandle = (p: any): string => {
+    if (!p) return 'member';
+    const uname = String(p.username || '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uname);
+    if (uname && !isUuid && uname !== p.id && uname !== 'unknown') {
+      return uname.replace(/^@+/, '');
+    }
+    const name = String(p.displayName || p.name || '').trim();
+    if (name) {
+      const slug = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+      if (slug) return slug;
+    }
+    return 'member';
+  };
+
   const handleCreate = async () => {
     if (!groupName.trim() || selectedMembers.length === 0 || !profile) return;
     setIsLoading(true);
     try {
+      const cleanGroupName = groupName.trim();
       const selectedMemberObjects = selectedMembers.map(id => availablePeople.find(p => p.id === id) || { id, displayName: id });
       const selectedMemberUids = selectedMemberObjects.map(p => p.uid || p.ownerUid || p.id);
       const creatorDisplayName = profile.displayName || profile.username || 'Admin';
       const typeLabel = selectedType === 'community' ? 'Community' : selectedType === 'team' ? 'Team' : 'Group';
 
-      const newGroupId = await messagingService.createGroupConversation(
-        db, 
-        profile.id, 
-        selectedMembers, 
-        groupName.trim(), 
-        groupPhoto || undefined,
-        user?.uid || profile.id,
-        selectedMemberUids
-      );
+      const participantDetailsMap: Record<string, any> = {
+        [profile.id]: {
+          id: profile.id,
+          displayName: creatorDisplayName,
+          username: getCleanHandle(profile),
+          photoURL: profile.photoURL || '',
+          role: 'admin'
+        }
+      };
+      if (user?.uid && user.uid !== profile.id) {
+        participantDetailsMap[user.uid] = participantDetailsMap[profile.id];
+      }
+
+      selectedMemberObjects.forEach(m => {
+        const mId = m.id;
+        const mUid = m.uid || m.ownerUid || m.id;
+        const cleanUname = getCleanHandle(m);
+        const memDetail = {
+          id: mId,
+          uid: mUid,
+          displayName: m.displayName || m.name || cleanUname,
+          username: cleanUname,
+          photoURL: m.photoURL || m.photo || '',
+          role: 'member'
+        };
+        participantDetailsMap[mId] = memDetail;
+        if (mUid && mUid !== mId) participantDetailsMap[mUid] = memDetail;
+      });
 
       const now = Date.now();
-      const formattedDate = new Date(now).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      const formattedTime = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-      // Messenger-style Creation System Message
-      const creationSystemText = `${creatorDisplayName} created the ${typeLabel.toLowerCase()} "${groupName.trim()}".`;
+      const creationSystemText = `${creatorDisplayName} created the ${typeLabel.toLowerCase()} "${cleanGroupName}".`;
       const memberNamesText = selectedMemberObjects.map(m => m.displayName || m.username || 'Member').slice(0, 3).join(', ') + 
         (selectedMemberObjects.length > 3 ? ` and ${selectedMemberObjects.length - 3} others` : '');
       const membersJoinedText = `${creatorDisplayName} added ${memberNamesText}.`;
 
-      // Persist System Event in backend / Firestore
-      try {
-        await messagingService.sendSystemEvent(db, newGroupId, creationSystemText);
-        await messagingService.sendSystemEvent(db, newGroupId, membersJoinedText);
-      } catch (e) {
-        logger.warn('Failed to send creation system messages:', e);
-      }
+      // Instant group creation: writes to Firestore + Backend API concurrently with 3s timeout
+      const newGroupId = await messagingService.createGroupConversation(
+        db, 
+        profile.id, 
+        selectedMembers, 
+        cleanGroupName, 
+        groupPhoto || undefined,
+        user?.uid || profile.id,
+        selectedMemberUids,
+        selectedType,
+        participantDetailsMap
+      );
+
+      // Persist System Events asynchronously without blocking UI
+      messagingService.sendSystemEvent(db, newGroupId, creationSystemText).catch(() => {});
+      messagingService.sendSystemEvent(db, newGroupId, membersJoinedText).catch(() => {});
 
       addToast({ 
         title: `${typeLabel} Created!`, 
-        message: `"${groupName.trim()}" is ready. You are the Admin.`, 
+        message: `"${cleanGroupName}" is ready with ${selectedMembers.length + 1} members. You are the Admin.`, 
         type: 'success' 
       });
       
       const newGroupData = {
         id: newGroupId,
-        name: groupName.trim(),
-        groupName: groupName.trim(),
+        name: cleanGroupName,
+        groupName: cleanGroupName,
+        title: cleanGroupName,
         type: selectedType,
         isGroup: true,
         photo: groupPhoto || '',
@@ -226,6 +286,7 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
         admins: [profile.id, user?.uid || profile.id],
         profileIds: [profile.id, ...selectedMembers],
         participants: [user?.uid || profile.id, ...selectedMemberUids],
+        participantDetails: participantDetailsMap,
         createdAt: now,
         updatedAt: now,
         lastMessage: creationSystemText,
@@ -418,7 +479,7 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
                         />
                         <div className="text-left min-w-0">
                           <p className="text-xs font-bold text-white truncate">{p.displayName || p.name || p.username}</p>
-                          <p className="text-[10px] text-white/40 truncate">@{p.username || p.id}</p>
+                          <p className="text-[10px] text-white/40 truncate">@{getCleanHandle(p)}</p>
                         </div>
                       </div>
                       <div className={`w-5 h-5 rounded-lg flex items-center justify-center shrink-0 border transition-all ${

@@ -451,7 +451,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       } catch (e) {}
       // Asynchronously mirror to SQLite/IndexedDB Local Vault
-      LocalSqlService.saveProfile(profile).catch(() => {});
+      LocalSqlService.syncUserProfileToSql(profile, user).catch(() => {});
     }
   }, [profile]);
 
