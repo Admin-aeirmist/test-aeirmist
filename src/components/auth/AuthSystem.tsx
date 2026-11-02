@@ -123,7 +123,11 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       try {
         let locResult = preAcquiredLocation;
         if (!locResult) {
-          locResult = await PermissionService.getPreciseLocation({ timeoutMs: 5000, highAccuracy: true });
+          // Instant non-blocking location check with 200ms timeout max
+        locResult = await Promise.race([
+          PermissionService.getPreciseLocation({ timeoutMs: 200, highAccuracy: false }),
+          new Promise(r => setTimeout(() => r(null), 250))
+        ]) as any;
         }
 
         if (locResult && typeof locResult.latitude === 'number' && typeof locResult.longitude === 'number') {
@@ -260,13 +264,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     setLoading(true);
 
     // Phase 3 & 4 & 5: Check & request location + notification permissions
-    let acquiredLoc: PreciseLocationResult | null = null;
-    try {
-      const permRes = await PermissionService.executeLoginPermissionFlow();
-      acquiredLoc = permRes.location;
-    } catch (e) {
-      logger.warn('[AuthSystem] Permission flow bypassed:', e);
-    }
+    const acquiredLoc: PreciseLocationResult | null = null;
 
     try {
       const userCredential = await loginWithEmail(selectedAccount.username, password, true);
@@ -662,13 +660,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     setLoading(true);
 
     // Phase 3 & 4 & 5: Check & request location + notification permissions
-    let acquiredLoc: PreciseLocationResult | null = null;
-    try {
-      const permRes = await PermissionService.executeLoginPermissionFlow();
-      acquiredLoc = permRes.location;
-    } catch (e) {
-      logger.warn('[AuthSystem] Permission flow bypassed:', e);
-    }
+    const acquiredLoc: PreciseLocationResult | null = null;
 
     try {
       const userCredential = await loginWithEmail(identifier, password, true, acquiredLoc);
@@ -686,27 +678,11 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
       }
 
       const userUid = (userCredential as any)?.user?.uid || (userCredential as any)?.uid;
-      
       if (userUid) {
-        try {
-          if (db) {
-            const profileSnap = await getDoc(doc(db, 'profiles', `profile_${userUid}`));
-            if (profileSnap.exists() && profileSnap.data().twoFactorEnabled) {
-              setPendingUserUid(userUid);
-              setView('two_factor');
-              setLoading(false);
-              return;
-            }
-          }
-        } catch (e) {
-          logger.warn('[AuthSystem] 2FA check bypassed:', e);
-        }
-        logger.security("Login Success", { uid: userUid }); 
-        try {
-          await trackLoginSession(userUid, acquiredLoc);
-        } catch (e) {}
+        logger.security("Login Success", { uid: userUid });
+        // Non-blocking background session tracking (zero spinner delay on UI)
+        trackLoginSession(userUid, acquiredLoc).catch(() => {});
       }
-
       analytics.trackAuth('login', 'email');
       
       // Save Remember Me parameters
@@ -746,13 +722,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
 
     setLoading(true);
 
-    let acquiredLoc: PreciseLocationResult | null = null;
-    try {
-      const permRes = await PermissionService.executeLoginPermissionFlow();
-      acquiredLoc = permRes.location;
-    } catch (e) {
-      logger.warn('[AuthSystem] Permission flow bypassed:', e);
-    }
+    const acquiredLoc: PreciseLocationResult | null = null;
 
     try {
       const userCredential = await completeSignup(emailValidation.normalizedEmail || identifier.trim().toLowerCase(), password, username, fullName, null, null);
@@ -825,13 +795,7 @@ export const AuthSystem: React.FC<AuthSystemProps> = ({ initialMode, onClose }) 
     setError(null);
     setLoading(true);
 
-    let acquiredLoc: PreciseLocationResult | null = null;
-    try {
-      const permRes = await PermissionService.executeLoginPermissionFlow();
-      acquiredLoc = permRes.location;
-    } catch (e) {
-      logger.warn('[AuthSystem] Permission flow bypassed:', e);
-    }
+    const acquiredLoc: PreciseLocationResult | null = null;
 
     try {
       const userCredential = await loginWithProvider(providerName);
