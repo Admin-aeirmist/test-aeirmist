@@ -320,10 +320,17 @@ const LiveParticipantAvatar = ({
   
   if (participantId === '00000000-0000-4000-a000-000000000001' || fallbackPhoto === 'ai:era_official') {
     return (
-      <div className={`relative flex items-center justify-center p-[2px] bg-gradient-to-tr from-cyan-400 via-blue-500 to-purple-500 ${sizeClassName} ${roundedClassName} shadow-[0_0_12px_rgba(0,255,255,0.4)]`}>
-        <div className={`w-full h-full bg-[#0a0f1d] flex items-center justify-center font-black text-cyan-300 text-xs ${innerRoundedClassName}`}>
-          E
+      <div className={`relative flex items-center justify-center p-[2px] bg-gradient-to-tr from-cyan-400 via-blue-500 to-purple-500 ${sizeClassName} ${roundedClassName} shadow-[0_0_14px_rgba(0,255,255,0.45)]`}>
+        <div className={`w-full h-full bg-[#0a0f1d] flex items-center justify-center overflow-hidden p-1.5 ${innerRoundedClassName}`}>
+          <img 
+            src="/custom_uploaded_logo.png" 
+            alt="Era AI" 
+            className="w-full h-full object-contain"
+          />
         </div>
+        <span className="absolute -bottom-1 -right-1 px-1 bg-gradient-to-r from-cyan-400 to-blue-500 text-black text-[7px] font-black rounded-md border border-black shadow">
+          AI
+        </span>
       </div>
     );
   }
@@ -1567,7 +1574,7 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
         name: 'Era AI',
         displayName: 'Era AI',
         username: 'era',
-        photo: '',
+        photo: '/custom_uploaded_logo.png',
         isVerified: true,
         lastMessage: 'Official Aeirmist AI Assistant. How can I help you today?',
         unread: false,
@@ -2448,16 +2455,7 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                 >
                   Personal
                 </button>
-                <button 
-                  onClick={() => setActiveFilter('marketplace')}
-                  className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border ${
-                    activeFilter === 'marketplace' 
-                      ? 'bg-gradient-to-tr from-aeirmist-cyan/15 to-transparent border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_12px_rgba(0,242,255,0.3)] font-bold' 
-                      : 'bg-slate-100 dark:bg-[#0f0f13]/85 border-slate-200 dark:border-white/5 text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/15'
-                  }`}
-                >
-                  Marketplace
-                </button>
+                
                 <button 
                   onClick={() => setActiveFilter('groups')}
                   className={`px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border ${
@@ -2561,8 +2559,8 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                     {/* Holographic Neon Ring Avatar */}
                     <div className="relative flex-shrink-0">
                       <div className="w-12 h-12 rounded-2xl p-[2px] bg-gradient-to-tr from-cyan-400 via-blue-500 to-purple-500 shadow-[0_0_14px_rgba(0,255,255,0.35)] group-hover:shadow-[0_0_20px_rgba(0,255,255,0.6)] transition-all">
-                        <div className="w-full h-full bg-[#0a0f1d] rounded-[14px] flex items-center justify-center font-black text-cyan-300 text-sm tracking-wider">
-                          E
+                        <div className="w-full h-full bg-[#0a0f1d] rounded-[14px] flex items-center justify-center overflow-hidden p-1.5">
+                          <img src="/custom_uploaded_logo.png" alt="Era AI" className="w-full h-full object-contain" />
                         </div>
                       </div>
                       <span className="absolute -bottom-1 -right-1 px-1 bg-gradient-to-r from-cyan-400 to-blue-500 text-black text-[7px] font-black rounded-md border border-black shadow">

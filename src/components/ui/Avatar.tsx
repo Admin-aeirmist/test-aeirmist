@@ -85,6 +85,26 @@ export const Avatar: React.FC<AvatarProps> = React.memo(({
     }
   }
 
+  if (userId === '00000000-0000-4000-a000-000000000001' || src === 'ai:era_official' || alt === 'Era AI') {
+    return (
+      <div 
+        onClick={onClick}
+        className={`relative select-none flex items-center justify-center p-[2px] bg-gradient-to-tr from-cyan-400 via-blue-500 to-purple-500 shadow-[0_0_14px_rgba(0,255,255,0.45)] ${sizeClassName} ${roundedClassName} ${className} ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
+      >
+        <div className={`w-full h-full ${innerRoundedClassName} bg-[#0a0f1d] flex items-center justify-center overflow-hidden p-1.5`}>
+          <img 
+            src="/custom_uploaded_logo.png" 
+            alt="Era AI" 
+            className="w-full h-full object-contain"
+          />
+        </div>
+        <span className="absolute -bottom-1 -right-1 px-1 bg-gradient-to-r from-cyan-400 to-blue-500 text-black text-[7px] font-black rounded-md border border-black shadow">
+          AI
+        </span>
+      </div>
+    );
+  }
+
   const finalAvatarUrl = getAvatarUrl(src);
 
   return (
