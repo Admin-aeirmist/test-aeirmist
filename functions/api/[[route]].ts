@@ -1507,26 +1507,38 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       const members = Array.isArray(body.memberIds) ? [...body.memberIds] : [];
       if (!members.includes(currentId)) members.push(currentId);
 
+      const passedDetails = body.participantDetails || {};
       const participants = members.map((mid: string) => {
+        const passed = passedDetails[mid] || {};
         const u = usersMap.get(mid) || { id: mid, displayName: mid, username: mid, profile: {} };
         return {
           userId: mid,
-          displayName: u.displayName || u.username || mid,
-          username: u.username || mid,
-          avatarKey: u.profile?.avatarKey || ""
+          displayName: passed.displayName || u.displayName || u.username || mid,
+          username: passed.username || u.username || mid,
+          avatarKey: passed.photoURL || passed.photo || u.profile?.avatarKey || "",
+          photoURL: passed.photoURL || passed.photo || u.profile?.avatarKey || "",
+          isVerified: Boolean(passed.isVerified || u.profile?.isVerified),
+          badge: passed.badge || u.profile?.badge || null,
+          role: mid === currentId ? 'owner' : (passed.role || 'member')
         };
       });
 
       const convType = body.type || "group";
+      const groupTitle = body.title || "Group Chat";
       const creatorName = authUser.displayName || authUser.username || "Admin";
       const channelLabel = convType === 'community' ? 'community' : convType === 'team' ? 'team' : 'group';
-      const creationText = `${creatorName} created the ${channelLabel} "${body.title || 'Group Chat'}".`;
+      const creationText = `${creatorName} created the ${channelLabel} "${groupTitle}".`;
 
       const conv = {
         id: convId,
         type: convType,
-        title: body.title || "Group Chat",
-        avatarKey: body.avatarKey || "",
+        title: groupTitle,
+        name: groupTitle,
+        groupName: groupTitle,
+        isGroup: true,
+        avatarKey: body.avatarKey || body.photo || "",
+        photo: body.avatarKey || body.photo || "",
+        groupPhotoURL: body.avatarKey || body.photo || "",
         lastMessagePreview: creationText,
         lastMessageAt: new Date().toISOString(),
         unreadCount: 0,
@@ -1535,7 +1547,9 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         createdBy: currentId,
         owner: currentId,
         admins: [currentId],
-        participants
+        profileIds: members,
+        participants,
+        participantDetails: passedDetails
       };
       edgeConversations.unshift(conv);
 
@@ -1548,13 +1562,19 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         type: "system",
         text: creationText,
         timestamp: new Date().toISOString(),
-        timestampMs: Date.now(),
         createdAt: new Date().toISOString()
       };
-      edgeMessagesMap.set(convId, [initialSysMsg]);
-      return new Response(JSON.stringify({ conversation: conv }), { status: 201, headers: CORS_HEADERS });
-    } catch {
-      return new Response(JSON.stringify({ error: "Failed to create group conversation" }), { status: 400, headers: CORS_HEADERS });
+      edgeMessages.push(initialSysMsg);
+
+      return new Response(JSON.stringify({ conversation: conv }), {
+        status: 201,
+        headers: CORS_HEADERS
+      });
+    } catch (e: any) {
+      return new Response(JSON.stringify({ error: e?.message || "Failed to create group" }), {
+        status: 500,
+        headers: CORS_HEADERS
+      });
     }
   }
 

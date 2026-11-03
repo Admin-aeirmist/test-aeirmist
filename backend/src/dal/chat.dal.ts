@@ -95,11 +95,11 @@ export class ChatDAL {
     });
   }
 
-  static async createGroupConversation(creatorId: string, title: string, memberIds: string[], avatarKey?: string) {
+  static async createGroupConversation(creatorId: string, title: string, memberIds: string[], avatarKey?: string, type: string = 'group', participantDetails?: Record<string, any>) {
     const [conv] = await db
       .insert(conversations)
       .values({
-        type: 'group',
+        type,
         title,
         avatarKey,
       })
@@ -114,7 +114,14 @@ export class ChatDAL {
 
     await db.insert(conversationMembers).values(memberRows);
 
-    return conv;
+    return {
+      ...conv,
+      name: title,
+      groupName: title,
+      isGroup: true,
+      profileIds: uniqueMembers,
+      participantDetails: participantDetails || {}
+    };
   }
 
   static async getUserConversations(userId: string) {
@@ -174,18 +181,23 @@ export class ChatDAL {
         }
       }
 
+      const isGrp = row.conversation.type === 'group' || row.conversation.type === 'community' || row.conversation.type === 'team';
       result.push({
         ...row.conversation,
+        name: isGrp ? (row.conversation.title || 'Group') : (otherParticipant?.displayName || otherParticipant?.username || 'User'),
+        groupName: row.conversation.title || row.conversation.name,
+        isGroup: isGrp,
         unreadCount: row.member.unreadCount,
         unread: (row.member.unreadCount ?? 0) > 0,
         isMuted: row.member.isMuted,
         isPinned: row.member.isPinned,
         participants,
-        otherParticipant,
-        otherParticipantId: otherParticipant?.profileId || otherParticipant?.userId || otherParticipant?.firebaseUid || null,
-        otherParticipantUid: otherParticipant?.firebaseUid || null,
-        otherProfile: otherParticipant,
-        online: isOtherOnline,
+        profileIds: participants.map(p => p.userId),
+        otherParticipant: isGrp ? null : otherParticipant,
+        otherParticipantId: isGrp ? null : (otherParticipant?.profileId || otherParticipant?.userId || otherParticipant?.firebaseUid || null),
+        otherParticipantUid: isGrp ? null : (otherParticipant?.firebaseUid || null),
+        otherProfile: isGrp ? null : otherParticipant,
+        online: isGrp ? false : isOtherOnline,
         lastRead,
       });
     }

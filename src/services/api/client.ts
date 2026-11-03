@@ -778,10 +778,10 @@ export const api = {
       request<{ success: boolean }>(`/api/v1/chat/conversations/${conversationId}/unread`, {
         method: 'POST',
       }),
-    createGroup: (title: string, memberIds: string[], avatarKey?: string) =>
+    createGroup: (title: string, memberIds: string[], avatarKey?: string, type?: string, participantDetails?: Record<string, any>) =>
       request<{ conversation: any }>('/api/v1/chat/conversations/group', {
         method: 'POST',
-        body: JSON.stringify({ title, memberIds, avatarKey }),
+        body: JSON.stringify({ title, memberIds, avatarKey, type, participantDetails }),
       }),
     editMessage: (messageId: string, content: string) =>
       request<{ message: any }>(`/api/v1/chat/messages/${messageId}`, {

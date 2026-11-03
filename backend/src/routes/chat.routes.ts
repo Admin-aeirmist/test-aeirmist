@@ -34,6 +34,8 @@ const GroupChatSchema = z.object({
   title: z.string().min(1).max(100),
   memberIds: z.array(z.string().min(1)),
   avatarKey: z.string().optional(),
+  type: z.string().optional(),
+  participantDetails: z.record(z.any()).optional(),
 });
 
 async function resolveUserId(rawId: string): Promise<string | null> {
@@ -172,13 +174,31 @@ router.post('/conversations/direct', authenticateToken, async (req: Authenticate
 // Group Chat
 router.post('/conversations/group', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, memberIds, avatarKey } = GroupChatSchema.parse(req.body);
-    const resolvedMemberIds = (await Promise.all(memberIds.map(resolveUserId))).filter((id: string | null): id is string => Boolean(id));
-    const conv = await ChatDAL.createGroupConversation(req.user!.userId, title, resolvedMemberIds, avatarKey);
+    const { title, memberIds, avatarKey, type, participantDetails } = GroupChatSchema.parse(req.body);
+    const resolvedMemberIds = (await Promise.all(memberIds.map(async (rawId: string) => {
+      const resolved = await resolveUserId(rawId);
+      return resolved || rawId;
+    }))).filter((id: string | null): id is string => Boolean(id));
+
+    const conv = await ChatDAL.createGroupConversation(req.user!.userId, title, resolvedMemberIds, avatarKey, type || 'group', participantDetails);
+
+    // Broadcast to all members via Socket.IO
+    try {
+      const allMembers = [req.user!.userId, ...resolvedMemberIds];
+      for (const mId of allMembers) {
+        io.to(`user:${mId}`).emit('conversation_created', { conversation: conv });
+      }
+    } catch {}
+
     res.status(201).json({ conversation: conv });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: err.errors });
+    }
+    console.error('[Group Chat Error]', err);
+    res.status(500).json({ error: 'Failed to create group conversation' });
+  }
+});
     }
     console.error('[Group Chat Error]', err);
     res.status(500).json({ error: 'Failed to create group conversation' });

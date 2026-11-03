@@ -636,7 +636,19 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
   const currentChat = useMemo(() => {
     if (activeChatId) {
       const found = chats.find(c => c.id === activeChatId);
-      if (found) return found;
+      if (found) {
+        if (tempChat && tempChat.id === activeChatId) {
+          return {
+            ...tempChat,
+            ...found,
+            name: found.name || found.groupName || (found as any).title || tempChat.name,
+            groupName: found.groupName || found.name || (found as any).title || tempChat.groupName,
+            isGroup: (found.isGroup ?? tempChat.isGroup) || (found.type === 'group' || found.type === 'community' || found.type === 'team'),
+            participantDetails: { ...(tempChat.participantDetails || {}), ...(found.participantDetails || {}) }
+          };
+        }
+        return found;
+      }
       if (tempChat && tempChat.id === activeChatId) return tempChat;
     }
     return tempChat || null;
@@ -1515,18 +1527,28 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
     setActiveChatId(groupId);
     setIsMobileList(false);
     if (groupData) {
-      setTempChat({
+      const cleanName = groupData.groupName || groupData.name || groupData.title || 'Group Chat';
+      const cleanPhoto = groupData.photo || groupData.groupPhotoURL || '';
+      const newChatObj: any = {
+        ...groupData,
         id: groupId,
-        name: groupData.groupName || groupData.name || 'Group Chat',
-        photo: getAvatarUrl(groupData.groupPhotoURL || groupData.photo),
-        lastMessage: 'Group created',
+        name: cleanName,
+        groupName: cleanName,
+        title: cleanName,
+        photo: cleanPhoto,
+        groupPhotoURL: cleanPhoto,
+        lastMessage: groupData.lastMessage || 'Group created',
+        latestMessagePreview: groupData.lastMessage || 'Group created',
         time: 'Just now',
         unread: false,
         isGroup: true,
-        type: 'group',
+        type: groupData.type || 'group',
         participants: groupData.participants || [user?.uid],
-        profileIds: groupData.profileIds || [profile?.id]
-      } as any);
+        profileIds: groupData.profileIds || [profile?.id],
+        participantDetails: groupData.participantDetails || {}
+      };
+      setTempChat(newChatObj);
+      setChats(prev => [newChatObj, ...prev.filter(c => c.id !== groupId)]);
     }
   };
 
