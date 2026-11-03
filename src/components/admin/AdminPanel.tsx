@@ -1073,7 +1073,7 @@ const VerificationPlanModal = ({
   );
 };
 
-// Ultra-clean accurate User Avatar Badge with real photo + vibrant initial gradient fallback
+// Accurate User Avatar Badge: real photo if uploaded, otherwise sleek clean blank silhouette
 const UserAvatarBadge = ({ user, className = '' }: { user: any; className?: string }) => {
   const [imgError, setImgError] = useState(false);
 
@@ -1096,39 +1096,23 @@ const UserAvatarBadge = ({ user, className = '' }: { user: any; className?: stri
     resolvedPhoto !== 'null' &&
     resolvedPhoto !== 'undefined';
 
-  const name = user?.displayName || user?.name || user?.username || 'User';
-  const cleanName = String(name).replace(/^@+/, '').trim();
-  const initial = (cleanName.charAt(0) || 'U').toUpperCase();
-
-  const gradients = [
-    'from-cyan-500 to-blue-600',
-    'from-purple-500 to-indigo-600',
-    'from-emerald-500 to-teal-600',
-    'from-pink-500 to-rose-600',
-    'from-amber-500 to-orange-600',
-    'from-violet-500 to-fuchsia-600',
-    'from-teal-500 to-emerald-600',
-    'from-blue-500 to-cyan-600'
-  ];
-  const hash = (cleanName + (user?.id || '')).split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  const gradientClass = gradients[hash % gradients.length];
-
   if (isRealPhoto && !imgError) {
     return (
       <img
         src={resolvedPhoto}
-        alt={cleanName}
+        alt=""
         onError={() => setImgError(true)}
         className={`w-12 h-12 rounded-2xl object-cover border border-white/10 shadow-md shrink-0 bg-[#0c0f17] ${className}`}
       />
     );
   }
 
+  // Blank avatar for accounts without an uploaded picture (as requested)
   return (
     <div 
-      className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${gradientClass} flex items-center justify-center font-bold text-base text-white border border-white/20 shadow-md shrink-0 select-none ${className}`}
+      className={`w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center text-white/30 shrink-0 select-none ${className}`}
     >
-      {initial}
+      <User size={22} className="text-white/30" />
     </div>
   );
 };
