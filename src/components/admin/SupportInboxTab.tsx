@@ -69,22 +69,47 @@ export const SupportInboxTab: React.FC<SupportInboxProps> = ({ db, addToast }) =
 
   // Realtime subscription to supportReports
   useEffect(() => {
-    if (!db) return;
+    let isMounted = true;
+    const loadTicketsFallback = async () => {
+      try {
+        const res = await fetch('/api/v1/admin/tickets');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.tickets) && data.tickets.length > 0 && isMounted) {
+            setReports(prev => prev.length === 0 ? data.tickets : prev);
+          }
+        }
+      } catch (err) {
+        logger.warn('Tickets edge fallback error:', err);
+      }
+    };
+    loadTicketsFallback();
+
+    if (!db) {
+      setLoading(false);
+      return;
+    }
     const q = query(collection(db, 'supportReports'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setReports(items);
-      setLoading(false);
-      // Keep selected report updated if open
-      if (selectedReport) {
-        const updated = items.find(item => item.id === selectedReport.id);
-        if (updated) setSelectedReport(updated);
+      if (snap.docs.length > 0) {
+        const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setReports(items);
+        if (selectedReport) {
+          const updated = items.find(item => item.id === selectedReport.id);
+          if (updated) setSelectedReport(updated);
+        }
+      } else {
+        loadTicketsFallback();
       }
+      setLoading(false);
     }, (err) => {
       logger.warn("Support reports listener error:", err);
-      setLoading(false);
+      loadTicketsFallback().finally(() => setLoading(false));
     });
-    return () => unsub();
+    return () => {
+      isMounted = false;
+      unsub();
+    };
   }, [db]);
 
   // Mark as read by admin when selected

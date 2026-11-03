@@ -68,16 +68,42 @@ export const ReportsManagementTab = ({ db, addToast }: { db: any; addToast: any 
   };
 
   useEffect(() => {
-    if (!db) return;
+    let isMounted = true;
+    const loadReportsFallback = async () => {
+      try {
+        const res = await fetch('/api/v1/admin/reports');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.reports) && data.reports.length > 0 && isMounted) {
+            setReports(prev => prev.length === 0 ? data.reports : prev);
+          }
+        }
+      } catch (err) {
+        logger.warn('Reports edge fallback error:', err);
+      }
+    };
+    loadReportsFallback();
+
+    if (!db) {
+      setLoading(false);
+      return;
+    }
     const q = query(collection(db, 'reports'), orderBy('createdAt', 'desc'), limit(100));
     const unsub = onSnapshot(q, (snapshot) => {
-      setReports(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      if (snapshot.docs.length > 0) {
+        setReports(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      } else {
+        loadReportsFallback();
+      }
       setLoading(false);
     }, (err) => {
       logger.warn("Reports list error:", err);
-      setLoading(false);
+      loadReportsFallback().finally(() => setLoading(false));
     });
-    return () => unsub();
+    return () => {
+      isMounted = false;
+      unsub();
+    };
   }, [db]);
 
   const filteredReports = reports.filter(r => {
