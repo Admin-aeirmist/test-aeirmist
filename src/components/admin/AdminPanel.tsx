@@ -3367,10 +3367,102 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   );
 };
 
+type AdminTab = 'dashboard' | 'users' | 'reports' | 'appeals' | 'marketplace' | 'security' | 'roles' | 'flags' | 'logs' | 'verification' | 'tickets' | 'system';
+
 export const AdminPanel = () => {
   const { user, profile, loading: authLoading, db, addToast, purgeUser, toggleUserBan, toggleVerification, updateUserStatus, suspendUser } = useAeirmist();
   const [isAdminUser, setIsAdminUser] = useState<boolean | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'reports' | 'appeals' | 'marketplace' | 'security' | 'roles' | 'flags' | 'logs' | 'verification' | 'tickets' | 'system'>('dashboard');
+
+  // Helper to resolve exact tab from browser URL
+  const getAdminTabFromLocation = (): AdminTab => {
+    if (typeof window === 'undefined') return 'dashboard';
+    const rawPath = window.location.pathname.toLowerCase().replace(/\/+$/, '');
+    const cleanSegment = rawPath.replace(/^\/admin\/?/, '');
+    
+    switch (cleanSegment) {
+      case 'users':
+      case 'user':
+      case 'accounts':
+        return 'users';
+      case 'reports':
+      case 'report':
+      case 'moderation':
+        return 'reports';
+      case 'appeals':
+      case 'appeal':
+        return 'appeals';
+      case 'tickets':
+      case 'support':
+      case 'inbox':
+        return 'tickets';
+      case 'verification':
+      case 'verify':
+      case 'verified':
+        return 'verification';
+      case 'marketplace':
+      case 'pay':
+      case 'payments':
+      case 'pay-and-sub':
+      case 'subscriptions':
+        return 'marketplace';
+      case 'security':
+      case 'shield':
+        return 'security';
+      case 'roles':
+      case 'permissions':
+        return 'roles';
+      case 'flags':
+      case 'features':
+        return 'flags';
+      case 'logs':
+      case 'audit':
+      case 'audit-logs':
+        return 'logs';
+      case 'system':
+      case 'health':
+      case 'telemetry':
+        return 'system';
+      case 'dashboard':
+      case '':
+      default:
+        return 'dashboard';
+    }
+  };
+
+  const getAdminUrlForTab = (tab: AdminTab): string => {
+    if (tab === 'dashboard') return '/admin';
+    return `/admin/${tab}`;
+  };
+
+  const [activeTab, setActiveTabState] = useState<AdminTab>(() => getAdminTabFromLocation());
+
+  // Function to switch tab AND update browser URL
+  const setActiveTab = (tab: AdminTab) => {
+    setActiveTabState(tab);
+    const targetUrl = getAdminUrlForTab(tab);
+    if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+      window.history.pushState({ _adminTab: tab }, '', targetUrl);
+    }
+  };
+
+  // Sync with browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const tab = getAdminTabFromLocation();
+      setActiveTabState(tab);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Ensure current URL reflects the active tab on mount
+  useEffect(() => {
+    const currentTab = getAdminTabFromLocation();
+    const correctUrl = getAdminUrlForTab(currentTab);
+    if (window.location.pathname !== correctUrl && (window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/'))) {
+      window.history.replaceState({ _adminTab: currentTab }, '', correctUrl);
+    }
+  }, []);
   const [isAddAdminOpen, setIsAddAdminOpen] = useState(false);
   const [allProfiles, setAllProfiles] = useState<any[]>([]);
   const [pendingVerificationsCount, setPendingVerificationsCount] = useState<number>(0);
@@ -3567,6 +3659,8 @@ export const AdminPanel = () => {
                 <span>Aeirmist Core</span>
                 <span>/</span>
                 <span className="text-aeirmist-cyan font-bold uppercase">{activeTab}</span>
+                <span className="text-white/20">•</span>
+                <span className="text-aeirmist-cyan/80 font-mono tracking-wider font-semibold">{getAdminUrlForTab(activeTab)}</span>
               </div>
               <h1 className="text-lg md:text-xl font-black uppercase tracking-[0.18em] text-white">Enterprise Control Center</h1>
             </div>

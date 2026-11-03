@@ -254,7 +254,12 @@ export const getPathForAppState = (
     case 'messenger': 
       if (vChatUid) return `/messages/${vChatUid}`;
       return '/messages';
-    case 'admin': return '/admin';
+    case 'admin': {
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin/')) {
+        return window.location.pathname;
+      }
+      return '/admin';
+    }
     case 'dashboard': return '/connections';
     default: return `/${tab}`;
   }
@@ -370,7 +375,7 @@ export const getInitialStateFromPath = (path: string) => {
   }
 
   // 11. Admin & Dashboard
-  if (lowerPath === '/admin-panel' || lowerPath === '/admin') {
+  if (lowerPath === '/admin-panel' || lowerPath === '/admin' || lowerPath.startsWith('/admin/')) {
     return { tab: 'admin' as Tab, notifs: false };
   }
   if (lowerPath === '/connections' || lowerPath === '/network' || lowerPath === '/friends' || lowerPath === '/dashboard' || lowerPath === '/stats' || lowerPath === '/analytics') {
