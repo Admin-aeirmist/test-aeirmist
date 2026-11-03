@@ -168,7 +168,19 @@ export function normalizeAdminUser(record: any): NormalizedAdminUser {
     usernameNormalized,
     displayName,
     email: isAnonymized ? null : (record.email || record.personalEmail || null),
-    photoURL: isAnonymized ? null : (record.photoURL || null),
+    photoURL: isAnonymized ? null : (
+      record.photoURL || 
+      record.avatarUrl || 
+      record.avatar_url || 
+      record.profilePicture || 
+      record.profilePic || 
+      record.avatar || 
+      record.avatarKey || 
+      record.image || 
+      record.picture || 
+      null
+    ),
+    accountId: record.accountId || record.id_num || record.idNum || record.account_id || null,
     isVerified: Boolean(record.isVerified),
     isBanned: Boolean(record.isBanned || record.status === 'BANNED'),
     status: record.status || (record.isBanned ? 'BANNED' : 'ACTIVE'),
