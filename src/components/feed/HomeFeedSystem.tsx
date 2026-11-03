@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAppearance } from '../../context/AppearanceContext';
 import { StoriesSystem } from './StoriesSystem';
 import { PremiumPostCard } from './PremiumPostCard';
+import { LinkedInProfileCard } from './LinkedInProfileCard';
+import { LinkedInPostComposer } from './LinkedInPostComposer';
 import { 
   Loader2,
   Plus,
@@ -14,7 +16,8 @@ import {
   Sparkles,
   Bookmark,
   Users,
-  Compass
+  Compass,
+  ChevronDown
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { api } from '../../services/api/client';
@@ -389,13 +392,33 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
            </div>
         </div>
         
-        <div className="w-full flex justify-center">
+        <div className="w-full flex justify-center gap-6 px-1 sm:px-4">
           
+          {/* LEFT COLUMN: LinkedIn Profile & Identity Card */}
+          <div className="hidden xl:block w-56 2xl:w-64 shrink-0">
+            <LinkedInProfileCard onUserClick={onUserClick} onNavigate={onNavigate} />
+          </div>
+
           {/* MAIN FEED COLUMN */}
-          <div className="w-full max-w-[700px]">
+          <div className="w-full max-w-[620px] min-w-0">
+            {/* Top LinkedIn-Style Post Composer */}
+            <LinkedInPostComposer onCreate={onCreate} onNavigate={onNavigate} />
+
             {/* NOTES & STORIES RESTORED */}
-            <div className="mb-1">
+            <div className="mb-2">
               <StoriesSystem />
+            </div>
+
+            {/* LinkedIn Sort By Row */}
+            <div className="flex items-center justify-between px-2 py-1 mb-2 text-white/40">
+              <div className="h-[1px] flex-1 bg-white/10" />
+              <div className="px-3 flex items-center gap-1.5 text-[11px] font-medium font-sans">
+                <span>Sort by:</span>
+                <span className="font-bold text-white/80 flex items-center gap-1 cursor-pointer hover:text-aeirmist-cyan transition-colors">
+                  Top <ChevronDown size={12} />
+                </span>
+              </div>
+              <div className="h-[1px] w-4 bg-white/10" />
             </div>
             {/* FEED ITEMS */}
             <div className="relative rounded-[2.5rem] backdrop-blur-2xl bg-black/15 py-2">

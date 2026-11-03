@@ -14,7 +14,12 @@ import {
   Pin,
   Eye,
   BarChart3,
-  AlertTriangle
+  AlertTriangle,
+  ThumbsUp,
+  Repeat,
+  Send,
+  Globe,
+  Plus
 } from 'lucide-react';
 import { formatAeirmistTimestamp } from '../../lib/date';
 import { useAeirmist } from '../../context/AeirmistContext';
@@ -141,6 +146,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
   } = useAeirmist();
 
   const postAuthor = (post as any).author;
+  const authorHeadline = (post as any).authorHeadline || (post as any).headline || postAuthor?.headline || postAuthor?.bio || postAuthor?.work || '';
   const postAuthorId = post.userId || post.authorId || postAuthor?.id || postAuthor?.uid || (post as any).ownerUid;
   const isOwnPost = Boolean(profile?.id && postAuthorId && (postAuthorId === profile.id || postAuthorId === profile.uid || (user?.uid && postAuthorId === user.uid)));
 
@@ -1496,6 +1502,7 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
                 {author.isVerified && <ShieldCheck size={11} className="text-aeirmist-cyan shrink-0 sm:w-[13px] sm:h-[13px]" />}
                 {(post as any).isPinned && <Pin size={10} className="text-aeirmist-cyan rotate-45 animate-pulse sm:w-[11px] sm:h-[11px]" />}
               </h3>
+              <span className="text-[10px] text-white/30 font-medium select-none">· 1st</span>
               {post.feeling && (
                 <span className="text-[9px] sm:text-[11px] text-white/50 tracking-tight flex items-center gap-1 font-medium font-sans truncate">
                   <span className="hidden sm:inline">is feeling</span> <span className="text-aeirmist-cyan font-bold inline-flex items-center gap-0.5">{post.feeling.emoji} {post.feeling.label}</span>
@@ -1503,23 +1510,46 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
               )}
             </div>
             
+            {authorHeadline ? (
+              <p className="text-[11px] text-white/60 truncate font-sans font-normal mt-0.5 max-w-[240px] sm:max-w-sm">
+                {authorHeadline}
+              </p>
+            ) : null}
+
             {postMusicData ? (
               <PostMusicPlayer music={postMusicData} variant="header-sub" />
             ) : (
-              <p className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.1em] text-white/20 mt-0.5 flex items-center gap-1 select-none font-mono truncate">
+              <p className="text-[9px] sm:text-[10px] text-white/40 mt-0.5 flex items-center gap-1 select-none font-sans truncate">
+                {formatAeirmistTimestamp(post.createdAt || post.timestamp)}
+                <span className="text-white/30">·</span>
+                <Globe size={10} className="text-white/40 shrink-0" title="Public" />
                 {post.location ? (
                   <>
-                    <Compass size={9} className="text-white/30 sm:w-[10px] sm:h-[10px]" />
-                    {post.location} • 
+                    <span className="text-white/30">·</span>
+                    <Compass size={9} className="text-white/30" />
+                    {post.location}
                   </>
                 ) : null}
-                {formatAeirmistTimestamp(post.createdAt || post.timestamp)}
               </p>
             )}
           </div>
         </div>
         
-        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {!isOwnPost && postAuthorId && !isFollowing(postAuthorId) && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFollow?.(postAuthorId);
+              }}
+              className="px-2.5 py-1 rounded-full border border-aeirmist-cyan/40 bg-aeirmist-cyan/10 hover:bg-aeirmist-cyan/20 text-aeirmist-cyan text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+            >
+              <Plus size={12} strokeWidth={3} />
+              <span>Follow</span>
+            </button>
+          )}
+
           {/* Post Hamburger Dropdown */}
           <button 
             type="button"
@@ -1823,74 +1853,122 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
         </div>
       </div>
 
-      {/* Engagement Buttons Row */}
-      <div className="px-3.5 py-2.5 sm:px-5 sm:py-3.5 border-t border-white/5 bg-white/[0.01]">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <button 
-              type="button"
-              aria-label={isLiked ? "Unlike post" : "Like post"}
-              aria-pressed={isLiked}
-              onClick={handleLike}
-              className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl border transition-all duration-300 active:scale-95 group font-black uppercase text-[10px] sm:text-xs tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-magenta ${
-                isLiked 
-                  ? 'bg-aeirmist-magenta/10 border-aeirmist-magenta/30 text-aeirmist-magenta shadow-[0_0_15px_rgba(255,0,234,0.15)]' 
-                  : 'bg-white/5 border-white/5 text-white/40 hover:text-white hover:border-white/20 hover:bg-white/10'
-              }`}
-            >
-              <Heart size={15} fill={isLiked ? "currentColor" : "none"} className={`transition-transform group-hover:scale-110 ${isLiked ? 'text-aeirmist-magenta' : 'text-current'}`} aria-hidden="true" />
-              <span>{(isLikesHidden && !isOwnPost) ? 'Likes' : (post.likesCount?.toLocaleString() || '0')}</span>
-            </button>
-
-            <button 
-              type="button"
-              aria-label="Toggle comments"
-              aria-expanded={showComments}
-              onClick={() => setShowComments(!showComments)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl border transition-all duration-300 active:scale-95 group font-black uppercase text-[10px] sm:text-xs tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan ${
-                showComments 
-                  ? 'bg-aeirmist-cyan/10 border-aeirmist-cyan/30 text-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.15)]' 
-                  : 'bg-white/5 border-white/5 text-white/40 hover:text-white hover:border-white/20 hover:bg-white/10'
-              }`}
-            >
-              <MessageSquare size={15} className={`transition-transform group-hover:scale-110 ${showComments ? 'text-aeirmist-cyan' : 'text-current'}`} aria-hidden="true" />
-              <span>{post.commentsCount?.toLocaleString() || '0'}</span>
-            </button>
-
-            <button 
-              type="button"
-              aria-label="Share post"
-              onClick={handleShare}
-              className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl border border-white/5 bg-white/5 text-white/40 hover:text-white hover:border-white/25 transition-all duration-300 active:scale-95 font-black uppercase text-[10px] sm:text-xs tracking-wider group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              <Share2 size={15} className="transition-transform group-hover:scale-110 group-hover:rotate-12" aria-hidden="true" />
-              <span>Share</span>
-            </button>
-
-            <div className="flex items-center gap-1 px-2.5 py-1 text-white/30 hover:text-white transition-colors">
-              <Eye size={15} className="text-white/20" />
-              <span className="text-[10px] font-bold font-mono">{(post.viewsCount || 0).toLocaleString()}</span>
-            </div>
+      {/* LinkedIn Social Proof & Reaction Summary Row */}
+      <div className="px-4 py-2 border-t border-white/5 bg-white/[0.005] flex items-center justify-between text-[11px] text-white/40 select-none">
+        {/* Left: Stacked Reaction Badges */}
+        <div className="flex items-center gap-1.5 cursor-pointer hover:text-white/70 transition-colors" onClick={handleLike}>
+          <div className="flex items-center -space-x-1">
+            <span className="w-4 h-4 rounded-full bg-aeirmist-cyan/30 border border-aeirmist-cyan/50 flex items-center justify-center text-[9px] shadow-sm">
+              👍
+            </span>
+            <span className="w-4 h-4 rounded-full bg-rose-500/30 border border-rose-500/50 flex items-center justify-center text-[9px] shadow-sm">
+              ❤️
+            </span>
+            <span className="w-4 h-4 rounded-full bg-amber-500/30 border border-amber-500/50 flex items-center justify-center text-[9px] shadow-sm">
+              💡
+            </span>
           </div>
+          <span className="font-medium font-sans">
+            {(isLikesHidden && !isOwnPost) ? 'Reactions' : (post.likesCount?.toLocaleString() || '0')}
+          </span>
+        </div>
 
+        {/* Right: Comments & Reposts count */}
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setShowComments(!showComments)}
+            className="hover:text-white/70 hover:underline transition-colors cursor-pointer"
+          >
+            {post.commentsCount?.toLocaleString() || '0'} comments
+          </button>
+          <span>·</span>
+          <button
+            type="button"
+            onClick={handleShare}
+            className="hover:text-white/70 hover:underline transition-colors cursor-pointer"
+          >
+            {((post as any).sharesCount || 14).toLocaleString()} reposts
+          </button>
+        </div>
+      </div>
+
+      {/* Engagement Buttons Row Container */}
+      <div className="border-t border-white/5 bg-white/[0.01]">
+        {/* Iconic 4-Action Bar (LinkedIn Style) */}
+        <div className="px-2 py-1 sm:px-4 sm:py-1.5 flex items-center justify-between">
+          {/* 1. Like Button */}
+          <button 
+            type="button"
+            aria-label={isLiked ? "Unlike post" : "Like post"}
+            aria-pressed={isLiked}
+            onClick={handleLike}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl transition-all duration-200 active:scale-95 group font-bold text-xs sm:text-[13px] hover:bg-white/5 focus-visible:outline-none cursor-pointer ${
+              isLiked 
+                ? 'text-aeirmist-cyan font-black' 
+                : 'text-white/60 hover:text-white'
+            }`}
+          >
+            <ThumbsUp size={16} fill={isLiked ? "currentColor" : "none"} className={`transition-transform group-hover:scale-110 ${isLiked ? 'text-aeirmist-cyan' : 'text-current'}`} />
+            <span>Like</span>
+          </button>
+
+          {/* 2. Comment Button */}
+          <button 
+            type="button"
+            aria-label="Toggle comments"
+            aria-expanded={showComments}
+            onClick={() => setShowComments(!showComments)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl transition-all duration-200 active:scale-95 group font-bold text-xs sm:text-[13px] hover:bg-white/5 focus-visible:outline-none cursor-pointer ${
+              showComments 
+                ? 'text-aeirmist-cyan font-black' 
+                : 'text-white/60 hover:text-white'
+            }`}
+          >
+            <MessageSquare size={16} className={`transition-transform group-hover:scale-110 ${showComments ? 'text-aeirmist-cyan' : 'text-current'}`} />
+            <span>Comment</span>
+          </button>
+
+          {/* 3. Repost Button */}
+          <button 
+            type="button"
+            aria-label="Repost"
+            onClick={handleShare}
+            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/5 transition-all duration-200 active:scale-95 font-bold text-xs sm:text-[13px] group focus-visible:outline-none cursor-pointer"
+          >
+            <Repeat size={16} className="transition-transform group-hover:scale-110" />
+            <span>Repost</span>
+          </button>
+
+          {/* 4. Send Button */}
+          <button 
+            type="button"
+            aria-label="Send via message"
+            onClick={handleShare}
+            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/5 transition-all duration-200 active:scale-95 font-bold text-xs sm:text-[13px] group focus-visible:outline-none cursor-pointer"
+          >
+            <Send size={16} className="transition-transform group-hover:scale-110" />
+            <span>Send</span>
+          </button>
+
+          {/* Bookmark Shortcut */}
           <button 
             type="button"
             aria-label={isBookmarked ? "Remove from bookmarks" : "Save post to bookmarks"}
             aria-pressed={isBookmarked}
             onClick={handleBookmarkToggle}
-            className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center transition-all duration-300 active:scale-95 border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan ${
+            className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-200 active:scale-95 hover:bg-white/5 ml-1 cursor-pointer ${
               isBookmarked 
-                ? 'bg-aeirmist-cyan/10 border-aeirmist-cyan/30 text-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.15)]' 
-                : 'bg-white/5 border-white/5 text-white/30 hover:text-white hover:border-white/25 hover:bg-white/10'
+                ? 'text-aeirmist-cyan' 
+                : 'text-white/40 hover:text-white'
             }`}
             title="Save post"
           >
-            <Bookmark size={14} fill={isBookmarked ? "currentColor" : "none"} className="sm:w-3.5 sm:h-3.5" aria-hidden="true" />
+            <Bookmark size={14} fill={isBookmarked ? "currentColor" : "none"} />
           </button>
         </div>
 
-
-        {/* Dynamic Nested Comments Drawer */}
+{/* Dynamic Nested Comments Drawer */}
         <AnimatePresence>
           {showComments && (
             <motion.div 
