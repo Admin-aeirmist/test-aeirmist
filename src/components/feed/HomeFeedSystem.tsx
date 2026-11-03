@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAppearance } from '../../context/AppearanceContext';
 import { StoriesSystem } from './StoriesSystem';
 import { PremiumPostCard } from './PremiumPostCard';
-import { LinkedInProfileCard } from './LinkedInProfileCard';
 import { LinkedInPostComposer } from './LinkedInPostComposer';
 import { 
   Loader2,
@@ -392,15 +391,10 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
            </div>
         </div>
         
-        <div className="w-full flex justify-center gap-6 px-1 sm:px-4">
+        <div className="w-full flex justify-center">
           
-          {/* LEFT COLUMN: LinkedIn Profile & Identity Card */}
-          <div className="hidden xl:block w-56 2xl:w-64 shrink-0">
-            <LinkedInProfileCard onUserClick={onUserClick} onNavigate={onNavigate} />
-          </div>
-
           {/* MAIN FEED COLUMN */}
-          <div className="w-full max-w-[620px] min-w-0">
+          <div className="w-full max-w-[700px]">
             {/* Top LinkedIn-Style Post Composer */}
             <LinkedInPostComposer onCreate={onCreate} onNavigate={onNavigate} />
 

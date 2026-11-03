@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, ChevronRight, Bookmark, Sparkles, MapPin, Briefcase } from 'lucide-react';
+import { ShieldCheck, ChevronRight, Bookmark, MapPin, Briefcase } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { BLANK_DP } from '../../lib/avatar';
 
@@ -32,42 +32,38 @@ export const LinkedInProfileCard: React.FC<LinkedInProfileCardProps> = React.mem
       {/* 1. Main Identity Card */}
       <div className="glass-panel rounded-2xl border-white/5 bg-black/40 overflow-hidden shadow-2xl hover:border-white/10 transition-all duration-300">
         {/* Cover Banner */}
-        <div className="h-16 w-full relative bg-gradient-to-r from-amber-950/40 via-purple-950/30 to-cyan-950/40 border-b border-white/5 overflow-hidden">
-          {/* Subtle night-city glow aesthetic matching the screenshot */}
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-500/20 via-transparent to-transparent opacity-70" />
-          <div className="absolute -top-6 -right-6 w-24 h-24 bg-aeirmist-cyan/10 blur-xl rounded-full pointer-events-none" />
+        <div className="h-16 w-full relative bg-gradient-to-r from-neutral-900 via-neutral-800 to-neutral-900 border-b border-white/5 overflow-hidden">
+          <div className="absolute inset-0 bg-white/[0.02]" />
         </div>
 
         {/* Profile Content */}
         <div className="px-4 pb-4 pt-0 relative">
-          {/* Overlapping Avatar */}
+          {/* Overlapping Square Avatar */}
           <div className="-mt-9 mb-2.5 flex items-end justify-between">
             <button
               type="button"
               onClick={handleProfileClick}
-              className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan group/avatar"
+              className="relative rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aeirmist-cyan group/avatar"
             >
               <img
                 src={avatarUrl}
                 alt={displayName}
-                className="w-16 h-16 rounded-full object-cover border-2 border-[#000d1c] bg-neutral-900 shadow-xl transition-transform duration-200 group-hover/avatar:scale-105"
+                className="w-16 h-16 rounded-2xl object-cover border-2 border-[#000d1c] bg-neutral-900 shadow-xl transition-transform duration-200 group-hover/avatar:scale-105"
               />
-              <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-400 rounded-full border-2 border-[#000d1c] shadow-[0_0_8px_#10b981]" />
+              <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-[#000d1c]" />
             </button>
 
-            {/* Level Rank Badge */}
+            {/* Level Rank Badge - Clean & Simple */}
             <div 
-              style={{ borderColor: `${rank?.color || '#00f2ff'}40`, color: rank?.color || '#00f2ff' }}
-              className="px-2 py-0.5 rounded-full border bg-white/[0.03] text-[9px] font-black uppercase tracking-widest flex items-center gap-1"
+              className="px-2 py-0.5 rounded-lg border border-white/10 bg-white/5 text-[9px] font-bold text-white/70 tracking-wider flex items-center gap-1"
             >
-              <Sparkles size={10} />
               <span>Lv. {aeirmistLevel}</span>
             </div>
           </div>
 
           {/* Name & Headline */}
           <div className="text-left cursor-pointer" onClick={handleProfileClick}>
-            <h2 className="text-sm font-black text-white hover:text-aeirmist-cyan transition-colors flex items-center gap-1.5 leading-snug">
+            <h2 className="text-sm font-bold text-white hover:text-aeirmist-cyan transition-colors flex items-center gap-1.5 leading-snug">
               {displayName}
               <ShieldCheck size={13} className="text-aeirmist-cyan shrink-0" />
             </h2>
@@ -82,7 +78,7 @@ export const LinkedInProfileCard: React.FC<LinkedInProfileCardProps> = React.mem
 
           {/* Work / Role Pill */}
           <div className="mt-2.5 pt-2.5 border-t border-white/5 flex items-center gap-2 text-left">
-            <div className="w-5 h-5 rounded bg-aeirmist-cyan/10 border border-aeirmist-cyan/30 flex items-center justify-center text-aeirmist-cyan shrink-0 text-[10px] font-bold">
+            <div className="w-5 h-5 rounded-md bg-white/10 border border-white/15 flex items-center justify-center text-white/80 shrink-0 text-[10px] font-bold">
               fs
             </div>
             <span className="text-[11px] text-white/80 font-medium truncate flex items-center gap-1">
@@ -114,14 +110,14 @@ export const LinkedInProfileCard: React.FC<LinkedInProfileCardProps> = React.mem
               <p className="text-[11px] text-white/50 group-hover:text-white/80 transition-colors">Connections</p>
               <p className="text-[10px] text-white/30 font-medium">Grow your network</p>
             </div>
-            <span className="text-sm font-black text-aeirmist-cyan font-mono group-hover:scale-105 transition-transform">
+            <span className="text-sm font-bold text-white/80 font-mono group-hover:scale-105 transition-transform">
               {connectionsCount}
             </span>
           </button>
         </div>
       </div>
 
-      {/* 3. Exclusive Tools & Insights / Pro */}
+      {/* 3. Exclusive Tools & Insights / Pro - Simple & User friendly */}
       <div className="glass-panel rounded-2xl border-white/5 bg-black/40 p-3 shadow-xl hover:border-white/10 transition-all duration-300 text-left">
         <p className="text-[10px] text-white/40 font-medium leading-relaxed">
           Access exclusive tools & insights
@@ -129,12 +125,12 @@ export const LinkedInProfileCard: React.FC<LinkedInProfileCardProps> = React.mem
         <button
           type="button"
           onClick={() => onNavigate?.('business')}
-          className="mt-1.5 flex items-center gap-2 text-xs font-black text-amber-400 hover:text-amber-300 transition-colors group"
+          className="mt-1.5 flex items-center gap-2 text-xs font-semibold text-white/80 hover:text-white transition-colors group"
         >
-          <span className="w-3.5 h-3.5 rounded bg-amber-400/20 border border-amber-400/40 flex items-center justify-center text-[9px] text-amber-300">
+          <span className="w-3.5 h-3.5 rounded bg-white/10 border border-white/20 flex items-center justify-center text-[9px] text-white/70">
             ★
           </span>
-          <span className="underline decoration-amber-400/40 group-hover:decoration-amber-300">
+          <span className="underline decoration-white/20 group-hover:decoration-white/60">
             Try BOND Ecosystem Pro for ৳0
           </span>
         </button>
