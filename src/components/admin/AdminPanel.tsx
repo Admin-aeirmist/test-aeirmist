@@ -1072,10 +1072,76 @@ const VerificationPlanModal = ({
   );
 };
 
-const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, updateUserStatus, suspendUser, onOpenAddAdmin }: { db: any; addToast: any; purgeUser: any; toggleUserBan: any; toggleVerification: any; updateUserStatus: any; suspendUser: any; onOpenAddAdmin: () => void }) => {
+const UsersTab = ({ 
+  db, 
+  initialUsers = [],
+  addToast, 
+  purgeUser, 
+  toggleUserBan, 
+  toggleVerification, 
+  updateUserStatus, 
+  suspendUser, 
+  onOpenAddAdmin 
+}: { 
+  db: any; 
+  initialUsers?: any[];
+  addToast: any; 
+  purgeUser: any; 
+  toggleUserBan: any; 
+  toggleVerification: any; 
+  updateUserStatus: any; 
+  suspendUser: any; 
+  onOpenAddAdmin: () => void;
+}) => {
   const { auth } = useAeirmist();
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  // Helper to strictly identify Era AI and system bots (they are not regular users)
+  const isSystemOrAiUser = (u: any): boolean => {
+    if (!u) return false;
+    const uid = String(u.id || u.uid || u.accountId || '').toLowerCase().trim();
+    const username = String(u.username || '').toLowerCase().trim();
+    const displayName = String(u.displayName || u.name || '').toLowerCase().trim();
+    const role = String(u.role || '').toLowerCase().trim();
+    const email = String(u.email || '').toLowerCase().trim();
+
+    return (
+      uid === '00000000-0000-4000-a000-000000000001' ||
+      uid.startsWith('00000000-') ||
+      uid === 'era' ||
+      uid === 'era_ai' ||
+      username === 'era' ||
+      username === 'era_ai' ||
+      username === 'eraai' ||
+      username === 'aeirmist_system' ||
+      username === 'system' ||
+      displayName === 'era ai' ||
+      displayName === 'era' ||
+      displayName === 'aeirmist system' ||
+      role === 'ai_assistant' ||
+      role === 'system' ||
+      role === 'bot' ||
+      email === 'era@aeirmist.com' ||
+      email === 'era.ai@aeirmist.com' ||
+      email === 'system@aeirmist.com'
+    );
+  };
+
+  const [users, setUsers] = useState<any[]>(() => {
+    if (Array.isArray(initialUsers) && initialUsers.length > 0) {
+      return initialUsers.map((u: any) => normalizeAdminUser(u)).filter(u => !isSystemOrAiUser(u));
+    }
+    try {
+      const cached = sessionStorage.getItem('aeirmist_cached_admin_users');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.filter(u => !isSystemOrAiUser(u));
+        }
+      }
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState<boolean>(() => users.length === 0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUserForDrawer, setSelectedUserForDrawer] = useState<any | null>(null);
   const [verificationModalUser, setVerificationModalUser] = useState<any | null>(null);
@@ -1186,41 +1252,71 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
   };
 
   useEffect(() => {
-    if (!db) return;
     let isMounted = true;
-    const loadFromApi = async () => {
-      try {
-        const res = await api.admin.getUsers();
-        if (res && res.users && res.users.length > 0 && isMounted) {
-          setUsers(prev => {
-            if (prev.length === 0) {
-              return res.users.map((u: any) => normalizeAdminUser(u.profile || u));
-            }
-            return prev;
-          });
-        }
-      } catch (e) {
-        logger.warn('Users fallback load from API:', e);
+
+    // Safety timeout: Maximum 350ms loading spinner so it never hangs
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) setLoading(false);
+    }, 350);
+
+    const syncUsersState = (incomingList: any[]) => {
+      if (!isMounted || !Array.isArray(incomingList)) return;
+      const normalized = incomingList
+        .map((u: any) => normalizeAdminUser(u.profile || u))
+        .filter(u => !isSystemOrAiUser(u));
+
+      if (normalized.length > 0) {
+        setUsers(normalized);
+        setLoading(false);
+        try {
+          sessionStorage.setItem('aeirmist_cached_admin_users', JSON.stringify(normalized.slice(0, 150)));
+        } catch {}
       }
     };
-    loadFromApi();
 
-    const unsub = onSnapshot(collection(db, 'profiles'), (snapshot) => {
-      if (snapshot.docs.length > 0) {
-        setUsers(snapshot.docs.map(d => normalizeAdminUser({ id: d.id, ...d.data() })));
-      } else {
-        loadFromApi();
-      }
-      setLoading(false);
-    }, (err) => {
-      logger.warn("Profiles list error:", err);
-      loadFromApi().finally(() => setLoading(false));
-    });
+    // If initialUsers became available from parent AdminPanel, sync immediately
+    if (Array.isArray(initialUsers) && initialUsers.length > 0) {
+      syncUsersState(initialUsers);
+    }
+
+    // 1. Fast load from edge backend (<15ms)
+    api.admin.getUsers()
+      .then((res) => {
+        if (res && Array.isArray(res.users) && res.users.length > 0) {
+          syncUsersState(res.users);
+        }
+      })
+      .catch((err) => {
+        logger.warn('Users API load error:', err);
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    // 2. Real-time Firestore sync
+    if (db) {
+      const unsub = onSnapshot(collection(db, 'profiles'), (snapshot) => {
+        if (snapshot.docs.length > 0) {
+          syncUsersState(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        }
+        if (isMounted) setLoading(false);
+      }, (err) => {
+        logger.warn("Profiles list error:", err);
+        if (isMounted) setLoading(false);
+      });
+
+      return () => {
+        isMounted = false;
+        clearTimeout(safetyTimer);
+        unsub();
+      };
+    }
+
     return () => {
       isMounted = false;
-      unsub();
+      clearTimeout(safetyTimer);
     };
-  }, [db]);
+  }, [db, initialUsers]);
 
   const handleApplySuspension = async () => {
     if (!suspendingUser) return;
@@ -1350,7 +1446,9 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
     }
   };
 
-  const filteredUsers = users.filter(u => {
+  const realUsers = users.filter(u => !isSystemOrAiUser(u));
+
+  const filteredUsers = realUsers.filter(u => {
     const matchesSearch = 
       u.username?.toLowerCase().includes(searchQuery.toLowerCase()) || 
       u.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1365,7 +1463,14 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
     return matchesSearch;
   });
 
-  if (loading) return <div className="p-12 flex justify-center"><RefreshCw className="animate-spin text-aeirmist-cyan" /></div>;
+  if (loading && realUsers.length === 0) {
+    return (
+      <div className="p-12 flex flex-col items-center justify-center gap-3">
+        <RefreshCw className="animate-spin text-aeirmist-cyan" size={24} />
+        <span className="text-xs font-mono text-white/40 uppercase tracking-widest">Loading Accounts Telemetry...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -1386,7 +1491,7 @@ const UsersTab = ({ db, addToast, purgeUser, toggleUserBan, toggleVerification, 
             onChange={(e) => setFilterRole(e.target.value)}
             className="h-12 px-4 rounded-2xl bg-white/[0.03] border border-white/10 text-white text-xs font-mono outline-none cursor-pointer"
           >
-            <option value="ALL" className="bg-black">All Statuses ({users.length})</option>
+            <option value="ALL" className="bg-black">All Statuses ({realUsers.length})</option>
             <option value="ADMIN" className="bg-black">Admins & Staff</option>
             <option value="VERIFIED" className="bg-black">Verified Nodes</option>
             <option value="BANNED" className="bg-black">Restricted / Banned</option>
@@ -3456,6 +3561,7 @@ export const AdminPanel = () => {
           {activeTab === 'users' && (
             <UsersTab 
               db={db} 
+              initialUsers={allProfiles}
               addToast={addToast} 
               purgeUser={purgeUser} 
               toggleUserBan={toggleUserBan} 

@@ -1002,6 +1002,30 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     }), { status: 200, headers: CORS_HEADERS });
   }
 
+  // Admin: Users List (Fast edge response, excluding Era AI & system bots)
+  if (path === "/api/v1/admin/users" && method === "GET") {
+    const isAi = (u: any) => {
+      const id = String(u?.id || u?.uid || u?.accountId || '').toLowerCase();
+      const username = String(u?.username || u?.profile?.username || '').toLowerCase();
+      const role = String(u?.role || u?.profile?.role || '').toLowerCase();
+      const name = String(u?.displayName || u?.profile?.displayName || '').toLowerCase();
+      return id.startsWith('00000000-') || id === 'era' || username === 'era' || username === 'era_ai' || role === 'ai_assistant' || name === 'era ai';
+    };
+
+    const uniqueUsersMap = new Map<string, any>();
+    for (const u of Array.from(usersMap.values())) {
+      const uid = u?.id || u?.uid || u?.accountId;
+      if (uid && !uniqueUsersMap.has(uid) && !isAi(u)) {
+        uniqueUsersMap.set(uid, u);
+      }
+    }
+    const users = Array.from(uniqueUsersMap.values()).map((u: any) => ({
+      ...u,
+      profile: u.profile || u
+    }));
+    return new Response(JSON.stringify({ users, total: users.length }), { status: 200, headers: CORS_HEADERS });
+  }
+
   // Admin: Audit Logs
   if (path === "/api/v1/admin/audit-logs" && method === "GET") {
     return new Response(JSON.stringify({
