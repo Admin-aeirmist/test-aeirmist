@@ -254,7 +254,11 @@ class MediaService {
     // Primary & High-Speed: Native Aeirmist Server Storage Engine (Local Disk & PostgreSQL)
     try {
       const folderName = path.split('/')[0] || 'general';
-      const deviceRes = await api.media.upload(uploadFile, folderName);
+      const deviceRes = await api.media.upload(uploadFile, folderName, (uploadPct) => {
+        // Smoothly map 0-100% upload bytes into 15% - 95% total task progress
+        const mapped = Math.floor(15 + (uploadPct * 0.80));
+        onProgress(mapped, `Streaming media bytes (${uploadPct}%)...`);
+      });
       if (deviceRes && (deviceRes.url || deviceRes.key)) {
         const publicUrl = deviceRes.url || `/media/${deviceRes.key}`;
         onProgress(100, 'Uploaded');

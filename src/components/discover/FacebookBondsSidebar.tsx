@@ -238,7 +238,8 @@ export const FacebookBondsSidebar: React.FC<FacebookBondsSidebarProps> = ({
           </div>
 
           <div className="space-y-0.5">
-            {filteredManaged.map((entity) => {
+            {filteredManaged.length > 0 ? (
+              filteredManaged.map((entity) => {
               const isSelected = selectedEntity?.id === entity.id;
               return (
                 <div
@@ -278,12 +279,17 @@ export const FacebookBondsSidebar: React.FC<FacebookBondsSidebarProps> = ({
                       {entity.name}
                     </h4>
                     <p className="text-xs text-neutral-400 truncate flex items-center gap-1 mt-0.5">
-                      <span>Last active 15m ago</span>
+                      <span>Active</span>
                     </p>
                   </div>
                 </div>
               );
-            })}
+            })
+            ) : (
+              <div className="p-3 text-center rounded-xl bg-white/[0.02] border border-white/5 my-1">
+                <p className="text-[11px] text-white/40">No managed {currentMeta.title.toLowerCase()} yet.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -302,9 +308,10 @@ export const FacebookBondsSidebar: React.FC<FacebookBondsSidebarProps> = ({
           </div>
 
           <div className="space-y-0.5">
-            {filteredJoined.map((entity, idx) => {
+            {filteredJoined.length > 0 ? (
+              filteredJoined.map((entity, idx) => {
               const isSelected = selectedEntity?.id === entity.id;
-              const timeSamples = ['Last active 5 minutes ago', 'Last active about an hour ago', 'Last active 4 minutes ago', 'Last active 54 minutes ago'];
+              const timeSamples = ['Active recently', 'Active today', 'Active this week'];
               const activeText = timeSamples[idx % timeSamples.length];
 
               return (
@@ -341,7 +348,12 @@ export const FacebookBondsSidebar: React.FC<FacebookBondsSidebarProps> = ({
                   </div>
                 </div>
               );
-            })}
+            })
+            ) : (
+              <div className="p-3 text-center rounded-xl bg-white/[0.02] border border-white/5 my-1">
+                <p className="text-[11px] text-white/40">No joined {currentMeta.title.toLowerCase()} yet.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

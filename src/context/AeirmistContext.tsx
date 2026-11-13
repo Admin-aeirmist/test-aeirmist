@@ -1212,10 +1212,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       try {
         const rawSession = localStorage.getItem('aeirmist_session');
         const rawProfile = localStorage.getItem('aeirmist_cached_profile') || localStorage.getItem('aeirmist_user_profile');
-        if (rawSession || rawProfile) {
+        const rawUid = localStorage.getItem('aeirmist_user_id') || localStorage.getItem('user_id');
+        if (rawSession || rawProfile || rawUid) {
           const s = rawSession ? JSON.parse(rawSession) : null;
           const p = rawProfile ? JSON.parse(rawProfile) : null;
-          const uid = s?.uid || s?.id || p?.uid || p?.ownerUid || p?.id || p?.userId;
+          const uid = s?.uid || s?.id || p?.uid || p?.ownerUid || p?.id || p?.userId || rawUid;
           if (uid) {
             activeUser = {
               uid,

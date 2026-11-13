@@ -312,6 +312,19 @@ router.post('/entities/:id/posts', authenticateToken, async (req: AuthenticatedR
   }
 });
 
+// 13.5 Get Bonds Ecosystem Feed Posts
+router.get('/feed', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    const limit = parseInt(req.query.limit as string) || 30;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const posts = await BondsDAL.getFeedPosts(userId, { limit, offset });
+    res.json({ posts });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch bonds feed' });
+  }
+});
+
 // 14. Get Entity Posts (Enforces entity privacy & moderation visibility)
 router.get('/entities/:id/posts', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {

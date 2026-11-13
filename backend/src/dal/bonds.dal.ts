@@ -984,6 +984,67 @@ export class BondsDAL {
     }));
   }
 
+  static async getFeedPosts(userId?: string, options?: { limit?: number; offset?: number }) {
+    const limit = Math.min(options?.limit || 30, 60);
+    const offset = options?.offset || 0;
+
+    let allowedEntityIds: string[] = [];
+    if (userId) {
+      const myMemberships = await db
+        .select({ entityId: bondsMemberships.entityId })
+        .from(bondsMemberships)
+        .where(and(eq(bondsMemberships.userId, userId), eq(bondsMemberships.status, 'active')));
+      allowedEntityIds = myMemberships.map(m => m.entityId);
+    }
+
+    const conditions = [
+      eq(bondsPosts.status, 'published'),
+      or(
+        eq(bondsEntities.privacy, 'public'),
+        allowedEntityIds.length > 0 ? inArray(bondsEntities.id, allowedEntityIds) : sql`false`
+      )
+    ];
+
+    const rows = await db
+      .select({
+        post: bondsPosts,
+        entity: {
+          id: bondsEntities.id,
+          name: bondsEntities.name,
+          type: bondsEntities.type,
+          slug: bondsEntities.slug,
+          logoUrl: bondsEntities.logoUrl,
+          coverUrl: bondsEntities.coverUrl,
+          privacy: bondsEntities.privacy,
+        },
+        author: {
+          id: users.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarKey: profiles.avatarKey,
+          isVerified: profiles.isVerified,
+        },
+      })
+      .from(bondsPosts)
+      .innerJoin(bondsEntities, eq(bondsPosts.entityId, bondsEntities.id))
+      .innerJoin(users, eq(bondsPosts.authorId, users.id))
+      .innerJoin(profiles, eq(users.id, profiles.userId))
+      .where(and(...conditions))
+      .orderBy(desc(bondsPosts.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    return rows.map(r => ({
+      ...r.post,
+      groupName: r.entity.name,
+      groupType: r.entity.type,
+      entityId: r.entity.id,
+      entitySlug: r.entity.slug,
+      authorName: r.author.displayName || r.author.username || 'Member',
+      authorAvatarUrl: r.author.avatarKey ? (r.author.avatarKey.startsWith('http') ? r.author.avatarKey : `/media/${r.author.avatarKey}`) : '',
+    }));
+  }
+
   static async approvePost(postId: string, adminUserId: string) {
     const [post] = await db
       .select()

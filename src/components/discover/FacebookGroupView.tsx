@@ -81,6 +81,19 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
   const [isMember, setIsMember] = useState(entity.isMember || false);
   const [membershipStatus, setMembershipStatus] = useState(entity.membershipStatus || 'not_member');
   const [myRole, setMyRole] = useState(entity.myRole || (entity.isCreator ? 'owner' : 'member'));
+  const [members, setMembers] = useState<any[]>([]);
+
+  // Load Real Members from API
+  const fetchMembers = async () => {
+    try {
+      const res = await api.bonds.getEntityMembers(entity.id);
+      if (res && Array.isArray(res.members)) {
+        setMembers(res.members);
+      }
+    } catch (err) {
+      console.warn('[Members fetch notice]', err);
+    }
+  };
 
   // Load Posts from DAL/API
   const fetchPosts = async () => {
@@ -88,39 +101,12 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
     try {
       const res = await api.bonds.getPosts(entity.id);
       if (res && res.posts) {
-        setPosts(res.posts);
+        setPosts(res.posts.filter((p: any) => !String(p.id).startsWith('seed-')));
+      } else {
+        setPosts([]);
       }
     } catch (err) {
-      setPosts([
-        {
-          id: 'post-seed-1',
-          entityId: entity.id,
-          authorId: 'user-admin',
-          authorName: 'Syed Shakil',
-          authorHandle: 'shakil_arch',
-          authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-          authorRole: 'admin',
-          content: 'Welcome to all 776 members! Please review our group code of conduct before posting. Spammers and promotional links without mod approval will be removed immediately.',
-          likesCount: 42,
-          commentsCount: 8,
-          createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-          hasLiked: false,
-        },
-        {
-          id: 'post-seed-2',
-          entityId: entity.id,
-          authorId: 'user-2',
-          authorName: 'Tanvir Hossain',
-          authorHandle: 'tanvir_dev',
-          authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-          authorRole: 'member',
-          content: 'Just deployed our new real-time WebSockets event routing engine on PostgreSQL & Redis. The latency dropped from 120ms to 9ms flat across all channels!',
-          likesCount: 19,
-          commentsCount: 3,
-          createdAt: new Date(Date.now() - 3600000 * 8).toISOString(),
-          hasLiked: false,
-        }
-      ]);
+      setPosts([]);
     } finally {
       setIsLoadingPosts(false);
     }
@@ -128,6 +114,7 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
 
   useEffect(() => {
     fetchPosts();
+    fetchMembers();
   }, [entity.id]);
 
   // Handle Post Creation
@@ -287,18 +274,6 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
     }
   };
 
-  // Sample Member Square Avatars
-  const sampleAvatars = [
-    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&q=80',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=80&q=80',
-    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=80&q=80',
-    'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=80&q=80',
-    'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=80&q=80',
-    'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=80&q=80',
-    'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=80&q=80',
-    'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=80&q=80',
-  ];
-
   return (
     <div className="flex-1 flex overflow-hidden bg-[#18191a] text-[#e4e6eb] select-none">
       {/* 1. CENTER MAIN FEED & COVER (Takes full left/center width) */}
@@ -343,23 +318,31 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
                 <div className="flex items-center gap-2 mt-1 text-sm text-[#b0b3b8]">
                   <Lock className="w-3.5 h-3.5" />
                   <span className="font-medium">
-                    {entity.privacy === 'private' ? 'Private group' : 'Public group'} · {entity.memberCount || 776} members
+                    {entity.privacy === 'private' ? 'Private group' : 'Public group'} · {entity.memberCount || members.length || 1} members
                   </span>
                 </div>
 
-                {/* Overlapping Square Member Avatars Stack */}
+                {/* Real Square Member Avatars Stack */}
                 <div className="flex items-center mt-3 -space-x-1.5 overflow-hidden py-1">
-                  {sampleAvatars.map((src, i) => (
-                    <img
-                      key={i}
-                      src={src}
-                      alt="Member"
-                      className="inline-block h-8 w-8 rounded-lg ring-2 ring-[#18191a] object-cover"
-                    />
-                  ))}
-                  <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-[#3a3b3c] ring-2 ring-[#18191a] text-[10px] font-bold text-white">
-                    +{Math.max(0, (entity.memberCount || 776) - sampleAvatars.length)}
-                  </div>
+                  {members.length > 0 ? (
+                    members.slice(0, 6).map((m: any, i: number) => (
+                      <img
+                        key={m.userId || i}
+                        src={getAvatarUrl(m.avatarKey || m.photoURL, m.userId)}
+                        alt={m.displayName || m.username || 'Member'}
+                        className="inline-block h-8 w-8 rounded-lg ring-2 ring-[#18191a] object-cover"
+                      />
+                    ))
+                  ) : (
+                    <div className="flex items-center justify-center h-8 px-2.5 rounded-lg bg-[#3a3b3c] ring-2 ring-[#18191a] text-xs font-semibold text-white/70">
+                      1 member
+                    </div>
+                  )}
+                  {members.length > 6 && (
+                    <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-[#3a3b3c] ring-2 ring-[#18191a] text-[10px] font-bold text-white">
+                      +{members.length - 6}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -800,7 +783,7 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
               <h3 className="font-bold text-sm text-white truncate">{entity.name}</h3>
               <p className="text-[12px] text-[#b0b3b8] flex items-center gap-1">
                 <Lock className="w-3 h-3 text-[#b0b3b8]" />
-                <span>{entity.privacy === 'private' ? 'Private group' : 'Public group'} · {entity.memberCount || 776} members</span>
+                <span>{entity.privacy === 'private' ? 'Private group' : 'Public group'} · {entity.memberCount || members.length || 1} members</span>
               </p>
             </div>
           </div>

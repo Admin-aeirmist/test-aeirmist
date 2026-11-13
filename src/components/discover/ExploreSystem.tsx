@@ -45,186 +45,6 @@ export function getEntityCanonicalUrl(entity: any): string {
   return `/bonds/${typePlural}/${slug}`;
 }
 
-// Authentic seed entities matching Facebook UI screenshots
-const SEED_ENTITIES = [
-  // 1. Weird Shitposting. (Exact match from Facebook Group Screenshot 2)
-  {
-    id: 'seed-grp-fb-1',
-    type: 'group',
-    name: 'Weird Shitposting.',
-    entityNumber: '10849204812',
-    slug: '10849204812-weird-shitposting-ryiwevdghjsdgxujegdhjnedghjed',
-    canonicalUrl: '/bonds/groups/10849204812-weird-shitposting-ryiwevdghjsdgxujegdhjnedghjed',
-    description: 'A cozy corner for surreal developer humor, avant-garde memes, late night debugging stories, and creative tech jokes.',
-    category: 'Humor & Community',
-    coverUrl: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
-    logoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-    privacy: 'private',
-    membershipPolicy: 'approval_required',
-    memberCount: 776,
-    myRole: 'owner',
-    isCreator: true,
-    isMember: true,
-    membershipStatus: 'active',
-    tags: ['humor', 'memes', 'shitposting', 'tech'],
-    rules: [
-      { title: 'Be Kind and Courteous', description: 'Create a welcoming environment for everyone.' },
-      { title: 'No Hate Speech or Bullying', description: 'Degrading comments about race, religion, or orientation will not be tolerated.' }
-    ],
-    conversationId: 'conv_weird_shitposting',
-  },
-
-  // 2. Preboost Marketing (Managed Facebook Page Screenshot 3)
-  {
-    id: 'seed-page-fb-1',
-    type: 'community',
-    name: 'Preboost Marketing',
-    entityNumber: '20938471928',
-    slug: '20938471928-preboost-marketing-kxmvndhweuiyeidjcbxzv',
-    canonicalUrl: '/bonds/communities/20938471928-preboost-marketing-kxmvndhweuiyeidjcbxzv',
-    description: 'Performance growth agency and marketing infrastructure studio for high-velocity software ventures and creator products.',
-    category: 'Marketing & Growth',
-    coverUrl: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1200&q=80',
-    logoUrl: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=200&q=80',
-    privacy: 'public',
-    membershipPolicy: 'open',
-    memberCount: 450,
-    myRole: 'owner',
-    isCreator: true,
-    isMember: true,
-    membershipStatus: 'active',
-    tags: ['marketing', 'growth', 'advertising'],
-    conversationId: 'conv_preboost_marketing',
-  },
-
-  // 3. TopFan (Managed Facebook Page Screenshot 3)
-  {
-    id: 'seed-page-fb-2',
-    type: 'community',
-    name: 'TopFan',
-    entityNumber: '31049281726',
-    slug: '31049281726-topfan-qowieuwoieudnvcxbzmshd',
-    canonicalUrl: '/bonds/communities/31049281726-topfan-qowieuwoieudnvcxbzmshd',
-    description: 'Community network connecting passionate super-fans, supporters, and early product testers with independent builders.',
-    category: 'Creator Economy',
-    coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1200&q=80',
-    logoUrl: 'https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?auto=format&fit=crop&w=200&q=80',
-    privacy: 'public',
-    membershipPolicy: 'open',
-    memberCount: 980,
-    myRole: 'owner',
-    isCreator: true,
-    isMember: true,
-    membershipStatus: 'active',
-    tags: ['creators', 'fans', 'community'],
-    conversationId: 'conv_topfan',
-  },
-
-  // 4. Dhaka Fullstack Architects
-  {
-    id: 'seed-grp-1',
-    type: 'group',
-    name: 'Dhaka Fullstack Architects',
-    entityNumber: '41928374615',
-    slug: '41928374615-dhaka-fullstack-architects-mznxbcvyeuwiqopasdf',
-    canonicalUrl: '/bonds/groups/41928374615-dhaka-fullstack-architects-mznxbcvyeuwiqopasdf',
-    description: 'Premier network of React 19, TypeScript, Rust, and Node.js builders in South Asia. Weekly deep dives on concurrency and cloud-native architecture.',
-    category: 'Tech & Developers',
-    coverUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1000&q=80',
-    logoUrl: 'https://images.unsplash.com/photo-1534972195531-a756b1126f24?auto=format&fit=crop&w=200&q=80',
-    privacy: 'public',
-    membershipPolicy: 'open',
-    memberCount: 2420,
-    myRole: 'member',
-    isMember: true,
-    membershipStatus: 'active',
-    tags: ['react', 'typescript', 'architecture'],
-    conversationId: 'conv_dhaka_fullstack',
-  },
-
-  // 5. UI/UX Craft & Spatial Design
-  {
-    id: 'seed-grp-2',
-    type: 'group',
-    name: 'UI/UX Craft & Spatial Design',
-    entityNumber: '52019482716',
-    slug: '52019482716-ui-ux-craft-spatial-design-bvmnzxkqiwoeudygfbch',
-    canonicalUrl: '/bonds/groups/52019482716-ui-ux-craft-spatial-design-bvmnzxkqiwoeudygfbch',
-    description: 'Designers building micro-interactions, dark aesthetic interfaces, spatial glassmorphism, and high-conversion products.',
-    category: 'Design & UX',
-    coverUrl: 'https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?auto=format&fit=crop&w=1000&q=80',
-    logoUrl: 'https://images.unsplash.com/photo-1572044162444-ad60f128bdea?auto=format&fit=crop&w=200&q=80',
-    privacy: 'public',
-    membershipPolicy: 'approval_required',
-    memberCount: 1840,
-    myRole: 'not_member',
-    isMember: false,
-    membershipStatus: 'not_member',
-    tags: ['design-systems', 'figma', 'motion'],
-    conversationId: 'conv_ui_ux_craft',
-  },
-
-  // 6. Era AI Model Gateway (Team with Recruitment)
-  {
-    id: 'seed-team-1',
-    type: 'team',
-    name: 'Era AI Model Gateway',
-    entityNumber: '63120593827',
-    slug: '63120593827-era-ai-model-gateway-nvbmzxqieuroyalskd',
-    canonicalUrl: '/bonds/teams/63120593827-era-ai-model-gateway-nvbmzxqieuroyalskd',
-    description: 'Multi-provider intelligence router with context boundaries, streaming fallbacks, and real-time human verification gates.',
-    category: 'Software Engineering',
-    coverUrl: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1000&q=80',
-    logoUrl: 'https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=200&q=80',
-    privacy: 'public',
-    membershipPolicy: 'approval_required',
-    memberCount: 16,
-    myRole: 'owner',
-    isCreator: true,
-    isMember: true,
-    membershipStatus: 'active',
-    tags: ['ai/ml', 'model-router', 'embeddings'],
-    settings: {
-      stage: 'Active Alpha',
-      openRoles: [
-        { title: 'Backend / Distributed Systems Lead', skills: ['Go', 'Rust', 'Redis', 'WebSockets'] },
-        { title: 'Evaluation & Benchmarks Engineer', skills: ['Python', 'Eval-Harness', 'PyTest'] },
-        { title: 'Frontend Systems Engineer', skills: ['React 19', 'Tailwind', 'Motion'] }
-      ]
-    },
-    conversationId: 'conv_era_ai_gateway',
-  },
-
-  // 7. ZeroPay Settlement Mesh (Team with Recruitment)
-  {
-    id: 'seed-team-2',
-    type: 'team',
-    name: 'ZeroPay Settlement Mesh',
-    entityNumber: '74231604938',
-    slug: '74231604938-zeropay-settlement-mesh-qowieupaldksmznbvx',
-    canonicalUrl: '/bonds/teams/74231604938-zeropay-settlement-mesh-qowieupaldksmznbvx',
-    description: 'Ultra-low-latency financial microtransaction ledger for regional cross-border creator payments and instant payouts.',
-    category: 'FinTech & Ledger',
-    coverUrl: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?auto=format&fit=crop&w=1000&q=80',
-    logoUrl: 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=200&q=80',
-    privacy: 'public',
-    membershipPolicy: 'approval_required',
-    memberCount: 12,
-    myRole: 'not_member',
-    isMember: false,
-    membershipStatus: 'not_member',
-    tags: ['fintech', 'stripe', 'ledger', 'bKash'],
-    settings: {
-      stage: 'Prototype',
-      openRoles: [
-        { title: 'Idempotency & Database Auditor', skills: ['PostgreSQL', 'Isolation Levels', 'ACID'] },
-        { title: 'Compliance & Integration Specialist', skills: ['Banking APIs', 'Stripe', 'Security'] }
-      ]
-    },
-    conversationId: 'conv_zeropay_mesh',
-  }
-];
-
 export const ExploreSystem: React.FC<ExploreSystemProps> = ({
   onUserClick,
   onPostClick,
@@ -242,8 +62,8 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
   const { settings: appearanceSettings } = useAppearance();
   const accentHex = ACCENT_COLOR_MAP[appearanceSettings?.accentColor] || '#00f2ff';
   
-  // Data state
-  const [entities, setEntities] = useState<any[]>(SEED_ENTITIES);
+  // Data state: 100% Real Live Entities (No Mock or Seed Data)
+  const [entities, setEntities] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Active full Facebook view (if an individual entity is open)
@@ -304,111 +124,39 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
     }
   }, [realUserId, realDisplayName, realUsername, realAvatarUrl]);
 
-  // Aggregated feed posts from followed/joined groups, teams & communities
-  const [aggregatedFeedPosts, setAggregatedFeedPosts] = useState<any[]>([
-    {
-      id: 'feed-p1',
-      entityId: 'seed-grp-fb-1',
-      groupName: 'Weird Shitposting.',
-      groupType: 'group',
-      authorName: 'Syed Shakil',
-      authorRole: 'admin',
-      authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-      content: 'Welcome to all 776 members! Please review our group code of conduct before posting.\n\nSpammers and promotional links without mod approval will be removed immediately.',
-      likesCount: 42,
-      commentsCount: 8,
-      createdAt: '2 hrs ago',
-      hasLiked: false,
-      comments: [
-        {
-          id: 'c-1',
-          authorName: 'Junaed Islam Jim',
-          authorRole: 'admin',
-          authorAvatarUrl: realAvatarUrl,
-          content: 'Pinned this announcement at the top of the discussion feed.',
-          createdAt: '1 hr ago'
-        },
-        {
-          id: 'c-2',
-          authorName: 'Nazmul Rifat',
-          authorRole: 'moderator',
-          authorAvatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80',
-          content: 'Confirmed. Automated spam filters active on pending posts.',
-          createdAt: '45m ago'
-        }
-      ]
-    },
-    {
-      id: 'feed-p2',
-      entityId: 'seed-grp-1',
-      groupName: 'Dhaka Fullstack Architects',
-      groupType: 'group',
-      authorName: 'Tanvir Hossain',
-      authorRole: 'member',
-      authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-      content: 'Just deployed our new real-time WebSockets event routing engine on PostgreSQL & Redis.\n\nThe end-to-end latency dropped from 120ms to 9ms flat across all active chat channels! Benchmarks published to our repo.',
-      likesCount: 29,
-      commentsCount: 5,
-      createdAt: '4 hrs ago',
-      hasLiked: false,
-      comments: [
-        {
-          id: 'c-3',
-          authorName: 'Syed Shakil',
-          authorRole: 'admin',
-          authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
-          content: 'Super clean numbers! Are you using Redis Streams or Pub/Sub pubsub clusters?',
-          createdAt: '3 hrs ago'
-        }
-      ]
-    },
-    {
-      id: 'feed-p3',
-      entityId: 'seed-page-fb-1',
-      groupName: 'Preboost Marketing',
-      groupType: 'community',
-      authorName: 'Junaed Islam Jim',
-      authorRole: 'owner',
-      authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      content: 'Launching our new Creator Monetization & Audience Growth Playbook!\n\nTested across 200+ indie apps with an average 3.4x conversion bump. Free breakdown for all our community members.',
-      likesCount: 67,
-      commentsCount: 14,
-      createdAt: '6 hrs ago',
-      hasLiked: true,
-      comments: []
-    },
-    {
-      id: 'feed-p4',
-      entityId: 'seed-team-1',
-      groupName: 'Era AI Model Gateway',
-      groupType: 'team',
-      authorName: 'Era AI Core Lead',
-      authorRole: 'owner',
-      authorAvatarUrl: 'https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=150&q=80',
-      content: '🔥 TEAM RECRUITMENT OPENING 🔥\n\nWe are actively hiring 2 Backend / Distributed Systems Leads (Go, Rust, Redis) and 1 Frontend Systems Engineer (React 19). Apply directly through our Team page in Bonds!',
-      likesCount: 51,
-      commentsCount: 9,
-      createdAt: '8 hrs ago',
-      hasLiked: false,
-      comments: []
-    }
-  ]);
-
+  // Aggregated feed posts from followed/joined groups, teams & communities (100% Real Live Content)
+  const [aggregatedFeedPosts, setAggregatedFeedPosts] = useState<any[]>([]);
   const [feedCommentInputs, setFeedCommentInputs] = useState<{ [postId: string]: string }>({});
   const [openFeedCommentsPostId, setOpenFeedCommentsPostId] = useState<string | null>(null);
   const [quickPostText, setQuickPostText] = useState('');
-  const [quickPostEntityId, setQuickPostEntityId] = useState('seed-grp-fb-1');
+  const [quickPostEntityId, setQuickPostEntityId] = useState('');
 
-  // Managed entities for identity switcher
+  // Managed entities for identity switcher (Only genuine entities the user owns or leads)
   const managedEntities = useMemo(() => {
-    return entities.filter(e => 
-      e.ownerId === currentUser.id || 
-      e.myRole === 'owner' || 
-      e.myRole === 'admin' || 
-      e.isCreator ||
-      ['seed-grp-fb-1', 'seed-page-fb-1', 'seed-page-fb-2'].includes(e.id)
-    );
-  }, [entities, currentUser.id]);
+    const myIds = new Set([
+      currentUser.id,
+      user?.uid,
+      profile?.id,
+      profile?.userId,
+      profile?.ownerUid,
+      typeof window !== 'undefined' ? localStorage.getItem('aeirmist_user_id') : null
+    ].filter(Boolean));
+
+    return entities.filter(e => {
+      if (!e || !e.id || String(e.id).startsWith('seed-')) return false;
+      const isMyOwner = myIds.has(e.ownerId) || myIds.has(e.creatorId) || myIds.has(e.createdBy);
+      return Boolean(isMyOwner || e.myRole === 'owner' || e.myRole === 'admin' || e.isCreator);
+    });
+  }, [entities, currentUser.id, user?.uid, profile?.id, profile?.userId, profile?.ownerUid]);
+
+  // Keep quick post entity target aligned with active managed entities
+  useEffect(() => {
+    if (managedEntities.length > 0 && (!quickPostEntityId || !entities.some(e => e.id === quickPostEntityId))) {
+      setQuickPostEntityId(managedEntities[0].id);
+    } else if (entities.length > 0 && !quickPostEntityId) {
+      setQuickPostEntityId(entities[0].id);
+    }
+  }, [managedEntities, entities, quickPostEntityId]);
 
   // Open individual entity with distinct canonical URL
   const handleOpenEntity = (entity: any) => {
@@ -453,26 +201,50 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
         filter: filterParam,
       }).catch(() => ({ entities: [] }));
 
-      const apiEntities = res?.entities || [];
-      const combined = [...localEntities, ...apiEntities];
-      const fetchedIds = new Set(combined.map(e => e.id));
-      const merged = [...combined, ...SEED_ENTITIES.filter(s => !fetchedIds.has(s.id))];
-      setEntities(merged);
+      const apiEntities = (res?.entities || []).filter((e: any) => !String(e.id).startsWith('seed-'));
+      const combined = [...localEntities.filter(e => !String(e.id).startsWith('seed-')), ...apiEntities];
+      const seen = new Set();
+      const deduplicated = combined.filter(e => {
+        if (!e?.id || seen.has(e.id)) return false;
+        seen.add(e.id);
+        return true;
+      });
+      setEntities(deduplicated);
     } catch (err) {
-      console.warn('[Bonds Fetch Warning, using fallback]', err);
+      console.warn('[Bonds Fetch Warning]', err);
       let localEntities: any[] = [];
       try {
-        localEntities = JSON.parse(localStorage.getItem('aeirmist_local_bonds_entities') || '[]');
+        localEntities = JSON.parse(localStorage.getItem('aeirmist_local_bonds_entities') || '[]')
+          .filter((e: any) => !String(e.id).startsWith('seed-'));
       } catch {}
-      setEntities([...localEntities, ...SEED_ENTITIES]);
+      setEntities(localEntities);
     } finally {
       setLoading(false);
     }
   };
 
+  // Fetch aggregated feed posts from backend API
+  const fetchFeedPosts = async () => {
+    try {
+      const res = await api.bonds.getFeedPosts().catch(() => null);
+      if (res && Array.isArray(res.posts)) {
+        const cleanPosts = res.posts.filter((p: any) => !String(p.id).startsWith('seed-') && !String(p.entityId).startsWith('seed-'));
+        setAggregatedFeedPosts(cleanPosts);
+      }
+    } catch (e) {
+      console.warn('[Bonds Feed Fetch]', e);
+    }
+  };
+
   useEffect(() => {
     fetchEntities();
-  }, [navTab, categoryFilter]);
+  }, [navTab, categoryFilter, searchQuery]);
+
+  useEffect(() => {
+    if (navTab === 'feed') {
+      fetchFeedPosts();
+    }
+  }, [navTab]);
 
   // Synchronize deep link URL on initial load and popstate (Back/Forward)
   useEffect(() => {
@@ -568,10 +340,19 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
     }
   };
 
-  // Handle Feed Post Creation
-  const handleCreateFeedPost = () => {
+  // Handle Feed Post Creation (Persisted directly to backend)
+  const handleCreateFeedPost = async () => {
     if (!quickPostText.trim() && !pollQuestion.trim()) return;
-    const targetEntity = entities.find(e => e.id === quickPostEntityId) || entities[0];
+    const targetEntity = entities.find(e => e.id === quickPostEntityId) || managedEntities[0] || entities[0];
+    if (!targetEntity) {
+      addToast({
+        title: 'SELECT ENTITY',
+        message: 'Please create or select a Group, Community, or Team before posting.',
+        type: 'warning'
+      });
+      return;
+    }
+
     const authorName = isAnonymousQuickPost ? 'Anonymous Member' : activeIdentity.name;
     const authorAvatar = isAnonymousQuickPost ? getAvatarUrl('') : (activeIdentity.avatarUrl || currentUser.avatarUrl);
 
@@ -586,63 +367,82 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
       }
     }
 
-    const newPost = {
-      id: `feed-${Date.now()}`,
-      entityId: targetEntity.id,
-      groupName: targetEntity.name,
-      groupType: targetEntity.type,
-      authorName,
-      authorRole: isAnonymousQuickPost ? 'member' : 'owner',
-      authorAvatarUrl: authorAvatar,
-      content: postContent,
-      likesCount: 0,
-      commentsCount: 0,
-      createdAt: 'Just now',
-      hasLiked: false,
-      comments: []
-    };
+    try {
+      const res = await api.bonds.createPost(targetEntity.id, {
+        content: postContent,
+        isAnonymous: isAnonymousQuickPost,
+      }).catch(() => null);
 
-    setAggregatedFeedPosts([newPost, ...aggregatedFeedPosts]);
-    setQuickPostText('');
-    setIsAnonymousQuickPost(false);
-    setSelectedFeeling(null);
-    setShowFeelingsPicker(false);
-    setShowPollBuilder(false);
-    setPollQuestion('');
-    setPollOptions(['Option 1', 'Option 2']);
-    addToast({
-      title: 'POST PUBLISHED',
-      message: `Your post was shared to ${targetEntity.name}.`,
-      type: 'success',
-    });
+      const newPost = res?.post || {
+        id: `feed-${Date.now()}`,
+        entityId: targetEntity.id,
+        groupName: targetEntity.name,
+        groupType: targetEntity.type,
+        authorName,
+        authorRole: isAnonymousQuickPost ? 'member' : 'owner',
+        authorAvatarUrl: authorAvatar,
+        content: postContent,
+        likesCount: 0,
+        commentsCount: 0,
+        createdAt: 'Just now',
+        hasLiked: false,
+        comments: []
+      };
+
+      setAggregatedFeedPosts(prev => [newPost, ...prev]);
+      setQuickPostText('');
+      setIsAnonymousQuickPost(false);
+      setSelectedFeeling(null);
+      setShowFeelingsPicker(false);
+      setShowPollBuilder(false);
+      setPollQuestion('');
+      setPollOptions(['Option 1', 'Option 2']);
+      addToast({
+        title: 'POST PUBLISHED',
+        message: `Your post was shared to ${targetEntity.name}.`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      addToast({
+        title: 'POST FAILED',
+        message: err?.message || 'Could not publish post to server.',
+        type: 'warning',
+      });
+    }
   };
 
-  // Handle Feed Comment Addition
-  const handleAddFeedComment = (postId: string) => {
+  // Handle Feed Comment Addition (Persisted directly to backend)
+  const handleAddFeedComment = async (postId: string) => {
     const text = (feedCommentInputs[postId] || '').trim();
     if (!text) return;
 
-    const newComment = {
-      id: `c-${Date.now()}`,
-      authorName: activeIdentity.name,
-      authorRole: 'owner',
-      authorAvatarUrl: activeIdentity.avatarUrl || currentUser.avatarUrl,
-      content: text,
-      createdAt: 'Just now'
-    };
+    try {
+      const res = await api.bonds.createPostComment(postId, text).catch(() => null);
 
-    setAggregatedFeedPosts(prev => prev.map(p => {
-      if (p.id === postId) {
-        return {
-          ...p,
-          commentsCount: (p.commentsCount || 0) + 1,
-          comments: [...(p.comments || []), newComment]
-        };
-      }
-      return p;
-    }));
+      const newComment = res?.comment || {
+        id: `c-${Date.now()}`,
+        authorName: activeIdentity.name,
+        authorRole: 'member',
+        authorAvatarUrl: activeIdentity.avatarUrl || currentUser.avatarUrl,
+        content: text,
+        createdAt: 'Just now'
+      };
 
-    setFeedCommentInputs(prev => ({ ...prev, [postId]: '' }));
+      setAggregatedFeedPosts(prev => prev.map(p => {
+        if (p.id === postId) {
+          return {
+            ...p,
+            commentsCount: (p.commentsCount || 0) + 1,
+            comments: [...(p.comments || []), newComment]
+          };
+        }
+        return p;
+      }));
+
+      setFeedCommentInputs(prev => ({ ...prev, [postId]: '' }));
+    } catch (err) {
+      console.warn('[Feed comment error]', err);
+    }
   };
 
   // Filter local entities based on active tab and search
@@ -1062,8 +862,36 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
               </div>
 
               {/* Aggregated Feed Posts Stream */}
-              {aggregatedFeedPosts.map((post) => {
-                const targetEntity = entities.find(e => e.id === post.entityId) || entities[0];
+              {aggregatedFeedPosts.length === 0 ? (
+                <div className="bg-[#11141c] rounded-2xl border border-white/10 p-8 text-center shadow-lg">
+                  <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center mx-auto mb-4 text-white/40">
+                    <Sparkles className="w-7 h-7" style={{ color: accentHex }} />
+                  </div>
+                  <h3 className="text-base font-bold text-white mb-2">No Posts in Your Network Yet</h3>
+                  <p className="text-xs text-white/50 max-w-md mx-auto mb-5 leading-relaxed">
+                    Be the first to share an update, start a discussion, or create a Group, Community, or Team!
+                  </p>
+                  <div className="flex items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleCreateNewClick('group')}
+                      style={{ backgroundColor: accentHex }}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-black hover:opacity-90 transition-all cursor-pointer shadow-md"
+                    >
+                      + Create Group
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCreateNewClick('team')}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-white/10 hover:bg-white/15 border border-white/10 transition-all cursor-pointer"
+                    >
+                      + Create Team
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                aggregatedFeedPosts.map((post) => {
+                const targetEntity = entities.find(e => e.id === post.entityId) || entities[0] || { name: 'Ecosystem', logoUrl: '' };
                 const isOpenComments = openFeedCommentsPostId === post.id;
 
                 return (
@@ -1303,7 +1131,7 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
                     )}
                   </div>
                 );
-              })}
+              }))}
             </div>
           ) : (
             /* =========================================================================

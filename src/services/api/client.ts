@@ -92,6 +92,12 @@ export function getAuthToken(): string | null {
     }
   } catch {}
 
+  // Check alternative tokens
+  const altToken = localStorage.getItem('aeirmist_session_token') || localStorage.getItem('aeirmist_device_trust_token');
+  if (altToken && altToken !== 'null' && altToken !== 'undefined' && altToken.trim() !== '') {
+    return altToken.trim();
+  }
+
   // Firebase Auth persistence auto-detection fallback
   try {
     for (let i = 0; i < localStorage.length; i++) {
@@ -939,17 +945,78 @@ export const api = {
 
   // Media
   media: {
-    upload: async (file: File, folder = 'general') => {
+    upload: async (file: File, folder = 'general', onProgress?: (percent: number) => void): Promise<{ key: string; url: string; sizeBytes: number; mimeType: string }> => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('folder', folder);
-      return request<{ key: string; url: string; sizeBytes: number; mimeType: string }>(
-        '/api/v1/media/upload',
-        {
-          method: 'POST',
-          body: formData,
+
+      const base = resolveApiBase();
+      const url = `${base}/api/v1/media/upload`;
+      const token = await getFreshToken();
+
+      return new Promise<{ key: string; url: string; sizeBytes: number; mimeType: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        xhr.withCredentials = true;
+        xhr.timeout = 300000; // 5 minutes for large high-definition video files
+
+        if (token) {
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         }
-      );
+
+        // Attach persistent user session headers
+        if (typeof window !== 'undefined') {
+          try {
+            const s = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
+            if (s) {
+              const parsed = JSON.parse(s);
+              const uid = parsed.uid || parsed.id || parsed.userId || localStorage.getItem('aeirmist_user_id');
+              if (uid) xhr.setRequestHeader('X-User-Id', uid);
+              const pid = parsed.profileId || parsed.activeProfileId || (parsed.profile ? parsed.profile.id : null) || localStorage.getItem('aeirmist_active_profile_id');
+              if (pid) xhr.setRequestHeader('X-Profile-Id', pid);
+            }
+          } catch {}
+        }
+
+        // Live Upload Progress Tracker: Real-time byte calculation
+        if (xhr.upload && onProgress) {
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && event.total > 0) {
+              const percent = Math.min(99, Math.max(1, Math.round((event.loaded / event.total) * 100)));
+              onProgress(percent);
+            }
+          };
+        }
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              onProgress?.(100);
+              resolve(data);
+            } catch (err) {
+              reject(new Error('Invalid JSON response from media storage server'));
+            }
+          } else {
+            let errorMsg = `Upload failed with HTTP ${xhr.status}`;
+            try {
+              const errData = JSON.parse(xhr.responseText);
+              if (errData.error) errorMsg = errData.error;
+            } catch {}
+            reject(new Error(errorMsg));
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(new Error('Network error during media upload. Please verify connection to the Aeirmist server.'));
+        };
+
+        xhr.ontimeout = () => {
+          reject(new Error('Upload timed out. The video file took too long to transfer.'));
+        };
+
+        xhr.send(formData);
+      });
     },
   },
 
@@ -1099,6 +1166,13 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ status }),
       }),
+    getFeedPosts: (params?: { limit?: number; offset?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.limit) q.set('limit', String(params.limit));
+      if (params?.offset) q.set('offset', String(params.offset));
+      const qs = q.toString();
+      return request<{ posts: any[] }>(`/api/v1/bonds/feed${qs ? `?${qs}` : ''}`);
+    },
     getPosts: (entityId: string, params?: { status?: string; limit?: number; offset?: number }) => {
       const q = new URLSearchParams();
       if (params?.status) q.set('status', params.status);

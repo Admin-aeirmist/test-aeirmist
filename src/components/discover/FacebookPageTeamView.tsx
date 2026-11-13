@@ -64,24 +64,12 @@ export const FacebookPageTeamView: React.FC<FacebookPageTeamViewProps> = ({
       try {
         const res = await api.bonds.getPosts(entity.id);
         if (res && res.posts) {
-          setPosts(res.posts);
+          setPosts(res.posts.filter((p: any) => !String(p.id).startsWith('seed-')));
+        } else {
+          setPosts([]);
         }
       } catch (err) {
-        // Fallback default posts
-        setPosts([
-          {
-            id: 'page-post-1',
-            entityId: entity.id,
-            authorName: entity.name,
-            authorAvatarUrl: entity.logoUrl,
-            authorRole: 'admin',
-            content: `Exciting announcement! We're expanding our core ${isTeam ? 'engineering team' : 'community initiatives'}. Check out our open roles or connect directly with our leads.`,
-            likesCount: 54,
-            commentsCount: 12,
-            createdAt: new Date(Date.now() - 7200000).toISOString(),
-            hasLiked: false,
-          }
-        ]);
+        setPosts([]);
       } finally {
         setIsLoadingPosts(false);
       }

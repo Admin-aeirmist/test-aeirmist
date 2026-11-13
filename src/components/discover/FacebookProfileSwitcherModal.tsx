@@ -124,13 +124,16 @@ export const FacebookProfileSwitcherModal: React.FC<FacebookProfileSwitcherModal
         </div>
 
         {/* Managed Pages, Groups & Teams Section */}
-        {managedEntities.length > 0 && (
-          <div className="px-3 py-2 space-y-1">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 px-1 pt-1 pb-1">
-              Your Managed Pages, Groups & Teams
-            </div>
+        <div className="px-3 py-2 space-y-1">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 px-1 pt-1 pb-1 flex items-center justify-between">
+            <span>Your Managed Pages, Groups & Teams</span>
+            {managedEntities.length > 0 && (
+              <span className="text-[9px] text-white/30">({managedEntities.length})</span>
+            )}
+          </div>
 
-            {managedEntities.map((ent) => {
+          {managedEntities.length > 0 ? (
+            managedEntities.map((ent) => {
               const isEntityActive = activeIdentity.id === ent.id;
               const typeLabel = ent.type === 'team' ? 'Team' : ent.type === 'community' ? 'Community' : 'Group';
               return (
@@ -180,9 +183,23 @@ export const FacebookProfileSwitcherModal: React.FC<FacebookProfileSwitcherModal
                   </div>
                 </div>
               );
-            })}
-          </div>
-        )}
+            })
+          ) : (
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-center my-1">
+              <p className="text-[11px] text-white/50 mb-2">You don't manage any Groups or Teams yet.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  window.dispatchEvent(new CustomEvent('aeirmist-open-create-entity'));
+                }}
+                className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg text-xs font-bold text-black bg-aeirmist-cyan hover:bg-opacity-90 transition-all cursor-pointer"
+              >
+                + Create New Group or Team
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="h-px bg-white/10 my-1 mx-3" />
 
