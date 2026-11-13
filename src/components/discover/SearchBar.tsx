@@ -456,8 +456,8 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onFocusChange, o
                           className="w-full flex items-center justify-between p-5 rounded-3xl bg-white/[0.03] border border-white/5 hover:border-aeirmist-lime/30 hover:bg-white/[0.06] transition-all text-left group relative overflow-hidden"
                         >
                           <div className="flex items-center gap-5 relative z-10">
-                            <div className="w-14 h-14 rounded-full p-0.5 border-2 border-aeirmist-lime bg-black overflow-hidden">
-                              <img src={story.mediaUrl || story.thumbnailUrl} className="w-full h-full object-cover rounded-full" alt="" />
+                            <div className="w-14 h-14 rounded-2xl p-0.5 border-2 border-aeirmist-lime bg-black overflow-hidden">
+                              <img src={story.mediaUrl || story.thumbnailUrl} className="w-full h-full object-cover rounded-xl" alt="" />
                             </div>
                             <div>
                               <p className="text-sm font-bold text-white line-clamp-1">{story.content || "Digital Flash"}</p>

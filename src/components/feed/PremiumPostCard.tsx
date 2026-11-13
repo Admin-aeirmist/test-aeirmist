@@ -1522,7 +1522,9 @@ export const PremiumPostCard = React.memo<PostCardProps>(({ post, onUserClick, o
               <p className="text-[9px] sm:text-[10px] text-white/40 mt-0.5 flex items-center gap-1 select-none font-sans truncate">
                 {formatAeirmistTimestamp(post.createdAt || post.timestamp)}
                 <span className="text-white/30">·</span>
-                <Globe size={10} className="text-white/40 shrink-0" title="Public" />
+                <span title="Public" className="inline-flex items-center">
+                  <Globe size={10} className="text-white/40 shrink-0" />
+                </span>
                 {post.location ? (
                   <>
                     <span className="text-white/30">·</span>

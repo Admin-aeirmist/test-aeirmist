@@ -32,7 +32,8 @@ import {
   Clock,
   CheckCircle2,
   AlertTriangle,
-  ChevronDown
+  ChevronDown,
+  ExternalLink
 } from 'lucide-react';
 import { useAeirmist } from '../../../context/AeirmistContext';
 import { resolveApiBase, getAuthToken, setAuthToken } from '../../../services/api/client';
@@ -46,7 +47,7 @@ export const DeveloperSettings: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<DevSubTab>('explorer');
 
   // --- 1. REST API Explorer State ---
-  const [apiMethod, setApiMethod] = useState<'GET' | 'POST' | 'PATCH' | 'DELETE'>('GET');
+  const [apiMethod, setApiMethod] = useState<'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'>('GET');
   const [apiEndpoint, setApiEndpoint] = useState('/api/v1/auth/me');
   const [apiRequestBody, setApiRequestBody] = useState('{\n  "message": "Hello from Meta Developer Studio"\n}');
   const [showBodyEditor, setShowBodyEditor] = useState(false);
@@ -225,7 +226,7 @@ export const DeveloperSettings: React.FC = () => {
       addToast({
         title: 'API Call Failed',
         message: err?.message || 'Failed to fetch',
-        type: 'error'
+        type: 'warning'
       });
     } finally {
       setApiExecuting(false);

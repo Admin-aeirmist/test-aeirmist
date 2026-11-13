@@ -1,0 +1,51 @@
+appId: com.aeirmist.social
+productName: Aeirmist
+copyright: Copyright © 2026 Aeirmist
+directories:
+  output: release
+  buildResources: build
+extraMetadata:
+  main: electron/main.cjs
+files:
+  - dist/**/*
+  - electron/**/*
+  - build/icon.png
+  - build/icon.ico
+  - package.json
+  - "!node_modules/**"
+asar: true
+protocols:
+  - name: Aeirmist
+    schemes:
+      - aeirmist
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Aeirmist
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  artifactName: Aeirmist-Setup-${version}.${ext}
+portable:
+  artifactName: aeirmist.${ext}
+appx:
+  applicationId: Aeirmist
+  identityName: Aeirmist.Social
+  publisher: CN=Aeirmist
+  publisherDisplayName: Aeirmist
+  displayName: Aeirmist
+  backgroundColor: "#030712"
+  languages:
+    - en-US
+  artifactName: Aeirmist-${version}.${ext}

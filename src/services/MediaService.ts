@@ -294,20 +294,51 @@ class MediaService {
     throw new Error("Upload encountered an unexpected condition.");
   }
 
+  async evictCachedMedia(url: string): Promise<void> {
+    if (!url) return;
+    await aeirmistCache.deleteMedia(url);
+  }
+
   async getCachedMediaURL(url: string, type: string): Promise<string> {
-    const cachedBlob = await aeirmistCache.getMedia(url);
-    if (cachedBlob) {
-      return URL.createObjectURL(cachedBlob);
+    try {
+      const cachedBlob = await aeirmistCache.getMedia(url);
+      if (cachedBlob && (await aeirmistCache.isValidMediaBlob(cachedBlob))) {
+        return URL.createObjectURL(cachedBlob);
+      }
+      if (cachedBlob) {
+        await aeirmistCache.deleteMedia(url);
+      }
+    } catch {}
+
+    const tryFetch = async (target: string): Promise<string | null> => {
+      try {
+        const response = await fetch(target);
+        if (!response.ok) return null;
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (contentType.startsWith('text/') || contentType.includes('html') || contentType.includes('json') || contentType.includes('xml')) {
+          return null;
+        }
+        const blob = await response.blob();
+        if (!(await aeirmistCache.isValidMediaBlob(blob))) {
+          return null;
+        }
+        await aeirmistCache.saveMedia(url, blob, blob.type || type);
+        return URL.createObjectURL(blob);
+      } catch {
+        return null;
+      }
+    };
+
+    const primary = await tryFetch(url);
+    if (primary) return primary;
+
+    if (url.startsWith('/media/')) {
+      const remoteFallback = await tryFetch(`https://aeirmist.com${url}`);
+      if (remoteFallback) return remoteFallback;
+      return `https://aeirmist.com${url}`;
     }
 
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      await aeirmistCache.saveMedia(url, blob, type);
-      return URL.createObjectURL(blob);
-    } catch (e) {
-      return url; 
-    }
+    return url;
   }
 
   async generateThumbnail(file: File): Promise<string | null> {

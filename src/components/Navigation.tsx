@@ -63,7 +63,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useAeirmist } from '../context/AeirmistContext';
-import { getAvatarUrl } from '../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../lib/avatar';
 import { AeirmistLogo } from './ui/AeirmistLogo';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { InstallModal } from './pwa/InstallModal';
@@ -767,7 +767,7 @@ export const Navigation = React.memo(({ onCreate, activeTab, onTabChange, isExpa
             }`}>
               <div className="w-full h-full rounded-md overflow-hidden bg-neutral-900">
                 <img 
-                  src={localAvatarURL || getAvatarUrl(profile?.photoURL || user?.photoURL)} 
+                  src={localAvatarURL || getAvatarUrl(resolveAvatarSrc(profile?.photoURL || profile?.avatarKey || user?.photoURL || (user as any)?.avatarKey))} 
                   alt="Profile" 
                   className="w-full h-full object-cover group-hover/profile:scale-105 transition-transform duration-300"
                 />

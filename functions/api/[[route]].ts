@@ -960,7 +960,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
 
       dynamicDau.push({
         day: dayName,
-        count: isToday ? activeUsers : Math.max(1, Math.min(activeUsers, 3)),
+        count: isToday ? activeUsers : 0,
         date: dateStr
       });
 
@@ -987,15 +987,15 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         totalReports: totalReports,
         revenue: "$0.00",
         subscribers: verifiedUsers,
-        serverHealth: "100% HEALTHY",
-        uptime: "99.99%",
-        edgeLatency: "< 15ms",
+        serverHealth: "OPERATIONAL",
+        uptime: "Active",
+        edgeLatency: "Synced",
         totalPosts: edgePosts.length,
         totalVideos: 0,
         totalTransactions: 0,
         totalMarketplaceOrders: 0,
         totalMarketplaceItems: 0,
-        onlineNow: `${Math.max(1, activeUsers)} active`,
+        onlineNow: `${activeUsers} active`,
         dailyActiveSeries: dynamicDau,
         reportsTrendSeries: dynamicReportsTrend
       }
@@ -1564,7 +1564,9 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
         timestamp: new Date().toISOString(),
         createdAt: new Date().toISOString()
       };
-      edgeMessages.push(initialSysMsg);
+      const curMsgs = edgeMessagesMap.get(convId) || [];
+      curMsgs.push(initialSysMsg);
+      edgeMessagesMap.set(convId, curMsgs);
 
       return new Response(JSON.stringify({ conversation: conv }), {
         status: 201,

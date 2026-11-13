@@ -10,11 +10,12 @@ import { env } from '../config/env';
 
 const router = Router();
 
-// Configure multer memory storage
+// Configure multer memory storage: Unlimited file size for all video and media uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100 MB max for video/large attachments
+    fieldSize: Infinity,
+    fileSize: Infinity,
   },
 });
 
@@ -30,7 +31,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
 
     const ALLOWED_EXTENSIONS = new Set([
       '.jpg', '.jpeg', '.png', '.webp', '.gif',
-      '.mp4', '.webm', '.mov',
+      '.mp4', '.webm', '.mov', '.mkv', '.avi', '.flv', '.wmv',
       '.mp3', '.m4a', '.ogg', '.wav',
       '.pdf'
     ]);

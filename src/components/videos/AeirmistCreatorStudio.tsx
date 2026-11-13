@@ -35,6 +35,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
 
 import { 
@@ -336,7 +337,7 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
           id: 'rep_' + Date.now().toString(36),
           userId: profile?.id || 'creator',
           userName: profile?.displayName || 'Creator',
-          userAvatar: profile?.photoURL || 'https://picsum.photos/seed/cre/100/100',
+          userAvatar: getAvatarUrl(resolveAvatarSrc(profile?.photoURL || profile?.avatarKey || ''), profile?.displayName || 'Creator'),
           text: txt,
           createdAt: new Date().toISOString(),
           likeCount: 0,
@@ -416,7 +417,7 @@ export const AeirmistCreatorStudio: React.FC<AeirmistCreatorStudioProps> = ({ on
           <div className="px-6 md:px-0 flex items-center md:flex-col md:text-center gap-3 md:gap-4 border-b border-white/5 pb-6 md:pb-8">
             <div className="relative">
               <img 
-                src={profile?.photoURL || 'https://picsum.photos/seed/guest/200/200'} 
+                src={getAvatarUrl(resolveAvatarSrc(profile?.photoURL || profile?.avatarKey || ''), profile?.displayName || 'Creator')} 
                 alt={profile?.displayName} 
                 className="w-11 h-11 md:w-20 md:h-20 rounded-2xl md:rounded-[2rem] object-cover border border-aeirmist-cyan/30"
               />

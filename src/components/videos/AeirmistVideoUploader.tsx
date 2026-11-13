@@ -271,7 +271,8 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         setUploadProgress(10);
 
         try {
-          finalVideoUrl = await uploadMedia(videoFile, `users/${user?.uid || 'guest'}/videos`, (p) => {
+          const userFolder = user?.uid || profile?.id || profile?.userId || 'guest';
+          finalVideoUrl = await uploadMedia(videoFile, `users/${userFolder}/videos`, (p) => {
             const mapped = Math.floor(10 + p * 0.75);
             setUploadProgress(mapped);
           });
@@ -307,7 +308,8 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
           const res = await fetch(finalThumbnailUrl);
           const blob = await res.blob();
           const thumbFile = new File([blob], 'thumb.webp', { type: 'image/webp' });
-          finalThumbnailUrl = await uploadMedia(thumbFile, `users/${user?.uid || 'guest'}/video_thumbs`, () => {}, MediaQuality.THUMBNAIL);
+          const userFolder = user?.uid || profile?.id || profile?.userId || 'guest';
+          finalThumbnailUrl = await uploadMedia(thumbFile, `users/${userFolder}/video_thumbs`, () => {}, MediaQuality.THUMBNAIL);
         } catch (err) {
           logger.warn('[Uploader] Thumbnail upload failed, keeping base64 fallback', err);
         }
@@ -322,13 +324,16 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         .filter(t => t.startsWith('#'))
         .map(t => t.replace('#', '').toLowerCase());
 
+      const activeUid = user?.uid || profile?.ownerUid || profile?.uid || profile?.id || profile?.userId || 'guest';
+      const activeId = profile?.id || profile?.userId || user?.uid || 'guest';
+
       const finalVideoRecord = {
         id,
-        creatorId: profile?.id || 'guest_creator',
-        creatorUid: user?.uid || profile?.ownerUid || profile?.uid || profile?.id,
-        authorUid: user?.uid || profile?.ownerUid || profile?.uid || profile?.id,
-        authorId: profile?.id || user?.uid,
-        userId: user?.uid || profile?.ownerUid || profile?.uid || profile?.id,
+        creatorId: activeId,
+        creatorUid: activeUid,
+        authorUid: activeUid,
+        authorId: activeId,
+        userId: activeUid,
         creatorName: profile?.displayName || profile?.username || 'Guest',
         creatorAvatar: getAvatarUrl(profile?.photoURL, profile?.id),
         videoURL: finalVideoUrl,
@@ -366,12 +371,12 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         await addDoc(collection(db, 'posts'), {
           type: 'video',
           videoId: id,
-          authorId: profile?.id,
-          authorUid: user?.uid,
+          authorId: activeId,
+          authorUid: activeUid,
           author: {
-            displayName: profile?.displayName,
-            username: profile?.username,
-            photoURL: profile?.photoURL,
+            displayName: profile?.displayName || 'User',
+            username: profile?.username || 'user',
+            photoURL: profile?.photoURL || null,
             isVerified: profile?.isVerified || false,
           },
           caption: title,

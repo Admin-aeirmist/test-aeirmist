@@ -42,13 +42,19 @@ export function resolveAvatarSrc(keyOrUrl?: string | null): string | null {
   ) {
     return trimmed;
   }
+  if (trimmed === 'ai:era_official' || trimmed.startsWith('ai:')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/custom_') || trimmed.startsWith('/assets/')) {
+    return trimmed;
+  }
   if (trimmed.startsWith('/media/')) {
     if (trimmed.startsWith('/media/data:') || trimmed.startsWith('/media/http://') || trimmed.startsWith('/media/https://')) {
       return trimmed.slice(7);
     }
     return trimmed;
   }
-  return `/media/${trimmed}`;
+  return `/media/${trimmed.replace(/^\/+/, '')}`;
 }
 
 export function getAvatarUrl(photoURL?: string | null, seed?: string, isLight?: boolean): string {
@@ -60,6 +66,9 @@ export function getAvatarUrl(photoURL?: string | null, seed?: string, isLight?: 
   let trimmed = photoURL.trim();
   if (trimmed.startsWith('/media/data:') || trimmed.startsWith('/media/http://') || trimmed.startsWith('/media/https://')) {
     trimmed = trimmed.slice(7);
+  }
+  if (trimmed === 'ai:era_official' || trimmed === '/media/ai:era_official' || trimmed.startsWith('ai:')) {
+    return '/custom_uploaded_logo.png';
   }
   if (trimmed.startsWith('data:image/jpeg;base64') && trimmed.length <= 512) {
     return fallback;
@@ -78,6 +87,16 @@ export function getAvatarUrl(photoURL?: string | null, seed?: string, isLight?: 
     trimmed.includes('placeholder')
   ) {
     return fallback;
+  }
+
+  if (
+    !trimmed.startsWith('http://') &&
+    !trimmed.startsWith('https://') &&
+    !trimmed.startsWith('data:') &&
+    !trimmed.startsWith('blob:') &&
+    !trimmed.startsWith('/')
+  ) {
+    return resolveAvatarSrc(trimmed) || fallback;
   }
   
   return trimmed;

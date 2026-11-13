@@ -68,8 +68,8 @@ app.use(cors({
   exposedHeaders: ['Authorization', 'Content-Disposition'],
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '2048mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2048mb' }));
 if (env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
@@ -134,6 +134,7 @@ import notesRoutes from './routes/notes.routes';
 import vaultRoutes from './routes/vault.routes';
 import callsRoutes from './routes/calls.routes';
 import aiRoutes from './routes/ai.routes';
+import bondsRoutes from './routes/bonds.routes';
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/posts', postRoutes);
@@ -150,6 +151,7 @@ app.use('/api/v1/notes', notesRoutes);
 app.use('/api/v1/vault', vaultRoutes);
 app.use('/api/v1/calls', callsRoutes);
 app.use('/api/v1/ai', aiRoutes);
+app.use('/api/v1/bonds', bondsRoutes);
 
 // -------------------------------------------------------------
 // Socket.IO Setup with Redis Pub/Sub & WebRTC Signaling

@@ -1,706 +1,1746 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Link2, Search, Compass, Users, Briefcase, Rocket, Calendar, 
-  GraduationCap, DollarSign, ShoppingBag, Sparkles, Filter, 
-  ArrowUpRight, ShieldCheck, Star, Layers, Globe, CheckCircle2,
-  ChevronRight, ExternalLink, MessageCircle, Heart, FolderKanban
+import {
+  Search, Users, Layers, Briefcase, Plus, MessageSquare,
+  Shield, Globe, Lock, CheckCircle2, ChevronRight, Sparkles,
+  Filter, Compass, ArrowRight, ExternalLink, Calendar, Code,
+  Cpu, Rocket, Terminal, Share2, Star, SquarePen, Settings,
+  ThumbsUp, MessageCircle, Send, Smile, BarChart2, EyeOff,
+  Newspaper, Camera, MoreHorizontal
 } from 'lucide-react';
+import { api } from '../../services/api/client';
+import { useAppearance, ACCENT_COLOR_MAP } from '../../context/AppearanceContext';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
+import { BondsEntityDetailModal } from './BondsEntityDetailModal';
+import { TeamApplicationModal } from './TeamApplicationModal';
+import { CreateGroupWizard } from './wizards/CreateGroupWizard';
+import { CreateCommunityWizard } from './wizards/CreateCommunityWizard';
+import { CreateTeamWizard } from './wizards/CreateTeamWizard';
+import { BondsRequestsView } from '../messenger/BondsRequestsView';
+
+// Facebook cloned components
+import { FacebookBondsSidebar } from './FacebookBondsSidebar';
+import { FacebookGroupView } from './FacebookGroupView';
+import { FacebookPageTeamView } from './FacebookPageTeamView';
+import { FacebookProfileSwitcherModal, ActiveIdentity } from './FacebookProfileSwitcherModal';
 
 interface ExploreSystemProps {
   onUserClick?: (user: any) => void;
   onPostClick?: (postId: string) => void;
+  onMessageEntity?: (entity: any) => void;
   initialStoreId?: string | null;
   initialProductId?: string | null;
   onStoreChange?: (storeId: string | null) => void;
   onProductChange?: (productId: string | null) => void;
+  initialBondUrl?: string | null;
+  onBondChange?: (bondUrl: string | null) => void;
 }
 
-type EcosystemCategory = 'all' | 'projects' | 'communities' | 'careers' | 'capital' | 'events' | 'knowledge' | 'marketplace';
+export function getEntityCanonicalUrl(entity: any): string {
+  if (!entity) return '/bonds';
+  if (entity.canonicalUrl) return entity.canonicalUrl;
+  const typePlural = entity.type === 'community' ? 'communities' : entity.type === 'team' ? 'teams' : 'groups';
+  const slug = entity.slug || entity.id;
+  return `/bonds/${typePlural}/${slug}`;
+}
 
-const CATEGORIES: { id: EcosystemCategory; label: string; icon: any; count: number }[] = [
-  { id: 'all', label: 'All Ecosystem', icon: Compass, count: 68 },
-  { id: 'projects', label: 'Projects & Workspaces', icon: FolderKanban, count: 18 },
-  { id: 'communities', label: 'Communities & Guilds', icon: Users, count: 14 },
-  { id: 'careers', label: 'Opportunities & Gigs', icon: Briefcase, count: 12 },
-  { id: 'capital', label: 'Investors & Grants', icon: DollarSign, count: 8 },
-  { id: 'events', label: 'Events & Hackathons', icon: Calendar, count: 6 },
-  { id: 'knowledge', label: 'Research & Learning', icon: GraduationCap, count: 10 },
-  { id: 'marketplace', label: 'Digital Marketplace', icon: ShoppingBag, count: 16 }
-];
+// Authentic seed entities matching Facebook UI screenshots
+const SEED_ENTITIES = [
+  // 1. Weird Shitposting. (Exact match from Facebook Group Screenshot 2)
+  {
+    id: 'seed-grp-fb-1',
+    type: 'group',
+    name: 'Weird Shitposting.',
+    entityNumber: '10849204812',
+    slug: '10849204812-weird-shitposting-ryiwevdghjsdgxujegdhjnedghjed',
+    canonicalUrl: '/bonds/groups/10849204812-weird-shitposting-ryiwevdghjsdgxujegdhjnedghjed',
+    description: 'A cozy corner for surreal developer humor, avant-garde memes, late night debugging stories, and creative tech jokes.',
+    category: 'Humor & Community',
+    coverUrl: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
+    logoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+    privacy: 'private',
+    membershipPolicy: 'approval_required',
+    memberCount: 776,
+    myRole: 'owner',
+    isCreator: true,
+    isMember: true,
+    membershipStatus: 'active',
+    tags: ['humor', 'memes', 'shitposting', 'tech'],
+    rules: [
+      { title: 'Be Kind and Courteous', description: 'Create a welcoming environment for everyone.' },
+      { title: 'No Hate Speech or Bullying', description: 'Degrading comments about race, religion, or orientation will not be tolerated.' }
+    ],
+    conversationId: 'conv_weird_shitposting',
+  },
 
-const SEED_PROJECTS = [
+  // 2. Preboost Marketing (Managed Facebook Page Screenshot 3)
   {
-    id: 'proj_bond_core',
-    title: 'BOND Core Infrastructure',
-    tagline: 'Global decentralized identity and real-time collaborative workspace protocol.',
-    category: 'projects',
-    tags: ['Distributed Systems', 'TypeScript', 'PostgreSQL', 'WebSockets'],
-    lead: 'Junaed Islam Jim',
-    leadAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
-    leadHandle: 'junaed_islam_jim9',
-    verified: true,
-    membersCount: 28,
-    progress: 74,
-    status: 'Active Development',
-    badgeColor: 'border-cyan-500/40 text-cyan-400 bg-cyan-500/10'
+    id: 'seed-page-fb-1',
+    type: 'community',
+    name: 'Preboost Marketing',
+    entityNumber: '20938471928',
+    slug: '20938471928-preboost-marketing-kxmvndhweuiyeidjcbxzv',
+    canonicalUrl: '/bonds/communities/20938471928-preboost-marketing-kxmvndhweuiyeidjcbxzv',
+    description: 'Performance growth agency and marketing infrastructure studio for high-velocity software ventures and creator products.',
+    category: 'Marketing & Growth',
+    coverUrl: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1200&q=80',
+    logoUrl: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=200&q=80',
+    privacy: 'public',
+    membershipPolicy: 'open',
+    memberCount: 450,
+    myRole: 'owner',
+    isCreator: true,
+    isMember: true,
+    membershipStatus: 'active',
+    tags: ['marketing', 'growth', 'advertising'],
+    conversationId: 'conv_preboost_marketing',
   },
-  {
-    id: 'proj_era_ai',
-    title: 'Era AI Model Gateway',
-    tagline: 'Multi-provider intelligence router with context boundaries and human approval gates.',
-    category: 'projects',
-    tags: ['AI/ML', 'Model Router', 'pgvector', 'RAG'],
-    lead: 'Era AI Systems',
-    leadAvatar: '',
-    leadHandle: 'era_official',
-    verified: true,
-    membersCount: 16,
-    progress: 88,
-    status: 'Phase 2 Architecture',
-    badgeColor: 'border-purple-500/40 text-purple-400 bg-purple-500/10'
-  },
-  {
-    id: 'proj_zeropay',
-    title: 'ZeroPay Settlement Mesh',
-    tagline: 'Ultra-low-latency microtransaction ledger for regional cross-border digital creator payments.',
-    category: 'capital',
-    tags: ['FinTech', 'Stripe', 'Ledger', 'bKash'],
-    lead: 'Tawsif Rahman',
-    leadAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200',
-    leadHandle: 'tawsif20',
-    verified: true,
-    membersCount: 12,
-    progress: 60,
-    status: 'Seeking Backers',
-    badgeColor: 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
-  }
-];
 
-const SEED_COMMUNITIES = [
+  // 3. TopFan (Managed Facebook Page Screenshot 3)
   {
-    id: 'comm_fullstack_devs',
-    title: 'Global Fullstack Guild',
-    description: 'Premier network of React 19, TypeScript, Rust, and Node.js engineers building high-scale distributed applications.',
-    category: 'communities',
-    tags: ['React 19', 'TypeScript', 'Next.js', 'PostgreSQL'],
-    members: 2420,
-    postsThisWeek: 184,
-    isOpen: true,
-    bannerGradient: 'from-cyan-500/20 via-blue-600/15 to-transparent'
+    id: 'seed-page-fb-2',
+    type: 'community',
+    name: 'TopFan',
+    entityNumber: '31049281726',
+    slug: '31049281726-topfan-qowieuwoieudnvcxbzmshd',
+    canonicalUrl: '/bonds/communities/31049281726-topfan-qowieuwoieudnvcxbzmshd',
+    description: 'Community network connecting passionate super-fans, supporters, and early product testers with independent builders.',
+    category: 'Creator Economy',
+    coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1200&q=80',
+    logoUrl: 'https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?auto=format&fit=crop&w=200&q=80',
+    privacy: 'public',
+    membershipPolicy: 'open',
+    memberCount: 980,
+    myRole: 'owner',
+    isCreator: true,
+    isMember: true,
+    membershipStatus: 'active',
+    tags: ['creators', 'fans', 'community'],
+    conversationId: 'conv_topfan',
   },
-  {
-    id: 'comm_founders_network',
-    title: 'BOND Founders Circle',
-    description: 'Peer-to-peer closed community for early-stage startup founders, technical creators, and angel operators.',
-    category: 'communities',
-    tags: ['Ventures', 'Fundraising', 'Product DNA', 'Scale'],
-    members: 890,
-    postsThisWeek: 92,
-    isOpen: false,
-    bannerGradient: 'from-amber-500/20 via-orange-600/15 to-transparent'
-  },
-  {
-    id: 'comm_ai_research',
-    title: 'Autonomous Agents Lab',
-    description: 'Open discussion forum on prompt-chaining, tool invocation protocols, evaluation datasets, and safety barriers.',
-    category: 'communities',
-    tags: ['LLM', 'Autonomous Agents', 'Safety', 'Eval'],
-    members: 1650,
-    postsThisWeek: 140,
-    isOpen: true,
-    bannerGradient: 'from-purple-500/20 via-pink-600/15 to-transparent'
-  }
-];
 
-const SEED_OPPORTUNITIES = [
+  // 4. Dhaka Fullstack Architects
   {
-    id: 'opp_staff_infra',
-    title: 'Lead Distributed Systems Engineer',
-    org: 'BOND Engineering Hub',
-    category: 'careers',
-    type: 'Full-time · Remote',
-    compensation: '$120k – $160k · Equity',
-    tags: ['PostgreSQL', 'Redis', 'Docker', 'WebSockets', 'Go/Node'],
-    location: 'Global (Remote)',
-    postedDaysAgo: 2
+    id: 'seed-grp-1',
+    type: 'group',
+    name: 'Dhaka Fullstack Architects',
+    entityNumber: '41928374615',
+    slug: '41928374615-dhaka-fullstack-architects-mznxbcvyeuwiqopasdf',
+    canonicalUrl: '/bonds/groups/41928374615-dhaka-fullstack-architects-mznxbcvyeuwiqopasdf',
+    description: 'Premier network of React 19, TypeScript, Rust, and Node.js builders in South Asia. Weekly deep dives on concurrency and cloud-native architecture.',
+    category: 'Tech & Developers',
+    coverUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1000&q=80',
+    logoUrl: 'https://images.unsplash.com/photo-1534972195531-a756b1126f24?auto=format&fit=crop&w=200&q=80',
+    privacy: 'public',
+    membershipPolicy: 'open',
+    memberCount: 2420,
+    myRole: 'member',
+    isMember: true,
+    membershipStatus: 'active',
+    tags: ['react', 'typescript', 'architecture'],
+    conversationId: 'conv_dhaka_fullstack',
   },
-  {
-    id: 'opp_ui_architect',
-    title: 'Senior Frontend Design Technologist',
-    org: 'Aeirmist Studios',
-    category: 'careers',
-    type: 'Contract · 6 Mos',
-    compensation: '$60 – $85 / hr',
-    tags: ['React 19', 'Tailwind CSS v4', 'Framer Motion', 'WebSockets'],
-    location: 'Remote / Hybrid',
-    postedDaysAgo: 4
-  },
-  {
-    id: 'opp_security_audit',
-    title: 'Security & Penetration Audit Bounty',
-    org: 'Platform Governance Taskforce',
-    category: 'careers',
-    type: 'Bounty / Award',
-    compensation: 'Up to $15,000 / Critical CVE',
-    tags: ['OAuth2', 'JWT', 'Rate Limiting', 'Vault AES'],
-    location: 'Global',
-    postedDaysAgo: 1
-  }
-];
 
-const SEED_CAPITAL = [
+  // 5. UI/UX Craft & Spatial Design
   {
-    id: 'cap_ecosystem_fund',
-    title: 'BOND Genesis Developer Grant',
-    sponsor: 'BOND Foundation & Ecosystem Partners',
-    category: 'capital',
-    grantSize: '$10,000 – $50,000 Equity-Free',
-    focus: 'Open-source SDKs, developer tooling, decentralized collaboration, privacy apps',
-    deadline: 'Rolling Submissions',
-    stage: 'Open Call'
+    id: 'seed-grp-2',
+    type: 'group',
+    name: 'UI/UX Craft & Spatial Design',
+    entityNumber: '52019482716',
+    slug: '52019482716-ui-ux-craft-spatial-design-bvmnzxkqiwoeudygfbch',
+    canonicalUrl: '/bonds/groups/52019482716-ui-ux-craft-spatial-design-bvmnzxkqiwoeudygfbch',
+    description: 'Designers building micro-interactions, dark aesthetic interfaces, spatial glassmorphism, and high-conversion products.',
+    category: 'Design & UX',
+    coverUrl: 'https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?auto=format&fit=crop&w=1000&q=80',
+    logoUrl: 'https://images.unsplash.com/photo-1572044162444-ad60f128bdea?auto=format&fit=crop&w=200&q=80',
+    privacy: 'public',
+    membershipPolicy: 'approval_required',
+    memberCount: 1840,
+    myRole: 'not_member',
+    isMember: false,
+    membershipStatus: 'not_member',
+    tags: ['design-systems', 'figma', 'motion'],
+    conversationId: 'conv_ui_ux_craft',
   },
-  {
-    id: 'cap_seed_syndicate',
-    title: 'Pan-Asian Creator Tech Syndicate',
-    sponsor: 'Venture Capital Alliance',
-    category: 'capital',
-    grantSize: '$100k – $500k Pre-Seed / Seed',
-    focus: 'Consumer digital networks, creator commerce, regional payment infrastructure',
-    deadline: 'Dec 15, 2026',
-    stage: 'Active Review'
-  }
-];
 
-const SEED_EVENTS = [
+  // 6. Era AI Model Gateway (Team with Recruitment)
   {
-    id: 'evt_bond_hackathon',
-    title: 'BOND Global Hackathon 2026',
-    organizer: 'BOND Core Team',
-    category: 'events',
-    date: 'Dec 05 – Dec 12, 2026',
-    format: 'Virtual (Global)',
-    prizePool: '$75,000 in Bounties',
-    participants: 1240,
-    tags: ['Hackathon', 'Ecosystem', 'AI Tools', 'Spaces']
+    id: 'seed-team-1',
+    type: 'team',
+    name: 'Era AI Model Gateway',
+    entityNumber: '63120593827',
+    slug: '63120593827-era-ai-model-gateway-nvbmzxqieuroyalskd',
+    canonicalUrl: '/bonds/teams/63120593827-era-ai-model-gateway-nvbmzxqieuroyalskd',
+    description: 'Multi-provider intelligence router with context boundaries, streaming fallbacks, and real-time human verification gates.',
+    category: 'Software Engineering',
+    coverUrl: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1000&q=80',
+    logoUrl: 'https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=200&q=80',
+    privacy: 'public',
+    membershipPolicy: 'approval_required',
+    memberCount: 16,
+    myRole: 'owner',
+    isCreator: true,
+    isMember: true,
+    membershipStatus: 'active',
+    tags: ['ai/ml', 'model-router', 'embeddings'],
+    settings: {
+      stage: 'Active Alpha',
+      openRoles: [
+        { title: 'Backend / Distributed Systems Lead', skills: ['Go', 'Rust', 'Redis', 'WebSockets'] },
+        { title: 'Evaluation & Benchmarks Engineer', skills: ['Python', 'Eval-Harness', 'PyTest'] },
+        { title: 'Frontend Systems Engineer', skills: ['React 19', 'Tailwind', 'Motion'] }
+      ]
+    },
+    conversationId: 'conv_era_ai_gateway',
   },
+
+  // 7. ZeroPay Settlement Mesh (Team with Recruitment)
   {
-    id: 'evt_infra_summit',
-    title: 'Distributed Real-Time Summit',
-    organizer: 'Global Cloud Architecture Group',
-    category: 'events',
-    date: 'Nov 24, 2026',
-    format: 'Interactive Live Stream',
-    prizePool: 'Free Registration',
-    participants: 680,
-    tags: ['WebSockets', 'Cloudflare Edge', 'PostgreSQL 16']
+    id: 'seed-team-2',
+    type: 'team',
+    name: 'ZeroPay Settlement Mesh',
+    entityNumber: '74231604938',
+    slug: '74231604938-zeropay-settlement-mesh-qowieupaldksmznbvx',
+    canonicalUrl: '/bonds/teams/74231604938-zeropay-settlement-mesh-qowieupaldksmznbvx',
+    description: 'Ultra-low-latency financial microtransaction ledger for regional cross-border creator payments and instant payouts.',
+    category: 'FinTech & Ledger',
+    coverUrl: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?auto=format&fit=crop&w=1000&q=80',
+    logoUrl: 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=200&q=80',
+    privacy: 'public',
+    membershipPolicy: 'approval_required',
+    memberCount: 12,
+    myRole: 'not_member',
+    isMember: false,
+    membershipStatus: 'not_member',
+    tags: ['fintech', 'stripe', 'ledger', 'bKash'],
+    settings: {
+      stage: 'Prototype',
+      openRoles: [
+        { title: 'Idempotency & Database Auditor', skills: ['PostgreSQL', 'Isolation Levels', 'ACID'] },
+        { title: 'Compliance & Integration Specialist', skills: ['Banking APIs', 'Stripe', 'Security'] }
+      ]
+    },
+    conversationId: 'conv_zeropay_mesh',
   }
 ];
 
 export const ExploreSystem: React.FC<ExploreSystemProps> = ({
   onUserClick,
   onPostClick,
-  onStoreChange,
-  onProductChange
+  onMessageEntity,
+  initialBondUrl,
+  onBondChange,
 }) => {
-  const { profile, addToast } = useAeirmist();
-  const [selectedCategory, setSelectedCategory] = useState<EcosystemCategory>('all');
+  // Navigation tabs - DEFAULT TO FEED
+  const [navTab, setNavTab] = useState<'feed' | 'discover' | 'groups' | 'communities' | 'teams' | 'my_bonds' | 'requests'>('feed');
+  const [sidebarMode, setSidebarMode] = useState<'feed' | 'discover' | 'my_bonds'>('feed');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [quickFilter, setQuickFilter] = useState<'all' | 'featured' | 'verified' | 'open'>('all');
 
-  const filteredProjects = useMemo(() => {
-    return SEED_PROJECTS.filter(p => {
-      if (selectedCategory !== 'all' && p.category !== selectedCategory) return false;
-      if (!searchQuery) return true;
-      const q = searchQuery.toLowerCase();
-      return p.title.toLowerCase().includes(q) || p.tagline.toLowerCase().includes(q) || p.tags.some(t => t.toLowerCase().includes(q));
-    });
-  }, [selectedCategory, searchQuery]);
+  // Appearance Context (Theme Accent Color Synchronization)
+  const { settings: appearanceSettings } = useAppearance();
+  const accentHex = ACCENT_COLOR_MAP[appearanceSettings?.accentColor] || '#00f2ff';
+  
+  // Data state
+  const [entities, setEntities] = useState<any[]>(SEED_ENTITIES);
+  const [loading, setLoading] = useState(false);
 
-  const filteredCommunities = useMemo(() => {
-    return SEED_COMMUNITIES.filter(c => {
-      if (selectedCategory !== 'all' && c.category !== selectedCategory) return false;
-      if (!searchQuery) return true;
-      const q = searchQuery.toLowerCase();
-      return c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q) || c.tags.some(t => t.toLowerCase().includes(q));
-    });
-  }, [selectedCategory, searchQuery]);
+  // Active full Facebook view (if an individual entity is open)
+  const [activeFacebookViewEntity, setActiveFacebookViewEntity] = useState<any | null>(null);
 
-  const filteredOpportunities = useMemo(() => {
-    return SEED_OPPORTUNITIES.filter(o => {
-      if (selectedCategory !== 'all' && o.category !== selectedCategory) return false;
-      if (!searchQuery) return true;
-      const q = searchQuery.toLowerCase();
-      return o.title.toLowerCase().includes(q) || o.org.toLowerCase().includes(q) || o.tags.some(t => t.toLowerCase().includes(q));
-    });
-  }, [selectedCategory, searchQuery]);
+  // Modals & Wizards
+  const [selectedEntityForDetail, setSelectedEntityForDetail] = useState<any | null>(null);
+  const [selectedTeamForApply, setSelectedTeamForApply] = useState<any | null>(null);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+  const [isCreateCommunityOpen, setIsCreateCommunityOpen] = useState(false);
+  const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
+  const [isProfileSwitcherOpen, setIsProfileSwitcherOpen] = useState(false);
+  const [isCreateDropdownOpen, setIsCreateDropdownOpen] = useState(false);
 
-  const filteredCapital = useMemo(() => {
-    return SEED_CAPITAL.filter(k => {
-      if (selectedCategory !== 'all' && k.category !== selectedCategory) return false;
-      if (!searchQuery) return true;
-      const q = searchQuery.toLowerCase();
-      return k.title.toLowerCase().includes(q) || k.sponsor.toLowerCase().includes(q) || k.focus.toLowerCase().includes(q);
-    });
-  }, [selectedCategory, searchQuery]);
+  // User Identity & Switcher state (Synchronized with real logged-in user)
+  const { user, profile, localAvatarURL, logout, addToast } = useAeirmist();
+  const [isAnonymousQuickPost, setIsAnonymousQuickPost] = useState(false);
+  const [selectedFeeling, setSelectedFeeling] = useState<string | null>(null);
+  const [showFeelingsPicker, setShowFeelingsPicker] = useState(false);
+  const [showPollBuilder, setShowPollBuilder] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['Option 1', 'Option 2']);
 
-  const filteredEvents = useMemo(() => {
-    return SEED_EVENTS.filter(e => {
-      if (selectedCategory !== 'all' && e.category !== selectedCategory) return false;
-      if (!searchQuery) return true;
-      const q = searchQuery.toLowerCase();
-      return e.title.toLowerCase().includes(q) || e.organizer.toLowerCase().includes(q);
-    });
-  }, [selectedCategory, searchQuery]);
+  const realAvatarUrl = useMemo(() => {
+    return localAvatarURL || 
+      resolveAvatarSrc(profile?.avatarKey || profile?.photoURL || user?.photoURL) || 
+      getAvatarUrl(profile?.photoURL || user?.photoURL, profile?.displayName || user?.displayName);
+  }, [localAvatarURL, profile, user]);
 
-  const handleActionToast = (title: string, message: string) => {
-    addToast?.({
-      title,
-      message,
-      type: 'info'
+  const realDisplayName = profile?.displayName || user?.displayName || 'Junaed Islam Jim';
+  const realUsername = profile?.username || 'junaed_islam_jim9';
+  const realUserId = user?.uid || profile?.id || 'user-jim';
+
+  const currentUser = useMemo(() => ({
+    id: realUserId,
+    name: realDisplayName,
+    handle: realUsername,
+    avatarUrl: realAvatarUrl,
+  }), [realUserId, realDisplayName, realUsername, realAvatarUrl]);
+
+  const [activeIdentity, setActiveIdentity] = useState<ActiveIdentity>({
+    id: realUserId,
+    name: realDisplayName,
+    avatarUrl: realAvatarUrl,
+    type: 'user',
+    handle: realUsername,
+  });
+
+  useEffect(() => {
+    if (activeIdentity.type === 'user') {
+      setActiveIdentity({
+        id: realUserId,
+        name: realDisplayName,
+        avatarUrl: realAvatarUrl,
+        type: 'user',
+        handle: realUsername,
+      });
+    }
+  }, [realUserId, realDisplayName, realUsername, realAvatarUrl]);
+
+  // Aggregated feed posts from followed/joined groups, teams & communities
+  const [aggregatedFeedPosts, setAggregatedFeedPosts] = useState<any[]>([
+    {
+      id: 'feed-p1',
+      entityId: 'seed-grp-fb-1',
+      groupName: 'Weird Shitposting.',
+      groupType: 'group',
+      authorName: 'Syed Shakil',
+      authorRole: 'admin',
+      authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+      content: 'Welcome to all 776 members! Please review our group code of conduct before posting.\n\nSpammers and promotional links without mod approval will be removed immediately.',
+      likesCount: 42,
+      commentsCount: 8,
+      createdAt: '2 hrs ago',
+      hasLiked: false,
+      comments: [
+        {
+          id: 'c-1',
+          authorName: 'Junaed Islam Jim',
+          authorRole: 'admin',
+          authorAvatarUrl: realAvatarUrl,
+          content: 'Pinned this announcement at the top of the discussion feed.',
+          createdAt: '1 hr ago'
+        },
+        {
+          id: 'c-2',
+          authorName: 'Nazmul Rifat',
+          authorRole: 'moderator',
+          authorAvatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80',
+          content: 'Confirmed. Automated spam filters active on pending posts.',
+          createdAt: '45m ago'
+        }
+      ]
+    },
+    {
+      id: 'feed-p2',
+      entityId: 'seed-grp-1',
+      groupName: 'Dhaka Fullstack Architects',
+      groupType: 'group',
+      authorName: 'Tanvir Hossain',
+      authorRole: 'member',
+      authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+      content: 'Just deployed our new real-time WebSockets event routing engine on PostgreSQL & Redis.\n\nThe end-to-end latency dropped from 120ms to 9ms flat across all active chat channels! Benchmarks published to our repo.',
+      likesCount: 29,
+      commentsCount: 5,
+      createdAt: '4 hrs ago',
+      hasLiked: false,
+      comments: [
+        {
+          id: 'c-3',
+          authorName: 'Syed Shakil',
+          authorRole: 'admin',
+          authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
+          content: 'Super clean numbers! Are you using Redis Streams or Pub/Sub pubsub clusters?',
+          createdAt: '3 hrs ago'
+        }
+      ]
+    },
+    {
+      id: 'feed-p3',
+      entityId: 'seed-page-fb-1',
+      groupName: 'Preboost Marketing',
+      groupType: 'community',
+      authorName: 'Junaed Islam Jim',
+      authorRole: 'owner',
+      authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+      content: 'Launching our new Creator Monetization & Audience Growth Playbook!\n\nTested across 200+ indie apps with an average 3.4x conversion bump. Free breakdown for all our community members.',
+      likesCount: 67,
+      commentsCount: 14,
+      createdAt: '6 hrs ago',
+      hasLiked: true,
+      comments: []
+    },
+    {
+      id: 'feed-p4',
+      entityId: 'seed-team-1',
+      groupName: 'Era AI Model Gateway',
+      groupType: 'team',
+      authorName: 'Era AI Core Lead',
+      authorRole: 'owner',
+      authorAvatarUrl: 'https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=150&q=80',
+      content: '🔥 TEAM RECRUITMENT OPENING 🔥\n\nWe are actively hiring 2 Backend / Distributed Systems Leads (Go, Rust, Redis) and 1 Frontend Systems Engineer (React 19). Apply directly through our Team page in Bonds!',
+      likesCount: 51,
+      commentsCount: 9,
+      createdAt: '8 hrs ago',
+      hasLiked: false,
+      comments: []
+    }
+  ]);
+
+  const [feedCommentInputs, setFeedCommentInputs] = useState<{ [postId: string]: string }>({});
+  const [openFeedCommentsPostId, setOpenFeedCommentsPostId] = useState<string | null>(null);
+  const [quickPostText, setQuickPostText] = useState('');
+  const [quickPostEntityId, setQuickPostEntityId] = useState('seed-grp-fb-1');
+
+  // Managed entities for identity switcher
+  const managedEntities = useMemo(() => {
+    return entities.filter(e => 
+      e.ownerId === currentUser.id || 
+      e.myRole === 'owner' || 
+      e.myRole === 'admin' || 
+      e.isCreator ||
+      ['seed-grp-fb-1', 'seed-page-fb-1', 'seed-page-fb-2'].includes(e.id)
+    );
+  }, [entities, currentUser.id]);
+
+  // Open individual entity with distinct canonical URL
+  const handleOpenEntity = (entity: any) => {
+    if (!entity) return;
+    setActiveFacebookViewEntity(entity);
+    const canonical = getEntityCanonicalUrl(entity);
+    if (typeof window !== 'undefined' && window.location.pathname !== canonical) {
+      window.history.pushState({ bondSlug: entity.slug || entity.id, _appNav: true }, '', canonical);
+    }
+    if (onBondChange) {
+      onBondChange(canonical);
+    }
+  };
+
+  // Close entity view and restore /bonds URL
+  const handleCloseEntity = () => {
+    setActiveFacebookViewEntity(null);
+    if (typeof window !== 'undefined' && window.location.pathname !== '/bonds') {
+      window.history.pushState({ tab: 'discover', _appNav: true }, '', '/bonds');
+    }
+    if (onBondChange) {
+      onBondChange(null);
+    }
+  };
+
+  // Fetch real entities from backend API
+  const fetchEntities = async () => {
+    setLoading(true);
+    try {
+      const typeParam = (navTab === 'groups' ? 'group' : navTab === 'communities' ? 'community' : navTab === 'teams' ? 'team' : undefined);
+      const filterParam = navTab === 'my_bonds' ? 'my_memberships' : undefined;
+
+      let localEntities: any[] = [];
+      try {
+        localEntities = JSON.parse(localStorage.getItem('aeirmist_local_bonds_entities') || '[]');
+      } catch {}
+
+      const res = await api.bonds.getEntities({
+        type: typeParam,
+        category: categoryFilter !== 'all' ? categoryFilter : undefined,
+        search: searchQuery.trim() || undefined,
+        filter: filterParam,
+      }).catch(() => ({ entities: [] }));
+
+      const apiEntities = res?.entities || [];
+      const combined = [...localEntities, ...apiEntities];
+      const fetchedIds = new Set(combined.map(e => e.id));
+      const merged = [...combined, ...SEED_ENTITIES.filter(s => !fetchedIds.has(s.id))];
+      setEntities(merged);
+    } catch (err) {
+      console.warn('[Bonds Fetch Warning, using fallback]', err);
+      let localEntities: any[] = [];
+      try {
+        localEntities = JSON.parse(localStorage.getItem('aeirmist_local_bonds_entities') || '[]');
+      } catch {}
+      setEntities([...localEntities, ...SEED_ENTITIES]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEntities();
+  }, [navTab, categoryFilter]);
+
+  // Synchronize deep link URL on initial load and popstate (Back/Forward)
+  useEffect(() => {
+    const handleUrlEntityCheck = () => {
+      if (typeof window === 'undefined') return;
+      const path = window.location.pathname;
+      const match = path.match(/^\/(?:bonds\/)?(groups|communities|teams)\/([^/?#]+)/i);
+      if (match) {
+        const slug = match[2];
+        const found = entities.find(ent => ent.slug === slug || ent.id === slug || (ent.slug && ent.slug.startsWith(slug)));
+        if (found) {
+          setActiveFacebookViewEntity(found);
+          if (onBondChange) onBondChange(getEntityCanonicalUrl(found));
+        } else {
+          api.bonds.getEntity(slug).then(res => {
+            if (res?.entity) {
+              setActiveFacebookViewEntity(res.entity);
+              if (onBondChange) onBondChange(getEntityCanonicalUrl(res.entity));
+            }
+          }).catch(() => {});
+        }
+      } else if (path === '/bonds' || path === '/bonds/' || path === '/explore' || path === '/discover') {
+        setActiveFacebookViewEntity(null);
+        if (onBondChange) onBondChange(null);
+      }
+    };
+
+    handleUrlEntityCheck();
+    window.addEventListener('popstate', handleUrlEntityCheck);
+    return () => window.removeEventListener('popstate', handleUrlEntityCheck);
+  }, [entities]);
+
+  // Handle newly created bonds from wizards
+  useEffect(() => {
+    const handleCreated = (e: any) => {
+      const newEnt = e.detail?.entity;
+      if (newEnt) {
+        setEntities(prev => [newEnt, ...prev.filter(x => x.id !== newEnt.id)]);
+        handleOpenEntity(newEnt);
+      }
+    };
+    window.addEventListener('aeirmist_bonds_created', handleCreated);
+    return () => window.removeEventListener('aeirmist_bonds_created', handleCreated);
+  }, []);
+
+  // Handle navigation from Admin Panel or external bond links
+  useEffect(() => {
+    const handleBondNav = (e: any) => {
+      const { slug, type } = e.detail || {};
+      if (slug) {
+        const found = entities.find(ent => ent.slug === slug || ent.id === slug || (ent.slug && ent.slug.startsWith(slug)));
+        if (found) {
+          handleOpenEntity(found);
+        } else {
+          api.bonds.getEntity(slug).then(res => {
+            if (res?.entity) handleOpenEntity(res.entity);
+          }).catch(() => {});
+        }
+      }
+    };
+    window.addEventListener('aeirmist-navigate-bond', handleBondNav);
+    return () => window.removeEventListener('aeirmist-navigate-bond', handleBondNav);
+  }, [entities]);
+
+  // Handle direct message button click
+  const handleMessageClick = (entity: any) => {
+    if (onMessageEntity) {
+      onMessageEntity(entity);
+    } else {
+      window.dispatchEvent(new CustomEvent('aeirmist:open_conversation', {
+        detail: {
+          conversationId: entity.conversationId,
+          entity,
+        }
+      }));
+    }
+  };
+
+  // Handle inline quick join / apply
+  const handleQuickJoin = async (entity: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (entity.type === 'team') {
+      setSelectedTeamForApply(entity);
+      return;
+    }
+
+    try {
+      const res = await api.bonds.joinOrRequest(entity.id);
+      const newStatus = res?.result?.status === 'joined' ? 'active' : 'pending';
+      setEntities(prev => prev.map(ent => ent.id === entity.id ? { ...ent, membershipStatus: newStatus, isMember: newStatus === 'active' } : ent));
+    } catch (err: any) {
+      console.error('[Quick Join Error]', err);
+    }
+  };
+
+  // Handle Feed Post Creation
+  const handleCreateFeedPost = () => {
+    if (!quickPostText.trim() && !pollQuestion.trim()) return;
+    const targetEntity = entities.find(e => e.id === quickPostEntityId) || entities[0];
+    const authorName = isAnonymousQuickPost ? 'Anonymous Member' : activeIdentity.name;
+    const authorAvatar = isAnonymousQuickPost ? getAvatarUrl('') : (activeIdentity.avatarUrl || currentUser.avatarUrl);
+
+    let postContent = quickPostText.trim();
+    if (selectedFeeling) {
+      postContent = `${postContent}\n\nFeeling: ${selectedFeeling}`.trim();
+    }
+    if (showPollBuilder && pollQuestion.trim()) {
+      const opts = pollOptions.filter(o => o.trim());
+      if (opts.length > 0) {
+        postContent = `${postContent}\n\n📊 Poll: ${pollQuestion}\n${opts.map((o, idx) => `• ${o}`).join('\n')}`.trim();
+      }
+    }
+
+    const newPost = {
+      id: `feed-${Date.now()}`,
+      entityId: targetEntity.id,
+      groupName: targetEntity.name,
+      groupType: targetEntity.type,
+      authorName,
+      authorRole: isAnonymousQuickPost ? 'member' : 'owner',
+      authorAvatarUrl: authorAvatar,
+      content: postContent,
+      likesCount: 0,
+      commentsCount: 0,
+      createdAt: 'Just now',
+      hasLiked: false,
+      comments: []
+    };
+
+    setAggregatedFeedPosts([newPost, ...aggregatedFeedPosts]);
+    setQuickPostText('');
+    setIsAnonymousQuickPost(false);
+    setSelectedFeeling(null);
+    setShowFeelingsPicker(false);
+    setShowPollBuilder(false);
+    setPollQuestion('');
+    setPollOptions(['Option 1', 'Option 2']);
+    addToast({
+      title: 'POST PUBLISHED',
+      message: `Your post was shared to ${targetEntity.name}.`,
+      type: 'success',
     });
   };
 
+  // Handle Feed Comment Addition
+  const handleAddFeedComment = (postId: string) => {
+    const text = (feedCommentInputs[postId] || '').trim();
+    if (!text) return;
+
+    const newComment = {
+      id: `c-${Date.now()}`,
+      authorName: activeIdentity.name,
+      authorRole: 'owner',
+      authorAvatarUrl: activeIdentity.avatarUrl || currentUser.avatarUrl,
+      content: text,
+      createdAt: 'Just now'
+    };
+
+    setAggregatedFeedPosts(prev => prev.map(p => {
+      if (p.id === postId) {
+        return {
+          ...p,
+          commentsCount: (p.commentsCount || 0) + 1,
+          comments: [...(p.comments || []), newComment]
+        };
+      }
+      return p;
+    }));
+
+    setFeedCommentInputs(prev => ({ ...prev, [postId]: '' }));
+  };
+
+  // Filter local entities based on active tab and search
+  const filteredEntities = useMemo(() => {
+    return entities.filter(ent => {
+      if (navTab === 'groups' && ent.type !== 'group') return false;
+      if (navTab === 'communities' && ent.type !== 'community') return false;
+      if (navTab === 'teams' && ent.type !== 'team') return false;
+      if (navTab === 'my_bonds' && !ent.isMember) return false;
+
+      if (categoryFilter !== 'all' && ent.category !== categoryFilter) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = ent.name?.toLowerCase().includes(q);
+        const matchDesc = ent.description?.toLowerCase().includes(q);
+        const matchCat = ent.category?.toLowerCase().includes(q);
+        const matchTag = ent.tags?.some((t: string) => t.toLowerCase().includes(q));
+        if (!matchName && !matchDesc && !matchCat && !matchTag) return false;
+      }
+
+      return true;
+    });
+  }, [entities, navTab, categoryFilter, searchQuery]);
+
+  const groupsList = filteredEntities.filter(e => e.type === 'group');
+  const communitiesList = filteredEntities.filter(e => e.type === 'community');
+  const teamsList = filteredEntities.filter(e => e.type === 'team');
+
+  // IF AN INDIVIDUAL ENTITY IS ACTIVELY OPENED, DISPLAY FULL FACEBOOK CLONED PAGE
+  if (activeFacebookViewEntity) {
+    if (activeFacebookViewEntity.type === 'group') {
+      return (
+        <div className="flex h-screen bg-[#18191a] overflow-hidden">
+          <FacebookGroupView
+            entity={activeFacebookViewEntity}
+            currentUser={currentUser}
+            activeIdentity={activeIdentity}
+            onBack={handleCloseEntity}
+            onOpenRequests={() => setNavTab('requests')}
+            onOpenProfileSwitcher={() => setIsProfileSwitcherOpen(true)}
+            onRefreshEntity={fetchEntities}
+          />
+
+          <FacebookProfileSwitcherModal
+            isOpen={isProfileSwitcherOpen}
+            onClose={() => setIsProfileSwitcherOpen(false)}
+            currentUser={currentUser}
+            managedEntities={managedEntities}
+            activeIdentity={activeIdentity}
+            onSwitchIdentity={(identity) => {
+              setActiveIdentity(identity);
+              setIsProfileSwitcherOpen(false);
+            }}
+            onOpenSettings={() => window.dispatchEvent(new CustomEvent('aeirmist-navigate', { detail: 'settings' }))}
+            onLogout={logout}
+          />
+        </div>
+      );
+    } else {
+      return (
+        <div className="flex h-screen bg-[#18191a] overflow-hidden">
+          <FacebookPageTeamView
+            entity={activeFacebookViewEntity}
+            currentUser={currentUser}
+            activeIdentity={activeIdentity}
+            onBack={handleCloseEntity}
+            onOpenApplyModal={(team) => setSelectedTeamForApply(team)}
+            onOpenProfileSwitcher={() => setIsProfileSwitcherOpen(true)}
+            onRefreshEntity={fetchEntities}
+          />
+
+          {selectedTeamForApply && (
+            <TeamApplicationModal
+              isOpen={Boolean(selectedTeamForApply)}
+              onClose={() => setSelectedTeamForApply(null)}
+              team={{
+                id: selectedTeamForApply.id,
+                name: selectedTeamForApply.name,
+                logoUrl: selectedTeamForApply.logoUrl,
+                openRoles: selectedTeamForApply.settings?.openRoles,
+              }}
+              onApplicationSubmitted={() => {
+                setEntities(prev => prev.map(e => e.id === selectedTeamForApply.id ? { ...e, membershipStatus: 'pending' } : e));
+              }}
+            />
+          )}
+
+          <FacebookProfileSwitcherModal
+            isOpen={isProfileSwitcherOpen}
+            onClose={() => setIsProfileSwitcherOpen(false)}
+            currentUser={currentUser}
+            managedEntities={managedEntities}
+            activeIdentity={activeIdentity}
+            onSwitchIdentity={(identity) => {
+              setActiveIdentity(identity);
+              setIsProfileSwitcherOpen(false);
+            }}
+            onOpenSettings={() => window.dispatchEvent(new CustomEvent('aeirmist-navigate', { detail: 'settings' }))}
+            onLogout={logout}
+          />
+        </div>
+      );
+    }
+  }
+
+  // Is Main Area in Feed Mode? (Default when on Feed tab or sidebarMode === 'feed')
+  const isFeedMode = navTab === 'feed' || sidebarMode === 'feed';
+
   return (
-    <div className="w-full min-h-screen bg-[#06080c] text-white flex flex-col pb-20 select-none">
-      {/* Ambient Top Glows */}
-      <div className="fixed top-0 left-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-[140px] pointer-events-none" />
-      <div className="fixed top-1/3 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-[140px] pointer-events-none" />
-
-      {/* Hero Banner Header */}
-      <header className="relative w-full border-b border-white/5 bg-gradient-to-b from-[#0c101a]/80 via-[#080b12]/60 to-transparent backdrop-blur-xl px-4 md:px-8 pt-6 pb-6 z-20">
-        <div className="max-w-7xl mx-auto flex flex-col gap-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-500/20 via-blue-500/15 to-purple-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-[0_0_25px_rgba(0,255,255,0.15)] shrink-0">
-                <Link2 size={24} strokeWidth={2.4} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-xl md:text-2xl font-black tracking-tight text-white uppercase font-sans">
-                    Bonds Ecosystem
-                  </h1>
-                  <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-[9px] font-black uppercase tracking-widest text-cyan-400">
-                    Live Hub
-                  </span>
-                </div>
-                <p className="text-xs text-white/50 tracking-wide mt-0.5">
-                  A connected digital ecosystem for builders, teams, talent, capital & knowledge.
-                </p>
-              </div>
-            </div>
-
-            {/* AI Assistant Quick Pill */}
-            <div className="flex items-center gap-2 self-start md:self-auto bg-white/[0.03] border border-white/10 rounded-2xl px-3.5 py-2 backdrop-blur-md">
-              <Sparkles size={15} className="text-cyan-400 animate-pulse" />
-              <span className="text-xs font-semibold text-white/80">Era AI Discovery:</span>
-              <span className="text-xs text-cyan-400/90 font-medium cursor-pointer hover:underline" onClick={() => handleActionToast("Era AI Discovery", "Era AI is analyzing matching ecosystem connections for your profile.")}>
-                Recommend Matches
-              </span>
-            </div>
-          </div>
-
-          {/* Search & Filter Bar */}
-          <div className="flex flex-col sm:flex-row items-center gap-3">
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" size={16} />
-              <input
-                type="text"
-                placeholder="Search projects, communities, roles, investors, hackathons..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white/[0.04] border border-white/10 rounded-2xl py-2.5 pl-10 pr-4 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-cyan-400/50 transition-colors"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/40 hover:text-white"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {/* Quick Pill Filter */}
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar w-full sm:w-auto shrink-0">
-              {(['all', 'featured', 'verified', 'open'] as const).map(filterKey => (
-                <button
-                  key={filterKey}
-                  onClick={() => setQuickFilter(filterKey)}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all capitalize ${
-                    quickFilter === filterKey
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
-                      : 'bg-white/[0.03] text-white/60 hover:text-white border border-white/5'
-                  }`}
-                >
-                  {filterKey}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Horizontal Sector Category Navigation */}
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1 pb-1">
-            {CATEGORIES.map(cat => {
-              const Icon = cat.icon;
-              const isSelected = selectedCategory === cat.id;
+    <div className="min-h-screen bg-[#06080c] text-neutral-200 pb-24 flex flex-col justify-between">
+      {/* 
+        TOP STICKY HEADER
+        - RED MARK SECTION REMOVED
+        - BLUE MARK NAVIGATION TABS MOVED TO TOP
+        - UNIFIED THEME ACCENT COLOR SYNCHRONIZED WITH APPEARANCE
+      */}
+      <div className="border-b border-white/10 bg-[#06080c]/90 backdrop-blur-md sticky top-0 z-20">
+        <div className="max-w-[1700px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+          {/* Navigation Tabs at the Top */}
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none py-1">
+            {[
+              { id: 'feed', label: 'Your Feed', icon: Newspaper },
+              { id: 'discover', label: 'Discover', icon: Compass },
+              { id: 'groups', label: 'Groups', icon: Users },
+              { id: 'communities', label: 'Communities', icon: Layers },
+              { id: 'teams', label: 'Teams', icon: Briefcase },
+              { id: 'my_bonds', label: 'My Bonds', icon: Star },
+              { id: 'requests', label: 'Requests', icon: Shield },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isSelected = navTab === tab.id;
               return (
                 <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                  key={tab.id}
+                  onClick={() => {
+                    setNavTab(tab.id as any);
+                    if (tab.id === 'feed') setSidebarMode('feed');
+                    else if (tab.id === 'discover') setSidebarMode('discover');
+                    else if (tab.id === 'my_bonds') setSidebarMode('my_bonds');
+                  }}
+                  style={
                     isSelected
-                      ? 'bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-purple-500/20 text-white border border-cyan-400/50 shadow-md shadow-cyan-500/10'
-                      : 'bg-white/[0.02] text-white/60 hover:text-white hover:bg-white/[0.05] border border-white/5'
+                      ? {
+                          backgroundColor: `${accentHex}20`,
+                          color: accentHex,
+                          borderColor: `${accentHex}50`,
+                          boxShadow: `0 0 12px ${accentHex}25`,
+                        }
+                      : undefined
+                  }
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 whitespace-nowrap transition-all cursor-pointer border ${
+                    isSelected
+                      ? 'font-bold'
+                      : 'border-transparent text-neutral-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
-                  <Icon size={14} className={isSelected ? 'text-cyan-400' : 'text-white/40'} />
-                  <span>{cat.label}</span>
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? 'bg-cyan-400/20 text-cyan-300' : 'bg-white/5 text-white/40'}`}>
-                    {cat.count}
-                  </span>
+                  <Icon className="w-3.5 h-3.5" style={isSelected ? { color: accentHex } : undefined} />
+                  <span>{tab.label}</span>
                 </button>
               );
             })}
           </div>
-        </div>
-      </header>
 
-      {/* Main Content Sections */}
-      <main className="max-w-7xl mx-auto w-full px-4 md:px-8 pt-8 flex flex-col gap-10 relative z-10">
-        
-        {/* SECTION 1: Active Projects & Initiatives */}
-        {(selectedCategory === 'all' || selectedCategory === 'projects') && (
-          <section className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <FolderKanban size={18} className="text-cyan-400" />
-                <h2 className="text-base font-bold text-white tracking-tight">Active Projects & Initiatives</h2>
-                <span className="text-xs text-white/40">({filteredProjects.length})</span>
-              </div>
-              <button 
-                onClick={() => handleActionToast("New Project", "Project Workspace creation is being provisioned.")}
-                className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
+          {/* Right: Pen Create Button + Square Profile DP */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {/* Create Pen Button */}
+            <div className="relative">
+              <button
+                onClick={() => setIsCreateDropdownOpen(prev => !prev)}
+                style={{ borderColor: `${accentHex}50` }}
+                className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 border flex items-center justify-center text-white transition-all cursor-pointer group shadow-sm active:scale-95"
+                title="Create Group, Community, or Team"
               >
-                + Propose Project
+                <SquarePen size={18} style={{ color: accentHex }} className="group-hover:scale-110 transition-transform" />
               </button>
+
+              <AnimatePresence>
+                {isCreateDropdownOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                    className="absolute right-0 top-12 z-50 w-52 rounded-2xl bg-[#0f131a] border border-white/10 p-2 shadow-2xl backdrop-blur-xl space-y-1"
+                  >
+                    <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-white/50 border-b border-white/5">
+                      Create in Bonds
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsCreateDropdownOpen(false);
+                        setIsCreateGroupOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-white/90 hover:bg-white/10 hover:text-white transition-all text-left cursor-pointer"
+                    >
+                      <Users size={15} style={{ color: accentHex }} />
+                      <span>Create New Group</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsCreateDropdownOpen(false);
+                        setIsCreateCommunityOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-white/90 hover:bg-white/10 hover:text-white transition-all text-left cursor-pointer"
+                    >
+                      <Globe size={15} className="text-emerald-400" />
+                      <span>Create Community</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsCreateDropdownOpen(false);
+                        setIsCreateTeamOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-white/90 hover:bg-white/10 hover:text-white transition-all text-left cursor-pointer"
+                    >
+                      <Layers size={15} className="text-purple-400" />
+                      <span>Create Team</span>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {filteredProjects.map(proj => (
-                <motion.div
-                  key={proj.id}
-                  whileHover={{ y: -3 }}
-                  transition={{ duration: 0.15 }}
-                  className="flex flex-col justify-between p-5 rounded-3xl bg-white/[0.025] hover:bg-white/[0.045] border border-white/5 hover:border-cyan-500/30 transition-all backdrop-blur-xl group shadow-lg"
+            {/* Square Profile DP */}
+            <div 
+              onClick={() => setIsProfileSwitcherOpen(true)}
+              className="relative cursor-pointer group flex items-center gap-2 p-0.5 rounded-2xl hover:bg-white/5 transition-all shrink-0"
+              title="Switch Active Profile / Page"
+            >
+              <div className="relative">
+                <img
+                  src={activeIdentity.avatarUrl || currentUser.avatarUrl}
+                  alt={activeIdentity.name}
+                  style={{ borderColor: accentHex }}
+                  className="w-10 h-10 rounded-xl object-cover border-2 shadow-sm transition-all"
+                />
+                <div 
+                  style={{ backgroundColor: accentHex }}
+                  className="absolute -bottom-1 -right-1 w-4 h-4 rounded-md border border-[#06080c] flex items-center justify-center text-neutral-950 text-[9px] font-bold"
                 >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-2.5">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${proj.badgeColor}`}>
-                        {proj.status}
-                      </span>
-                      <span className="text-[11px] text-white/40 font-mono">
-                        {proj.membersCount} Collaborators
-                      </span>
-                    </div>
+                  ▾
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-                    <h3 className="text-sm font-bold text-white group-hover:text-cyan-300 transition-colors line-clamp-1 mb-1">
-                      {proj.title}
-                    </h3>
-                    <p className="text-xs text-white/60 leading-relaxed line-clamp-2 mb-4">
-                      {proj.tagline}
-                    </p>
-
-                    <div className="flex flex-wrap gap-1.5 mb-4">
-                      {proj.tags.map(tag => (
-                        <span key={tag} className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-[10px] text-white/60 border border-white/5">
-                          {tag}
-                        </span>
-                      ))}
+      {/* Main Dual-Column Content: Left Scrollable Feed & Right Facebook Bonds Sidebar */}
+      <div className="max-w-[1700px] mx-auto px-4 sm:px-6 py-6 flex-1 flex flex-col lg:flex-row gap-6 w-full">
+        {/* Left Column (Feed, Discovery Grid, or Requests) */}
+        <div className="flex-1 min-w-0">
+          {navTab === 'requests' ? (
+            <div className="rounded-2xl border border-white/10 overflow-hidden bg-[#0b0e14] min-h-[500px]">
+              <BondsRequestsView
+                onOpenConversation={(convId) => {
+                  handleMessageClick({ conversationId: convId });
+                }}
+              />
+            </div>
+          ) : isFeedMode ? (
+            /* =========================================================================
+               1. AGGREGATED FACEBOOK FEED OF FOLLOWED GROUPS, TEAMS & COMMUNITIES
+               ========================================================================= */
+            <div className="max-w-2xl mx-auto space-y-5">
+              {/* Post Composer Card */}
+              <div className="bg-[#11141c] rounded-2xl p-4 border border-white/10 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div 
+                    onClick={() => setIsProfileSwitcherOpen(true)}
+                    className="relative cursor-pointer group flex-shrink-0"
+                    title="Switch Posting Identity"
+                  >
+                    <img
+                      src={activeIdentity.avatarUrl || currentUser.avatarUrl}
+                      alt="Author"
+                      style={{ borderColor: accentHex }}
+                      className="w-10 h-10 rounded-xl object-cover border-2 group-hover:scale-105 transition-all"
+                    />
+                    <div 
+                      style={{ backgroundColor: accentHex }}
+                      className="absolute -bottom-1 -right-1 w-4 h-4 rounded-md border border-[#11141c] flex items-center justify-center text-neutral-950 text-[9px] font-bold"
+                    >
+                      ▾
                     </div>
                   </div>
 
-                  <div className="pt-3 border-t border-white/5 flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {proj.leadAvatar ? (
-                        <img src={proj.leadAvatar} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-[10px] font-bold">
-                          AI
+                  {/* Quick Input Bar */}
+                  <div className="flex-1 relative">
+                    <input
+                      type="text"
+                      value={quickPostText}
+                      onChange={(e) => setQuickPostText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleCreateFeedPost();
+                      }}
+                      placeholder={`Write something to your groups, communities & teams...`}
+                      className="w-full bg-white/5 hover:bg-white/10 text-xs text-white placeholder-neutral-400 pl-4 pr-16 py-3 rounded-xl border border-white/5 outline-none transition-all"
+                    />
+                    <button
+                      onClick={handleCreateFeedPost}
+                      disabled={!quickPostText.trim()}
+                      style={{
+                        backgroundColor: accentHex,
+                        color: '#06080c',
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg disabled:opacity-40 font-black text-xs transition-all cursor-pointer shadow-sm active:scale-95"
+                    >
+                      Post
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-bar with target entity picker & actions */}
+                <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-xs text-neutral-400">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-neutral-500">Posting to:</span>
+                    <select
+                      value={quickPostEntityId}
+                      onChange={(e) => setQuickPostEntityId(e.target.value)}
+                      style={{ color: accentHex, borderColor: `${accentHex}40` }}
+                      className="bg-white/5 text-xs px-2.5 py-1 rounded-lg border outline-none cursor-pointer"
+                    >
+                      {entities.map(e => (
+                        <option key={e.id} value={e.id} className="bg-[#11141c] text-white">
+                          {e.name} ({e.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        const next = !isAnonymousQuickPost;
+                        setIsAnonymousQuickPost(next);
+                        addToast({
+                          title: next ? 'ANONYMOUS MODE ON' : 'ANONYMOUS MODE OFF',
+                          message: next ? 'Your identity will be hidden on this post.' : 'Posting under your profile identity.',
+                          type: 'info'
+                        });
+                      }}
+                      className={`flex items-center gap-1.5 transition-colors cursor-pointer px-2 py-1 rounded-lg ${isAnonymousQuickPost ? 'bg-white/10 text-white' : 'hover:text-white'}`}
+                    >
+                      <EyeOff className="w-3.5 h-3.5" style={{ color: accentHex }} />
+                      <span className="hidden sm:inline">Anonymous</span>
+                    </button>
+                    <div className="relative">
+                      <button 
+                        type="button"
+                        onClick={() => setShowFeelingsPicker(prev => !prev)}
+                        className={`flex items-center gap-1.5 transition-colors cursor-pointer px-2 py-1 rounded-lg ${selectedFeeling ? 'bg-white/10 text-white' : 'hover:text-white'}`}
+                      >
+                        <Smile className="w-3.5 h-3.5" style={{ color: accentHex }} />
+                        <span className="hidden sm:inline">{selectedFeeling ? selectedFeeling.split(' ')[0] : 'Feeling'}</span>
+                      </button>
+                      {showFeelingsPicker && (
+                        <div className="absolute right-0 bottom-full mb-2 bg-[#121620] border border-white/10 rounded-xl p-2 shadow-2xl flex gap-1 z-30">
+                          {['🚀 Excited', '💡 Creative', '🔥 Productive', '☕ Relaxed', '🎉 Celebrating'].map(f => (
+                            <button
+                              key={f}
+                              type="button"
+                              onClick={() => {
+                                setSelectedFeeling(f === selectedFeeling ? null : f);
+                                setShowFeelingsPicker(false);
+                              }}
+                              className="px-2 py-1 rounded-lg hover:bg-white/10 text-xs text-white cursor-pointer whitespace-nowrap"
+                            >
+                              {f}
+                            </button>
+                          ))}
                         </div>
                       )}
-                      <span className="text-[11px] text-white/70 font-medium truncate">@{proj.leadHandle}</span>
-                      {proj.verified && <ShieldCheck size={12} className="text-cyan-400 shrink-0" />}
                     </div>
-
-                    <button
-                      onClick={() => handleActionToast(proj.title, `Opening project workspace for ${proj.title}.`)}
-                      className="p-1.5 rounded-xl bg-white/5 group-hover:bg-cyan-500/20 text-white/50 group-hover:text-cyan-300 transition-all"
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setShowPollBuilder(prev => !prev);
+                      }}
+                      className={`flex items-center gap-1.5 transition-colors cursor-pointer px-2 py-1 rounded-lg ${showPollBuilder ? 'bg-white/10 text-white' : 'hover:text-white'}`}
                     >
-                      <ArrowUpRight size={14} />
+                      <BarChart2 className="w-3.5 h-3.5" style={{ color: accentHex }} />
+                      <span className="hidden sm:inline">Poll</span>
                     </button>
                   </div>
-                </motion.div>
-              ))}
-            </div>
-          </section>
-        )}
+                </div>
 
-        {/* SECTION 2: Communities & Guilds */}
-        {(selectedCategory === 'all' || selectedCategory === 'communities') && (
-          <section className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <Users size={18} className="text-purple-400" />
-                <h2 className="text-base font-bold text-white tracking-tight">Communities & Guilds</h2>
-                <span className="text-xs text-white/40">({filteredCommunities.length})</span>
-              </div>
-              <button 
-                onClick={() => handleActionToast("Create Community", "Open discussion space creation modal.")}
-                className="text-xs font-semibold text-purple-400 hover:text-purple-300 flex items-center gap-1 transition-colors"
-              >
-                + Create Space
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {filteredCommunities.map(comm => (
-                <div
-                  key={comm.id}
-                  className="flex flex-col justify-between p-5 rounded-3xl bg-white/[0.025] hover:bg-white/[0.045] border border-white/5 hover:border-purple-500/30 transition-all backdrop-blur-xl relative overflow-hidden group shadow-lg"
-                >
-                  <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl ${comm.bannerGradient} rounded-full blur-2xl pointer-events-none`} />
-
-                  <div className="relative z-10">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${
-                        comm.isOpen ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' : 'border-amber-500/30 text-amber-400 bg-amber-500/10'
-                      }`}>
-                        {comm.isOpen ? 'Public Guild' : 'Private Circle'}
-                      </span>
-                      <span className="text-[11px] text-white/40">
-                        {comm.members.toLocaleString()} Members
-                      </span>
-                    </div>
-
-                    <h3 className="text-sm font-bold text-white group-hover:text-purple-300 transition-colors mb-1.5">
-                      {comm.title}
-                    </h3>
-                    <p className="text-xs text-white/60 leading-relaxed line-clamp-3 mb-4">
-                      {comm.description}
-                    </p>
-
-                    <div className="flex flex-wrap gap-1.5 mb-4">
-                      {comm.tags.map(t => (
-                        <span key={t} className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-[10px] text-white/60 border border-white/5">
-                          #{t}
-                        </span>
+                {/* Inline Poll Builder if active */}
+                {showPollBuilder && (
+                  <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+                    <input
+                      type="text"
+                      placeholder="Ask a poll question..."
+                      value={pollQuestion}
+                      onChange={(e) => setPollQuestion(e.target.value)}
+                      className="w-full bg-white/5 text-xs px-3 py-2 rounded-lg border border-white/10 text-white outline-none"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      {pollOptions.map((opt, i) => (
+                        <input
+                          key={i}
+                          type="text"
+                          placeholder={`Option ${i + 1}`}
+                          value={opt}
+                          onChange={(e) => {
+                            const copy = [...pollOptions];
+                            copy[i] = e.target.value;
+                            setPollOptions(copy);
+                          }}
+                          className="bg-white/5 text-xs px-2.5 py-1.5 rounded-lg border border-white/5 text-white outline-none"
+                        />
                       ))}
                     </div>
                   </div>
-
-                  <div className="pt-3 border-t border-white/5 flex items-center justify-between relative z-10">
-                    <span className="text-[11px] text-white/40 font-mono">
-                      {comm.postsThisWeek} posts this week
-                    </span>
-                    <button
-                      onClick={() => handleActionToast(comm.title, `You joined the ${comm.title} space.`)}
-                      className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs font-bold transition-all border border-purple-500/30"
-                    >
-                      Join Space
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* SECTION 3: Career Opportunities & Bounties */}
-        {(selectedCategory === 'all' || selectedCategory === 'careers') && (
-          <section className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <Briefcase size={18} className="text-emerald-400" />
-                <h2 className="text-base font-bold text-white tracking-tight">Opportunities & Bounties</h2>
-                <span className="text-xs text-white/40">({filteredOpportunities.length})</span>
+                )}
               </div>
-              <button 
-                onClick={() => handleActionToast("Post Role", "Talent post creation is opening.")}
-                className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors"
-              >
-                + Post Opportunity
-              </button>
+
+              {/* Aggregated Feed Posts Stream */}
+              {aggregatedFeedPosts.map((post) => {
+                const targetEntity = entities.find(e => e.id === post.entityId) || entities[0];
+                const isOpenComments = openFeedCommentsPostId === post.id;
+
+                return (
+                  <div key={post.id} className="bg-[#11141c] rounded-2xl border border-white/10 shadow-lg overflow-hidden transition-all hover:border-white/20">
+                    {/* Origin Entity & Author Header */}
+                    <div className="p-4 border-b border-white/5 flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        {/* Clickable Entity Logo */}
+                        <div
+                          onClick={() => handleOpenEntity(targetEntity)}
+                          className="relative cursor-pointer group shrink-0"
+                          title={`View ${post.groupName}`}
+                        >
+                          <img
+                            src={targetEntity.logoUrl || post.authorAvatarUrl}
+                            alt={post.groupName}
+                            style={{ borderColor: `${accentHex}30` }}
+                            className="w-11 h-11 rounded-xl object-cover border group-hover:scale-105 transition-all shadow-md"
+                          />
+                        </div>
+
+                        <div>
+                          {/* Group / Community / Team Link */}
+                          <div className="flex items-center gap-2">
+                            <span 
+                              onClick={() => handleOpenEntity(targetEntity)}
+                              className="font-bold text-sm text-white hover:underline cursor-pointer transition-colors"
+                            >
+                              {post.groupName}
+                            </span>
+                            <span 
+                              style={{
+                                backgroundColor: `${accentHex}18`,
+                                borderColor: `${accentHex}35`,
+                                color: accentHex,
+                              }}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-bold border uppercase"
+                            >
+                              {post.groupType || targetEntity.type}
+                            </span>
+                          </div>
+
+                          {/* Author & Timestamp */}
+                          <div className="flex items-center gap-2 text-xs text-neutral-400 mt-0.5">
+                            <span>Posted by <strong className="text-neutral-200">{post.authorName}</strong></span>
+                            {post.authorRole === 'owner' && (
+                              <span 
+                                style={{
+                                  backgroundColor: `${accentHex}20`,
+                                  borderColor: `${accentHex}40`,
+                                  color: accentHex,
+                                }}
+                                className="px-1.5 py-0.2 rounded text-[9px] font-black border"
+                              >
+                                OWNER
+                              </span>
+                            )}
+                            {post.authorRole === 'admin' && (
+                              <span 
+                                style={{
+                                  backgroundColor: `${accentHex}20`,
+                                  borderColor: `${accentHex}40`,
+                                  color: accentHex,
+                                }}
+                                className="px-1.5 py-0.2 rounded text-[9px] font-black border"
+                              >
+                                ADMIN
+                              </span>
+                            )}
+                            {post.authorRole === 'moderator' && (
+                              <span 
+                                style={{
+                                  backgroundColor: `${accentHex}20`,
+                                  borderColor: `${accentHex}40`,
+                                  color: accentHex,
+                                }}
+                                className="px-1.5 py-0.2 rounded text-[9px] font-black border"
+                              >
+                                MODERATOR
+                              </span>
+                            )}
+                            <span>·</span>
+                            <span>{post.createdAt}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-white/5 cursor-pointer">
+                        <MoreHorizontal className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Post Content */}
+                    <div className="p-4 text-sm text-neutral-200 leading-relaxed whitespace-pre-line">
+                      {post.content}
+                    </div>
+
+                    {/* Engagement Counts Bar */}
+                    <div className="px-4 py-2 flex items-center justify-between text-xs text-neutral-400 border-t border-white/5">
+                      <div className="flex items-center gap-1.5">
+                        <div 
+                          style={{ backgroundColor: accentHex, color: '#06080c' }}
+                          className="w-4 h-4 rounded-md flex items-center justify-center text-[9px] font-bold"
+                        >
+                          👍
+                        </div>
+                        <span>{post.likesCount || 0}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span>{post.commentsCount || 0} comments</span>
+                        <span>0 shares</span>
+                      </div>
+                    </div>
+
+                    {/* Action Bar: Like, Comment, Share */}
+                    <div className="grid grid-cols-3 gap-1 p-1 text-xs font-semibold text-neutral-400 border-t border-white/5">
+                      <button 
+                        onClick={() => {
+                          setAggregatedFeedPosts(prev => prev.map(p => {
+                            if (p.id === post.id) {
+                              const next = !p.hasLiked;
+                              return {
+                                ...p,
+                                hasLiked: next,
+                                likesCount: next ? p.likesCount + 1 : Math.max(0, p.likesCount - 1)
+                              };
+                            }
+                            return p;
+                          }));
+                        }}
+                        style={post.hasLiked ? { color: accentHex } : undefined}
+                        className="py-2 rounded-xl hover:bg-white/5 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                      >
+                        <ThumbsUp className="w-4 h-4" style={post.hasLiked ? { fill: accentHex } : undefined} />
+                        <span>Like</span>
+                      </button>
+
+                      <button 
+                        onClick={() => setOpenFeedCommentsPostId(isOpenComments ? null : post.id)}
+                        className="py-2 rounded-xl hover:bg-white/5 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>Comment</span>
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          const postUrl = `${window.location.origin}/bonds/posts/${post.id}`;
+                          navigator.clipboard.writeText(postUrl);
+                          addToast({
+                            title: 'LINK COPIED',
+                            message: `Post link copied to clipboard.`,
+                            type: 'success',
+                          });
+                        }}
+                        className="py-2 rounded-xl hover:bg-white/5 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                      >
+                        <Share2 className="w-4 h-4" />
+                        <span>Share</span>
+                      </button>
+                    </div>
+
+                    {/* EXPANDABLE COMMENTS STREAM WITH UNIFIED BADGES */}
+                    {isOpenComments && (
+                      <div className="p-4 border-t border-white/5 bg-black/20 space-y-3">
+                        {/* Comments List */}
+                        <div className="space-y-2.5">
+                          {(post.comments || []).map((comm: any) => (
+                            <div key={comm.id} className="flex items-start gap-2.5">
+                              <img
+                                src={comm.authorAvatarUrl}
+                                alt={comm.authorName}
+                                className="w-8 h-8 rounded-lg object-cover mt-0.5"
+                              />
+                              <div className="flex-1 bg-white/5 p-2.5 rounded-2xl border border-white/5">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs text-white">{comm.authorName}</span>
+                                  {comm.authorRole === 'owner' && (
+                                    <span 
+                                      style={{ backgroundColor: `${accentHex}20`, borderColor: `${accentHex}40`, color: accentHex }}
+                                      className="px-1.5 py-0.5 rounded text-[9px] font-black border"
+                                    >
+                                      OWNER
+                                    </span>
+                                  )}
+                                  {comm.authorRole === 'admin' && (
+                                    <span 
+                                      style={{ backgroundColor: `${accentHex}20`, borderColor: `${accentHex}40`, color: accentHex }}
+                                      className="px-1.5 py-0.5 rounded text-[9px] font-black border"
+                                    >
+                                      ADMIN
+                                    </span>
+                                  )}
+                                  {comm.authorRole === 'moderator' && (
+                                    <span 
+                                      style={{ backgroundColor: `${accentHex}20`, borderColor: `${accentHex}40`, color: accentHex }}
+                                      className="px-1.5 py-0.5 rounded text-[9px] font-black border"
+                                    >
+                                      MODERATOR
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-neutral-200 mt-1 leading-relaxed">{comm.content}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Comment Input Box */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <img
+                            src={activeIdentity.avatarUrl || currentUser.avatarUrl}
+                            alt="You"
+                            className="w-7 h-7 rounded-lg object-cover"
+                          />
+                          <div className="flex-1 relative">
+                            <input
+                              type="text"
+                              value={feedCommentInputs[post.id] || ''}
+                              onChange={(e) => setFeedCommentInputs({ ...feedCommentInputs, [post.id]: e.target.value })}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleAddFeedComment(post.id);
+                              }}
+                              placeholder="Write a comment..."
+                              className="w-full bg-white/5 hover:bg-white/10 text-xs text-white placeholder-neutral-400 py-2 pl-3 pr-9 rounded-xl border border-white/5 outline-none"
+                            />
+                            <button
+                              onClick={() => handleAddFeedComment(post.id)}
+                              style={{ color: accentHex }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 cursor-pointer hover:brightness-125"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+          ) : (
+            /* =========================================================================
+               2. DISCOVERY CATALOG GRID (When user navigates to Discover)
+               ========================================================================= */
+            <>
+              {/* Search and Filters Bar */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6">
+                <div className="relative w-full sm:w-96">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+                  <input
+                    type="text"
+                    placeholder="Search groups, communities, teams, roles..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 bg-[#0b0e14] border border-white/10 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none transition-colors"
+                    style={{ borderColor: searchQuery ? `${accentHex}60` : undefined }}
+                  />
+                </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {filteredOpportunities.map(opp => (
-                <div
-                  key={opp.id}
-                  className="flex flex-col justify-between p-5 rounded-3xl bg-white/[0.025] hover:bg-white/[0.045] border border-white/5 hover:border-emerald-500/30 transition-all backdrop-blur-xl group shadow-lg"
-                >
+                <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto">
+                  <span className="text-xs text-neutral-500 shrink-0 flex items-center gap-1">
+                    <Filter className="w-3 h-3" /> Category:
+                  </span>
+                  {['all', 'Tech & Developers', 'Design & UX', 'AI & Data', 'Software Engineering'].map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setCategoryFilter(c)}
+                      style={
+                        categoryFilter === c
+                          ? { backgroundColor: `${accentHex}20`, color: accentHex, borderColor: `${accentHex}40` }
+                          : undefined
+                      }
+                      className={`px-2.5 py-1 rounded-lg text-xs whitespace-nowrap transition-colors cursor-pointer border ${
+                        categoryFilter === c
+                          ? 'font-bold'
+                          : 'border-transparent text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      {c === 'all' ? 'All' : c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Discovery Sections */}
+              <div className="space-y-10">
+                {/* Groups Section */}
+                {(navTab === 'discover' || navTab === 'groups') && groupsList.length > 0 && (
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[11px] font-semibold text-emerald-400">
-                        {opp.type}
-                      </span>
-                      <span className="text-[10px] text-white/40">
-                        {opp.postedDaysAgo}d ago
-                      </span>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4" style={{ color: accentHex }} />
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-white">Groups</h2>
+                        <span className="text-xs text-neutral-500">People & Shared Interests</span>
+                      </div>
                     </div>
 
-                    <h3 className="text-sm font-bold text-white group-hover:text-emerald-300 transition-colors mb-1 line-clamp-1">
-                      {opp.title}
-                    </h3>
-                    <p className="text-xs text-white/70 font-medium mb-3">
-                      {opp.org} · <span className="text-white/40">{opp.location}</span>
-                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {groupsList.map((grp) => (
+                        <div
+                          key={grp.id}
+                          onClick={() => handleOpenEntity(grp)}
+                          className="group bg-[#0b0e14] border border-white/10 hover:border-white/25 rounded-2xl overflow-hidden cursor-pointer transition-all duration-200 flex flex-col justify-between shadow-sm"
+                        >
+                          <div className="relative aspect-video bg-neutral-900 overflow-hidden">
+                            {grp.coverUrl && (
+                              <img
+                                src={grp.coverUrl}
+                                alt={grp.name}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                            )}
+                            <div className="absolute inset-0 bg-gradient-to-t from-[#0b0e14] via-transparent to-transparent" />
+                            <div 
+                              style={{ backgroundColor: `${accentHex}20`, borderColor: `${accentHex}40`, color: accentHex }}
+                              className="absolute top-3 right-3 px-2 py-0.5 rounded-lg backdrop-blur-md text-[10px] uppercase font-bold border"
+                            >
+                              {grp.privacy}
+                            </div>
+                            <div className="absolute bottom-3 left-3 w-12 h-12 rounded-xl bg-[#06080c] border border-white/20 overflow-hidden shadow-lg flex items-center justify-center">
+                              {grp.logoUrl ? (
+                                <img src={grp.logoUrl} alt={grp.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="text-sm font-bold" style={{ color: accentHex }}>{grp.name.slice(0, 2).toUpperCase()}</span>
+                              )}
+                            </div>
+                          </div>
 
-                    <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 mb-3">
-                      <span className="text-xs font-bold text-white font-mono">{opp.compensation}</span>
-                    </div>
+                          <div className="p-4 flex-1 flex flex-col justify-between">
+                            <div>
+                              <h3 className="text-sm font-bold text-white group-hover:underline transition-colors line-clamp-1">
+                                {grp.name}
+                              </h3>
+                              <div className="text-[11px] font-medium mb-2" style={{ color: accentHex }}>{grp.category}</div>
+                              <p className="text-xs text-neutral-400 line-clamp-2 leading-relaxed">
+                                {grp.description}
+                              </p>
+                            </div>
 
-                    <div className="flex flex-wrap gap-1 mb-4">
-                      {opp.tags.map(t => (
-                        <span key={t} className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-[10px] text-white/60">
-                          {t}
-                        </span>
+                            <div className="pt-4 border-t border-white/5 mt-4 flex items-center justify-between">
+                              <span className="text-xs text-neutral-500 flex items-center gap-1">
+                                <Users className="w-3.5 h-3.5" />
+                                {grp.memberCount} members
+                              </span>
+
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                {grp.isMember ? (
+                                  <span 
+                                    style={{ backgroundColor: `${accentHex}18`, borderColor: `${accentHex}35`, color: accentHex }}
+                                    className="px-2.5 py-1 rounded-lg border text-xs font-semibold"
+                                  >
+                                    Joined
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={(e) => handleQuickJoin(grp, e)}
+                                    style={{ backgroundColor: accentHex, color: '#06080c' }}
+                                    className="px-3 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                                  >
+                                    Join
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleMessageClick(grp)}
+                                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white transition-colors cursor-pointer"
+                                  title="Message"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" style={{ color: accentHex }} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
+                )}
 
-                  <button
-                    onClick={() => handleActionToast(opp.title, `Application submitted for ${opp.title}.`)}
-                    className="w-full py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all"
-                  >
-                    Apply Now
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* SECTION 4: Capital, Grants & Sponsors */}
-        {(selectedCategory === 'all' || selectedCategory === 'capital') && (
-          <section className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <DollarSign size={18} className="text-amber-400" />
-                <h2 className="text-base font-bold text-white tracking-tight">Capital, Grants & Sponsors</h2>
-                <span className="text-xs text-white/40">({filteredCapital.length})</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredCapital.map(cap => (
-                <div
-                  key={cap.id}
-                  className="flex flex-col justify-between p-5 rounded-3xl bg-white/[0.025] hover:bg-white/[0.045] border border-white/5 hover:border-amber-500/30 transition-all backdrop-blur-xl group shadow-lg"
-                >
+                {/* Communities Section */}
+                {(navTab === 'discover' || navTab === 'communities') && communitiesList.length > 0 && (
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-amber-500/30 text-amber-400 bg-amber-500/10">
-                        {cap.stage}
-                      </span>
-                      <span className="text-[11px] text-white/40">
-                        Deadline: {cap.deadline}
-                      </span>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <Layers className="w-4 h-4" style={{ color: accentHex }} />
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-white">Communities</h2>
+                        <span className="text-xs text-neutral-500">Guilds & Knowledge Hubs</span>
+                      </div>
                     </div>
 
-                    <h3 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors mb-1">
-                      {cap.title}
-                    </h3>
-                    <p className="text-xs text-white/70 font-medium mb-3">
-                      Sponsor: {cap.sponsor}
-                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {communitiesList.map((comm) => (
+                        <div
+                          key={comm.id}
+                          onClick={() => handleOpenEntity(comm)}
+                          className="group bg-[#0b0e14] border border-white/10 hover:border-white/25 rounded-2xl overflow-hidden cursor-pointer transition-all duration-200 flex flex-col justify-between shadow-sm"
+                        >
+                          <div className="relative aspect-video bg-neutral-900 overflow-hidden">
+                            {comm.coverUrl && (
+                              <img
+                                src={comm.coverUrl}
+                                alt={comm.name}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                            )}
+                            <div className="absolute inset-0 bg-gradient-to-t from-[#0b0e14] via-transparent to-transparent" />
+                            <div 
+                              style={{ backgroundColor: `${accentHex}20`, borderColor: `${accentHex}40`, color: accentHex }}
+                              className="absolute top-3 right-3 px-2 py-0.5 rounded-lg backdrop-blur-md text-[10px] uppercase font-bold border"
+                            >
+                              {comm.privacy}
+                            </div>
+                            <div className="absolute bottom-3 left-3 w-12 h-12 rounded-xl bg-[#06080c] border border-white/20 overflow-hidden shadow-lg flex items-center justify-center">
+                              {comm.logoUrl ? (
+                                <img src={comm.logoUrl} alt={comm.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="text-sm font-bold" style={{ color: accentHex }}>{comm.name.slice(0, 2).toUpperCase()}</span>
+                              )}
+                            </div>
+                          </div>
 
-                    <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 mb-3">
-                      <p className="text-[11px] text-amber-300 font-bold font-mono">{cap.grantSize}</p>
-                      <p className="text-[11px] text-white/60 mt-1">{cap.focus}</p>
-                    </div>
-                  </div>
+                          <div className="p-4 flex-1 flex flex-col justify-between">
+                            <div>
+                              <h3 className="text-sm font-bold text-white group-hover:underline transition-colors line-clamp-1">
+                                {comm.name}
+                              </h3>
+                              <div className="text-[11px] font-medium mb-2" style={{ color: accentHex }}>{comm.category}</div>
+                              <p className="text-xs text-neutral-400 line-clamp-2 leading-relaxed">
+                                {comm.description}
+                              </p>
+                            </div>
 
-                  <div className="flex items-center justify-end gap-2 pt-2">
-                    <button
-                      onClick={() => handleActionToast(cap.title, `Opening proposal portal for ${cap.title}.`)}
-                      className="px-4 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-bold transition-all"
-                    >
-                      Submit Pitch / Proposal
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+                            <div className="pt-4 border-t border-white/5 mt-4 flex items-center justify-between">
+                              <span className="text-xs text-neutral-500 flex items-center gap-1">
+                                <Users className="w-3.5 h-3.5" />
+                                {comm.memberCount} members
+                              </span>
 
-        {/* SECTION 5: Events & Hackathons */}
-        {(selectedCategory === 'all' || selectedCategory === 'events') && (
-          <section className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <Calendar size={18} className="text-blue-400" />
-                <h2 className="text-base font-bold text-white tracking-tight">Events & Hackathons</h2>
-                <span className="text-xs text-white/40">({filteredEvents.length})</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredEvents.map(evt => (
-                <div
-                  key={evt.id}
-                  className="flex flex-col justify-between p-5 rounded-3xl bg-white/[0.025] hover:bg-white/[0.045] border border-white/5 hover:border-blue-500/30 transition-all backdrop-blur-xl group shadow-lg"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[11px] font-semibold text-blue-400">
-                        {evt.format}
-                      </span>
-                      <span className="text-[11px] text-white/40">
-                        {evt.participants} Registered
-                      </span>
-                    </div>
-
-                    <h3 className="text-sm font-bold text-white group-hover:text-blue-300 transition-colors mb-1">
-                      {evt.title}
-                    </h3>
-                    <p className="text-xs text-white/70 font-medium mb-3">
-                      By {evt.organizer} · <span className="text-white/40">{evt.date}</span>
-                    </p>
-
-                    <div className="p-3 rounded-2xl bg-blue-500/5 border border-blue-500/20 mb-3">
-                      <span className="text-xs font-bold text-blue-300 font-mono">Prize / Benefit: {evt.prizePool}</span>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5 mb-3">
-                      {evt.tags.map(t => (
-                        <span key={t} className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-[10px] text-white/60">
-                          {t}
-                        </span>
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                {comm.isMember ? (
+                                  <span 
+                                    style={{ backgroundColor: `${accentHex}18`, borderColor: `${accentHex}35`, color: accentHex }}
+                                    className="px-2.5 py-1 rounded-lg border text-xs font-semibold"
+                                  >
+                                    Joined
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={(e) => handleQuickJoin(comm, e)}
+                                    style={{ backgroundColor: accentHex, color: '#06080c' }}
+                                    className="px-3 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                                  >
+                                    Join
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleMessageClick(comm)}
+                                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white transition-colors cursor-pointer"
+                                  title="Message"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" style={{ color: accentHex }} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
+                )}
 
-                  <div className="flex items-center justify-end gap-2 pt-2">
-                    <button
-                      onClick={() => handleActionToast(evt.title, `You are registered for ${evt.title}. Ticket added to your Vault.`)}
-                      className="px-4 py-2 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 text-xs font-bold transition-all"
-                    >
-                      Register Now
-                    </button>
+                {/* Teams Section */}
+                {(navTab === 'discover' || navTab === 'teams') && teamsList.length > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <Briefcase className="w-4 h-4" style={{ color: accentHex }} />
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-white">Teams</h2>
+                        <span className="text-xs text-neutral-500">Projects, Roles & Recruitment</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {teamsList.map((team) => (
+                        <div
+                          key={team.id}
+                          onClick={() => handleOpenEntity(team)}
+                          className="group bg-[#0b0e14] border border-white/10 hover:border-white/25 rounded-2xl overflow-hidden cursor-pointer transition-all duration-200 flex flex-col justify-between shadow-sm"
+                        >
+                          <div className="relative aspect-video bg-neutral-900 overflow-hidden">
+                            {team.coverUrl && (
+                              <img
+                                src={team.coverUrl}
+                                alt={team.name}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                            )}
+                            <div className="absolute inset-0 bg-gradient-to-t from-[#0b0e14] via-transparent to-transparent" />
+                            <div 
+                              style={{ backgroundColor: `${accentHex}20`, borderColor: `${accentHex}40`, color: accentHex }}
+                              className="absolute top-3 right-3 px-2 py-0.5 rounded-lg backdrop-blur-md text-[10px] font-bold border"
+                            >
+                              {team.settings?.stage || 'Active'}
+                            </div>
+                            <div className="absolute bottom-3 left-3 w-12 h-12 rounded-xl bg-[#06080c] border border-white/20 overflow-hidden shadow-lg flex items-center justify-center">
+                              {team.logoUrl ? (
+                                <img src={team.logoUrl} alt={team.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="text-sm font-bold" style={{ color: accentHex }}>{team.name.slice(0, 2).toUpperCase()}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="p-4 flex-1 flex flex-col justify-between">
+                            <div>
+                              <h3 className="text-sm font-bold text-white group-hover:underline transition-colors line-clamp-1">
+                                {team.name}
+                              </h3>
+                              <div className="text-[11px] font-medium mb-2" style={{ color: accentHex }}>{team.category}</div>
+                              <p className="text-xs text-neutral-400 line-clamp-2 leading-relaxed">
+                                {team.description}
+                              </p>
+
+                              {team.settings?.openRoles && (
+                                <div className="mt-3 flex flex-wrap gap-1">
+                                  {team.settings.openRoles.slice(0, 2).map((r: any, idx: number) => (
+                                    <span 
+                                      key={idx} 
+                                      style={{ backgroundColor: `${accentHex}18`, borderColor: `${accentHex}30`, color: accentHex }}
+                                      className="px-2 py-0.5 rounded-lg border text-[10px] font-medium"
+                                    >
+                                      {r.title}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="pt-4 border-t border-white/5 mt-4 flex items-center justify-between">
+                              <span className="text-xs text-neutral-500 flex items-center gap-1">
+                                <Users className="w-3.5 h-3.5" />
+                                {team.memberCount} members
+                              </span>
+
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  onClick={(e) => handleQuickJoin(team, e)}
+                                  style={{ backgroundColor: accentHex, color: '#06080c' }}
+                                  className="px-3 py-1 rounded-lg text-xs font-black transition-colors cursor-pointer shadow-sm"
+                                >
+                                  Apply
+                                </button>
+                                <button
+                                  onClick={() => handleMessageClick(team)}
+                                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white transition-colors cursor-pointer"
+                                  title="Message"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" style={{ color: accentHex }} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
-      </main>
+        {/* Right Column: FACEBOOK BONDS SIDEBAR */}
+        <div className="hidden lg:block w-[320px] xl:w-[350px] shrink-0 sticky top-20 h-[calc(100vh-100px)] rounded-2xl overflow-hidden border border-white/10 shadow-xl">
+          <FacebookBondsSidebar
+            entities={entities}
+            selectedEntity={activeFacebookViewEntity}
+            onSelectEntity={(ent) => handleOpenEntity(ent)}
+            onCreateClick={(type) => {
+              if (type === 'group') setIsCreateGroupOpen(true);
+              else if (type === 'community') setIsCreateCommunityOpen(true);
+              else setIsCreateTeamOpen(true);
+            }}
+            activeType={navTab === 'communities' ? 'community' : navTab === 'teams' ? 'team' : 'group'}
+            sidebarMode={sidebarMode}
+            onSelectMode={(mode) => {
+              setSidebarMode(mode);
+              if (mode === 'feed') setNavTab('feed');
+              else if (mode === 'my_bonds') setNavTab('my_bonds');
+              else if (mode === 'discover') setNavTab('discover');
+            }}
+            onOpenSettings={() => setIsProfileSwitcherOpen(true)}
+          />
+        </div>
+      </div>
+
+      {/* FLOATING ACTION PEN (Bottom Right) */}
+      <div className="fixed bottom-6 right-6 z-30">
+        <button
+          onClick={() => setIsCreateGroupOpen(true)}
+          style={{ borderColor: accentHex, boxShadow: `0 0 25px ${accentHex}50` }}
+          className="w-14 h-14 rounded-2xl bg-neutral-900 border-2 text-white hover:scale-105 active:scale-95 transition-all flex items-center justify-center cursor-pointer group"
+          title="Create in Bonds"
+        >
+          <SquarePen size={24} style={{ color: accentHex }} className="group-hover:rotate-6 transition-transform" />
+        </button>
+      </div>
+
+      {/* Entity Detail Modal */}
+      {selectedEntityForDetail && (
+        <BondsEntityDetailModal
+          isOpen={Boolean(selectedEntityForDetail)}
+          onClose={() => setSelectedEntityForDetail(null)}
+          entity={selectedEntityForDetail}
+          onMessageClick={handleMessageClick}
+          onJoinSuccess={(id, status) => {
+            setEntities(prev => prev.map(e => e.id === id ? { ...e, membershipStatus: status, isMember: status === 'active' } : e));
+          }}
+        />
+      )}
+
+      {/* Team Application Modal */}
+      {selectedTeamForApply && (
+        <TeamApplicationModal
+          isOpen={Boolean(selectedTeamForApply)}
+          onClose={() => setSelectedTeamForApply(null)}
+          team={{
+            id: selectedTeamForApply.id,
+            name: selectedTeamForApply.name,
+            logoUrl: selectedTeamForApply.logoUrl,
+            openRoles: selectedTeamForApply.settings?.openRoles,
+          }}
+          onApplicationSubmitted={() => {
+            setEntities(prev => prev.map(e => e.id === selectedTeamForApply.id ? { ...e, membershipStatus: 'pending' } : e));
+          }}
+        />
+      )}
+
+      {/* Facebook Profile Switcher Modal */}
+      <FacebookProfileSwitcherModal
+        isOpen={isProfileSwitcherOpen}
+        onClose={() => setIsProfileSwitcherOpen(false)}
+        currentUser={currentUser}
+        managedEntities={managedEntities}
+        activeIdentity={activeIdentity}
+        onSwitchIdentity={(identity) => {
+          setActiveIdentity(identity);
+          setIsProfileSwitcherOpen(false);
+        }}
+        onOpenSettings={() => window.dispatchEvent(new CustomEvent('aeirmist-navigate', { detail: 'settings' }))}
+        onLogout={logout}
+      />
+
+      {/* Creation Wizards */}
+      <CreateGroupWizard
+        isOpen={isCreateGroupOpen}
+        onClose={() => setIsCreateGroupOpen(false)}
+        onSuccess={(newEntity) => {
+          setEntities(prev => [newEntity, ...prev]);
+        }}
+      />
+
+      <CreateCommunityWizard
+        isOpen={isCreateCommunityOpen}
+        onClose={() => setIsCreateCommunityOpen(false)}
+        onSuccess={(newEntity) => {
+          setEntities(prev => [newEntity, ...prev]);
+        }}
+      />
+
+      <CreateTeamWizard
+        isOpen={isCreateTeamOpen}
+        onClose={() => setIsCreateTeamOpen(false)}
+        onSuccess={(newEntity) => {
+          setEntities(prev => [newEntity, ...prev]);
+        }}
+      />
     </div>
   );
 };
-
-export default ExploreSystem;

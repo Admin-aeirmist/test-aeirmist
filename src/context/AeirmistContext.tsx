@@ -105,7 +105,8 @@ import {
   OperationType
 } from '../lib/firebase';
 import { usePermissions } from '../hooks/usePermissions';
-import { BLANK_DP, getAvatarUrl } from '../lib/avatar';
+import { BLANK_DP, getAvatarUrl, resolveAvatarSrc } from '../lib/avatar';
+import { seedSharedProfile } from '../hooks/useSharedProfile';
 import { aeirmistCache } from '../services/CacheService';
 export { MediaQuality } from '../services/MediaService';
 import { mediaService, MediaQuality } from '../services/MediaService';
@@ -408,7 +409,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               uid,
               email: s?.email || p?.email || '',
               displayName: s?.displayName || p?.displayName || p?.username || '',
-              photoURL: p?.photoURL || '',
+              photoURL: p?.photoURL || resolveAvatarSrc(p?.avatarKey) || '',
               emailVerified: true,
               isAnonymous: false,
               providerData: [{ providerId: 'password', uid, email: s?.email || p?.email || '' }],
@@ -430,6 +431,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const parsed = JSON.parse(cached);
           if (parsed && typeof parsed === 'object') {
             if (parsed.pruningReason) delete parsed.pruningReason;
+            if (!parsed.photoURL && parsed.avatarKey) {
+              parsed.photoURL = resolveAvatarSrc(parsed.avatarKey) || '';
+            }
             return parsed;
           }
         }
@@ -1194,30 +1198,46 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const uploadMedia = useCallback(async (file: File, folder: string, onProgress?: (p: number, status: string) => void, quality: MediaQuality = MediaQuality.AUTO) => {
     const activeStorage = storage || { driver: 'native' };
 
-    // Digital Size Sentinel: Validate limits before processing
-    const isProfile = folder.includes('profile');
-    const isCover = folder.includes('cover');
-    const isStory = folder.includes('stories') || folder.includes('story');
-    const maxMB = isProfile ? 15 : (isCover ? 20 : 100);
-    if (file.size > maxMB * 1024 * 1024) {
-      const errorMsg = `File size too large. Max ${maxMB}MB allowed for ${isProfile ? 'profile' : (isCover ? 'cover' : 'story/media')} uploads.`;
-      addToast({
-        title: "Size Violation",
-        message: errorMsg,
-        type: "warning"
-      });
-      throw new Error(errorMsg);
+    // Resolve active session user across React state, profile, Firebase Auth, and persistent storage
+    let activeUser: any = user || auth.currentUser;
+    if (!activeUser && profile) {
+      activeUser = {
+        uid: profile.uid || profile.ownerUid || profile.id || profile.userId,
+        id: profile.id || profile.userId,
+        email: profile.email || '',
+        displayName: profile.displayName || profile.username || 'User'
+      };
     }
-    
-    const currentUser = user || auth.currentUser;
-    logger.info(`[MediaContext] Initiating, user state: ${user ? 'present' : 'null'}, auth.currentUser: ${auth.currentUser ? 'present' : 'null'}`);
-    if (!currentUser) {
-        logger.error("[AeirmistContext] User not logged in, cannot upload. user:", user, "auth.currentUser:", auth.currentUser);
-        throw new Error("User not logged in");
+    if (!activeUser && typeof window !== 'undefined') {
+      try {
+        const rawSession = localStorage.getItem('aeirmist_session');
+        const rawProfile = localStorage.getItem('aeirmist_cached_profile') || localStorage.getItem('aeirmist_user_profile');
+        if (rawSession || rawProfile) {
+          const s = rawSession ? JSON.parse(rawSession) : null;
+          const p = rawProfile ? JSON.parse(rawProfile) : null;
+          const uid = s?.uid || s?.id || p?.uid || p?.ownerUid || p?.id || p?.userId;
+          if (uid) {
+            activeUser = {
+              uid,
+              id: uid,
+              email: s?.email || p?.email || '',
+              displayName: s?.displayName || p?.displayName || p?.username || 'User'
+            };
+          }
+        }
+      } catch {}
     }
-    
-    // Use currentUser.uid safely
-    const uid = currentUser.uid;
+
+    const token = getAuthToken();
+    const hasActiveSession = Boolean(activeUser || token);
+
+    logger.info(`[MediaContext] Initiating upload, user: ${user ? 'present' : 'null'}, profile: ${profile ? 'present' : 'null'}, auth.currentUser: ${auth.currentUser ? 'present' : 'null'}, token: ${token ? 'present' : 'null'}`);
+
+    if (!hasActiveSession) {
+      logger.error("[AeirmistContext] User not logged in, cannot upload. user:", user, "profile:", profile, "auth.currentUser:", auth.currentUser);
+      throw new Error("User not logged in");
+    }
+
     const timestamp = Date.now();
     const filePath = `${folder}/${timestamp}_${file.name}`;
     
@@ -1232,16 +1252,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return url;
     } catch (e: any) {
       logger.error("[MediaContext] Storage upload failure:", e);
-      
-      addToast({
-        title: "Upload Failed",
-        message: "Failed to upload media.",
-        type: "warning"
-      });
-      
       throw e;
     }
-  }, [storage, addToast]);
+  }, [storage, user, profile]);
 
   const publishStory = useCallback(async (storyData: { 
     file?: File, 
@@ -1933,18 +1946,80 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const fetchSuggestions = useCallback(async () => {
-    if (!db || !profile?.id) return;
+    if (!profile?.id) return;
     try {
-      const q = query(collection(db, 'profiles'), limit(45));
-      const snapshot = await getDocs(q);
-      const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      
+      const mergedMap = new Map<string, any>();
+      const myIds = new Set(
+        [profile?.id, profile?.userId, user?.uid, (user as any)?.id]
+          .filter(Boolean)
+          .map((v: any) => String(v).toLowerCase())
+      );
+      const myUsername = (profile?.username || '').toLowerCase();
+
+      const mergeCandidate = (raw: any) => {
+        if (!raw) return;
+        const cid = raw.id || raw.profileId || raw.userId || raw.uid;
+        if (!cid) return;
+        const uname = String(raw.username || '').trim().toLowerCase();
+        if (myIds.has(String(cid).toLowerCase()) || (raw.userId && myIds.has(String(raw.userId).toLowerCase())) || (raw.uid && myIds.has(String(raw.uid).toLowerCase())) || (raw.ownerUid && myIds.has(String(raw.ownerUid).toLowerCase()))) {
+          return;
+        }
+        if (myUsername && uname === myUsername) return;
+        if (raw.scheduledForPurge || raw.status === 'scheduled_for_deletion' || raw.isBanned) return;
+
+        const key = (uname && uname.length >= 2) ? `u:${uname}` : `id:${cid}`;
+        const existing = mergedMap.get(key) || {};
+        const resolvedPhoto =
+          resolveAvatarSrc(raw.avatarKey) ||
+          resolveAvatarSrc(raw.photoURL) ||
+          resolveAvatarSrc(existing.avatarKey) ||
+          resolveAvatarSrc(existing.photoURL) ||
+          undefined;
+
+        mergedMap.set(key, {
+          ...existing,
+          ...raw,
+          id: raw.profileId || existing.profileId || existing.id || raw.id || raw.userId,
+          userId: raw.userId || existing.userId || raw.id,
+          uid: raw.firebaseUid || existing.uid || raw.uid || raw.userId || raw.id,
+          profileId: raw.profileId || existing.profileId || raw.id,
+          username: raw.username || existing.username,
+          displayName: raw.displayName || raw.name || existing.displayName || raw.username || 'Aeirmist Member',
+          photoURL: resolvedPhoto,
+          avatarKey: raw.avatarKey || existing.avatarKey,
+          bannerURL: resolveAvatarSrc(raw.bannerKey) || raw.bannerURL || existing.bannerURL,
+        });
+      };
+
+      // 1. Primary source: PostgreSQL backend API (returns all active users up to 200)
+      try {
+        const res = await api.users.getSuggestions(200);
+        if (res && Array.isArray(res.users)) {
+          res.users.forEach(mergeCandidate);
+        }
+      } catch (apiErr) {
+        logger.warn("PostgreSQL suggestions fetch notice:", apiErr);
+      }
+
+      // 2. Secondary merge: Firestore profiles (only when Postgres returned few or to fill extra metadata)
+      if (db) {
+        try {
+          const q = query(collection(db, 'profiles'), limit(100));
+          const snapshot = await getDocs(q);
+          snapshot.docs.forEach(d => mergeCandidate({ id: d.id, ...d.data() }));
+        } catch {}
+      }
+
+      const allUsers = Array.from(mergedMap.values());
       const dismissed = followRecommService.getDismissedSuggestions();
-      const following = profile.social?.following || [];
+      const following = new Set((profile.social?.following || []).map((v: any) => String(v).toLowerCase()));
 
       // Calculate scores
-      let scored = allUsers
-        .filter(u => u.id !== profile.id && u.uid !== user?.uid && u.ownerUid !== user?.uid && !following.includes(u.id))
+      const scored = allUsers
+        .filter(u => {
+          const ids = [u.id, u.profileId, u.userId, u.uid].filter(Boolean).map((v: any) => String(v).toLowerCase());
+          return !ids.some(id => following.has(id));
+        })
         .map(u => {
           const rating = followRecommService.calculateRecommendationScore(
             profile,
@@ -1962,25 +2037,21 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           };
         });
 
-      // Split into active recommendations (not dismissed) and fallback pool
       let activeSuggestions = scored.filter(u => !u.isDismissed);
-      
-      // Bootstrap: if list is empty or very limited, backfill with dismissed users if necessary to avoid dry states
-      if (activeSuggestions.length < 3) {
-        activeSuggestions = scored; // include all
+      if (activeSuggestions.length < 10) {
+        activeSuggestions = scored;
       }
 
-      // Sort with highest score first
-      const sorted = activeSuggestions.sort((a, b) => b.recommScore - a.recommScore);
-      setSuggestedUsers(sorted.slice(0, 10)); // return top 10 recommended
+      const sorted = activeSuggestions.sort((a, b) => (b.recommScore || 0) - (a.recommScore || 0));
+      setSuggestedUsers(sorted);
     } catch (e) {
        logger.warn("Follow recommendation system failed", e);
     }
-  }, [db, profile?.id, user?.uid]);
+  }, [db, profile?.id, profile?.userId, profile?.username, user?.uid]);
 
   // Reactive listener to refresh suggestions periodically or when following status changes
   useEffect(() => {
-    if (!db || !profile?.id) return;
+    if (!profile?.id) return;
     const followingStr = JSON.stringify(profile.social?.following || []);
     const triggerId = `${profile.id}_${followingStr}_${suggestionsFetched.current === profile.id ? "done" : "init"}`;
     
@@ -2993,7 +3064,11 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       .then((res: any) => {
         if (isCancelled) return;
         if (res?.profile) {
-          setProfile((prev: any) => ({ ...prev, ...res.profile }));
+          setProfile((prev: any) => ({
+            ...prev,
+            ...res.profile,
+            photoURL: res.profile.photoURL || resolveAvatarSrc(res.profile.avatarKey) || prev?.photoURL || ''
+          }));
         }
       })
       .catch((err: any) => {
@@ -3061,9 +3136,9 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
        // Handle tab close / browser close — use sendBeacon for reliable offline signal
        const handleBeforeUnload = () => {
          // sendBeacon is fire-and-forget and survives page close
-         const token = typeof window !== 'undefined' ? (localStorage.getItem('aeirmist_auth_token') || '') : '';
+         const token = typeof window !== 'undefined' ? (getAuthToken() || localStorage.getItem('aeirmist_auth_token') || '') : '';
          try {
-           const blob = new Blob([JSON.stringify({ status: 'offline' })], { type: 'application/json' });
+           const blob = new Blob([JSON.stringify({ status: 'offline', token })], { type: 'application/json' });
            navigator.sendBeacon?.('/api/v1/users/presence', blob);
          } catch {}
          // Also try the Firestore path synchronously
@@ -3935,7 +4010,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           reload: async () => {}
         };
 
-        setUser(sessionUser);
+        setUser(sessionUser as any);
         setProfile(bProfile);
         setAllProfiles([bProfile]);
         setActiveProfileId(bProfile.id);
@@ -4793,7 +4868,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     
     const allowedFields = [
-      'displayName', 'username', 'bio', 'description', 'tagline', 'relationshipStatus', 'relationshipStatusVisibility', 'photoURL', 'coverURL', 'bannerURL', 
+      'displayName', 'username', 'bio', 'description', 'tagline', 'relationshipStatus', 'relationshipStatusVisibility', 'photoURL', 'avatarKey', 'coverURL', 'bannerURL', 'bannerKey',
       'location', 'locationData', 'website', 'pronouns', 'socialLinks', 'category',
       'privacySettings', 'themeSettings', 'aeirmistLevel', 'notificationSettings', 'messagingSettings', 'appearanceSettings',
       'isDeactivated', 'isProfileLocked', 'isProfessional', 'isPrivate', 'isCreatorSetup',
@@ -4825,6 +4900,18 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     });
 
+    if (updateData.avatarKey !== undefined && updateData.photoURL === undefined) {
+      updateData.photoURL = resolveAvatarSrc(updateData.avatarKey) || updateData.avatarKey;
+    } else if (updateData.photoURL !== undefined && updateData.avatarKey === undefined) {
+      updateData.avatarKey = updateData.photoURL;
+    }
+    if (updateData.bannerKey !== undefined && updateData.coverURL === undefined) {
+      updateData.coverURL = resolveAvatarSrc(updateData.bannerKey) || updateData.bannerKey;
+    }
+    if (updateData.bannerURL !== undefined && updateData.bannerKey === undefined) {
+      updateData.bannerKey = updateData.bannerURL;
+    }
+
     // Prune base64 from appearanceSettings if present
     if (updateData.appearanceSettings && Array.isArray(updateData.appearanceSettings.globalBgList)) {
       updateData.appearanceSettings = {
@@ -4837,14 +4924,49 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const batch = writeBatch(db);
       
       // OPTIMISTIC UPDATE: Update local state immediately for snappy feel
+      const liveResolvedPhoto =
+        resolveAvatarSrc(updateData.photoURL || updateData.avatarKey) ||
+        updateData.photoURL ||
+        updateData.avatarKey;
       setProfile((prev: any) => ({
         id: targetProfileId,
         uid: user.uid,
         ownerUid: user.uid,
         isActive: true,
         ...(prev || {}),
-        ...updateData
+        ...updateData,
+        ...(liveResolvedPhoto ? { photoURL: liveResolvedPhoto } : {}),
       }));
+
+      // Sync shared profile cache + React user state immediately across all mounted components
+      if (updateData.photoURL !== undefined || updateData.avatarKey !== undefined || updateData.displayName !== undefined || updateData.username !== undefined) {
+        setUser((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                ...(liveResolvedPhoto ? { photoURL: liveResolvedPhoto } : {}),
+                ...(updateData.displayName !== undefined ? { displayName: updateData.displayName } : {}),
+              }
+            : prev
+        );
+        const liveProfilePayload = {
+          userId: profile?.userId || user.uid,
+          id: targetProfileId,
+          profileId: targetProfileId,
+          firebaseUid: user.uid,
+          username: updateData.username || profile?.username,
+          displayName: updateData.displayName || profile?.displayName,
+          avatarKey: updateData.avatarKey || profile?.avatarKey,
+          photoURL: liveResolvedPhoto || profile?.photoURL,
+        };
+        seedSharedProfile(
+          [targetProfileId, user.uid, profile?.userId, profile?.username, updateData.username],
+          liveProfilePayload
+        );
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('aeirmist:profile_updated', { detail: liveProfilePayload }));
+        }
+      }
 
       // 1. Handle Username Change & Index Management
       if (data.username && normalizeUsername(data.username) !== (profile?.username ? normalizeUsername(profile.username) : '')) {
@@ -5066,7 +5188,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
             if (hasLargeBase64) {
               logger.info("[AeirmistContext] Large Base64 detected. Clearing images to restore app functionality.");
-              if (profile.photoURL?.startsWith('data:image')) pruningData.photoURL = 'https://picsum.photos/seed/default/100';
+              if (profile.photoURL?.startsWith('data:image')) pruningData.photoURL = '';
               if (profile.coverURL?.startsWith('data:image')) pruningData.coverURL = '';
               if (profile.bannerURL?.startsWith('data:image')) pruningData.bannerURL = '';
               
@@ -6844,7 +6966,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (res?.followers && Array.isArray(res.followers) && res.followers.length > 0) {
         return res.followers.map((f: any) => ({
           ...f,
-          photoURL: f.avatarKey ? (f.avatarKey.startsWith('http') || f.avatarKey.startsWith('data:') ? f.avatarKey : `/media/${f.avatarKey.replace(/^\/+media\/+/, '')}`) : null,
+          photoURL: resolveAvatarSrc(f.avatarKey) || resolveAvatarSrc(f.photoURL) || null,
         }));
       }
     } catch {}
@@ -6868,7 +6990,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (res?.following && Array.isArray(res.following) && res.following.length > 0) {
         return res.following.map((f: any) => ({
           ...f,
-          photoURL: f.avatarKey ? (f.avatarKey.startsWith('http') || f.avatarKey.startsWith('data:') ? f.avatarKey : `/media/${f.avatarKey.replace(/^\/+media\/+/, '')}`) : null,
+          photoURL: resolveAvatarSrc(f.avatarKey) || resolveAvatarSrc(f.photoURL) || null,
         }));
       }
     } catch {}
@@ -7198,7 +7320,6 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const searchUsers = async (text: string) => {
-    if (!db) return [];
     const trimmed = text.trim();
     if (!trimmed) return [];
     
@@ -7212,93 +7333,125 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const addProfileIfValid = (docId: string, data: any) => {
       if (!data) return;
-      const pid = docId || data.id;
-      if (blockedIds.has(pid)) return;
+      const pid = docId || data.profileId || data.id || data.userId;
+      if (!pid || blockedIds.has(pid)) return;
       if (data.scheduledForPurge || data.status === 'scheduled_for_deletion' || data.isBanned) return;
       const uname = (data.username || '').trim().toLowerCase();
-      if (!uname || uname === 'user' || uname === 'null' || uname === 'undefined' || uname.length < 2) return;
-      const dname = (data.displayName || data.name || data.fullName || '').trim();
-      if (!dname) return;
+      const dname = (data.displayName || data.name || data.fullName || uname || '').trim();
+      if (!dname && (!uname || uname.length < 2)) return;
 
-      resultsMap.set(pid, { id: pid, ...data });
+      const dedupeKey = (uname && uname.length >= 2 && uname !== 'user' && uname !== 'null' && uname !== 'undefined')
+        ? `u:${uname}`
+        : `id:${pid}`;
+      const existing = resultsMap.get(dedupeKey) || {};
+      const resolvedPhoto =
+        resolveAvatarSrc(data.avatarKey) ||
+        resolveAvatarSrc(data.photoURL) ||
+        resolveAvatarSrc(existing.avatarKey) ||
+        resolveAvatarSrc(existing.photoURL) ||
+        undefined;
+
+      resultsMap.set(dedupeKey, {
+        ...existing,
+        ...data,
+        id: data.profileId || existing.id || pid,
+        userId: data.userId || existing.userId || pid,
+        uid: data.firebaseUid || existing.uid || data.uid || data.userId || pid,
+        photoURL: resolvedPhoto,
+        avatarKey: data.avatarKey || existing.avatarKey,
+        displayName: dname || uname,
+        username: data.username || existing.username || '',
+      });
     };
 
-    // 1. Check if it's a direct document ID match or profile_ID
+    // 0. Primary Source: PostgreSQL Backend API search (covers all active accounts)
     try {
-      const candidates = [trimmed, cleanText, `profile_${cleanText}`];
-      for (const cid of candidates) {
-        if (!cid) continue;
-        const directDocRef = doc(db, 'profiles', cid);
-        const directSnap = await getDoc(directDocRef);
-        if (directSnap.exists()) {
-          addProfileIfValid(directSnap.id, directSnap.data());
-        }
+      const apiRes = await api.users.search(cleanText, 200);
+      if (apiRes && Array.isArray(apiRes.users)) {
+        apiRes.users.forEach((u: any) => addProfileIfValid(u.profileId || u.id || u.userId, u));
       }
-    } catch (e) {
-      logger.warn("Direct ID lookup bypassed:", e);
+    } catch (apiErr) {
+      logger.warn("PostgreSQL user search fallback notice:", apiErr);
     }
 
-    // 2. Query by username prefix
-    try {
-      const q1 = query(
-        collection(db, 'profiles'),
-        where('username', '>=', cleanLower),
-        where('username', '<=', cleanLower + '\uf8ff'),
-        limit(25)
-      );
-      const snap1 = await getDocs(q1);
-      snap1.forEach(docSnap => {
-        addProfileIfValid(docSnap.id, docSnap.data());
-      });
-    } catch (e) {
-      logger.warn("Username query bypassed:", e);
-    }
-
-    // 3. Query by usernameNormalized if populated
-    try {
-      const qNorm = query(
-        collection(db, 'profiles'),
-        where('usernameNormalized', '>=', cleanLower),
-        where('usernameNormalized', '<=', cleanLower + '\uf8ff'),
-        limit(25)
-      );
-      const snapNorm = await getDocs(qNorm);
-      snapNorm.forEach(docSnap => {
-        addProfileIfValid(docSnap.id, docSnap.data());
-      });
-    } catch (e) {}
-
-    // 4. Query by displayName prefix (as typed)
-    try {
-      const q2 = query(
-        collection(db, 'profiles'),
-        where('displayName', '>=', cleanText),
-        where('displayName', '<=', cleanText + '\uf8ff'),
-        limit(25)
-      );
-      const snap2 = await getDocs(q2);
-      snap2.forEach(docSnap => {
-        addProfileIfValid(docSnap.id, docSnap.data());
-      });
-    } catch (e) {
-      logger.warn("Display name query bypassed:", e);
-    }
-
-    // 5. Query by displayName in TitleCase (e.g. "junaed" -> "Junaed")
-    const titleCase = cleanLower.charAt(0).toUpperCase() + cleanLower.slice(1);
-    if (titleCase !== cleanText) {
+    if (db) {
+      // 1. Check if it's a direct document ID match or profile_ID
       try {
-        const qTitle = query(
+        const candidates = [trimmed, cleanText, `profile_${cleanText}`];
+        for (const cid of candidates) {
+          if (!cid) continue;
+          const directDocRef = doc(db, 'profiles', cid);
+          const directSnap = await getDoc(directDocRef);
+          if (directSnap.exists()) {
+            addProfileIfValid(directSnap.id, directSnap.data());
+          }
+        }
+      } catch (e) {
+        logger.warn("Direct ID lookup bypassed:", e);
+      }
+
+      // 2. Query by username prefix
+      try {
+        const q1 = query(
           collection(db, 'profiles'),
-          where('displayName', '>=', titleCase),
-          where('displayName', '<=', titleCase + '\uf8ff'),
-          limit(25)
+          where('username', '>=', cleanLower),
+          where('username', '<=', cleanLower + '\uf8ff'),
+          limit(50)
         );
-        const snapTitle = await getDocs(qTitle);
-        snapTitle.forEach(docSnap => {
+        const snap1 = await getDocs(q1);
+        snap1.forEach(docSnap => {
+          addProfileIfValid(docSnap.id, docSnap.data());
+        });
+      } catch (e) {
+        logger.warn("Username query bypassed:", e);
+      }
+
+      // 3. Query by usernameNormalized if populated
+      try {
+        const qNorm = query(
+          collection(db, 'profiles'),
+          where('usernameNormalized', '>=', cleanLower),
+          where('usernameNormalized', '<=', cleanLower + '\uf8ff'),
+          limit(50)
+        );
+        const snapNorm = await getDocs(qNorm);
+        snapNorm.forEach(docSnap => {
           addProfileIfValid(docSnap.id, docSnap.data());
         });
       } catch (e) {}
+
+      // 4. Query by displayName prefix (as typed)
+      try {
+        const q2 = query(
+          collection(db, 'profiles'),
+          where('displayName', '>=', cleanText),
+          where('displayName', '<=', cleanText + '\uf8ff'),
+          limit(50)
+        );
+        const snap2 = await getDocs(q2);
+        snap2.forEach(docSnap => {
+          addProfileIfValid(docSnap.id, docSnap.data());
+        });
+      } catch (e) {
+        logger.warn("Display name query bypassed:", e);
+      }
+
+      // 5. Query by displayName in TitleCase (e.g. "junaed" -> "Junaed")
+      const titleCase = cleanLower.charAt(0).toUpperCase() + cleanLower.slice(1);
+      if (titleCase !== cleanText) {
+        try {
+          const qTitle = query(
+            collection(db, 'profiles'),
+            where('displayName', '>=', titleCase),
+            where('displayName', '<=', titleCase + '\uf8ff'),
+            limit(50)
+          );
+          const snapTitle = await getDocs(qTitle);
+          snapTitle.forEach(docSnap => {
+            addProfileIfValid(docSnap.id, docSnap.data());
+          });
+        } catch (e) {}
+      }
     }
 
     // 6. Rank results: exact username > username prefix > display name exact/prefix

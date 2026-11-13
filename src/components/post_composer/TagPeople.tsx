@@ -85,7 +85,7 @@ export const TagPeople: React.FC<TagPeopleProps> = ({ taggedUsers, onChange }) =
               >
                 <img
                   src={getAvatarUrl(user.photoURL)}
-                  className="w-5 h-5 rounded-full object-cover border border-white/10"
+                  className="w-5 h-5 rounded-md object-cover border border-white/10"
                   alt=""
                 />
                 <div className="flex-1 min-w-0">

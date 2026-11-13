@@ -33,11 +33,37 @@ import { useAppearance } from '../../context/AppearanceContext';
 import { collection, query, doc, updateDoc, increment, getDocs, limit } from 'firebase/firestore';
 import { AeirmistVideoUploader } from './AeirmistVideoUploader';
 import { AeirmistCreatorStudio } from './AeirmistCreatorStudio';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
+import { useSharedProfile } from '../../hooks/useSharedProfile';
 import { formatDuration, formatTimeLeft, getPlaybackProgressMap, getWatchHistory, clearWatchHistory, getLocalPlaylists } from '../../utils/videoStorage';
 import { logger } from '@/src/utils/logger';
 import { api } from '../../services/api/client';
+import { normalizeMediaUrl } from '../../utils/mediaUtils';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
+
+const FeaturedVideoCreator: React.FC<{
+  db: any;
+  creatorId?: string;
+  creatorAvatar?: string;
+  creatorName?: string;
+  isVerified?: boolean;
+}> = ({ db, creatorId, creatorAvatar, creatorName, isVerified }) => {
+  const shared = useSharedProfile(db, creatorId);
+  const avatar = resolveAvatarSrc(shared?.photoURL || shared?.avatarKey || shared?.avatar || creatorAvatar) || creatorAvatar || '';
+  const name = shared?.displayName || shared?.name || shared?.username || creatorName || 'Aeirmist Creator';
+  const verified = shared?.isVerified ?? isVerified;
+  return (
+    <div className="flex items-center gap-2 text-xs text-white/60">
+      <img
+        src={getAvatarUrl(avatar, name)}
+        alt={name}
+        className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg object-cover border border-white/20"
+      />
+      <span className="font-medium text-white/90 text-xs truncate max-w-[100px] sm:max-w-none">{name}</span>
+      {verified && <ShieldCheck size={14} className="text-aeirmist-cyan shrink-0" />}
+    </div>
+  );
+};
 
 
 interface VideoFeedProps {
@@ -66,6 +92,37 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   
+  const isPlayableVideoUrl = (url?: string): boolean => {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (!trimmed || trimmed.startsWith('blob:')) return false;
+    // Public GCS sample bucket returns 403 AccessDenied XML; skip dead fixture videos
+    if (trimmed.includes('commondatastorage.googleapis.com/gtv-videos-bucket/sample/')) return false;
+    return true;
+  };
+
+  const normalizeVideoRecord = (v: any): Video => {
+    const rawVideo = v?.videoURL || v?.videoUrl || v?.mediaUrl || (v?.mediaKey ? (String(v.mediaKey).startsWith('/') || String(v.mediaKey).startsWith('http') ? v.mediaKey : `/media/${v.mediaKey}`) : '');
+    let rawThumb = v?.thumbnailURL || v?.thumbnailUrl || v?.posterUrl || v?.thumbnail || '';
+    const normVideo = normalizeMediaUrl(rawVideo);
+    if (!rawThumb && normVideo.includes('cloudinary.com')) {
+      rawThumb = normVideo.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2');
+    }
+    const rawAvatar = v?.creatorAvatar || v?.authorPhoto || v?.author?.avatarKey || v?.author?.photoURL || '';
+    return {
+      ...v,
+      videoURL: normVideo,
+      thumbnailURL: normalizeMediaUrl(rawThumb) || '',
+      creatorId: v?.creatorId || v?.userId || v?.authorId || v?.author?.id || '',
+      creatorName: v?.creatorName || v?.authorName || v?.author?.displayName || v?.author?.name || v?.author?.username || 'Aeirmist Creator',
+      creatorAvatar: resolveAvatarSrc(rawAvatar) || normalizeMediaUrl(rawAvatar) || '',
+      isVerified: Boolean(v?.isVerified ?? v?.author?.isVerified),
+      viewCount: v?.viewCount ?? v?.viewsCount ?? 0,
+      likeCount: v?.likeCount ?? v?.likesCount ?? 0,
+      caption: v?.caption || v?.description || v?.title || '',
+    } as Video;
+  };
+
   // Real DB state (hydrated instantly from local cache)
   const [dbVideos, setDbVideos] = useState<Video[]>(() => {
     if (typeof window !== 'undefined') {
@@ -73,7 +130,9 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
         const cached = localStorage.getItem('aeirmist_cached_videos');
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map(normalizeVideoRecord).filter((v) => isPlayableVideoUrl(v.videoURL));
+          }
         }
       } catch (e) {}
     }
@@ -85,31 +144,79 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   const [showUploader, setShowUploader] = useState(false);
   const [showStudio, setShowStudio] = useState(false);
 
-  // Fetch videos (PostgreSQL API primary, fallback to getDocs)
+  // Fetch videos (PostgreSQL API primary, Firestore merged non-blocking with timeout)
   useEffect(() => {
     let isMounted = true;
+    const mergedMap = new Map<string, Video>();
+
+    const commitMerged = () => {
+      if (!isMounted) return;
+      const list = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+      if (list.length > 0) {
+        setDbVideos(list);
+        try {
+          localStorage.setItem('aeirmist_cached_videos', JSON.stringify(list.slice(0, 30)));
+        } catch {}
+      }
+    };
+
     const fetchVideos = async () => {
       try {
-        const apiRes = await api.videos.getFeed(30, 0).catch(() => null);
-        if (apiRes && Array.isArray(apiRes.videos) && apiRes.videos.length > 0) {
-          if (!isMounted) return;
-          setDbVideos(apiRes.videos);
-          try {
-            localStorage.setItem('aeirmist_cached_videos', JSON.stringify(apiRes.videos.slice(0, 30)));
-          } catch {}
-          return;
+        const [apiRes, postsRes] = await Promise.all([
+          api.videos.getFeed(30, 0).catch(() => null),
+          api.posts.getFeed(30).catch(() => null),
+        ]);
+
+        if (apiRes && Array.isArray(apiRes.videos)) {
+          for (const item of apiRes.videos) {
+            const norm = normalizeVideoRecord(item);
+            if (norm.id && isPlayableVideoUrl(norm.videoURL)) mergedMap.set(norm.id, norm);
+          }
+        }
+        if (postsRes && Array.isArray(postsRes.posts)) {
+          for (const p of postsRes.posts) {
+            if (!p || p.isArchived || p.deletedAt) continue;
+            const keys: string[] = Array.isArray(p.mediaKeys) && p.mediaKeys.length > 0
+              ? p.mediaKeys
+              : (Array.isArray(p.mediaUrls) ? p.mediaUrls : []);
+            const vidKey = keys.find((k) => /\.(mp4|webm|mov|m4v|ogg|mkv)(\?.*)?$/i.test(String(k)) || String(k).includes('/video/upload/'));
+            if (!vidKey && p.mediaType !== 'video') continue;
+            const chosenKey = vidKey || keys[0];
+            if (!chosenKey) continue;
+            const norm = normalizeVideoRecord({
+              ...p,
+              id: p.id,
+              title: (p.content || 'Aeirmist Video').slice(0, 80),
+              description: p.content || '',
+              videoUrl: chosenKey,
+              category: 'Social',
+            });
+            if (norm.id && isPlayableVideoUrl(norm.videoURL) && !mergedMap.has(norm.id)) {
+              mergedMap.set(norm.id, norm);
+            }
+          }
         }
 
+        commitMerged();
+
         if (db) {
-          const q = query(collection(db, 'videos'), limit(30));
-          const snapshot = await getDocs(q);
-          const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as Video);
-          list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-          if (list.length > 0 && isMounted) {
-            setDbVideos(list);
-            try {
-              localStorage.setItem('aeirmist_cached_videos', JSON.stringify(list.slice(0, 30)));
-            } catch {}
+          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500));
+          const fsSnapshot = await Promise.race([
+            getDocs(query(collection(db, 'videos'), limit(30))).catch(() => null),
+            timeoutPromise,
+          ]);
+          if (fsSnapshot && 'docs' in fsSnapshot) {
+            let added = false;
+            for (const d of fsSnapshot.docs) {
+              const norm = normalizeVideoRecord({ id: d.id, ...d.data() });
+              if (norm.id && isPlayableVideoUrl(norm.videoURL) && !mergedMap.has(norm.id)) {
+                mergedMap.set(norm.id, norm);
+                added = true;
+              }
+            }
+            if (added) commitMerged();
           }
         }
       } catch (error) {
@@ -144,9 +251,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
     const blockedList = new Set(profile?.social?.blocked || []);
     let list = vList.filter(v => {
       const cId = v.creatorId || (v as any).authorId || (v as any).author?.id;
-      // Exclude temporary/unreachable local browser blobs so users never get "Couldn't load this video"
-      const isBrokenBlob = v.videoURL && v.videoURL.startsWith('blob:');
-      return !blockedList.has(cId) && !isBrokenBlob;
+      return !blockedList.has(cId) && isPlayableVideoUrl(v.videoURL);
     });
 
     if (searchTerm.trim()) {
@@ -200,10 +305,10 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   const allFilteredVideos = filterVideos(dbVideos);
 
   // Continue watching list (excluding broken blobs)
-  const continueWatchingVideos = dbVideos.filter(v => progressMap[v.id] && (!v.videoURL || !v.videoURL.startsWith('blob:')));
+  const continueWatchingVideos = dbVideos.filter(v => progressMap[v.id] && isPlayableVideoUrl(v.videoURL));
 
   // Featured video (top valid cloud video or explicitly marked featured)
-  const validVideos = dbVideos.filter(v => v.videoURL && !v.videoURL.startsWith('blob:'));
+  const validVideos = dbVideos.filter(v => isPlayableVideoUrl(v.videoURL));
   const featuredVideo = validVideos.find(v => v.isFeatured) || validVideos[0] || null;
 
   // Tab-specific video lists
@@ -418,15 +523,13 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
                   <Play size={16} className="fill-current sm:w-[18px] sm:h-[18px]" /> Watch Now
                 </button>
 
-                <div className="flex items-center gap-2 text-xs text-white/60">
-                  <img 
-                    src={getAvatarUrl(featuredVideo.creatorAvatar, featuredVideo.creatorName)} 
-                    alt={featuredVideo.creatorName}
-                    className="w-5 h-5 sm:w-6 sm:h-6 rounded-full object-cover border border-white/20"
-                  />
-                  <span className="font-medium text-white/90 text-xs truncate max-w-[100px] sm:max-w-none">{featuredVideo.creatorName}</span>
-                  {featuredVideo.isVerified && <ShieldCheck size={14} className="text-aeirmist-cyan shrink-0" />}
-                </div>
+                <FeaturedVideoCreator
+                  db={db}
+                  creatorId={featuredVideo.creatorId}
+                  creatorAvatar={featuredVideo.creatorAvatar}
+                  creatorName={featuredVideo.creatorName}
+                  isVerified={featuredVideo.isVerified}
+                />
               </div>
             </div>
           </div>

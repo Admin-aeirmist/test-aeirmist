@@ -83,7 +83,7 @@ export const VerificationCelebrationModal: React.FC<VerificationCelebrationModal
               <img
                 src={photoURL}
                 alt=""
-                className="w-5 h-5 rounded-full object-cover border border-white/20"
+                className="w-5 h-5 rounded-md object-cover border border-white/20"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = '/icon-192.png';
                 }}

@@ -68,6 +68,25 @@ export const SafeImage: React.FC<SafeImageProps> = ({
   };
 
   const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    const normalized = normalizeMediaUrl(src);
+    if (currentSrc && currentSrc.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(currentSrc);
+      } catch {}
+      mediaService.evictCachedMedia(normalized).catch(() => {});
+      if (normalized && normalized !== currentSrc) {
+        setIsError(false);
+        setIsLoaded(false);
+        setCurrentSrc(normalized);
+        return;
+      }
+    }
+    if (currentSrc && currentSrc.startsWith('/media/') && !currentSrc.includes('aeirmist.com')) {
+      setIsError(false);
+      setIsLoaded(false);
+      setCurrentSrc(`https://aeirmist.com${currentSrc}`);
+      return;
+    }
     setIsError(true);
     onError?.(e);
   };
@@ -89,6 +108,7 @@ export const SafeImage: React.FC<SafeImageProps> = ({
       <img
         width={props.width || '100%'}
         height={props.height || '100%'}
+        data-safe-image="true"
         {...props}
         src={currentSrc || undefined}
         alt={alt}
@@ -121,9 +141,15 @@ export const SafeImage: React.FC<SafeImageProps> = ({
                 e.stopPropagation();
                 setIsError(false);
                 setIsLoaded(false);
-                const originalSrc = src;
+                const normalizedSrc = normalizeMediaUrl(src);
+                mediaService.evictCachedMedia(normalizedSrc).catch(() => {});
                 setCurrentSrc(undefined);
-                setTimeout(() => setCurrentSrc(originalSrc), 50);
+                setTimeout(() => {
+                  const target = normalizedSrc.startsWith('/media/')
+                    ? `https://aeirmist.com${normalizedSrc}`
+                    : normalizedSrc;
+                  setCurrentSrc(target);
+                }, 50);
               }}
               className="mt-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-[9px] font-medium tracking-wide transition-all active:scale-95"
             >

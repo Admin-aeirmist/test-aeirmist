@@ -15,13 +15,15 @@ import {
 } from 'lucide-react';
 import { Video } from '../../types/videos';
 import { formatAeirmistTimestamp } from '../../lib/date';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
 import { useAeirmist } from '../../context/AeirmistContext';
+import { useSharedProfile } from '../../hooks/useSharedProfile';
 import { formatDuration, formatTimeLeft, getPlaybackProgressMap } from '../../utils/videoStorage';
 import { VideoMenu } from './VideoMenu';
 import { ForwardModal } from '../messenger/ForwardModal';
 import { doc, updateDoc, arrayUnion, arrayRemove, increment } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
+import { normalizeMediaUrl } from '../../utils/mediaUtils';
 
 
 interface VideoCardProps {
@@ -45,11 +47,49 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   );
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
+  const [isEditingCaption, setIsEditingCaption] = useState(false);
+  const [editTitleValue, setEditTitleValue] = useState(video.title || video.caption || '');
+  const [localTitle, setLocalTitle] = useState<string | null>(null);
+
+  const creatorProfile = useSharedProfile(db, video.creatorId);
+  const resolvedCreatorAvatar = resolveAvatarSrc(
+    creatorProfile?.photoURL || creatorProfile?.avatarKey || creatorProfile?.avatar || video.creatorAvatar
+  ) || video.creatorAvatar || '';
+  const resolvedCreatorName = creatorProfile?.displayName || creatorProfile?.name || creatorProfile?.username || video.creatorName;
+  const displayTitle = localTitle ?? (video.title || video.caption);
 
   const progressMap = getPlaybackProgressMap();
   const savedProgress = progressMap[video.id];
 
-  const isOwner = profile?.id === video.creatorId;
+  const isOwner = profile?.id === video.creatorId || (profile as any)?.userId === video.creatorId || (profile as any)?.uid === video.creatorId;
+
+  const handleSaveCaption = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = editTitleValue.trim();
+    if (!trimmed) return;
+    setLocalTitle(trimmed);
+    setIsEditingCaption(false);
+    try {
+      if (db) {
+        await updateDoc(doc(db, 'videos', video.id), {
+          title: trimmed,
+          caption: trimmed,
+        });
+      }
+      addToast({
+        title: 'CAPTION UPDATED',
+        message: 'Video details saved.',
+        type: 'success',
+      });
+    } catch (err) {
+      logger.error(err);
+      addToast({
+        title: 'UPDATE FAILED',
+        message: 'Could not save video changes right now.',
+        type: 'warning',
+      });
+    }
+  };
 
   const handleSaveToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -127,7 +167,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         {/* Thumbnail 16:9 */}
         <div className="relative aspect-video w-full sm:w-64 rounded-xl overflow-hidden bg-black shrink-0">
           <img 
-            src={video.thumbnailURL || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600'} 
+            src={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600'} 
             alt={video.title || video.caption}
             width={600}
             height={338}
@@ -160,7 +200,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         <div className="flex-1 flex flex-col justify-between min-w-0 py-1">
           <div>
             <h3 className="text-sm font-semibold text-white/90 line-clamp-2 mb-1 group-hover:text-aeirmist-cyan transition-colors">
-              {video.title || video.caption}
+              {displayTitle}
             </h3>
             <p className="text-xs text-white/50 line-clamp-2 mb-3">
               {video.description || video.caption}
@@ -171,17 +211,17 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             <div 
               onClick={(e) => {
                 e.stopPropagation();
-                if (onUserClick) onUserClick({ id: video.creatorId, name: video.creatorName });
+                if (onUserClick) onUserClick({ id: video.creatorId, name: resolvedCreatorName, photoURL: resolvedCreatorAvatar });
               }}
               className="flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
             >
               <img 
-                src={getAvatarUrl(video.creatorAvatar, video.creatorName)} 
-                alt={video.creatorName} 
-                className="w-5 h-5 rounded-full object-cover border border-white/10"
+                src={getAvatarUrl(resolvedCreatorAvatar, resolvedCreatorName)} 
+                alt={resolvedCreatorName} 
+                className="w-5 h-5 rounded-md object-cover border border-white/10"
               />
-              <span className="font-medium text-xs truncate">{video.creatorName}</span>
-              {video.isVerified && (
+              <span className="font-medium text-xs truncate">{resolvedCreatorName}</span>
+              {(creatorProfile?.isVerified ?? video.isVerified) && (
                 <ShieldCheck className="text-aeirmist-cyan shrink-0" size={13} />
               )}
             </div>
@@ -207,7 +247,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       {/* Thumbnail 16:9 */}
       <div className="relative aspect-video w-full bg-black overflow-hidden">
         <img 
-          src={video.thumbnailURL || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=800'} 
+          src={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=800'} 
           alt={video.title || video.caption}
           width={800}
           height={450}
@@ -266,34 +306,34 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           <div 
             onClick={(e) => {
               e.stopPropagation();
-              if (onUserClick) onUserClick({ id: video.creatorId, name: video.creatorName });
+              if (onUserClick) onUserClick({ id: video.creatorId, name: resolvedCreatorName, photoURL: resolvedCreatorAvatar });
             }}
             className="shrink-0 cursor-pointer"
           >
             <img 
-              src={getAvatarUrl(video.creatorAvatar, video.creatorName)} 
-              alt={video.creatorName} 
-              className="w-9 h-9 rounded-full object-cover border border-white/10 hover:border-aeirmist-cyan transition-colors"
+              src={getAvatarUrl(resolvedCreatorAvatar, resolvedCreatorName)} 
+              alt={resolvedCreatorName} 
+              className="w-9 h-9 rounded-xl object-cover border border-white/10 hover:border-aeirmist-cyan transition-colors"
             />
           </div>
 
           {/* Title & Metadata */}
           <div className="flex-1 min-w-0">
             <h3 className="text-sm font-semibold text-white/90 line-clamp-2 leading-snug group-hover:text-aeirmist-cyan transition-colors">
-              {video.title || video.caption}
+              {displayTitle}
             </h3>
 
             <div className="flex items-center gap-1.5 mt-1 text-xs text-white/60">
               <span 
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (onUserClick) onUserClick({ id: video.creatorId, name: video.creatorName });
+                  if (onUserClick) onUserClick({ id: video.creatorId, name: resolvedCreatorName, photoURL: resolvedCreatorAvatar });
                 }}
                 className="font-medium text-white/80 hover:text-white transition-colors cursor-pointer truncate"
               >
-                {video.creatorName}
+                {resolvedCreatorName}
               </span>
-              {video.isVerified && (
+              {(creatorProfile?.isVerified ?? video.isVerified) && (
                 <ShieldCheck className="text-aeirmist-cyan shrink-0" size={13} />
               )}
             </div>
@@ -332,11 +372,54 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         onClose={() => setIsMenuOpen(false)}
         video={video}
         isOwner={isOwner}
-        onEdit={() => {}}
+        onEdit={() => {
+          setEditTitleValue(displayTitle || '');
+          setIsEditingCaption(true);
+        }}
         onDelete={handleDelete}
         onShareToInbox={handleShareToInbox}
         onShareToStory={handleShareToStory}
       />
+
+      {isEditingCaption && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsEditingCaption(false);
+          }}
+          className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <form
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleSaveCaption}
+            className="w-full max-w-md bg-[#0b0e14] border border-white/10 rounded-2xl p-5 space-y-4 shadow-2xl"
+          >
+            <h4 className="text-sm font-bold text-white">Edit Video Title / Caption</h4>
+            <input
+              type="text"
+              value={editTitleValue}
+              onChange={(e) => setEditTitleValue(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-aeirmist-cyan"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditingCaption(false)}
+                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/70"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-aeirmist-cyan text-black text-xs font-bold hover:brightness-110"
+              >
+                Save
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </motion.div>
   );
 };

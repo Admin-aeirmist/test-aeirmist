@@ -656,7 +656,7 @@ export const CallModal: React.FC<CallModalProps> = ({ chat, type, onClose, isInc
               return (
                 <div key={conn.id} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
                   <div className="flex items-center gap-3">
-                    <img src={getAvatarUrl(conn.photoURL || conn.avatar, conn.id)} className="w-9 h-9 rounded-full object-cover border border-white/10" referrerPolicy="no-referrer" />
+                    <img src={getAvatarUrl(conn.photoURL || conn.avatar, conn.id)} className="w-9 h-9 rounded-xl object-cover border border-white/10" referrerPolicy="no-referrer" />
                     <div>
                       <div className="text-xs font-bold text-white">{conn.displayName || 'Aeirmist Member'}</div>
                       <div className="text-[10px] text-emerald-400 font-mono">Online</div>

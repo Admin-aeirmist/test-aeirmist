@@ -266,70 +266,29 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
       if (mediaFiles.length > 0) {
         setUploadStatus(`Uploading ${mediaFiles.length} media file(s)...`);
         const progressArray = new Array(mediaFiles.length).fill(0);
-        
-        // Fast progress indicator simulation
-        const progressInterval = setInterval(() => {
-          setUploadProgress((prev) => (prev < 85 ? prev + 15 : prev));
-        }, 300);
 
         const uploadPromises = mediaFiles.map((item, idx) => {
-          return new Promise<string>(async (resolve) => {
-            let completed = false;
-
-            const timer = setTimeout(() => {
-              if (!completed) {
-                completed = true;
-                if (item.dataUrl || item.url) {
-                  resolve(item.dataUrl || item.url);
-                } else if (item.file) {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(reader.result as string);
-                  reader.onerror = () => resolve('');
-                  reader.readAsDataURL(item.file);
-                } else {
-                  resolve('');
-                }
-              }
-            }, 3500);
-
+          return new Promise<string>(async (resolve, reject) => {
             try {
               if (item.file) {
-                const url = await uploadMedia(item.file, `posts/${user?.uid}`, (progress) => {
+                const url = await uploadMedia(item.file, `posts/${user?.uid || 'user'}`, (progress, statusText) => {
                   progressArray[idx] = progress;
                   const averageProgress = progressArray.reduce((sum, val) => sum + val, 0) / mediaFiles.length;
                   setUploadProgress(Math.min(90, Math.floor(10 + (averageProgress * 0.8))));
+                  if (statusText) setUploadStatus(statusText);
                 });
-                if (!completed) {
-                  completed = true;
-                  clearTimeout(timer);
-                  resolve(url);
-                }
+                resolve(url);
               } else {
-                completed = true;
-                clearTimeout(timer);
                 resolve(item.dataUrl || item.url || '');
               }
             } catch (e) {
-              if (!completed) {
-                completed = true;
-                clearTimeout(timer);
-                if (item.dataUrl || item.url) {
-                  resolve(item.dataUrl || item.url);
-                } else if (item.file) {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(reader.result as string);
-                  reader.onerror = () => resolve('');
-                  reader.readAsDataURL(item.file);
-                } else {
-                  resolve('');
-                }
-              }
+              logger.error('PostStudio file upload failed:', e);
+              reject(e);
             }
           });
         });
 
         uploadedUrls = (await Promise.all(uploadPromises)).filter(Boolean);
-        clearInterval(progressInterval);
       }
 
       setUploadStatus('Publishing post...');
@@ -580,7 +539,7 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
                   <div className="flex items-center gap-2.5">
                     <img 
                       src={getAvatarUrl(profile?.photoURL)} 
-                      className="w-8 h-8 rounded-full border border-white/20 object-cover" 
+                      className="w-8 h-8 rounded-lg border border-white/20 object-cover" 
                       alt="" 
                     />
                     <div>
@@ -612,7 +571,7 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
                   style={{ background: selectedGradient.css }}
                 >
                   <div className="flex items-center gap-2.5 text-left z-10">
-                    <img src={getAvatarUrl(profile?.photoURL)} className="w-8 h-8 rounded-full border border-white/20 object-cover" alt="" />
+                    <img src={getAvatarUrl(profile?.photoURL)} className="w-8 h-8 rounded-lg border border-white/20 object-cover" alt="" />
                     <div>
                       <div className="text-xs font-bold text-white flex items-center gap-1">
                         <span>{userDisplayName}</span>
@@ -752,7 +711,7 @@ export const PostStudio: React.FC<PostStudioProps> = React.memo(({ onClose, init
             <div className="flex items-center gap-2.5">
               <img 
                 src={getAvatarUrl(profile?.photoURL)} 
-                className="w-9 h-9 rounded-full border border-white/20 object-cover shadow-sm" 
+                className="w-9 h-9 rounded-xl border border-white/20 object-cover shadow-sm" 
                 alt="" 
               />
               <div>

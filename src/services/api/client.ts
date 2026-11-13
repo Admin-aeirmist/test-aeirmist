@@ -2,6 +2,11 @@ import { auth } from '../../lib/firebase';
 
 export function resolveApiBase(): string {
   if (typeof window !== 'undefined') {
+    const customApiBeforeLocal = localStorage.getItem('aeirmist_backend_url');
+    if (customApiBeforeLocal) return customApiBeforeLocal.replace(/\/+$/, '');
+    if ((window as any).aeirmistDesktop?.isElectron || navigator.userAgent.includes('Electron')) {
+      return '';
+    }
     const hostname = window.location.hostname;
     const isLocal = hostname === 'localhost' || 
                     hostname === '127.0.0.1' ||
@@ -268,12 +273,12 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
           totalVideos: 0,
           totalTransactions: 0,
           marketplaceOrders: 0,
-          serverHealth: 'OPTIMAL',
-          uptime: '99.99%',
+          serverHealth: 'OPERATIONAL',
+          uptime: 'Active',
           revenue: '$0.00',
           subscribers: 0,
           onlineNow: '0 active',
-          edgeLatency: '< 15ms'
+          edgeLatency: 'Synced'
         }
       } as any;
     }
@@ -313,60 +318,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       return { notifications: [], unreadCount: 0 } as any;
     }
 
-    // User Search Fallback
+    // User Search / Suggestions Offline Fallback
     if (path.startsWith('/api/v1/users/search') || path.startsWith('/api/v1/users/suggestions')) {
-      return {
-        users: [
-          {
-            id: 'doViFWfMXcOoas976z6MO216YNg1',
-            uid: 'doViFWfMXcOoas976z6MO216YNg1',
-            email: 'junaedislamjim180@gmail.com',
-            username: 'junaed_islam_jim9',
-            displayName: 'Junaed Islam Jim',
-            role: 'admin',
-            isAdmin: true,
-            isVerified: true,
-            points: 1000,
-            status: 'ACTIVE',
-            location: 'Dhaka, Bangladesh',
-            createdLocation: 'Dhaka, Bangladesh',
-            signupLocation: 'Dhaka, Bangladesh',
-            createdAt: '2026-01-15T10:30:00.000Z'
-          },
-          {
-            id: 'usr_admin_aeirmist',
-            uid: 'usr_admin_aeirmist',
-            email: 'admin.aeirmist@gmail.com',
-            username: 'admin_aeirmist',
-            displayName: 'Admin Aeirmist',
-            role: 'admin',
-            isAdmin: true,
-            isVerified: true,
-            points: 1000,
-            status: 'ACTIVE',
-            location: 'Dhaka, Bangladesh',
-            createdLocation: 'Dhaka, Bangladesh',
-            signupLocation: 'Dhaka, Bangladesh',
-            createdAt: '2026-01-01T00:00:00.000Z'
-          },
-          {
-            id: 'system_aeirmist',
-            uid: 'system_aeirmist',
-            email: 'official@aeirmist.social',
-            username: 'aeirmist',
-            displayName: 'Aeirmist Official',
-            role: 'admin',
-            isAdmin: true,
-            isVerified: true,
-            points: 5000,
-            status: 'ACTIVE',
-            location: 'Core Node, Cloudflare',
-            createdLocation: 'Aeirmist HQ Core Node',
-            signupLocation: 'Aeirmist HQ Core Node',
-            createdAt: '2026-01-01T00:00:00.000Z'
-          }
-        ]
-      } as any;
+      return { users: [] } as any;
     }
 
     // Reports Fallback
@@ -691,9 +645,9 @@ export const api = {
       request<{ followers: any[] }>(`/api/v1/users/${encodeURIComponent(userId)}/followers`),
     getFollowing: (userId: string) =>
       request<{ following: any[] }>(`/api/v1/users/${encodeURIComponent(userId)}/following`),
-    search: (query: string, limit = 20) =>
+    search: (query: string, limit = 100) =>
       request<{ users: any[] }>(`/api/v1/users/search?q=${encodeURIComponent(query)}&limit=${limit}`),
-    getSuggestions: (limit = 20) =>
+    getSuggestions: (limit = 100) =>
       request<{ users: any[] }>(`/api/v1/users/suggestions?limit=${limit}`),
     deactivate: () =>
       request<{ success: boolean }>('/api/v1/users/deactivate', {
@@ -782,6 +736,11 @@ export const api = {
       request<{ conversation: any }>('/api/v1/chat/conversations/group', {
         method: 'POST',
         body: JSON.stringify({ title, memberIds, avatarKey, type, participantDetails }),
+      }),
+    addGroupMembers: (conversationId: string, memberIds: string[]) =>
+      request<{ success: boolean; addedCount: number; addedUserIds?: string[]; memberCount?: number; conversation?: any }>(`/api/v1/chat/conversations/${conversationId}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ memberIds }),
       }),
     editMessage: (messageId: string, content: string) =>
       request<{ message: any }>(`/api/v1/chat/messages/${messageId}`, {
@@ -1088,5 +1047,163 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+  },
+  // Bonds Ecosystem (Groups, Communities, Teams)
+  bonds: {
+    getEntities: (params?: { type?: string; category?: string; search?: string; filter?: string; limit?: number; offset?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.type && params.type !== 'all') q.set('type', params.type);
+      if (params?.category && params.category !== 'all') q.set('category', params.category);
+      if (params?.search) q.set('search', params.search);
+      if (params?.filter) q.set('filter', params.filter);
+      if (params?.limit) q.set('limit', String(params.limit));
+      if (params?.offset) q.set('offset', String(params.offset));
+      const qs = q.toString();
+      return request<{ entities: any[] }>(`/api/v1/bonds/entities${qs ? `?${qs}` : ''}`);
+    },
+    getEntity: (idOrSlug: string) =>
+      request<{ entity: any }>(`/api/v1/bonds/entities/${idOrSlug}`),
+    getEntityMembers: (id: string) =>
+      request<{ members: any[] }>(`/api/v1/bonds/entities/${id}/members`),
+    createEntity: (data: any) =>
+      request<{ entity: any }>('/api/v1/bonds/entities', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    joinOrRequest: (entityId: string, body?: { introduction?: string; answers?: any }) =>
+      request<{ result: any }>(`/api/v1/bonds/entities/${entityId}/join`, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      }),
+    applyToTeam: (entityId: string, body: { roleApplied: string; portfolioUrl?: string; answers?: any }) =>
+      request<{ result: any }>(`/api/v1/bonds/entities/${entityId}/apply`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    getReceivedRequests: () =>
+      request<{ requests: any[] }>('/api/v1/bonds/requests/received'),
+    getSentRequests: () =>
+      request<{ requests: any[] }>('/api/v1/bonds/requests/sent'),
+    approveRequest: (requestId: string) =>
+      request<{ success: boolean; result: any }>(`/api/v1/bonds/requests/${requestId}/approve`, {
+        method: 'POST',
+      }),
+    rejectRequest: (requestId: string) =>
+      request<{ success: boolean; result: any }>(`/api/v1/bonds/requests/${requestId}/reject`, {
+        method: 'POST',
+      }),
+    getTeamApplications: (entityId: string) =>
+      request<{ applications: any[] }>(`/api/v1/bonds/entities/${entityId}/applications`),
+    reviewTeamApplication: (applicationId: string, status: 'under_review' | 'accepted' | 'rejected') =>
+      request<{ success: boolean; result: any }>(`/api/v1/bonds/applications/${applicationId}/review`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
+    getPosts: (entityId: string, params?: { status?: string; limit?: number; offset?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.status) q.set('status', params.status);
+      if (params?.limit) q.set('limit', String(params.limit));
+      if (params?.offset) q.set('offset', String(params.offset));
+      const qs = q.toString();
+      return request<{ posts: any[] }>(`/api/v1/bonds/entities/${entityId}/posts${qs ? `?${qs}` : ''}`);
+    },
+    createPost: (entityId: string, data: { content: string; mediaUrls?: string[]; isAnonymous?: boolean; asEntity?: boolean; feeling?: string; poll?: any }) =>
+      request<{ post: any }>(`/api/v1/bonds/entities/${entityId}/posts`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    approvePost: (postId: string) =>
+      request<{ success: boolean; result: any }>(`/api/v1/bonds/posts/${postId}/approve`, {
+        method: 'POST',
+      }),
+    rejectPost: (postId: string) =>
+      request<{ success: boolean; result: any }>(`/api/v1/bonds/posts/${postId}/reject`, {
+        method: 'POST',
+      }),
+    getPostComments: (postId: string) =>
+      request<{ comments: any[] }>(`/api/v1/bonds/posts/${postId}/comments`),
+    createPostComment: (postId: string, content: string) =>
+      request<{ comment: any }>(`/api/v1/bonds/posts/${postId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      }),
+    togglePostLike: (postId: string) =>
+      request<{ liked: boolean; totalLikes: number }>(`/api/v1/bonds/posts/${postId}/like`, {
+        method: 'POST',
+      }),
+    updateMemberRole: (entityId: string, userId: string, role: string) =>
+      request<{ success: boolean; result: any }>(`/api/v1/bonds/entities/${entityId}/members/${userId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      }),
+
+    admin: {
+      getStats: () =>
+        request<{
+          totalGroups: number;
+          totalCommunities: number;
+          totalTeams: number;
+          totalEntities: number;
+          totalPosts: number;
+          totalPendingPosts: number;
+          totalMemberships: number;
+        }>('/api/v1/bonds/admin/stats'),
+
+      getEntities: (params?: { type?: string; status?: string; search?: string; limit?: number; offset?: number }) => {
+        const q = new URLSearchParams();
+        if (params?.type && params.type !== 'all') q.set('type', params.type);
+        if (params?.status && params.status !== 'all') q.set('status', params.status);
+        if (params?.search) q.set('search', params.search);
+        if (params?.limit) q.set('limit', String(params.limit));
+        if (params?.offset) q.set('offset', String(params.offset));
+        const qs = q.toString();
+        return request<{ entities: any[] }>(`/api/v1/bonds/admin/entities${qs ? `?${qs}` : ''}`);
+      },
+
+      updateStatus: (id: string, status: 'active' | 'suspended') =>
+        request<{ success: boolean; status: string }>(`/api/v1/bonds/admin/entities/${id}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status }),
+        }),
+
+      toggleVerified: (id: string, isVerified: boolean) =>
+        request<{ success: boolean; isVerified: boolean }>(`/api/v1/bonds/admin/entities/${id}/verify`, {
+          method: 'PATCH',
+          body: JSON.stringify({ isVerified }),
+        }),
+
+      regenerateUrl: (id: string) =>
+        request<{ success: boolean; slug: string; canonicalUrl: string; entityNum: string; token: string }>(
+          `/api/v1/bonds/admin/entities/${id}/regenerate-url`,
+          { method: 'POST' }
+        ),
+
+      deleteEntity: (id: string) =>
+        request<{ success: boolean; deletedId: string }>(`/api/v1/bonds/admin/entities/${id}`, {
+          method: 'DELETE',
+        }),
+
+      getMembers: (entityId: string) =>
+        request<{ members: any[] }>(`/api/v1/bonds/admin/entities/${entityId}/members`),
+
+      updateMemberRole: (entityId: string, userId: string, role: string) =>
+        request<{ success: boolean; role: string }>(`/api/v1/bonds/admin/entities/${entityId}/members/${userId}/role`, {
+          method: 'PATCH',
+          body: JSON.stringify({ role }),
+        }),
+
+      removeMember: (entityId: string, userId: string) =>
+        request<{ success: boolean }>(`/api/v1/bonds/admin/entities/${entityId}/members/${userId}`, {
+          method: 'DELETE',
+        }),
+
+      getEntityPosts: (entityId: string) =>
+        request<{ posts: any[] }>(`/api/v1/bonds/admin/entities/${entityId}/posts`),
+
+      deletePost: (postId: string) =>
+        request<{ success: boolean }>(`/api/v1/bonds/admin/posts/${postId}`, {
+          method: 'DELETE',
+        }),
+    },
   },
 };

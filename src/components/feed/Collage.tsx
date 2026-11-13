@@ -4,6 +4,7 @@ import { VideoPlayer } from './VideoPlayer';
 import { motion, AnimatePresence } from 'motion/react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { SafeImage } from '../ui/SafeImage';
+import { normalizeMediaUrl } from '../../utils/mediaUtils';
 
 export interface MediaItem {
   url: string;
@@ -151,12 +152,21 @@ export const Collage: React.FC<CollageProps> = ({
                 if (!isFirstVideo) handleThumbnailClick(0);
               }}
             >
-              <img 
-                src={items[0].url} 
-                alt="" 
-                aria-hidden="true" 
-                className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-25 scale-110 pointer-events-none" 
-              />
+              {(() => {
+                const firstUrl = normalizeMediaUrl(items[0].url);
+                const isFirstVideo = items[0].type === 'video' || (Boolean(firstUrl) && (firstUrl.includes('/video/upload/') || /\.(mp4|webm|mov|m4v|mkv)(\?.*)?$/i.test(firstUrl)));
+                const blurSrc = isFirstVideo
+                  ? (poster ? normalizeMediaUrl(poster) : (firstUrl.includes('cloudinary.com') ? firstUrl.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2') : ''))
+                  : firstUrl;
+                return blurSrc ? (
+                  <img 
+                    src={blurSrc} 
+                    alt="" 
+                    aria-hidden="true" 
+                    className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-25 scale-110 pointer-events-none" 
+                  />
+                ) : null;
+              })()}
               <div className="relative z-10 w-full h-full flex items-center justify-center">
                 {items[0].type === 'video' ? (
                   <VideoPlayer 

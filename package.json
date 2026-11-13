@@ -19,7 +19,11 @@
     "deploy": "npm run build && node scripts/deploy-cloudflare.mjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "desktop:icons": "node scripts/generate-desktop-icons.mjs",
+    "desktop:dev": "npx electron electron/main.cjs",
+    "desktop:build": "npm run build && npm run desktop:icons && npx electron-builder --win nsis portable",
+    "desktop:msstore": "npm run build && npm run desktop:icons && npx electron-builder --win appx"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.1",
@@ -81,6 +85,8 @@
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "basic-ftp": "^6.2.1",
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0",
     "eslint": "^9.0.0",
     "tailwindcss": "^4.1.14",
     "vite": "^6.2.3"
@@ -90,6 +96,8 @@
     "@google/genai@1.52.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
-    "protobufjs@7.6.6": true
+    "protobufjs@7.6.6": true,
+    "electron@45.3.1": true,
+    "electron-winstaller@5.4.0": true
   }
 }

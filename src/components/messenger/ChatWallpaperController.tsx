@@ -316,10 +316,6 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
       addToast({ title: 'Invalid format', message: 'File must be a valid image format.', type: 'warning' });
       return;
     }
-    if (file.size > 15 * 1024 * 1024) {
-      addToast({ title: 'File too large', message: 'Background volume exceeds 15MB threshold.', type: 'warning' });
-      return;
-    }
 
     // Instant local preview update (0ms latency!)
     const localBlobUrl = URL.createObjectURL(file);

@@ -3,17 +3,63 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, UserPlus, Crown, UserMinus, Camera, Edit3, Phone, Video, 
   Search, Bell, BellOff, Palette, Smile, Image as ImageIcon, 
-  FileText, Link as LinkIcon, LogOut, ShieldCheck, ChevronRight, 
-  Lock, Check, Loader2, User, AlertTriangle, AtSign, Tag, Trash2,
-  Copy, Share2, Shield, Settings, Volume2, VolumeX, Sparkles
+  FileText, Link as LinkIcon, LogOut, ShieldCheck, ChevronRight, ChevronDown,
+  Lock, Check, Loader2, User, AlertTriangle, AtSign, Tag, Trash2, Users, Info,
+  Copy, Share2, Shield, Settings, Volume2, VolumeX, Sparkles, MessageSquare
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { messagingService } from '../../modules/messaging/MessagingService';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
+import { useSharedProfile } from '../../hooks/useSharedProfile';
+import { api } from '../../services/api/client';
+import { Avatar } from '../ui/Avatar';
 import { collection, query, getDocs, limit } from 'firebase/firestore';
 import { MemberDetailsSheet } from './MemberDetailsSheet';
 import { SharedGroupMediaModal } from './SharedGroupMediaModal';
 import { logger } from '@/src/utils/logger';
+
+const ERA_AI_ID = '00000000-0000-4000-a000-000000000001';
+
+const GroupMemberAvatar: React.FC<{
+  mem: any;
+  isOnline?: boolean;
+  showStatus?: boolean;
+  sizeClassName?: string;
+}> = React.memo(({ mem, isOnline = false, showStatus = false, sizeClassName = 'w-10 h-10' }) => {
+  const memId = mem?.id || mem?.uid || '';
+  const shared = useSharedProfile(null, memId);
+  const isEra =
+    memId === ERA_AI_ID ||
+    mem?.username === 'era' ||
+    String(mem?.displayName || '').toLowerCase() === 'era ai' ||
+    shared?.username === 'era';
+
+  const photo =
+    (isEra ? 'ai:era_official' : null) ||
+    shared?.photoURL ||
+    resolveAvatarSrc(shared?.avatarKey) ||
+    resolveAvatarSrc(mem?.photoURL) ||
+    resolveAvatarSrc(mem?.avatarKey) ||
+    null;
+
+  return (
+    <div className="relative shrink-0">
+      <Avatar
+        src={photo}
+        userId={isEra ? ERA_AI_ID : memId}
+        alt={mem?.displayName || mem?.username || 'Member'}
+        sizeClassName={sizeClassName}
+        roundedClassName="rounded-xl"
+        innerRoundedClassName="rounded-[10px]"
+      />
+      {showStatus && (
+        <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#0D1117] p-0.5 flex items-center justify-center z-10">
+          <div className={`w-full h-full rounded-full transition-colors ${isOnline ? 'bg-aeirmist-lime shadow-sm shadow-aeirmist-lime/50' : 'bg-zinc-600/80 border border-white/10'}`} />
+        </div>
+      )}
+    </div>
+  );
+});
 
 
 interface GroupInfoPanelProps {
@@ -22,9 +68,10 @@ interface GroupInfoPanelProps {
   onInitiateCall?: (type: 'audio' | 'video') => void;
   onOpenWallpaper?: () => void;
   chats?: any[];
+  onDirectMessage?: (member: any) => void;
 }
 
-export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, onInitiateCall, onOpenWallpaper, chats = [] }) => {
+export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, onInitiateCall, onOpenWallpaper, chats = [], onDirectMessage }) => {
   const { profile, user, db, addToast, allProfiles, suggestedUsers, onlineUsers } = useAeirmist();
   
   const [isEditingName, setIsEditingName] = useState(false);
@@ -51,6 +98,23 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
   // Group Members Search Filter
   const [searchMemberQuery, setSearchMemberQuery] = useState('');
   const [memberFilterTab, setMemberFilterTab] = useState<'all' | 'admins' | 'muted'>('all');
+  const [openSections, setOpenSections] = useState<{
+    chatInfo: boolean;
+    customize: boolean;
+    members: boolean;
+    media: boolean;
+    privacy: boolean;
+  }>({
+    chatInfo: false,
+    customize: false,
+    members: false,
+    media: false,
+    privacy: false,
+  });
+
+  const toggleSection = (key: keyof typeof openSections) => {
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   // Nicknames State
   const [nicknames, setNicknames] = useState<Record<string, string>>(chat.nicknames || {});
@@ -96,41 +160,85 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     }
   }, [chat]);
 
-  // Fetch Firestore profiles when Add Member modal opens
+  // Fetch PostgreSQL + Firestore profiles when Add Member modal opens
   useEffect(() => {
-    if (!showAddMemberModal || !db) return;
+    if (!showAddMemberModal) return;
     let isMounted = true;
     const fetchRemote = async () => {
       setIsFetchingRemote(true);
+      const list: any[] = [];
       try {
-        const q = query(collection(db, 'profiles'), limit(40));
-        const snap = await getDocs(q);
-        if (isMounted) {
-          setFirestoreProfiles(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const res = await api.users.getSuggestions(200);
+        if (res && Array.isArray(res.users)) {
+          res.users.forEach((u: any) => {
+            list.push({
+              ...u,
+              id: u.profileId || u.id || u.userId,
+              photoURL: resolveAvatarSrc(u.avatarKey) || resolveAvatarSrc(u.photoURL) || null,
+            });
+          });
         }
       } catch (err) {
-        logger.warn('Failed fetching remote profiles for group:', err);
-      } finally {
-        if (isMounted) setIsFetchingRemote(false);
+        logger.warn('Failed fetching PostgreSQL profiles for group:', err);
+      }
+      if (db) {
+        try {
+          const q = query(collection(db, 'profiles'), limit(100));
+          const snap = await getDocs(q);
+          snap.docs.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+        } catch (err) {
+          logger.warn('Failed fetching remote profiles for group:', err);
+        }
+      }
+      if (isMounted) {
+        setFirestoreProfiles(list);
+        setIsFetchingRemote(false);
       }
     };
     fetchRemote();
     return () => { isMounted = false; };
   }, [showAddMemberModal, db]);
 
-  // Accurately fetch missing member profile docs from Firestore and chats cache
+  // Accurately fetch missing member profile docs from PostgreSQL API, Firestore and chats cache
   useEffect(() => {
     let isMounted = true;
     const loadMissingProfiles = async () => {
       if (memberProfileIds.length === 0) return;
       const missingIds = memberProfileIds.filter(id => {
         if (id === currentUserId || id === profile?.id || id === user?.uid) return false;
-        if (chat.participantDetails?.[id]?.displayName && chat.participantDetails[id].displayName !== 'Aeirmist Member') return false;
+        if (chat.participantDetails?.[id]?.displayName && chat.participantDetails[id].displayName !== 'Aeirmist Member' && chat.participantDetails[id]?.photoURL) return false;
         return true;
       });
 
       if (missingIds.length === 0) return;
       const newMap: Record<string, any> = {};
+
+      for (const mId of missingIds) {
+        if (mId === ERA_AI_ID || mId === 'era') {
+          newMap[mId] = {
+            id: ERA_AI_ID,
+            displayName: 'Era AI',
+            username: 'era',
+            photoURL: 'ai:era_official',
+            isVerified: true,
+          };
+          continue;
+        }
+        try {
+          const res: any = await api.users.getProfile(mId);
+          if (res?.profile) {
+            const p = res.profile;
+            newMap[mId] = {
+              id: mId,
+              displayName: p.displayName || p.username,
+              username: p.username,
+              photoURL: resolveAvatarSrc(p.avatarKey) || resolveAvatarSrc(p.photoURL),
+              isVerified: Boolean(p.isVerified === true || p.badge === 'verified' || p.badge === 'admin'),
+              badge: p.badge,
+            };
+          }
+        } catch {}
+      }
 
       // 1. Resolve from existing chats list (instant cache)
       (chats || []).forEach((c: any) => {
@@ -204,57 +312,133 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     return () => { isMounted = false; };
   }, [memberProfileIds.join(','), db, currentUserId, profile?.id, user?.uid, chat.participantDetails, chats]);
 
-  // Combine available user profiles to resolve member details
+  // Combine available user profiles to resolve member details with Canonical Identity Resolution
   const resolvedMembers = useMemo(() => {
     const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
     const formatHandle = (mem: any, fallbackId: string) => {
       const u = String(mem?.username || '').trim();
       if (u && !isUuid(u) && u !== fallbackId && u !== 'unknown' && u !== 'member') return u.replace(/^@+/, '');
       const d = String(mem?.displayName || mem?.name || '').trim();
-      if (d && d !== 'Aeirmist Member') {
+      if (d && d !== 'Aeirmist Member' && d !== 'Member' && d !== 'You') {
         const slug = d.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
         if (slug) return slug;
       }
       return 'member';
     };
 
-    return memberProfileIds.map((memId: string) => {
-      const isMe = memId === currentUserId || memId === profile?.id || memId === user?.uid;
+    // 1. Pre-build Canonical Identity Map: Map every alias (profileId, firebaseUid, username, id) to canonical userId
+    const aliasToCanonical = new Map<string, string>();
+
+    // Current user aliases
+    const myCanonical = profile?.userId || profile?.id || currentUserId || user?.uid;
+    if (myCanonical) {
+      if (profile?.id) aliasToCanonical.set(profile.id, myCanonical);
+      if (user?.uid) aliasToCanonical.set(user.uid, myCanonical);
+      if (profile?.userId) aliasToCanonical.set(profile.userId, myCanonical);
+      if (currentUserId) aliasToCanonical.set(currentUserId, myCanonical);
+      if (profile?.username) aliasToCanonical.set('u:' + profile.username.toLowerCase(), myCanonical);
+    }
+
+    // Helper to register entity aliases into canonical map
+    const registerAliases = (uId?: string, pId?: string, fUid?: string, uname?: string) => {
+      const canon = uId || pId || fUid;
+      if (!canon) return;
+      if (uId) aliasToCanonical.set(uId, canon);
+      if (pId) aliasToCanonical.set(pId, canon);
+      if (fUid) aliasToCanonical.set(fUid, canon);
+      if (uname && uname !== 'member' && uname !== 'unknown' && !isUuid(uname)) {
+        aliasToCanonical.set('u:' + uname.toLowerCase().replace(/^@+/, ''), canon);
+      }
+    };
+
+    // Scan participantDetails
+    if (chat.participantDetails) {
+      Object.entries(chat.participantDetails).forEach(([k, detail]: [string, any]) => {
+        if (!detail) return;
+        const uId = detail.userId;
+        const pId = detail.profileId || (isUuid(k) ? k : undefined);
+        const fUid = detail.firebaseUid || (!isUuid(k) ? k : undefined);
+        const canon = uId || detail.id || pId || fUid || k;
+        if (canon) {
+          aliasToCanonical.set(k, canon);
+          registerAliases(uId, pId, fUid, detail.username);
+        }
+      });
+    }
+
+    // Scan participantObjects and participants array
+    const partsArray = Array.isArray(chat.participants) ? chat.participants : [];
+    partsArray.forEach((p: any) => {
+      if (typeof p === 'object' && p !== null) {
+        registerAliases(p.userId, p.profileId || p.id, p.firebaseUid || p.uid, p.username);
+      }
+    });
+
+    // Scan fetchedMemberProfiles
+    Object.entries(fetchedMemberProfiles).forEach(([k, p]: [string, any]) => {
+      if (!p) return;
+      registerAliases(p.userId, p.id || k, p.firebaseUid, p.username);
+    });
+
+    // Scan allProfiles and suggestedUsers
+    [...(allProfiles || []), ...(suggestedUsers || [])].forEach((p: any) => {
+      if (!p) return;
+      registerAliases(p.userId, p.id, p.uid, p.username);
+    });
+
+    const rawList = memberProfileIds.map((memId: string) => {
+      const isMe = Boolean(
+        memId === currentUserId || 
+        memId === profile?.id || 
+        memId === user?.uid ||
+        memId === profile?.userId ||
+        aliasToCanonical.get(memId) === myCanonical
+      );
+
       if (isMe) {
         return {
           id: memId,
+          canonicalId: myCanonical,
           displayName: profile?.displayName || profile?.name || 'You',
           username: formatHandle(profile, memId),
           photoURL: profile?.photoURL,
           isVerified: Boolean(profile?.isVerified === true || profile?.verified === true || profile?.badge === 'verified' || profile?.isAdmin === true),
-          badge: profile?.badge
+          badge: profile?.badge,
+          role: chat.owner === memId || chat.ownerId === memId ? 'owner' : (admins.includes(memId) ? 'admin' : undefined),
+          isMe: true,
         };
       }
 
       // 1. Check participantDetails
       const detail = chat.participantDetails?.[memId];
       if (detail && detail.displayName && detail.displayName !== 'Aeirmist Member') {
+        const cId = aliasToCanonical.get(memId) || detail.userId || memId;
         return { 
           id: memId, 
+          canonicalId: cId,
           ...detail,
           username: formatHandle(detail, memId),
           photoURL: detail.photoURL || detail.photo || detail.avatarKey,
           isVerified: Boolean(detail.isVerified === true || detail.verified === true || detail.badge === 'verified' || detail.isAdmin === true),
-          badge: detail.badge
+          badge: detail.badge,
+          role: detail.role,
         };
       }
 
       // 2. Check chat.participants array of objects
       if (Array.isArray(chat.participants)) {
-        const foundObj = chat.participants.find((p: any) => typeof p === 'object' && p !== null && (p.userId === memId || p.id === memId || p.uid === memId));
+        const foundObj = chat.participants.find((p: any) => typeof p === 'object' && p !== null && (p.userId === memId || p.id === memId || p.uid === memId || p.profileId === memId));
         if (foundObj && (foundObj.displayName || foundObj.username)) {
+          const cId = foundObj.userId || aliasToCanonical.get(memId) || memId;
           return {
             id: memId,
+            canonicalId: cId,
             displayName: foundObj.displayName || foundObj.name || foundObj.username,
             username: formatHandle(foundObj, memId),
             photoURL: foundObj.photoURL || foundObj.avatarKey,
             isVerified: Boolean(foundObj.isVerified === true || foundObj.badge === 'verified' || foundObj.isAdmin === true),
-            badge: foundObj.badge
+            badge: foundObj.badge,
+            role: foundObj.role,
           };
         }
       }
@@ -262,13 +446,16 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
       // 3. Check fetchedMemberProfiles
       const fetched = fetchedMemberProfiles[memId];
       if (fetched && fetched.displayName && fetched.displayName !== 'Aeirmist Member') {
+        const cId = fetched.userId || aliasToCanonical.get(memId) || memId;
         return {
           id: memId,
+          canonicalId: cId,
           ...fetched,
           username: formatHandle(fetched, memId),
           photoURL: fetched.photoURL || fetched.photo || fetched.avatarKey,
           isVerified: Boolean(fetched.isVerified === true || fetched.verified === true || fetched.badge === 'verified' || fetched.isAdmin === true),
-          badge: fetched.badge
+          badge: fetched.badge,
+          role: fetched.role,
         };
       }
 
@@ -278,48 +465,58 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
           const cand = c.otherProfile || c.participantDetails?.[memId];
           const candName = cand?.displayName || c.name;
           if (candName && candName !== 'Aeirmist Member') {
+            const cId = cand?.userId || aliasToCanonical.get(memId) || memId;
             return {
               id: memId,
+              canonicalId: cId,
               displayName: candName,
               username: formatHandle(cand || { username: c.username, displayName: candName }, memId),
               photoURL: cand?.photoURL || c.photo,
               isVerified: Boolean(cand?.isVerified === true || cand?.verified === true || cand?.badge === 'verified' || cand?.isAdmin === true),
-              badge: cand?.badge
+              badge: cand?.badge,
+              role: cand?.role,
             };
           }
         }
       }
       
       // 5. Check allProfiles
-      const foundInAll = (allProfiles || []).find((p: any) => p.id === memId || p.uid === memId);
+      const foundInAll = (allProfiles || []).find((p: any) => p.id === memId || p.uid === memId || p.userId === memId);
       if (foundInAll && (foundInAll.displayName || foundInAll.username)) {
+        const cId = foundInAll.userId || aliasToCanonical.get(memId) || memId;
         return {
           id: memId,
+          canonicalId: cId,
           ...foundInAll,
           displayName: foundInAll.displayName || foundInAll.name || foundInAll.username,
           username: formatHandle(foundInAll, memId),
           photoURL: foundInAll.photoURL || foundInAll.avatarKey,
           isVerified: Boolean(foundInAll.isVerified === true || foundInAll.verified === true || foundInAll.badge === 'verified' || foundInAll.isAdmin === true),
-          badge: foundInAll.badge
+          badge: foundInAll.badge,
+          role: foundInAll.role,
         };
       }
 
       // 6. Check suggestedUsers
-      const foundInSugg = (suggestedUsers || []).find((p: any) => p.id === memId || p.uid === memId);
+      const foundInSugg = (suggestedUsers || []).find((p: any) => p.id === memId || p.uid === memId || p.userId === memId);
       if (foundInSugg && (foundInSugg.displayName || foundInSugg.username)) {
+        const cId = foundInSugg.userId || aliasToCanonical.get(memId) || memId;
         return {
           id: memId,
+          canonicalId: cId,
           ...foundInSugg,
           displayName: foundInSugg.displayName || foundInSugg.name || foundInSugg.username,
           username: formatHandle(foundInSugg, memId),
           photoURL: foundInSugg.photoURL || foundInSugg.avatarKey,
           isVerified: Boolean(foundInSugg.isVerified === true || foundInSugg.verified === true || foundInSugg.badge === 'verified' || foundInSugg.isAdmin === true),
-          badge: foundInSugg.badge
+          badge: foundInSugg.badge,
+          role: foundInSugg.role,
         };
       }
 
       return {
         id: memId,
+        canonicalId: aliasToCanonical.get(memId) || memId,
         displayName: 'Aeirmist Member',
         photoURL: null,
         username: 'member',
@@ -327,13 +524,122 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
         badge: null
       };
     });
-  }, [memberProfileIds, chat.participantDetails, chat.participants, fetchedMemberProfiles, chats, allProfiles, suggestedUsers, currentUserId, profile, user?.uid]);
+
+    // Deduplicate members across PostgreSQL UUID, Firebase UID, and username
+    const dedupedMap = new Map<string, any>();
+    for (const mem of rawList) {
+      const isMe = Boolean(
+        mem.isMe ||
+        mem.canonicalId === myCanonical ||
+        mem.id === currentUserId ||
+        mem.id === profile?.id ||
+        mem.id === user?.uid ||
+        (profile?.username && mem.username && mem.username.toLowerCase() === profile.username.toLowerCase())
+      );
+
+      let key = '';
+      if (isMe) {
+        key = '__ME__';
+      } else if (mem.canonicalId && mem.canonicalId !== mem.id && !isUuid(mem.canonicalId)) {
+        key = 'c:' + mem.canonicalId;
+      } else if (mem.canonicalId && isUuid(mem.canonicalId)) {
+        key = 'uid:' + mem.canonicalId;
+      } else if (mem.username && mem.username !== 'member' && mem.username !== 'unknown' && !isUuid(mem.username)) {
+        key = 'u:' + mem.username.toLowerCase().replace(/^@+/, '');
+      } else if (mem.displayName && mem.displayName !== 'Aeirmist Member' && mem.displayName !== 'Member') {
+        key = 'd:' + mem.displayName.toLowerCase().trim();
+      } else {
+        key = 'id:' + (mem.id || mem.uid);
+      }
+
+      if (dedupedMap.has(key)) {
+        const existing = dedupedMap.get(key);
+        const allIds = Array.from(new Set([...(existing.allIds || [existing.id]), ...(mem.allIds || [mem.id])].filter(Boolean)));
+        const bestName = (existing.displayName && existing.displayName !== 'Aeirmist Member') ? existing.displayName : mem.displayName;
+        const bestUsername = (existing.username && existing.username !== 'member' && !isUuid(existing.username)) ? existing.username : mem.username;
+        const bestPhoto = existing.photoURL || mem.photoURL;
+        const isVerified = Boolean(existing.isVerified || mem.isVerified);
+        const badge = existing.badge || mem.badge;
+        const bestRole = existing.role || mem.role;
+
+        dedupedMap.set(key, {
+          ...existing,
+          ...mem,
+          displayName: bestName,
+          username: bestUsername,
+          photoURL: bestPhoto,
+          isVerified,
+          badge,
+          role: bestRole,
+          isMe: existing.isMe || isMe,
+          allIds
+        });
+      } else {
+        dedupedMap.set(key, {
+          ...mem,
+          isMe,
+          allIds: [mem.id].filter(Boolean)
+        });
+      }
+    }
+
+    // Secondary consolidation pass: ensure no two cards share the same non-trivial display name or username
+    const finalMap = new Map<string, any>();
+    for (const mem of dedupedMap.values()) {
+      if (mem.isMe) {
+        finalMap.set('__ME__', mem);
+        continue;
+      }
+
+      const uKey = (mem.username && mem.username !== 'member' && !isUuid(mem.username)) ? 'u:' + mem.username.toLowerCase().replace(/^@+/, '') : null;
+      const dKey = (mem.displayName && mem.displayName !== 'Aeirmist Member') ? 'd:' + mem.displayName.toLowerCase().trim() : null;
+
+      let matchedKey: string | null = null;
+      for (const [k, existing] of finalMap.entries()) {
+        if (existing.isMe) continue;
+        if (uKey && existing.username && existing.username.toLowerCase().replace(/^@+/, '') === mem.username.toLowerCase().replace(/^@+/, '')) {
+          matchedKey = k;
+          break;
+        }
+        if (dKey && existing.displayName && existing.displayName.toLowerCase().trim() === mem.displayName.toLowerCase().trim()) {
+          matchedKey = k;
+          break;
+        }
+      }
+
+      if (matchedKey) {
+        const existing = finalMap.get(matchedKey);
+        const allIds = Array.from(new Set([...(existing.allIds || []), ...(mem.allIds || [mem.id])].filter(Boolean)));
+        finalMap.set(matchedKey, {
+          ...existing,
+          photoURL: existing.photoURL || mem.photoURL,
+          isVerified: Boolean(existing.isVerified || mem.isVerified),
+          allIds,
+        });
+      } else {
+        finalMap.set(mem.canonicalId || mem.id, mem);
+      }
+    }
+
+    const uniqueMembers = Array.from(finalMap.values());
+    uniqueMembers.sort((a, b) => {
+      if (a.isMe && !b.isMe) return -1;
+      if (!a.isMe && b.isMe) return 1;
+      const aIsAdmin = a.role === 'owner' || a.role === 'admin' || a.allIds?.some((id: string) => id === ownerId || admins.includes(id)) || a.id === ownerId || admins.includes(a.id);
+      const bIsAdmin = b.role === 'owner' || b.role === 'admin' || b.allIds?.some((id: string) => id === ownerId || admins.includes(id)) || b.id === ownerId || admins.includes(b.id);
+      if (aIsAdmin && !bIsAdmin) return -1;
+      if (!aIsAdmin && bIsAdmin) return 1;
+      return (a.displayName || '').localeCompare(b.displayName || '');
+    });
+
+    return uniqueMembers;
+  }, [memberProfileIds, chat.participantDetails, chat.participants, fetchedMemberProfiles, chats, allProfiles, suggestedUsers, currentUserId, profile, user?.uid, ownerId, admins]);
 
   // Filter members list based on search and tab
   const filteredMembers = useMemo(() => {
     return resolvedMembers.filter(mem => {
-      const id = mem.id || mem.uid;
-      const memNick = nicknames[id] || '';
+      const allIds: string[] = mem.allIds || [mem.id || mem.uid].filter(Boolean);
+      const memNick = allIds.map(id => nicknames[id]).find(Boolean) || '';
       const name = (mem.displayName || mem.name || '').toLowerCase();
       const nick = memNick.toLowerCase();
       const uname = (mem.username || '').toLowerCase();
@@ -344,10 +650,10 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
       if (!matchesQuery) return false;
 
       if (memberFilterTab === 'admins') {
-        return id === ownerId || admins.includes(id);
+        return allIds.some(id => id === ownerId || admins.includes(id)) || mem.id === ownerId || admins.includes(mem.id);
       }
       if (memberFilterTab === 'muted') {
-        return !!chat.mutedMembers?.[id];
+        return allIds.some(id => !!chat.mutedMembers?.[id]) || !!chat.mutedMembers?.[mem.id];
       }
       return true;
     });
@@ -413,11 +719,6 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      addToast({ title: 'File too large', message: 'Image must be under 5MB.', type: 'warning' });
-      return;
-    }
-
     setIsUpdating(true);
     const reader = new FileReader();
     reader.onload = async () => {
@@ -464,25 +765,24 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
       const newIdsToSubmit: string[] = [];
 
       selectedNewMembers.forEach(memId => {
-        const found = availableToAdd.find(u => (u.id || u.uid) === memId || u.id === memId || u.uid === memId);
-        if (found) {
-          const pId = found.id || memId;
-          const uId = found.uid || memId;
+        const found = availableToAdd.find(u => (u.id || u.uid || u.userId) === memId || u.id === memId || u.uid === memId);
+        const canonId = found?.userId || found?.id || memId;
+        newIdsToSubmit.push(canonId);
 
-          if (pId) newIdsToSubmit.push(pId);
-          if (uId && uId !== pId) newIdsToSubmit.push(uId);
+        const detailObj = {
+          id: canonId,
+          userId: found?.userId || canonId,
+          profileId: found?.profileId || found?.id,
+          firebaseUid: found?.uid || found?.firebaseUid,
+          displayName: found?.displayName || found?.name || 'Aeirmist Member',
+          photoURL: found?.photoURL || null,
+          username: found?.username || memId,
+          role: 'member'
+        };
 
-          const detailObj = {
-            displayName: found.displayName || found.name || 'Aeirmist Member',
-            photoURL: found.photoURL || null,
-            username: found.username || memId
-          };
-
-          if (pId) detailsMap[pId] = detailObj;
-          if (uId) detailsMap[uId] = detailObj;
-        } else {
-          newIdsToSubmit.push(memId);
-        }
+        detailsMap[canonId] = detailObj;
+        if (found?.id) detailsMap[found.id] = detailObj;
+        if (found?.uid && found.uid !== canonId) detailsMap[found.uid] = detailObj;
       });
 
       const uniqueNewIds = Array.from(new Set(newIdsToSubmit));
@@ -832,290 +1132,468 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
           </button>
         </div>
 
-        {/* CUSTOMIZATION & SETTINGS SECTION */}
-        <div className="space-y-2">
-          <span className="text-[10px] font-black uppercase tracking-wider text-white/40 px-1">Customization</span>
-          <div className="bg-white/5 border border-white/5 rounded-2xl divide-y divide-white/5 overflow-hidden">
-            
-            {/* Set Wallpaper */}
-            <button 
-              onClick={onOpenWallpaper}
-              className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-white/5 transition-colors text-xs font-bold text-white"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400">
-                  <Palette size={16} />
-                </div>
-                <span>Set Wallpaper / Theme</span>
-              </div>
-              <ChevronRight size={16} className="text-white/30" />
-            </button>
-
-            {/* Set Nicknames */}
-            <button 
-              onClick={() => setShowNicknamesModal(true)}
-              className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-white/5 transition-colors text-xs font-bold text-white"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
-                  <AtSign size={16} />
-                </div>
-                <div>
-                  <div>Set Nicknames</div>
-                  <div className="text-[10px] text-white/40 font-normal">Custom names for everyone in chat</div>
-                </div>
-              </div>
-              <ChevronRight size={16} className="text-white/30" />
-            </button>
-
-            {/* Invite Link */}
-            <button 
-              onClick={handleCopyShareLink}
-              className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-white/5 transition-colors text-xs font-bold text-white"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
-                  <Share2 size={16} />
-                </div>
-                <div>
-                  <div>Invite Link</div>
-                  <div className="text-[10px] text-white/40 font-normal">Copy group link to invite friends</div>
-                </div>
-              </div>
-              <Copy size={14} className="text-white/40" />
-            </button>
-          </div>
-        </div>
-
-        {/* MEMBERS SECTION */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-white/40">
-              MEMBERS ({resolvedMembers.length})
-            </span>
-            <button 
-              onClick={() => setShowAddMemberModal(true)}
-              className="text-xs font-bold text-aeirmist-cyan hover:underline flex items-center gap-1"
-            >
-              <UserPlus size={13} />
-              Add
-            </button>
-          </div>
-
-          {/* Search Member Bar */}
-          <div className="relative">
-            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
-            <input 
-              type="text" 
-              placeholder="Search members..." 
-              value={searchMemberQuery}
-              onChange={(e) => setSearchMemberQuery(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/40"
-            />
-          </div>
-
-          {/* Member Filter Tabs */}
-          <div className="flex items-center gap-1.5 p-1 bg-white/5 rounded-xl border border-white/5">
+        {/* MESSENGER APK 5 COLLAPSIBLE ACCORDION SECTIONS */}
+        <div className="divide-y divide-white/[0.06] border-y border-white/[0.06]">
+          {/* 1. CHAT INFO */}
+          <div>
             <button
-              onClick={() => setMemberFilterTab('all')}
-              className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${memberFilterTab === 'all' ? 'bg-aeirmist-cyan text-black shadow-sm' : 'text-white/60 hover:text-white'}`}
+              type="button"
+              onClick={() => toggleSection('chatInfo')}
+              className="w-full py-3.5 px-1 flex items-center justify-between text-left hover:bg-white/[0.03] transition-colors cursor-pointer"
             >
-              All ({resolvedMembers.length})
+              <span className="text-[14px] font-semibold text-white tracking-tight">Chat info</span>
+              <ChevronDown
+                size={18}
+                className={`text-white/60 transition-transform duration-200 ${openSections.chatInfo ? 'rotate-180 text-aeirmist-cyan' : ''}`}
+              />
             </button>
-            <button
-              onClick={() => setMemberFilterTab('admins')}
-              className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${memberFilterTab === 'admins' ? 'bg-aeirmist-cyan text-black shadow-sm' : 'text-white/60 hover:text-white'}`}
-            >
-              Admins ({admins.length + (ownerId ? 1 : 0)})
-            </button>
-            <button
-              onClick={() => setMemberFilterTab('muted')}
-              className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${memberFilterTab === 'muted' ? 'bg-aeirmist-cyan text-black shadow-sm' : 'text-white/60 hover:text-white'}`}
-            >
-              Muted ({Object.values(chat.mutedMembers || {}).filter(Boolean).length})
-            </button>
-          </div>
-
-          {/* MEMBER CARDS LIST */}
-          <div className="space-y-2">
-            {filteredMembers.length === 0 ? (
-              <div className="text-center py-6 text-white/40 text-xs font-medium">
-                No members found
-              </div>
-            ) : (
-              filteredMembers.map((mem) => {
-                const uid = mem.id || mem.uid;
-                const isMemOwner = uid === ownerId;
-                const isMemAdmin = isMemOwner || admins.includes(uid);
-                const isMemMod = chat.memberRoles?.[uid] === 'moderator';
-                const isSelfMem = uid === currentUserId;
-                const memNick = nicknames[uid] || '';
-                const displayName = mem.displayName || mem.name || 'Aeirmist Member';
-                const username = mem.username || uid;
-                const photoURL = getAvatarUrl(mem.photoURL);
-                const isVerified = Boolean(mem.isVerified === true || mem.verified === true || mem.badge === 'verified' || mem.badge === 'admin' || mem.isAdmin === true);
-                const isMutedMem = !!chat.mutedMembers?.[uid];
-                const isMemOnline = isSelfMem || (!!onlineUsers && (
-                  !!onlineUsers?.has?.(uid) || 
-                  (!!mem.uid && !!onlineUsers?.has?.(mem.uid)) || 
-                  (!!mem.id && !!onlineUsers?.has?.(mem.id))
-                ));
-
-                return (
-                  <div
-                    key={uid}
-                    onClick={() => setSelectedMemberForSheet(mem)}
-                    className="p-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all flex items-center justify-between cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {/* Avatar with status ring */}
-                      <div className="relative shrink-0">
-                        {photoURL ? (
-                          <img 
-                            src={photoURL} 
-                            className="w-10 h-10 rounded-2xl object-cover border border-white/10" 
-                            alt="" 
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-white/30">
-                            <User size={18} />
-                          </div>
-                        )}
-                        <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#0D1117] p-0.5 flex items-center justify-center">
-                          <div className={`w-full h-full rounded-full transition-colors ${isMemOnline ? 'bg-aeirmist-lime shadow-sm shadow-aeirmist-lime/50' : 'bg-zinc-600/80 border border-white/10'}`} />
-                        </div>
-                      </div>
-
-                      {/* Display & Nickname */}
-                      <div className="flex flex-col min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-bold text-white truncate">
-                            {memNick || displayName}
-                          </span>
-
-                          {/* MANDATED VERIFIED BADGE RULE */}
-                          {isVerified && (
-                            <ShieldCheck className="text-aeirmist-cyan shrink-0 w-3.5 h-3.5" />
-                          )}
-
-                          {isSelfMem && (
-                            <span className="px-1.5 py-0.2 rounded-full bg-aeirmist-cyan/20 text-aeirmist-cyan text-[9px] font-black uppercase">
-                              YOU
-                            </span>
-                          )}
-                        </div>
-
-                        {memNick && (
-                          <span className="text-[10px] text-white/50 font-medium truncate">
-                            {displayName}
-                          </span>
-                        )}
-
-                        <span className="text-[10px] text-white/40 font-mono truncate">
-                          @{username}
+            <AnimatePresence initial={false}>
+              {openSections.chatInfo && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pb-3.5 space-y-2">
+                    <div className="bg-white/5 border border-white/5 rounded-2xl p-3.5 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/50">Chat type</span>
+                        <span className="font-bold text-cyan-300 uppercase text-[10px]">
+                          {chat.type === 'community' ? 'Community' : chat.type === 'team' ? 'Team' : 'Group Chat'}
                         </span>
                       </div>
-                    </div>
-
-                    {/* Role Badge */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isMemOwner && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
-                          <Crown size={11} className="text-amber-400" />
-                          Owner
-                        </span>
+                      {chat.description && (
+                        <div className="pt-1 border-t border-white/5 text-white/70 text-[11px]">
+                          {chat.description}
+                        </div>
                       )}
-
-                      {isMemAdmin && !isMemOwner && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold">
-                          <ShieldCheck size={11} className="text-cyan-300" />
-                          Admin
-                        </span>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingName(true)}
+                          className="w-full mt-1 py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-left text-xs font-semibold text-white flex items-center justify-between transition-colors"
+                        >
+                          <span className="flex items-center gap-2"><Edit3 size={14} className="text-aeirmist-cyan" /> Edit Group Name</span>
+                          <ChevronRight size={14} className="text-white/40" />
+                        </button>
                       )}
-
-                      {isMemMod && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold">
-                          <Shield size={11} className="text-purple-300" />
-                          Mod
-                        </span>
-                      )}
-
-                      {isMutedMem && (
-                        <VolumeX size={14} className="text-rose-400" />
-                      )}
-
-                      <ChevronRight size={14} className="text-white/20 group-hover:text-white/60 transition-colors" />
                     </div>
                   </div>
-                );
-              })
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        </div>
 
-        {/* SHARED MEDIA SECTION */}
-        <div className="space-y-2">
-          <span className="text-[10px] font-black uppercase tracking-wider text-white/40 px-1">Shared Files & Media</span>
-          <div className="bg-white/5 border border-white/5 rounded-2xl divide-y divide-white/5 overflow-hidden">
-            <button 
-              onClick={() => {
-                setSharedMediaTab('media');
-                setShowSharedMediaModal(true);
-              }}
-              className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/10 active:scale-[0.99] text-xs font-semibold text-white transition-all cursor-pointer group"
+          {/* 2. CUSTOMIZE CHAT */}
+          <div>
+            <button
+              type="button"
+              onClick={() => toggleSection('customize')}
+              className="w-full py-3.5 px-1 flex items-center justify-between text-left hover:bg-white/[0.03] transition-colors cursor-pointer"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform">
-                  <ImageIcon size={15} />
-                </div>
-                <div>
-                  <span className="block font-bold">Media & Photos</span>
-                  <span className="text-[10px] font-medium text-white/40">Images, videos & GIFs</span>
-                </div>
-              </div>
-              <ChevronRight size={16} className="text-white/30 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+              <span className="text-[14px] font-semibold text-white tracking-tight">Customize chat</span>
+              <ChevronDown
+                size={18}
+                className={`text-white/60 transition-transform duration-200 ${openSections.customize ? 'rotate-180 text-aeirmist-cyan' : ''}`}
+              />
             </button>
+            <AnimatePresence initial={false}>
+              {openSections.customize && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pb-3.5">
+                    <div className="bg-white/5 border border-white/5 rounded-2xl divide-y divide-white/5 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={onOpenWallpaper}
+                        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/5 transition-colors text-xs font-bold text-white"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400">
+                            <Palette size={16} />
+                          </div>
+                          <span>Set Wallpaper / Theme</span>
+                        </div>
+                        <ChevronRight size={16} className="text-white/30" />
+                      </button>
 
-            <button 
-              onClick={() => {
-                setSharedMediaTab('files');
-                setShowSharedMediaModal(true);
-              }}
-              className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/10 active:scale-[0.99] text-xs font-semibold text-white transition-all cursor-pointer group"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
-                  <FileText size={15} />
-                </div>
-                <div>
-                  <span className="block font-bold">Files & Documents</span>
-                  <span className="text-[10px] font-medium text-white/40">PDFs, archives & docs</span>
-                </div>
-              </div>
-              <ChevronRight size={16} className="text-white/30 group-hover:text-purple-400 group-hover:translate-x-0.5 transition-all" />
-            </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowNicknamesModal(true)}
+                        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/5 transition-colors text-xs font-bold text-white"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                            <AtSign size={16} />
+                          </div>
+                          <div>
+                            <div>Set Nicknames</div>
+                            <div className="text-[10px] text-white/40 font-normal">Custom names for everyone in chat</div>
+                          </div>
+                        </div>
+                        <ChevronRight size={16} className="text-white/30" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleCopyShareLink}
+                        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/5 transition-colors text-xs font-bold text-white"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
+                            <Share2 size={16} />
+                          </div>
+                          <div>
+                            <div>Invite Link</div>
+                            <div className="text-[10px] text-white/40 font-normal">Copy group link to invite friends</div>
+                          </div>
+                        </div>
+                        <Copy size={14} className="text-white/40" />
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        </div>
 
-        {/* DANGER ZONE / LEAVE GROUP */}
-        <div className="pt-4 space-y-2">
-          <button 
-            onClick={() => setShowLeaveConfirm(true)}
-            className="w-full py-3.5 px-4 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold text-xs flex items-center justify-center gap-2 transition-colors"
-          >
-            <LogOut size={16} />
-            Leave Group
-          </button>
-
-          {isOwner && (
-            <button 
-              onClick={() => setShowDeleteConfirm(true)}
-              className="w-full py-3.5 px-4 rounded-2xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-red-400 font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+          {/* 3. CHAT MEMBERS */}
+          <div>
+            <button
+              type="button"
+              onClick={() => toggleSection('members')}
+              className="w-full py-3.5 px-1 flex items-center justify-between text-left hover:bg-white/[0.03] transition-colors cursor-pointer"
             >
-              <Trash2 size={16} />
-              Delete Group Permanently
+              <div className="flex items-center gap-2">
+                <span className="text-[14px] font-semibold text-white tracking-tight">Chat members</span>
+                <span className="text-[11px] font-bold text-white/45">({resolvedMembers.length})</span>
+              </div>
+              <ChevronDown
+                size={18}
+                className={`text-white/60 transition-transform duration-200 ${openSections.members ? 'rotate-180 text-aeirmist-cyan' : ''}`}
+              />
             </button>
-          )}
+            <AnimatePresence initial={false}>
+              {openSections.members && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pb-4 space-y-3 pt-1">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-white/40">
+                        MEMBERS ({resolvedMembers.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddMemberModal(true)}
+                        className="text-xs font-bold text-aeirmist-cyan hover:underline flex items-center gap-1"
+                      >
+                        <UserPlus size={13} />
+                        Add
+                      </button>
+                    </div>
+
+                    {/* Search Member Bar */}
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
+                      <input
+                        type="text"
+                        placeholder="Search members..."
+                        value={searchMemberQuery}
+                        onChange={(e) => setSearchMemberQuery(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-aeirmist-cyan/40"
+                      />
+                    </div>
+
+                    {/* Member Filter Tabs */}
+                    <div className="flex items-center gap-1.5 p-1 bg-white/5 rounded-xl border border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => setMemberFilterTab('all')}
+                        className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${memberFilterTab === 'all' ? 'bg-aeirmist-cyan text-black shadow-sm' : 'text-white/60 hover:text-white'}`}
+                      >
+                        All ({resolvedMembers.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMemberFilterTab('admins')}
+                        className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${memberFilterTab === 'admins' ? 'bg-aeirmist-cyan text-black shadow-sm' : 'text-white/60 hover:text-white'}`}
+                      >
+                        Admins ({resolvedMembers.filter(m => m.role === 'owner' || m.role === 'admin' || (m.allIds ? m.allIds.some((id: string) => id === ownerId || admins.includes(id)) : (m.id === ownerId || admins.includes(m.id)))).length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMemberFilterTab('muted')}
+                        className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${memberFilterTab === 'muted' ? 'bg-aeirmist-cyan text-black shadow-sm' : 'text-white/60 hover:text-white'}`}
+                      >
+                        Muted ({resolvedMembers.filter(m => (m.allIds ? m.allIds.some((id: string) => !!chat.mutedMembers?.[id]) : !!chat.mutedMembers?.[m.id])).length})
+                      </button>
+                    </div>
+
+                    {/* MEMBER CARDS LIST */}
+                    <div className="space-y-2">
+                      {filteredMembers.length === 0 ? (
+                        <div className="text-center py-6 text-white/40 text-xs font-medium">
+                          No members found
+                        </div>
+                      ) : (
+                        filteredMembers.map((mem) => {
+                          const uid = mem.canonicalId || mem.id || mem.uid;
+                          const allIds: string[] = mem.allIds || [uid].filter(Boolean);
+                          const isMemOwner = mem.role === 'owner' || allIds.some((id: string) => id === ownerId) || chat.owner === uid || chat.ownerId === uid;
+                          const isMemAdmin = isMemOwner || mem.role === 'admin' || allIds.some((id: string) => admins.includes(id));
+                          const isMemMod = mem.role === 'moderator' || allIds.some((id: string) => chat.memberRoles?.[id] === 'moderator');
+                          const isSelfMem = mem.isMe || allIds.some((id: string) => id === currentUserId || id === profile?.id || id === user?.uid);
+                          const memNick = allIds.map((id: string) => nicknames[id]).find(Boolean) || '';
+                          const displayName = mem.displayName || mem.name || (uid === ERA_AI_ID ? 'Era AI' : 'Aeirmist Member');
+                          const rawUsername = mem.username || (uid === ERA_AI_ID ? 'era' : '');
+                          const isHandleUuid = !rawUsername || /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawUsername) || rawUsername === 'member' || rawUsername === 'unknown';
+                          const cleanHandle = isHandleUuid
+                            ? (displayName && displayName !== 'Aeirmist Member' && displayName !== 'You' ? displayName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') : 'member')
+                            : rawUsername.replace(/^@+/, '');
+                          const isVerified = Boolean(mem.isVerified === true || mem.verified === true || mem.badge === 'verified' || mem.badge === 'admin' || mem.isAdmin === true || uid === ERA_AI_ID);
+                          const isMutedMem = allIds.some((id: string) => !!chat.mutedMembers?.[id]);
+                          const isMemOnline = isSelfMem || uid === ERA_AI_ID || (!!onlineUsers && (
+                            allIds.some((id: string) => onlineUsers?.has?.(id)) ||
+                            !!onlineUsers?.has?.(uid) ||
+                            (!!mem.uid && !!onlineUsers?.has?.(mem.uid)) ||
+                            (!!mem.id && !!onlineUsers?.has?.(mem.id))
+                          ));
+
+                          return (
+                            <div
+                              key={uid}
+                              onClick={() => setSelectedMemberForSheet(mem)}
+                              className="p-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all flex items-center justify-between cursor-pointer group"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <GroupMemberAvatar mem={mem} isOnline={isMemOnline} showStatus={true} />
+
+                                {/* Display & Nickname */}
+                                <div className="flex flex-col min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-xs font-bold text-white truncate">
+                                      {memNick || displayName}
+                                    </span>
+
+                                    {isVerified && (
+                                      <ShieldCheck className="text-aeirmist-cyan shrink-0 w-3.5 h-3.5" />
+                                    )}
+
+                                    {isSelfMem && (
+                                      <span className="px-1.5 py-0.2 rounded-full bg-aeirmist-cyan/20 text-aeirmist-cyan text-[9px] font-black uppercase">
+                                        YOU
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {memNick && (
+                                    <span className="text-[10px] text-white/50 font-medium truncate">
+                                      {displayName}
+                                    </span>
+                                  )}
+
+                                  <span className="text-[10px] text-white/40 font-mono truncate">
+                                    @{cleanHandle}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Role Badge & Actions */}
+                              <div className="flex items-center gap-2 shrink-0">
+                                {isMemOwner && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                                    <Crown size={11} className="text-amber-400" />
+                                    Owner
+                                  </span>
+                                )}
+
+                                {isMemAdmin && !isMemOwner && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold">
+                                    <ShieldCheck size={11} className="text-cyan-300" />
+                                    Admin
+                                  </span>
+                                )}
+
+                                {isMemMod && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold">
+                                    <Shield size={11} className="text-purple-300" />
+                                    Mod
+                                  </span>
+                                )}
+
+                                {isMutedMem && (
+                                  <VolumeX size={14} className="text-rose-400" />
+                                )}
+
+                                {!isSelfMem && onDirectMessage && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onClose();
+                                      onDirectMessage(mem);
+                                    }}
+                                    title={`Message ${displayName}`}
+                                    className="p-1.5 rounded-xl text-white/40 hover:text-aeirmist-cyan hover:bg-white/10 transition-colors"
+                                  >
+                                    <MessageSquare size={14} />
+                                  </button>
+                                )}
+
+                                <ChevronRight size={14} className="text-white/20 group-hover:text-white/60 transition-colors" />
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* 4. MEDIA, FILES AND LINKS */}
+          <div>
+            <button
+              type="button"
+              onClick={() => toggleSection('media')}
+              className="w-full py-3.5 px-1 flex items-center justify-between text-left hover:bg-white/[0.03] transition-colors cursor-pointer"
+            >
+              <span className="text-[14px] font-semibold text-white tracking-tight">Media, files and links</span>
+              <ChevronDown
+                size={18}
+                className={`text-white/60 transition-transform duration-200 ${openSections.media ? 'rotate-180 text-aeirmist-cyan' : ''}`}
+              />
+            </button>
+            <AnimatePresence initial={false}>
+              {openSections.media && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pb-3.5">
+                    <div className="bg-white/5 border border-white/5 rounded-2xl divide-y divide-white/5 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSharedMediaTab('media');
+                          setShowSharedMediaModal(true);
+                        }}
+                        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/10 active:scale-[0.99] text-xs font-semibold text-white transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform">
+                            <ImageIcon size={15} />
+                          </div>
+                          <div>
+                            <span className="block font-bold">Media & Photos</span>
+                            <span className="text-[10px] font-medium text-white/40">Images, videos & GIFs</span>
+                          </div>
+                        </div>
+                        <ChevronRight size={16} className="text-white/30 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSharedMediaTab('files');
+                          setShowSharedMediaModal(true);
+                        }}
+                        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/10 active:scale-[0.99] text-xs font-semibold text-white transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
+                            <FileText size={15} />
+                          </div>
+                          <div>
+                            <span className="block font-bold">Files & Documents</span>
+                            <span className="text-[10px] font-medium text-white/40">PDFs, archives & docs</span>
+                          </div>
+                        </div>
+                        <ChevronRight size={16} className="text-white/30 group-hover:text-purple-400 group-hover:translate-x-0.5 transition-all" />
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* 5. PRIVACY & SUPPORT */}
+          <div>
+            <button
+              type="button"
+              onClick={() => toggleSection('privacy')}
+              className="w-full py-3.5 px-1 flex items-center justify-between text-left hover:bg-white/[0.03] transition-colors cursor-pointer"
+            >
+              <span className="text-[14px] font-semibold text-white tracking-tight">Privacy & support</span>
+              <ChevronDown
+                size={18}
+                className={`text-white/60 transition-transform duration-200 ${openSections.privacy ? 'rotate-180 text-aeirmist-cyan' : ''}`}
+              />
+            </button>
+            <AnimatePresence initial={false}>
+              {openSections.privacy && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pb-4 pt-1 space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsMuted(!isMuted)}
+                      className="w-full py-3 px-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 text-white font-bold text-xs flex items-center justify-between transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        {isMuted ? <BellOff size={15} className="text-rose-400" /> : <Bell size={15} className="text-white/70" />}
+                        {isMuted ? 'Unmute notifications' : 'Mute notifications'}
+                      </span>
+                      <span className="text-[10px] text-white/40">{isMuted ? 'Muted' : 'On'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowLeaveConfirm(true)}
+                      className="w-full py-3.5 px-4 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <LogOut size={16} />
+                      Leave Group
+                    </button>
+
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="w-full py-3.5 px-4 rounded-2xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-red-400 font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <Trash2 size={16} />
+                        Delete Group Permanently
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 
@@ -1139,7 +1617,12 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
             onRemoveMember={handleRemoveMember}
             onTransferOwnership={handleTransferOwnership}
             onDirectMessage={(mem) => {
-              addToast({ title: 'Opening Chat', message: `Navigating to conversation with ${mem.displayName}`, type: 'info' });
+              if (onDirectMessage) {
+                onClose();
+                onDirectMessage(mem);
+              } else {
+                addToast({ title: 'Opening Chat', message: `Navigating to conversation with ${mem.displayName}`, type: 'info' });
+              }
             }}
             onInitiateCall={(type, mem) => {
               if (onInitiateCall) onInitiateCall(type);
@@ -1191,7 +1674,7 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <img src={getAvatarUrl(mem.photoURL)} className="w-8 h-8 rounded-xl object-cover" alt="" />
+                          <GroupMemberAvatar mem={mem} sizeClassName="w-8 h-8" />
                           <div className="flex flex-col">
                             <span className="text-xs font-bold text-white">{displayName}</span>
                             <span className="text-[10px] text-white/40">
@@ -1316,7 +1799,7 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
                         className={`p-3 rounded-2xl flex items-center justify-between cursor-pointer transition-all ${isSelected ? 'bg-aeirmist-cyan/20 border border-aeirmist-cyan/40' : 'bg-white/5 hover:bg-white/10 border border-white/5'}`}
                       >
                         <div className="flex items-center gap-3">
-                          <img src={getAvatarUrl(usr.photoURL)} className="w-9 h-9 rounded-xl object-cover" alt="" />
+                          <GroupMemberAvatar mem={usr} sizeClassName="w-9 h-9" />
                           <div className="flex flex-col">
                             <div className="flex items-center gap-1">
                               <span className="text-xs font-bold text-white">{displayName}</span>

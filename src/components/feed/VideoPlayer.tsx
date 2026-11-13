@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Volume2, VolumeX, Play, Pause, Maximize, Film, Loader2 } from 'lucide-react';
 import { logger } from '@/src/utils/logger';
+import { normalizeMediaUrl } from '@/src/utils/mediaUtils';
 
 interface VideoPlayerProps {
   src: string;
@@ -33,21 +34,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [hasError, setHasError] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Clean direct streaming source URL
+  const videoSrc = useMemo(() => normalizeMediaUrl(src), [src]);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [videoSrc]);
+
   // High-resolution poster
   const derivedPoster = useMemo(() => {
-    if (poster && poster.trim()) return poster;
-    if (!src) return undefined;
-    if (src.includes('cloudinary.com')) {
-      return src.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2');
+    if (poster && poster.trim()) return normalizeMediaUrl(poster);
+    if (!videoSrc) return undefined;
+    if (videoSrc.includes('cloudinary.com')) {
+      return videoSrc.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2');
     }
     return undefined;
-  }, [poster, src]);
-
-  // Clean direct streaming source URL
-  const videoSrc = src;
+  }, [poster, videoSrc]);
 
   // AutoPlay on Scroll Intersection Observer (Feed auto-play muted like YouTube/Instagram)
   useEffect(() => {
@@ -241,20 +247,50 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onWaiting={() => setIsBuffering(true)}
-        onCanPlay={() => setIsBuffering(false)}
+        onCanPlay={() => {
+          setIsBuffering(false);
+          setHasError(false);
+        }}
         onPlaying={() => {
           setIsBuffering(false);
+          setHasError(false);
           setIsPlaying(true);
         }}
         onPause={() => setIsPlaying(false)}
         onError={(err) => {
           logger.warn("Video stream error:", err);
           setIsBuffering(false);
+          setHasError(true);
         }}
       />
 
+      {/* Unavailable Video Fallback */}
+      {hasError && (
+        <div className="absolute inset-0 z-25 flex flex-col items-center justify-center bg-black/75 backdrop-blur-md text-center p-4 gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-white/75">Video Unavailable</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setHasError(false);
+              setIsBuffering(true);
+              if (videoRef.current) {
+                videoRef.current.load();
+                videoRef.current.play().catch(() => {
+                  setIsBuffering(false);
+                  setHasError(true);
+                });
+              }
+            }}
+            className="px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-[11px] font-medium text-white transition-all"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Poster Background Preview when paused */}
-      {!isPlaying && derivedPoster && (
+      {!hasError && !isPlaying && derivedPoster && (
         <div 
           className="absolute inset-0 bg-cover bg-center opacity-85 filter blur-[0.3px] pointer-events-none transition-opacity duration-300"
           style={{ backgroundImage: `url(${derivedPoster})` }}

@@ -334,10 +334,6 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
         setError('Please select a valid image file (JPG, PNG, WEBP, GIF, HEIC) for profile picture.');
         return;
       }
-      if (file.size > 25 * 1024 * 1024) {
-        setError('Profile picture size must be under 25MB.');
-        return;
-      }
       setAvatarFile(file);
       try {
         const objectUrl = URL.createObjectURL(file);
@@ -359,10 +355,6 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
       const isImg = (file.type && file.type.startsWith('image/')) || /\.(jpe?g|png|webp|gif|bmp|heic|heif|jfif|avif)$/i.test(file.name);
       if (!isImg) {
         setError('Please select a valid image file (JPG, PNG, WEBP, GIF, HEIC) for cover photo.');
-        return;
-      }
-      if (file.size > 25 * 1024 * 1024) {
-        setError('Cover photo size must be under 25MB.');
         return;
       }
       setCoverFile(file);

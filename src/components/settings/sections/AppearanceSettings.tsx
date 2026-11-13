@@ -79,11 +79,6 @@ export default function AppearanceSettings() {
       return;
     }
 
-    if (file.size > 20 * 1024 * 1024) {
-      setUploadError('File exceeds the maximum 20MB limit.');
-      return;
-    }
-
     // Instant local preview update (0ms latency)
     const localBlobUrl = URL.createObjectURL(file);
     const initialList = [...(settings.globalBgList || [])];

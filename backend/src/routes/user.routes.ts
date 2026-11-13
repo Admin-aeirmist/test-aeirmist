@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { UserDAL } from '../dal/user.dal';
 import { NotificationDAL } from '../dal/notification.dal';
-import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
+import { authenticateToken, optionalAuthToken, resolveUserFromCredentials, AuthenticatedRequest } from '../middleware/auth';
 import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 import { broadcastNotification } from './notification.routes';
@@ -42,12 +42,21 @@ const UpdateProfileSchema = z.object({
 
 
 // Search Users
-router.get('/search', async (req, res: Response) => {
+router.get('/search', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const q = ((req.query.q as string) || '').trim();
-    const limit = Math.min(parseInt((req.query.limit as string) || '20', 10), 50);
-    const results = await UserDAL.searchUsers(q, limit);
-    res.json({ users: results });
+    const limit = Math.min(Math.max(parseInt((req.query.limit as string) || '100', 10) || 100, 1), 200);
+    const results = await UserDAL.searchUsers(q, limit, req.user?.userId);
+    let onlineSet = new Set<string>();
+    try {
+      const members = await redis.smembers('online_users');
+      onlineSet = new Set(members || []);
+    } catch {}
+    const enriched = results.map((u: any) => ({
+      ...u,
+      isOnline: Boolean(onlineSet.has(u.userId) || onlineSet.has(u.profileId) || (u.firebaseUid && onlineSet.has(u.firebaseUid)) || (u.username && onlineSet.has(u.username))),
+    }));
+    res.json({ users: enriched });
   } catch (err) {
     console.error('[Search Users Error]', err);
     res.status(500).json({ error: 'Failed to search users' });
@@ -55,11 +64,20 @@ router.get('/search', async (req, res: Response) => {
 });
 
 // Follow Suggestions
-router.get('/suggestions', async (req, res: Response) => {
+router.get('/suggestions', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const limit = Math.min(parseInt((req.query.limit as string) || '20', 10), 50);
-    const results = await UserDAL.getSuggestedUsers(undefined, limit);
-    res.json({ users: results });
+    const limit = Math.min(Math.max(parseInt((req.query.limit as string) || '100', 10) || 100, 1), 200);
+    const results = await UserDAL.getSuggestedUsers(req.user?.userId, limit);
+    let onlineSet = new Set<string>();
+    try {
+      const members = await redis.smembers('online_users');
+      onlineSet = new Set(members || []);
+    } catch {}
+    const enriched = results.map((u: any) => ({
+      ...u,
+      isOnline: Boolean(onlineSet.has(u.userId) || onlineSet.has(u.profileId) || (u.firebaseUid && onlineSet.has(u.firebaseUid)) || (u.username && onlineSet.has(u.username))),
+    }));
+    res.json({ users: enriched });
   } catch (err) {
     console.error('[Suggestions Error]', err);
     res.status(500).json({ error: 'Failed to fetch suggestions' });
@@ -168,13 +186,34 @@ router.patch('/profile', authenticateToken, async (req: AuthenticatedRequest, re
     }
 
     const updated = await UserDAL.updateProfile(req.user!.userId, data);
+    let ownerUser: any = null;
+    try {
+      ownerUser = await UserDAL.findById(req.user!.userId);
+    } catch {}
     try {
       if (updated) {
         await Promise.all([
           redis.del(`profile_cache:${req.user!.userId.toLowerCase()}`),
           updated.username ? redis.del(`profile_cache:${updated.username.toLowerCase()}`) : Promise.resolve(),
           updated.id ? redis.del(`profile_cache:${updated.id.toLowerCase()}`) : Promise.resolve(),
+          ownerUser?.firebaseUid ? redis.del(`profile_cache:${ownerUser.firebaseUid.toLowerCase()}`) : Promise.resolve(),
         ]);
+      }
+    } catch {}
+    try {
+      if (updated && io) {
+        io.emit('profile_updated', {
+          userId: req.user!.userId,
+          profileId: updated.id,
+          firebaseUid: ownerUser?.firebaseUid,
+          username: updated.username,
+          displayName: updated.displayName,
+          avatarKey: updated.avatarKey,
+          bannerKey: updated.bannerKey,
+          bio: updated.bio,
+          isVerified: updated.isVerified,
+          updatedAt: new Date().toISOString(),
+        });
       }
     } catch {}
     res.json({ profile: updated });
@@ -354,12 +393,13 @@ router.post('/presence', async (req: any, res: Response) => {
     let userId = req.user?.userId;
     if (!userId) {
       const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.split(' ')[1];
+      const rawToken = (authHeader && authHeader.startsWith('Bearer '))
+        ? authHeader.split(' ')[1]
+        : (typeof req.body?.token === 'string' ? req.body.token : null);
+      if (rawToken) {
         try {
-          const { verifyAccessToken } = await import('../lib/auth');
-          const payload = verifyAccessToken(token);
-          if (payload) userId = payload.userId;
+          const resolved = await resolveUserFromCredentials(rawToken);
+          if (resolved?.userId) userId = resolved.userId;
         } catch {}
       }
     }

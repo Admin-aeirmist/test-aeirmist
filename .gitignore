@@ -18,3 +18,9 @@ dump.rdb
 cloudflared.exe
 backups/
 *.sql
+
+release/
+*.appx
+*.msix
+build/appx/
+scripts/pack_test_zip.mjs

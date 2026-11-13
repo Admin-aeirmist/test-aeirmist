@@ -51,6 +51,7 @@ import ProfileSystem from './profile/ProfileSystem';
 import { getAvatarUrl, resolveAvatarSrc, BLANK_DP } from '../lib/avatar';
 import { Avatar } from './ui/Avatar';
 import { RequestsSection } from './messenger/RequestsSection';
+import { BondsRequestsView } from './messenger/BondsRequestsView';
 import { ChatInfoPanel } from './messenger/ChatInfoPanel';
 import { Vault } from './messenger/Vault';
 import { MessageItem } from './messenger/MessageItem';
@@ -705,7 +706,7 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
     return ids;
   }, [chats, profile?.id]);
 
-  const [view, setView] = useState<'chats' | 'requests' | 'history' | 'restricted' | 'blocked'>('chats');
+  const [view, setView] = useState<'chats' | 'requests' | 'history' | 'restricted' | 'blocked' | 'bonds_requests'>('chats');
   const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'personal' | 'marketplace' | 'groups' | 'archived' | 'requests'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
@@ -1023,6 +1024,33 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
       }));
     };
 
+    const handleOpenConv = (e: any) => {
+      const { conversationId, entity } = e.detail || {};
+      if (conversationId) {
+        handleUserClick({
+          conversationId,
+          id: conversationId,
+          type: 'bond_entity',
+          entity,
+          isMember: entity?.isMember,
+          membershipStatus: entity?.membershipStatus,
+        });
+      }
+    };
+
+    const handleBondsApproved = (data: any) => {
+      if (data?.conversationId || data?.entityId) {
+        setChats(prev => prev.map(c =>
+          (c.id === data?.conversationId || c.entity?.id === data?.entityId)
+            ? { ...c, isMember: true, membershipStatus: 'active' }
+            : c
+        ));
+      }
+    };
+
+    window.addEventListener('aeirmist:open_conversation', handleOpenConv);
+    socket?.on?.('bonds_membership_approved', handleBondsApproved);
+
     window.addEventListener('aeirmist_chat_setting_changed', handleSettingChanged);
     window.addEventListener('aeirmist_chat_deleted', handleChatDeleted);
     window.addEventListener('aeirmist_chat_theme_updated', handleThemeUpdatedEvent);
@@ -1309,6 +1337,11 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
     if (targetChatId) {
       const directChat = chats.find(c => c.id === targetChatId);
       if (directChat) {
+        if (userData.entity || userData.type === 'bond_entity') {
+          (directChat as any).entity = userData.entity || directChat.entity;
+          (directChat as any).isMember = userData.isMember ?? directChat.isMember;
+          (directChat as any).membershipStatus = userData.membershipStatus ?? directChat.membershipStatus;
+        }
         if (directChat.isVaulted?.[profile.id] === true && !vaultState.isUnlocked) {
           setVaultState({ isOpen: true, isUnlocked: false, activeVaultChatId: directChat.id });
           setActiveChatId(directChat.id);
@@ -1326,6 +1359,31 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
         setSearchResults([]);
         return;
       }
+    }
+
+    // Special handling for Bonds Entity Conversation (Restricted preview or fresh conversation)
+    if (targetChatId && (userData.type === 'bond_entity' || userData.isBondEntity || userData.entity)) {
+      const entity = userData.entity || userData;
+      const entityChat: any = {
+        id: targetChatId,
+        type: 'bond_entity',
+        isGroup: true,
+        name: entity.name || userData.name || 'Bonds Entity',
+        avatarUrl: entity.logoUrl || userData.logoUrl || null,
+        participants: [],
+        unreadCount: 0,
+        themeSettings: { entityType: entity.type || userData.type },
+        entity,
+        isMember: Boolean(userData.isMember),
+        membershipStatus: userData.membershipStatus || 'not_member',
+        isRestricted: !userData.isMember,
+      };
+      setTempChat(entityChat);
+      setActiveChatId(targetChatId);
+      setIsMobileList(false);
+      setSearchQuery('');
+      setSearchResults([]);
+      return;
     }
 
     // Current user's candidate identifiers
@@ -1863,9 +1921,20 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                       {/* Suggested Profiles */}
                       {suggestedUsers && suggestedUsers.length > 0 && (
                         <div className="space-y-3">
-                          <span className="text-[10px] font-black tracking-widest text-white/30 uppercase block">Suggested Profiles</span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black tracking-widest text-white/30 uppercase block">Suggested Profiles</span>
+                            {suggestedUsers.length > 8 && (
+                              <button
+                                type="button"
+                                onClick={() => setSearchTab('people')}
+                                className="text-[10px] font-bold text-aeirmist-cyan hover:underline"
+                              >
+                                See all ({suggestedUsers.length})
+                              </button>
+                            )}
+                          </div>
                           <div className="space-y-2">
-                            {suggestedUsers.filter(item => !vaultedParticipantIds.has(item.id || item.uid)).slice(0, 6).map((item: any) => (
+                            {suggestedUsers.filter(item => !vaultedParticipantIds.has(item.id || item.uid)).slice(0, 10).map((item: any) => (
                               <div 
                                 key={item.id || item.uid}
                                 className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all group/card"
@@ -1987,35 +2056,40 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                         </div>
                       )}
 
-                      {/* Suggested People */}
-                      {suggestedUsers && suggestedUsers.length > 0 && (
-                        <div className="space-y-3">
-                          <span className="text-[10px] font-black tracking-widest text-white/30 uppercase block">Suggested Profiles</span>
-                          <div className="space-y-2">
-                            {suggestedUsers.filter(item => !vaultedParticipantIds.has(item.id || item.uid)).map((item: any) => (
-                              <div key={item.id || item.uid} className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all">
-                                <div onClick={() => setViewingProfileInSearch(item)} className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
-                                  <img src={getAvatarUrl(item.photoURL)} className="w-10 h-10 rounded-xl object-cover border border-white/10" alt="" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1">
-                                      <p className="text-xs font-bold text-white truncate">{item.displayName || item.username}</p>
-                                      {(item.badge || item.isVerified) && <ShieldCheck className="text-aeirmist-cyan shrink-0" size={14} />}
+                      {/* Suggested People / All Connections */}
+                      {(() => {
+                        const mergedPeople = (suggestedUsers && suggestedUsers.length > 0 ? suggestedUsers : allProfiles || [])
+                          .filter(item => item && (item.id || item.uid) !== profile?.id && !vaultedParticipantIds.has(item.id || item.uid));
+                        if (mergedPeople.length === 0) return null;
+                        return (
+                          <div className="space-y-3">
+                            <span className="text-[10px] font-black tracking-widest text-white/30 uppercase block">All Active Connections ({mergedPeople.length})</span>
+                            <div className="space-y-2">
+                              {mergedPeople.map((item: any) => (
+                                <div key={item.id || item.uid} className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all">
+                                  <div onClick={() => setViewingProfileInSearch(item)} className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
+                                    <img src={getAvatarUrl(item.photoURL || item.photo || resolveAvatarSrc(item.avatarKey))} className="w-10 h-10 rounded-xl object-cover border border-white/10" alt="" />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-1">
+                                        <p className="text-xs font-bold text-white truncate">{item.displayName || item.username}</p>
+                                        {(item.badge || item.isVerified) && <ShieldCheck className="text-aeirmist-cyan shrink-0" size={14} />}
+                                      </div>
+                                      <p className="text-[9px] text-white/40 font-semibold">
+                                        @{item.username && item.username !== 'user' && item.username !== 'null'
+                                          ? item.username.replace(/^@+/, '')
+                                          : (item.displayName ? item.displayName.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') : 'member')}
+                                      </p>
                                     </div>
-                                    <p className="text-[9px] text-white/40 font-semibold">
-                                      @{item.username && item.username !== 'user' && item.username !== 'null'
-                                        ? item.username.replace(/^@+/, '')
-                                        : (item.displayName ? item.displayName.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') : 'member')}
-                                    </p>
                                   </div>
+                                  <button onClick={() => { addToRecentSearches(item); handleUserClick(item); }} className="px-3 py-1.5 rounded-lg bg-aeirmist-cyan/10 border border-aeirmist-cyan/20 hover:bg-aeirmist-cyan hover:text-black text-[10px] text-aeirmist-cyan font-bold transition-all whitespace-nowrap">
+                                    Message
+                                  </button>
                                 </div>
-                                <button onClick={() => { addToRecentSearches(item); handleUserClick(item); }} className="px-3 py-1.5 rounded-lg bg-aeirmist-cyan/10 border border-aeirmist-cyan/20 hover:bg-aeirmist-cyan hover:text-black text-[10px] text-aeirmist-cyan font-bold transition-all whitespace-nowrap">
-                                  Message
-                                </button>
-                              </div>
-                            ))}
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </>
                   )}
 
@@ -2398,6 +2472,17 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                           </button>
 
                           <button 
+                            onClick={() => { setView('bonds_requests'); setIsMobileList(false); setIsMoreMenuOpen(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
+                          >
+                            <Shield size={16} className="text-cyan-400" />
+                            <div className="flex-1">
+                              <p className="text-xs font-bold text-white">Bonds Requests</p>
+                              <p className="text-[10px] text-white/40">Review membership applications</p>
+                            </div>
+                          </button>
+
+                          <button 
                             onClick={() => { setView('restricted'); setIsMobileList(false); setIsMoreMenuOpen(false); }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-white/60 hover:text-white transition-all text-left"
                           >
@@ -2759,6 +2844,16 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
               onUserClick={onUserClick}
             />
           </div>
+        ) : view === 'bonds_requests' ? (
+          <div className="flex-1 h-full overflow-hidden">
+            <BondsRequestsView 
+              onClose={() => { setView('chats'); setIsMobileList(true); }}
+              onOpenConversation={(convId) => {
+                setView('chats');
+                setActiveChatId(convId);
+              }}
+            />
+          </div>
         ) : view === 'requests' ? (
           <div className="flex-1 h-full overflow-hidden">
             <RequestsSection 
@@ -2861,6 +2956,10 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                       chat={currentChat} 
                       chats={chats}
                       onClose={() => setIsInfoOpen(false)} 
+                      onDirectMessage={(mem) => {
+                        setIsInfoOpen(false);
+                        handleUserClick(mem);
+                      }}
                       onOpenWallpaper={() => {
                         setIsWallpaperCustomizerOpen(true);
                         setIsInfoOpen(false);
@@ -3091,6 +3190,7 @@ const ChatWindow = ({
     togglePinMessage, 
     clearChat, 
     toggleFollow, 
+    toggleBlockUser,
     toggleRestrictUser,
     deleteConversation,
     startCall,
@@ -3434,14 +3534,14 @@ const ChatWindow = ({
 
   const sharedOtherProfile = useSharedProfile(db, otherParticipantId);
 
-  const otherResolvedPhoto = resolveAvatarSrc(
-    otherProfile?.photoURL ||
-    (otherProfile?.avatarKey ? (otherProfile.avatarKey.startsWith('/media/') ? otherProfile.avatarKey : `/media/${otherProfile.avatarKey}`) : null) ||
+  const otherResolvedPhoto =
     sharedOtherProfile?.photoURL ||
-    chat.otherProfile?.photoURL ||
-    (chat.otherProfile?.avatarKey ? (chat.otherProfile.avatarKey.startsWith('/media/') ? chat.otherProfile.avatarKey : `/media/${chat.otherProfile.avatarKey}`) : null) ||
-    chat.photo
-  );
+    resolveAvatarSrc(otherProfile?.avatarKey) ||
+    resolveAvatarSrc(otherProfile?.photoURL) ||
+    resolveAvatarSrc(chat.otherProfile?.avatarKey) ||
+    resolveAvatarSrc(chat.otherProfile?.photoURL) ||
+    resolveAvatarSrc(chat.photo) ||
+    null;
 
   // Universal Sender Identity Matcher (Strict exact matching, no partial split inference)
   const isSenderMe = useCallback((senderId?: string | null, senderUid?: string | null, isOptimistic?: boolean, msgObj?: any): boolean => {
@@ -4603,7 +4703,11 @@ const ChatWindow = ({
                   isMe={isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic, msg)} 
                   theme={chat.theme}
                   bubbleGradient={currentChatTheme?.bubbleGradient}
-                  senderPhoto={isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic, msg) ? (localAvatarURL || profile?.photoURL) : (msg.senderPhoto || otherResolvedPhoto || otherProfile?.photoURL || chat.photo)}
+                  senderPhoto={
+                    isSenderMe(msg.senderId, (msg as any).senderUid, msg.isOptimistic, msg)
+                      ? (resolveAvatarSrc(localAvatarURL) || resolveAvatarSrc(profile?.photoURL) || resolveAvatarSrc(profile?.avatarKey) || undefined)
+                      : (resolveAvatarSrc(msg.senderPhoto) || otherResolvedPhoto || resolveAvatarSrc(otherProfile?.photoURL) || resolveAvatarSrc(chat.photo) || undefined)
+                  }
                   onRetry={() => handleRetry(msg)} 
                   conversationId={chat.id}
                   onImageClick={(url, imgIdx, allUrls) => {
@@ -4963,6 +5067,51 @@ const ChatWindow = ({
                   <span className="text-white/60 text-xs">
                     {isFollowRequestPending ? "Follow request pending" : "You can't message this user yet."}
                   </span>
+                </div>
+              );
+            }
+
+            if (chat.type === 'bond_entity' && !chat.isMember) {
+              const entityType = chat.themeSettings?.entityType || chat.entity?.type || 'Group';
+              const entityId = chat.entity?.id;
+              const isPending = chat.membershipStatus === 'pending';
+
+              return (
+                <div className="w-full p-4 bg-[#0b0e14]/95 border border-cyan-500/30 rounded-xl text-center backdrop-blur-xl flex flex-col items-center justify-center gap-2.5 shadow-xl">
+                  <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-wider">
+                    <Shield className="w-4 h-4" />
+                    <span>Restricted Preview Mode</span>
+                  </div>
+                  <p className="text-xs text-neutral-300 max-w-md">
+                    Join this {entityType} to participate in conversations and send messages.
+                  </p>
+                  {isPending ? (
+                    <div className="px-4 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold flex items-center gap-2">
+                      <Clock className="w-4 h-4" />
+                      <span>Membership Request Pending Admin Review</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        if (entityId) {
+                          try {
+                            const res = await api.bonds.joinOrRequest(entityId);
+                            if (res?.result?.status === 'joined') {
+                              onChatUpdate({ ...chat, isMember: true, membershipStatus: 'active' } as any);
+                            } else {
+                              onChatUpdate({ ...chat, membershipStatus: 'pending' } as any);
+                            }
+                          } catch (e: any) {
+                            console.error(e);
+                          }
+                        }
+                      }}
+                      className="px-5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Request to Join {entityType}</span>
+                    </button>
+                  )}
                 </div>
               );
             }

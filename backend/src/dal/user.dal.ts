@@ -842,10 +842,10 @@ export class UserDAL {
     }
   }
 
-  static async searchUsers(queryText: string, limit = 20) {
+  static async searchUsers(queryText: string, limit = 100, currentUserId?: string) {
     const clean = queryText.trim().replace(/^@+/, '');
     if (!clean) {
-      return this.getSuggestedUsers(undefined, limit);
+      return this.getSuggestedUsers(currentUserId, limit);
     }
 
     const searchPattern = `%${clean.toLowerCase()}%`;
@@ -853,6 +853,7 @@ export class UserDAL {
       .select({
         id: users.id,
         userId: users.id,
+        firebaseUid: users.firebaseUid,
         profileId: profiles.id,
         username: profiles.username,
         displayName: profiles.displayName,
@@ -860,8 +861,11 @@ export class UserDAL {
         bannerKey: profiles.bannerKey,
         bio: profiles.bio,
         location: profiles.location,
+        category: profiles.category,
+        badge: profiles.badge,
         isVerified: profiles.isVerified,
         followersCount: profiles.followersCount,
+        followingCount: profiles.followingCount,
         createdAt: profiles.createdAt,
       })
       .from(profiles)
@@ -870,17 +874,19 @@ export class UserDAL {
         and(
           eq(users.status, 'ACTIVE'),
           eq(users.isBanned, false),
+          currentUserId ? sql`${users.id} != ${currentUserId}` : sql`1=1`,
           sql`(LOWER(${profiles.username}) LIKE ${searchPattern} OR LOWER(${profiles.displayName}) LIKE ${searchPattern})`
         )
       )
       .limit(limit);
   }
 
-  static async getSuggestedUsers(currentUserId?: string, limit = 20) {
+  static async getSuggestedUsers(currentUserId?: string, limit = 100) {
     return db
       .select({
         id: users.id,
         userId: users.id,
+        firebaseUid: users.firebaseUid,
         profileId: profiles.id,
         username: profiles.username,
         displayName: profiles.displayName,
@@ -888,8 +894,11 @@ export class UserDAL {
         bannerKey: profiles.bannerKey,
         bio: profiles.bio,
         location: profiles.location,
+        category: profiles.category,
+        badge: profiles.badge,
         isVerified: profiles.isVerified,
         followersCount: profiles.followersCount,
+        followingCount: profiles.followingCount,
         createdAt: profiles.createdAt,
       })
       .from(profiles)

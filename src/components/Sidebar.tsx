@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Users, X, ShieldCheck, ChevronDown, ChevronRight, Plus, Puzzle, Check } from 'lucide-react';
+import { Users, X, ShieldCheck, ChevronDown, ChevronRight, Plus, Puzzle, Check } from 'lucide-react';
 import { useAeirmist } from '../context/AeirmistContext';
 import { AeirmistRankBadge } from './profile/AeirmistRankBadge';
 import { getAvatarUrl, getBlankDp } from '../lib/avatar';
@@ -10,33 +10,29 @@ export const Sidebar = React.memo(({ onUserClick }: { onUserClick?: (user: any) 
 
   const aeirmistLevel = profile?.aeirmistLevel || 0;
 
+  // Uniform, single clean neutral color for puzzles - no multi-color emojis
   const puzzles = [
-    { id: 'zip', title: 'Zip #596', subtitle: 'Complete the path', icon: '🟠', color: 'text-amber-400 bg-amber-500/10' },
-    { id: 'wend', title: 'Wend #148', subtitle: 'Weave through words', icon: '🟨', color: 'text-yellow-400 bg-yellow-500/10' },
-    { id: 'patches', title: 'Patches #231', subtitle: 'Piece it together', icon: '🟦', color: 'text-sky-400 bg-sky-500/10' },
-    { id: 'sudoku', title: 'Mini Sudoku #449', subtitle: 'The classic game, made mini', icon: '🟩', color: 'text-emerald-400 bg-emerald-500/10' },
+    { id: 'zip', title: 'Zip #596', subtitle: 'Complete the path' },
+    { id: 'wend', title: 'Wend #148', subtitle: 'Weave through words' },
+    { id: 'patches', title: 'Patches #231', subtitle: 'Piece it together' },
+    { id: 'sudoku', title: 'Mini Sudoku #449', subtitle: 'The classic game, made mini' },
   ];
   
   return (
     <aside id="aeirmist-right-sidebar" className="hidden lg:block w-[var(--right-panel-w)] h-full p-4 xl:p-6 bg-aeirmist-bg/20 backdrop-blur-md overflow-hidden transition-all duration-500 z-40 shrink-0">
       <div className="flex flex-col gap-4 h-full overflow-y-auto scroll-smooth no-scrollbar">
-        {/* 1. Level / Rank Card */}
+        {/* 1. Level / Rank Card - Clean & Normal */}
         <div 
-          style={{ borderColor: `${rank?.color || '#00f2ff'}44`, boxShadow: `none` }}
-          className="glass-panel rounded-2xl p-4 border bg-white/[0.02] shrink-0 transition-all hover:scale-[1.01]"
+          className="glass-panel rounded-2xl p-4 border border-white/5 bg-black/40 shrink-0 transition-all text-left"
         >
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 text-left">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles style={{ color: rank?.color || '#00f2ff' }} size={16} />
-                <h2 className="font-display font-bold text-sm whitespace-nowrap text-white">Your Level</h2>
-              </div>
-              <div className="text-2xl font-display font-black tracking-tight text-white">
+              <h2 className="font-bold text-xs uppercase tracking-wider text-white/60 mb-1">Your Level</h2>
+              <div className="text-2xl font-black tracking-tight text-white">
                 {aeirmistLevel.toLocaleString()}
               </div>
               <div 
-                style={{ color: rank?.color || '#00f2ff' }}
-                className="text-[9px] uppercase font-black tracking-widest mt-0.5"
+                className="text-[10px] uppercase font-bold tracking-widest text-aeirmist-cyan mt-0.5"
               >
                 {rank?.rank || 'Explorer'}
               </div>
@@ -47,13 +43,13 @@ export const Sidebar = React.memo(({ onUserClick }: { onUserClick?: (user: any) 
           </div>
           <div className="mt-3 w-full h-1 bg-white/10 rounded-full overflow-hidden">
             <div 
-              style={{ width: `${Math.min(100, (aeirmistLevel % 1000) / 10)}%`, backgroundColor: rank?.color || '#00f2ff' }}
-              className="h-full transition-all duration-1000" 
+              style={{ width: `${Math.min(100, (aeirmistLevel % 1000) / 10)}%` }}
+              className="h-full bg-aeirmist-cyan transition-all duration-500" 
             />
           </div>
         </div>
 
-        {/* 2. Today's Puzzles Card (Matching LinkedIn Screenshot) */}
+        {/* 2. Today's Puzzles Card - Same single color, clean & user friendly */}
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-black/40 text-left">
           <div className="flex items-center justify-between mb-3 text-white">
             <h3 className="text-sm font-bold tracking-tight">Today&apos;s puzzles</h3>
@@ -67,8 +63,8 @@ export const Sidebar = React.memo(({ onUserClick }: { onUserClick?: (user: any) 
                 className="flex items-center justify-between p-2 rounded-xl hover:bg-white/5 transition-all cursor-pointer group"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${p.color} border border-white/5 shrink-0`}>
-                    {p.icon}
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/70 group-hover:text-white group-hover:bg-white/10 shrink-0 transition-colors">
+                    <Puzzle size={14} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-white group-hover:text-aeirmist-cyan transition-colors truncate">
@@ -131,7 +127,7 @@ export const Sidebar = React.memo(({ onUserClick }: { onUserClick?: (user: any) 
                       <img 
                         src={getAvatarUrl(u.photoURL, u.displayName || cleanHandle)} 
                         alt={u.displayName || cleanHandle}
-                        className="w-10 h-10 rounded-lg object-cover border border-white/10 shrink-0 bg-neutral-900 mt-0.5"
+                        className="w-10 h-10 rounded-xl object-cover border border-white/10 shrink-0 bg-neutral-900 mt-0.5"
                         onError={(e) => {
                           (e.target as HTMLImageElement).src = getBlankDp();
                         }}

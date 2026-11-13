@@ -8,7 +8,7 @@ import { MediaQuality } from '../../services/MediaService';
 import { getRankInfo, AEIRMIST_THRESHOLDS } from '../../lib/aeirmistRanks';
 import { AeirmistRankBadge } from './AeirmistRankBadge';
 import { AeirmistRankGuide } from './AeirmistRankGuide';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
 import { normalizeMediaUrl } from '../../utils/mediaUtils';
 import { api } from '../../services/api/client';
 import { logger } from '../../utils/logger';
@@ -186,9 +186,9 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
           displayName: p.displayName || p.username || 'User',
           username: p.username,
           bio: p.bio || '',
-          photoURL: p.avatarKey ? (p.avatarKey.startsWith('http') || p.avatarKey.startsWith('data:') ? p.avatarKey : `/media/${p.avatarKey.replace(/^\/+media\/+/, '')}`) : (p.photoURL || null),
-          coverURL: p.bannerKey ? (p.bannerKey.startsWith('http') || p.bannerKey.startsWith('data:') ? p.bannerKey : `/media/${p.bannerKey.replace(/^\/+media\/+/, '')}`) : (p.coverURL || null),
-          bannerURL: p.bannerKey ? (p.bannerKey.startsWith('http') || p.bannerKey.startsWith('data:') ? p.bannerKey : `/media/${p.bannerKey.replace(/^\/+media\/+/, '')}`) : (p.bannerURL || null),
+          photoURL: resolveAvatarSrc(p.avatarKey) || resolveAvatarSrc(p.photoURL) || null,
+          coverURL: resolveAvatarSrc(p.bannerKey) || resolveAvatarSrc(p.coverURL) || null,
+          bannerURL: resolveAvatarSrc(p.bannerKey) || resolveAvatarSrc(p.bannerURL) || null,
           aeirmistLevel: p.points || 0,
           followersCount: Number(p.followersCount ?? 0),
           followingCount: Number(p.followingCount ?? 0),
@@ -843,7 +843,7 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
         if (res?.posts && Array.isArray(res.posts)) {
           const mapped = res.posts.map((p: any) => {
             const keys = Array.isArray(p.mediaKeys) ? p.mediaKeys : [];
-            const urls = keys.map((k: string) => k.startsWith('http') || k.startsWith('data:') ? k : `/media/${k.replace(/^\/+media\/+/, '')}`);
+            const urls = keys.map((k: string) => resolveAvatarSrc(k) || k);
             return {
               ...p,
               id: p.id,
@@ -3194,8 +3194,8 @@ const ProfileSystem = ({ targetProfile, onMessageClick, onEditProfile, onUserCli
                             setFollowListSearchFilter('');
                           }}
                         >
-                           <div className="w-11 h-11 rounded-full border border-white/10 overflow-hidden shrink-0 p-0.5">
-                              <img src={getAvatarUrl(p.photoURL)} className="w-full h-full object-cover rounded-full" alt="" />
+                           <div className="w-11 h-11 rounded-xl border border-white/10 overflow-hidden shrink-0 p-0.5">
+                              <img src={getAvatarUrl(p.photoURL)} className="w-full h-full object-cover rounded-[10px]" alt="" />
                            </div>
                            <div className="flex-1 min-w-0">
                               <p className="text-xs font-bold text-white flex items-center gap-1 truncate">

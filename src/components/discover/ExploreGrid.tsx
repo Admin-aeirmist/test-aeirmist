@@ -5,6 +5,8 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { api } from '../../services/api/client';
 import { getAvatarUrl } from '../../lib/avatar';
 import { logger } from '@/src/utils/logger';
+import { SafeImage } from '../ui/SafeImage';
+import { normalizeMediaUrl } from '../../utils/mediaUtils';
 
 
 interface ExploreGridProps {
@@ -37,14 +39,19 @@ export const ExploreGrid: React.FC<ExploreGridProps> = ({ category, onUserClick 
             .map((p: any) => {
               const mediaList = p.mediaKeys && p.mediaKeys.length > 0 ? p.mediaKeys : (p.mediaUrls || []);
               const firstMedia = mediaList[0] || '';
-              const url = firstMedia.startsWith('http') || firstMedia.startsWith('data:') ? firstMedia : `/media/${firstMedia.replace(/^\/+media\/+/, '')}`;
+              const url = normalizeMediaUrl(firstMedia);
+              const isVideo = p.mediaType === 'video' || url.includes('/video/upload/') || /\.(mp4|webm|mov|m4v|ogg|mkv)(\?.*)?$/i.test(url);
+              const posterUrl = isVideo && url.includes('cloudinary.com')
+                ? url.replace(/\.(mp4|mov|webm|mkv)(\?.*)?$/i, '.jpg$2')
+                : '';
               const authorName = p.author?.displayName || p.author?.username || 'Aeirmist Member';
-              const authorAvatar = p.author?.avatarKey || '';
+              const authorAvatar = p.author?.avatarKey || p.author?.photoURL || '';
 
               return {
                 id: p.id,
-                type: p.mediaType || 'image',
+                type: isVideo ? 'video' : (p.mediaType || 'image'),
                 url,
+                posterUrl,
                 likes: p.likesCount || 0,
                 comments: p.commentsCount || 0,
                 author: p.author?.username || authorName,
@@ -96,11 +103,23 @@ export const ExploreGrid: React.FC<ExploreGridProps> = ({ category, onUserClick 
         >
           {/* Card Body */}
           <div className="relative rounded-[2rem] overflow-hidden border border-white/10 group-hover:border-aeirmist-cyan/30 transition-all duration-700 shadow-2xl">
-            <img 
-              src={item.url} 
-              alt={item.author} 
-              className="w-full h-auto object-cover transition-transform duration-1000 group-hover:scale-110"
-            />
+            {item.type === 'video' && !item.posterUrl ? (
+              <video
+                src={`${item.url}#t=0.1`}
+                muted
+                playsInline
+                preload="metadata"
+                className="w-full h-auto object-cover transition-transform duration-1000 group-hover:scale-110"
+              />
+            ) : (
+              <SafeImage 
+                src={item.posterUrl || item.url} 
+                alt={item.author} 
+                className="w-full h-auto object-cover transition-transform duration-1000 group-hover:scale-110"
+                referrerPolicy="no-referrer"
+                useCache
+              />
+            )}
             
             {/* Overlay */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500">
@@ -119,7 +138,7 @@ export const ExploreGrid: React.FC<ExploreGridProps> = ({ category, onUserClick 
                       });
                     }}
                   >
-                    <img src={item.authorAvatar} className="w-8 h-8 rounded-full border border-white/20 object-cover" />
+                    <img src={item.authorAvatar} className="w-8 h-8 rounded-lg border border-white/20 object-cover" />
                     <div className="truncate">
                       <h4 className="text-xs font-black text-white uppercase tracking-widest truncate">{item.author}</h4>
                       <p className="text-[8px] font-bold text-white/40 uppercase tracking-[0.2em] mt-0.5">High Connections</p>

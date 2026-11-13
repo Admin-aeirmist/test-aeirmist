@@ -124,6 +124,70 @@ export class ChatDAL {
     };
   }
 
+  static async addMembersToConversation(conversationId: string, userIds: string[], actorUserId?: string) {
+    if (!conversationId || typeof conversationId !== 'string') throw new Error('Invalid conversation ID');
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) throw new Error('Conversation not found');
+
+    const conv = await this.getConversationById(conversationId);
+    if (!conv) throw new Error('Conversation not found');
+
+    const uniqueUserIds = Array.from(new Set(userIds.filter(Boolean)));
+    if (uniqueUserIds.length === 0) {
+      const members = await this.getConversationMembersWithProfiles(conversationId);
+      return { addedCount: 0, addedUserIds: [], members, conversation: conv };
+    }
+
+    const insertedRows = await db
+      .insert(conversationMembers)
+      .values(
+        uniqueUserIds.map((uid) => ({
+          conversationId,
+          userId: uid,
+          role: 'member',
+          unreadCount: 0,
+        }))
+      )
+      .onConflictDoNothing()
+      .returning();
+
+    await db
+      .update(conversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(conversations.id, conversationId));
+
+    const members = await this.getConversationMembersWithProfiles(conversationId);
+
+    return {
+      addedCount: insertedRows.length,
+      addedUserIds: insertedRows.map((r) => r.userId),
+      members,
+      conversation: conv,
+    };
+  }
+
+  static async getConversationMembersWithProfiles(conversationId: string) {
+    if (!conversationId || typeof conversationId !== 'string') return [];
+    return db
+      .select({
+        userId: conversationMembers.userId,
+        role: conversationMembers.role,
+        lastReadAt: conversationMembers.lastReadAt,
+        unreadCount: conversationMembers.unreadCount,
+        isMuted: conversationMembers.isMuted,
+        username: profiles.username,
+        displayName: profiles.displayName,
+        avatarKey: profiles.avatarKey,
+        isVerified: profiles.isVerified,
+        firebaseUid: users.firebaseUid,
+        profileId: profiles.id,
+      })
+      .from(conversationMembers)
+      .innerJoin(users, eq(conversationMembers.userId, users.id))
+      .leftJoin(profiles, eq(users.id, profiles.userId))
+      .where(eq(conversationMembers.conversationId, conversationId));
+  }
+
   static async getUserConversations(userId: string) {
     const memberRows = await db
       .select({
@@ -185,7 +249,7 @@ export class ChatDAL {
       result.push({
         ...row.conversation,
         name: isGrp ? (row.conversation.title || 'Group') : (otherParticipant?.displayName || otherParticipant?.username || 'User'),
-        groupName: row.conversation.title || row.conversation.name,
+        groupName: row.conversation.title || (row.conversation as any).name,
         isGroup: isGrp,
         unreadCount: row.member.unreadCount,
         unread: (row.member.unreadCount ?? 0) > 0,

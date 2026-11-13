@@ -56,7 +56,12 @@ export interface Chat {
     neonIntensity?: number;
     bubbleStyle?: string;
     effectType?: string;
+    entityType?: string;
   };
+  displayName?: string;
+  entity?: any;
+  isMember?: boolean;
+  membershipStatus?: string;
   status?: 'active' | 'request' | 'archived';
   readBy?: string[];
   participants?: string[];

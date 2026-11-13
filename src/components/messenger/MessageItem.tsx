@@ -6,7 +6,9 @@ import { Message } from '../../types/messenger';
 import { VoicePlayback } from './VoicePlayback';
 import { Check, CheckCheck, Eye, EyeOff } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
+import { useSharedProfile } from '../../hooks/useSharedProfile';
+import { Avatar } from '../ui/Avatar';
 import { formatShortTimestamp, formatTimeOnly } from '../../lib/date';
 import { TelegramMediaAlbum, AlbumItem, isAutoMediaPlaceholder } from './TelegramMediaAlbum';
 import { DownloadManagerService } from '../../services/DownloadManagerService';
@@ -263,11 +265,19 @@ export const MessageItem = React.memo<{
     setShowEmojiPicker(false);
   };
 
-  // Profile photo fallback
-  const avatarUrl = React.useMemo(() => 
-    getAvatarUrl(senderPhoto, message.senderId),
-    [message.senderId, senderPhoto]
-  );
+  const sharedSenderProfile = useSharedProfile(null, !isMe ? message.senderId : null);
+
+  // Profile photo with live SharedProfile sync & Era AI support
+  const avatarUrl = React.useMemo(() => {
+    if (isMe) return getAvatarUrl(senderPhoto || profile?.photoURL || profile?.avatarKey, message.senderId);
+    const livePhoto =
+      sharedSenderProfile?.photoURL ||
+      resolveAvatarSrc(sharedSenderProfile?.avatarKey) ||
+      resolveAvatarSrc((message as any).senderPhoto) ||
+      resolveAvatarSrc(senderPhoto) ||
+      (message.senderId === '00000000-0000-4000-a000-000000000001' ? 'ai:era_official' : null);
+    return livePhoto || getAvatarUrl(senderPhoto, message.senderId);
+  }, [isMe, message.senderId, (message as any).senderPhoto, senderPhoto, sharedSenderProfile?.photoURL, sharedSenderProfile?.avatarKey, profile?.photoURL, profile?.avatarKey]);
 
   // Determine if this message is image or video
   const isImageOrVideo = Boolean(
@@ -469,11 +479,17 @@ export const MessageItem = React.memo<{
         }}
       >
         {!isMe && message.metadata?.isNewSender && (
-          <div 
-            className="w-8 h-8 rounded-xl overflow-hidden border border-white/10 mb-1 flex-shrink-0 cursor-pointer hover:border-aeirmist-cyan transition-colors"
-            onClick={handleAvatarClick}
-          >
-            <img src={avatarUrl} alt="user" className="w-full h-full object-cover bg-white/5" />
+          <div className="mb-1 flex-shrink-0">
+            <Avatar
+              src={avatarUrl}
+              userId={message.senderId}
+              alt={sharedSenderProfile?.displayName || otherParticipantName || 'User'}
+              sizeClassName="w-8 h-8"
+              roundedClassName="rounded-xl"
+              innerRoundedClassName="rounded-[10px]"
+              onClick={handleAvatarClick}
+              className="border border-white/10 hover:border-aeirmist-cyan transition-colors"
+            />
           </div>
         )}
         {!isMe && !message.metadata?.isNewSender && <div className="w-8 h-8 flex-shrink-0" />}

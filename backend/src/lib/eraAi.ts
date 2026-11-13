@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ChatDAL } from '../dal/chat.dal';
+import { UserDAL } from '../dal/user.dal';
 import { io } from '../index';
 
 export const ERA_AI_USER_ID = '00000000-0000-4000-a000-000000000001';
@@ -101,16 +102,57 @@ export async function askEraAi(message: string, sessionId = 'aeirmist_user'): Pr
  * Handle incoming message to Era AI in conversational Messenger
  */
 export async function triggerEraAssistantReply(conversationId: string, userMessage: string, userSenderId: string) {
-  // 1. Emit typing indicator to conversation room
-  io.to(`conv:${conversationId}`).emit('typing_status', {
+  let senderUser: any = null;
+  let senderProfile: any = null;
+  try {
+    [senderUser, senderProfile] = await Promise.all([
+      UserDAL.findById(userSenderId).catch(() => null),
+      UserDAL.getProfileByUserId(userSenderId).catch(() => null),
+    ]);
+  } catch {}
+
+  const emitToParticipantChannels = (eventName: string, payload: any) => {
+    let target = io.to(`conv:${conversationId}`).to(`user:${userSenderId}`);
+    if (senderUser?.firebaseUid) target = target.to(`user:${senderUser.firebaseUid}`);
+    if (senderProfile?.id) target = target.to(`user:${senderProfile.id}`);
+    target.emit(eventName, payload);
+  };
+
+  try {
+    const hadUndelivered = await ChatDAL.markDelivered(conversationId, ERA_AI_USER_ID);
+    if (hadUndelivered) {
+      emitToParticipantChannels('messages_delivered', {
+        conversationId,
+        rawConversationId: conversationId,
+        deliveredToUserId: ERA_AI_USER_ID,
+        deliveredAt: new Date().toISOString(),
+      });
+    }
+  } catch {}
+
+  const typingStartPayload = {
     conversationId,
+    rawConversationId: conversationId,
     userId: ERA_AI_USER_ID,
+    username: 'era',
     isTyping: true
-  });
+  };
+  emitToParticipantChannels('typing_status', typingStartPayload);
+  emitToParticipantChannels('user_typing', typingStartPayload);
 
   try {
     // 2. Query Era AI Engine from D:\ai\Era
     const result = await askEraAi(userMessage, `aeirmist_chat_${userSenderId}`);
+
+    try {
+      await ChatDAL.markSeen(conversationId, ERA_AI_USER_ID);
+      emitToParticipantChannels('seen_update', {
+        conversationId,
+        rawConversationId: conversationId,
+        userId: ERA_AI_USER_ID,
+        lastReadAt: new Date().toISOString(),
+      });
+    } catch {}
 
     // 3. Persist Era's response in DB
     const eraMessage = await ChatDAL.sendMessage({
@@ -129,21 +171,26 @@ export async function triggerEraAssistantReply(conversationId: string, userMessa
     const payload = {
       conversationId,
       rawConversationId: conversationId,
-      message: eraMessage
+      message: {
+        ...eraMessage,
+        isDelivered: true,
+      }
     };
 
-    io.to(`conv:${conversationId}`)
-      .to(`user:${userSenderId}`)
-      .emit('new_message', payload);
+    emitToParticipantChannels('new_message', payload);
 
   } catch (err) {
     console.error('❌ [Era AI Bridge] Error in assistant reply:', err);
   } finally {
     // 5. Clear typing indicator
-    io.to(`conv:${conversationId}`).emit('typing_status', {
+    const typingStopPayload = {
       conversationId,
+      rawConversationId: conversationId,
       userId: ERA_AI_USER_ID,
+      username: 'era',
       isTyping: false
-    });
+    };
+    emitToParticipantChannels('typing_status', typingStopPayload);
+    emitToParticipantChannels('user_stop_typing', typingStopPayload);
   }
 }

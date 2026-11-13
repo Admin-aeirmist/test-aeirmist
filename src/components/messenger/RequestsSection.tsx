@@ -133,7 +133,7 @@ export const RequestsSection = ({ chats, onBack, onUserClick, onChatSelect }: { 
               <img 
                 src={req.photo} 
                 alt={req.name} 
-                className="w-12 h-12 rounded-full border border-white/10 cursor-pointer object-cover" 
+                className="w-12 h-12 rounded-2xl border border-white/10 cursor-pointer object-cover" 
                 onClick={() => onUserClick?.({ id: req.otherParticipantId, displayName: req.name, photoURL: req.photo })}
               />
               <div className="flex-1 min-w-0">

@@ -56,7 +56,7 @@ export const HoloCard: React.FC<HoloCardProps> = React.memo(({ post }) => {
               <img 
                 src={getAvatarUrl(post.authorPhoto, post.authorName)} 
                 alt={post.authorName} 
-                className="w-12 h-12 rounded-full border-2 border-white/20 relative z-10 object-cover shadow-[0_0_15px_rgba(0,0,0,0.5)]" 
+                className="w-12 h-12 rounded-2xl border-2 border-white/20 relative z-10 object-cover shadow-[0_0_15px_rgba(0,0,0,0.5)]" 
                 referrerPolicy="no-referrer"
               />
               <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-aeirmist-bg border border-white/20 flex items-center justify-center z-20">

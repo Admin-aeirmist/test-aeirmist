@@ -29,6 +29,13 @@
       "when": 1791372821494,
       "tag": "0003_new_felicia_hardy",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793712000000,
+      "tag": "0004_bonds_ecosystem",
+      "breakpoints": true
     }
   ]
 }

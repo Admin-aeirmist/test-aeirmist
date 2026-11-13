@@ -6,6 +6,7 @@ import { mediaAssets, messages, conversations } from '../db/schema';
 import { ChatDAL } from '../dal/chat.dal';
 import { UserDAL } from '../dal/user.dal';
 import { NotificationDAL } from '../dal/notification.dal';
+import { BondsDAL } from '../dal/bonds.dal';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
@@ -199,9 +200,78 @@ router.post('/conversations/group', authenticateToken, async (req: Authenticated
     res.status(500).json({ error: 'Failed to create group conversation' });
   }
 });
+
+// Add Members to Conversation
+router.post('/conversations/:id/members', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawConvId = req.params.id;
+    const convId = await resolveConversationId(rawConvId, req.user!.userId);
+    
+    // Authorization check: Caller must be an existing active member or admin/moderator
+    const isMember = await ChatDAL.isParticipant(convId, req.user!.userId);
+    const entityAccess = await BondsDAL.checkEntityConversationAccess(convId, req.user!.userId);
+    
+    const canAdd = isMember || (entityAccess?.isMember && ['owner', 'admin', 'moderator'].includes(entityAccess.membershipRole || ''));
+    if (!canAdd) {
+      return res.status(403).json({ error: 'You do not have permission to add members to this conversation' });
     }
-    console.error('[Group Chat Error]', err);
-    res.status(500).json({ error: 'Failed to create group conversation' });
+
+    const { memberIds } = z.object({
+      memberIds: z.array(z.string()).min(1),
+    }).parse(req.body);
+
+    // Resolve target IDs to canonical user IDs
+    const resolvedMemberIds = (await Promise.all(memberIds.map(async (rawId: string) => {
+      const resolved = await resolveUserId(rawId);
+      return resolved || rawId;
+    }))).filter((id: string | null): id is string => Boolean(id));
+
+    const result = await ChatDAL.addMembersToConversation(convId, resolvedMemberIds, req.user!.userId);
+
+    // Broadcast to the conversation room and to each newly added user's personal room
+    try {
+      const convWithDetails = {
+        ...result.conversation,
+        isGroup: true,
+        participants: result.members,
+        profileIds: result.members.map((m: any) => m.userId),
+      };
+
+      for (const addedId of result.addedUserIds) {
+        io.to(`user:${addedId}`).emit('conversation_created', { conversation: convWithDetails });
+        io.to(`user:${addedId}`).emit('conversation_joined', { 
+          conversationId: convId, 
+          conversation: convWithDetails 
+        });
+      }
+
+      io.to(`conversation:${convId}`).emit('conversation_updated', {
+        conversationId: convId,
+        type: 'members_added',
+        addedUserIds: result.addedUserIds,
+        memberCount: result.members.length,
+      });
+
+      io.to(`conversation:${convId}`).emit('group_member_added', {
+        conversationId: convId,
+        addedUserIds: result.addedUserIds,
+      });
+    } catch (socketErr) {
+      console.warn('[Add Members Socket Error]', socketErr);
+    }
+
+    res.json({
+      success: true,
+      addedCount: result.addedCount,
+      addedUserIds: result.addedUserIds,
+      memberCount: result.members.length,
+    });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: err.errors });
+    }
+    console.error('[Add Members Error]', err);
+    res.status(500).json({ error: err?.message || 'Failed to add members to conversation' });
   }
 });
 
@@ -209,6 +279,36 @@ router.post('/conversations/group', authenticateToken, async (req: Authenticated
 router.get('/conversations/:id/messages', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const convId = await resolveConversationId(req.params.id, req.user!.userId);
+    const entityAccess = await BondsDAL.checkEntityConversationAccess(convId, req.user!.userId);
+
+    if (entityAccess) {
+      if (!entityAccess.canViewHistory) {
+        return res.json({
+          messages: [],
+          conversationId: convId,
+          isEntityConversation: true,
+          entity: entityAccess.entity,
+          isMember: false,
+          isRestricted: true,
+          membershipStatus: entityAccess.membershipStatus,
+          message: 'This is a private entity. Join to view conversation.'
+        });
+      }
+      const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 100);
+      const beforeDate = req.query.before ? new Date(req.query.before as string) : undefined;
+      const messages = await ChatDAL.getMessages(convId, limit, beforeDate);
+      return res.json({
+        messages,
+        conversationId: convId,
+        isEntityConversation: true,
+        entity: entityAccess.entity,
+        isMember: entityAccess.isMember,
+        isRestricted: !entityAccess.isMember,
+        membershipStatus: entityAccess.membershipStatus,
+        membershipRole: entityAccess.membershipRole,
+      });
+    }
+
     const isMember = await ChatDAL.isParticipant(convId, req.user!.userId);
     if (!isMember) {
       return res.status(403).json({ error: 'Access denied to this conversation' });
@@ -258,6 +358,15 @@ router.get('/conversations/:id/messages', authenticateToken, async (req: Authent
 router.post('/conversations/:id/messages', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const convId = await resolveConversationId(req.params.id, req.user!.userId);
+    const entityAccess = await BondsDAL.checkEntityConversationAccess(convId, req.user!.userId);
+    if (entityAccess && !entityAccess.canSendMessage) {
+      return res.status(403).json({
+        error: 'Only approved members can send messages in this entity',
+        isRestricted: true,
+        membershipStatus: entityAccess.membershipStatus,
+      });
+    }
+
     const isMember = await ChatDAL.isParticipant(convId, req.user!.userId);
     if (!isMember) {
       return res.status(403).json({ error: 'Access denied to this conversation' });
@@ -303,6 +412,33 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
 
     redis.set(`last_seen:${req.user!.userId}`, Date.now()).catch(() => {});
 
+    const members = await ChatDAL.getConversationMembers(convId);
+    const deliveredRecipients: string[] = [];
+    if (!(message as any).isDelivered) {
+      for (const m of members) {
+        if (m.userId === req.user!.userId) continue;
+        if (m.userId === ERA_AI_USER_ID) {
+          deliveredRecipients.push(m.userId);
+          break;
+        }
+        try {
+          const roomIds = [`user:${m.userId}`, m.firebaseUid ? `user:${m.firebaseUid}` : null, m.profileId ? `user:${m.profileId}` : null].filter(Boolean) as string[];
+          for (const rId of roomIds) {
+            const socks = await io.in(rId).fetchSockets();
+            if (socks && socks.length > 0) {
+              deliveredRecipients.push(m.userId);
+              break;
+            }
+          }
+        } catch {}
+        if (deliveredRecipients.length > 0) break;
+      }
+      if (deliveredRecipients.length > 0) {
+        await ChatDAL.markDelivered(convId, deliveredRecipients[0]).catch(() => {});
+        (message as any).isDelivered = true;
+      }
+    }
+
     // Real-time broadcast to authorized conversation room and participant user channels in ONE unified atomic emit
     const broadcastPayload = { conversationId: convId, rawConversationId: req.params.id, message };
     let broadcaster = io.to(`conv:${convId}`);
@@ -310,13 +446,20 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
       broadcaster = broadcaster.to(`conv:${req.params.id}`);
     }
 
-    const members = await ChatDAL.getConversationMembers(convId);
     for (const m of members) {
       broadcaster = broadcaster.to(`user:${m.userId}`);
       if (m.firebaseUid) broadcaster = broadcaster.to(`user:${m.firebaseUid}`);
       if (m.profileId) broadcaster = broadcaster.to(`user:${m.profileId}`);
     }
     broadcaster.emit('new_message', broadcastPayload);
+    if (deliveredRecipients.length > 0) {
+      broadcaster.emit('messages_delivered', {
+        conversationId: convId,
+        rawConversationId: req.params.id,
+        deliveredToUserId: deliveredRecipients[0],
+        deliveredAt: new Date().toISOString()
+      });
+    }
 
     // Trigger Era AI Assistant if this conversation is with Era AI or mentions @Era
     const isEraParticipant = members.some(m => m.userId === ERA_AI_USER_ID);
@@ -350,7 +493,7 @@ router.post('/conversations/:id/messages', authenticateToken, async (req: Authen
                 senderName,
                 senderUsername: senderProfile?.username,
                 senderPhoto: (senderProfile as any)?.avatarKey 
-                  ? ((senderProfile as any).avatarKey.startsWith('data:') || (senderProfile as any).avatarKey.startsWith('http') 
+                  ? ((senderProfile as any).avatarKey.startsWith('data:') || (senderProfile as any).avatarKey.startsWith('http') || (senderProfile as any).avatarKey.startsWith('ai:') || (senderProfile as any).avatarKey.startsWith('/media/')
                       ? (senderProfile as any).avatarKey 
                       : `/media/${(senderProfile as any).avatarKey}`) 
                   : null,

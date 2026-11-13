@@ -348,7 +348,7 @@ export const SharedGroupMediaModal: React.FC<SharedGroupMediaModalProps> = ({
                             </span>
                             <span>•</span>
                             <span className="flex items-center gap-1 text-white/60">
-                              <img src={senderAvatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover" />
+                              <img src={senderAvatar} alt="" className="w-3.5 h-3.5 rounded-sm object-cover" />
                               {senderName}
                             </span>
                             <span>•</span>

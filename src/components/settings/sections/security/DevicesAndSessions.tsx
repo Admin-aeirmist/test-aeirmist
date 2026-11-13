@@ -21,6 +21,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAeirmist } from '../../../../context/AeirmistContext';
 import { api } from '../../../../services/api/client';
 import { PermissionService } from '../../../../services/PermissionService';
+import { getAvatarUrl, resolveAvatarSrc } from '../../../../lib/avatar';
 import { logger } from '@/src/utils/logger';
 
 interface SessionItem {
@@ -43,7 +44,7 @@ interface SessionItem {
 }
 
 export const DevicesAndSessions: React.FC = () => {
-  const { user, profile, addToast } = useAeirmist();
+  const { user, profile, localAvatarURL, addToast } = useAeirmist();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [unrecognizedCount, setUnrecognizedCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -280,9 +281,9 @@ export const DevicesAndSessions: React.FC = () => {
                   {/* Avatar with Aeirmist badge */}
                   <div className="relative shrink-0">
                     <img
-                      src={profile?.avatarKey || user?.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
+                      src={getAvatarUrl(localAvatarURL || resolveAvatarSrc(profile?.avatarKey || profile?.photoURL || user?.photoURL), profile?.displayName || 'User')}
                       alt={profile?.displayName || 'User'}
-                      className="h-12 w-12 rounded-full object-cover border border-white/10"
+                      className="h-12 w-12 rounded-xl object-cover border border-white/10"
                     />
                     <div className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-aeirmist-cyan)] text-black ring-2 ring-[#1c1f24]">
                       <ShieldCheck size={11} className="stroke-[3]" />

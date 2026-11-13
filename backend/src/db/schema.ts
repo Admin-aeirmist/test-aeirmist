@@ -11,6 +11,7 @@ import {
   numeric,
   primaryKey,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -592,3 +593,130 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+
+// -------------------------------------------------------------
+// 8. BOND Ecosystem (Groups, Communities & Teams)
+// -------------------------------------------------------------
+export const bondsEntities = pgTable('bonds_entities', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  type: varchar('type', { length: 32 }).notNull(), // 'group' | 'community' | 'team'
+  name: varchar('name', { length: 128 }).notNull(),
+  slug: varchar('slug', { length: 128 }).notNull().unique(),
+  description: text('description').notNull(),
+  category: varchar('category', { length: 64 }).notNull(),
+  coverUrl: text('cover_url'),
+  logoUrl: text('logo_url'),
+  privacy: varchar('privacy', { length: 16 }).default('public').notNull(), // 'public' | 'private'
+  membershipPolicy: varchar('membership_policy', { length: 32 }).default('open').notNull(), // 'open' | 'approval_required' | 'invite_only'
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
+  memberCount: integer('member_count').default(1).notNull(),
+  activityScore: integer('activity_score').default(0).notNull(),
+  tags: jsonb('tags').default([]).notNull(),
+  rules: jsonb('rules').default([]).notNull(),
+  settings: jsonb('settings').default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('idx_bonds_entities_conversation_unique').on(table.conversationId),
+  index('idx_bonds_entities_type').on(table.type),
+  index('idx_bonds_entities_category').on(table.category),
+  index('idx_bonds_entities_owner').on(table.ownerId),
+]);
+
+export const bondsMemberships = pgTable('bonds_memberships', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  entityId: uuid('entity_id').notNull().references(() => bondsEntities.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: varchar('role', { length: 32 }).default('member').notNull(), // 'owner' | 'admin' | 'moderator' | 'member' | 'contributor'
+  status: varchar('status', { length: 32 }).default('active').notNull(), // 'active' | 'suspended' | 'banned'
+  joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('idx_bonds_memberships_unique').on(table.entityId, table.userId),
+  index('idx_bonds_memberships_user').on(table.userId),
+]);
+
+export const bondsMembershipRequests = pgTable('bonds_membership_requests', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  entityId: uuid('entity_id').notNull().references(() => bondsEntities.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  status: varchar('status', { length: 32 }).default('pending').notNull(), // 'pending' | 'approved' | 'rejected'
+  introduction: text('introduction'),
+  answers: jsonb('answers').default({}).notNull(),
+  reviewedBy: uuid('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('idx_bonds_requests_unique_status').on(table.entityId, table.userId, table.status),
+  index('idx_bonds_requests_entity').on(table.entityId, table.status),
+  index('idx_bonds_requests_user').on(table.userId),
+]);
+
+export const bondsTeamApplications = pgTable('bonds_team_applications', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  entityId: uuid('entity_id').notNull().references(() => bondsEntities.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  roleApplied: varchar('role_applied', { length: 64 }).notNull(),
+  portfolioUrl: text('portfolio_url'),
+  answers: jsonb('answers').default({}).notNull(),
+  status: varchar('status', { length: 32 }).default('submitted').notNull(), // 'submitted' | 'under_review' | 'accepted' | 'rejected' | 'withdrawn'
+  reviewedBy: uuid('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bonds_team_apps_entity').on(table.entityId, table.status),
+  index('idx_bonds_team_apps_user').on(table.userId),
+]);
+
+export const bondsInvitations = pgTable('bonds_invitations', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  entityId: uuid('entity_id').notNull().references(() => bondsEntities.id, { onDelete: 'cascade' }),
+  inviterId: uuid('inviter_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  inviteeId: uuid('invitee_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: varchar('role', { length: 32 }).default('member').notNull(),
+  status: varchar('status', { length: 32 }).default('pending').notNull(), // 'pending' | 'accepted' | 'declined'
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bonds_invitations_invitee').on(table.inviteeId, table.status),
+]);
+
+export const bondsPosts = pgTable('bonds_posts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  entityId: uuid('entity_id').notNull().references(() => bondsEntities.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  mediaUrls: text('media_urls').array().default([]).notNull(),
+  postAs: varchar('post_as', { length: 16 }).default('member').notNull(), // 'member' | 'entity'
+  isPinned: boolean('is_pinned').default(false).notNull(),
+  isAnnouncement: boolean('is_announcement').default(false).notNull(),
+  status: varchar('status', { length: 32 }).default('published').notNull(), // 'published' | 'pending_approval' | 'rejected'
+  likesCount: integer('likes_count').default(0).notNull(),
+  commentsCount: integer('comments_count').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bonds_posts_entity').on(table.entityId, table.status, table.createdAt),
+  index('idx_bonds_posts_author').on(table.authorId),
+]);
+
+export const bondsPostComments = pgTable('bonds_post_comments', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  postId: uuid('post_id').notNull().references(() => bondsPosts.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  authorRole: varchar('author_role', { length: 32 }).default('member').notNull(), // 'admin' | 'moderator' | 'member' | 'owner'
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bonds_comments_post').on(table.postId, table.createdAt),
+  index('idx_bonds_comments_author').on(table.authorId),
+]);
+
+export const bondsPostLikes = pgTable('bonds_post_likes', {
+  postId: uuid('post_id').notNull().references(() => bondsPosts.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('idx_bonds_post_likes_unique').on(table.postId, table.userId),
+]);

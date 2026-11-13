@@ -210,10 +210,6 @@ export const SupportSettings: React.FC = () => {
         addToast?.({ title: 'INVALID FILE', message: `${file.name} is not a supported image file.`, type: 'warning' });
         continue;
       }
-      if (file.size > MAX_FILE_SIZE) {
-        addToast?.({ title: 'FILE TOO LARGE', message: `${file.name} exceeds the 8MB limit.`, type: 'warning' });
-        continue;
-      }
 
       newFiles.push(file);
       newPreviews.push(URL.createObjectURL(file));

@@ -261,7 +261,7 @@ export const OfflineScreen: React.FC<OfflineScreenProps> = ({ onClose }) => {
                       <img
                         src={getAvatarUrl(post.authorPhoto)}
                         alt={post.authorName || 'User'}
-                        className="w-8 h-8 rounded-full object-cover border border-white/10"
+                        className="w-8 h-8 rounded-lg object-cover border border-white/10"
                         onError={(e) => { (e.target as HTMLImageElement).src = BLANK_DP; }}
                       />
                       <div>

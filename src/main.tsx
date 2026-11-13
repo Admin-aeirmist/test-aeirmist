@@ -25,6 +25,7 @@ if (typeof window !== 'undefined') {
       const target = event.target as HTMLElement | null;
       if (target && target.tagName === 'IMG') {
         const img = target as HTMLImageElement;
+        if (img.dataset.safeImage === 'true') return;
         if (!img.dataset.fallbackApplied) {
           img.dataset.fallbackApplied = 'true';
           img.src = BLANK_DP;
@@ -89,7 +90,20 @@ if (typeof window !== 'undefined' && isNativeCapacitor) {
   }).catch(() => {});
 }
 
-if ('serviceWorker' in navigator && !isNativeCapacitor) {
+const isElectronDesktop = typeof window !== 'undefined' && Boolean(
+  (window as any).aeirmistDesktop || navigator?.userAgent?.includes('Electron')
+);
+
+if ('serviceWorker' in navigator && isElectronDesktop) {
+  navigator.serviceWorker.getRegistrations()
+    .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+    .catch(() => {});
+  if ('caches' in window) {
+    caches.keys()
+      .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+      .catch(() => {});
+  }
+} else if ('serviceWorker' in navigator && !isNativeCapacitor) {
   window.addEventListener('load', () => {
     try {
       navigator.serviceWorker.register('/sw.js')

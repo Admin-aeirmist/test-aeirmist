@@ -93,7 +93,7 @@ export const PurgeScreen = ({ onCancel, onLogout }: { onCancel: () => void, onLo
           <img 
             src={avatarUrl || BLANK_DP} 
             alt={displayName}
-            className="w-full h-full rounded-full object-cover ring-2 ring-amber-500/60 shadow-[0_0_30px_rgba(245,158,11,0.25)] bg-black/60"
+            className="w-full h-full rounded-2xl object-cover ring-2 ring-amber-500/60 shadow-[0_0_30px_rgba(245,158,11,0.25)] bg-black/60"
             onError={(e) => { (e.target as HTMLImageElement).src = BLANK_DP; }}
           />
           <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-amber-500 text-black flex items-center justify-center shadow-md ring-2 ring-[#121316]">

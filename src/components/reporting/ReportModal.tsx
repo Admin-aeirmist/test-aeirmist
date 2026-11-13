@@ -84,11 +84,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           setIsSubmitting(false);
           return;
         }
-        if (file.size > 8 * 1024 * 1024) {
-          addToast({ title: 'File Too Large', message: 'Images must be under 8MB.', type: 'warning' });
-          setIsSubmitting(false);
-          return;
-        }
 
         try {
           const uploaded = await api.media.upload(file, 'reports');

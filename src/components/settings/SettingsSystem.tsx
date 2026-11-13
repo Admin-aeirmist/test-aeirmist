@@ -418,16 +418,6 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: 'avatar' | 'banner') => {
     const file = e.target.files?.[0];
     if (file) {
-      // Validate size
-      const limit = type === 'avatar' ? 10 * 1024 * 1024 : 15 * 1024 * 1024;
-      if (file.size > limit) {
-        addToast?.({
-          title: 'FILE TOO LARGE',
-          message: `Your ${type} exceeds the ${type === 'avatar' ? '10MB' : '15MB'} premium quality limit.`,
-          type: 'warning'
-        });
-        return;
-      }
       const url = URL.createObjectURL(file);
       setEditingImage({ src: url, type });
     }

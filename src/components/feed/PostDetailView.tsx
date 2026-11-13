@@ -32,7 +32,7 @@ import {
 } from 'firebase/firestore';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useBackHandler } from '../../utils/backNavigation';
-import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc, BLANK_DP } from '../../lib/avatar';
 import { formatAeirmistTimestamp } from '../../lib/date';
 import { SafeImage } from '../ui/SafeImage';
 import { VideoPlayer } from './VideoPlayer';
@@ -150,9 +150,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
               isVerified,
               badge: p.author?.badge || null
             },
-            mediaUrls: (p.mediaKeys || []).map((k: string) => 
-              k.startsWith('http') || k.startsWith('data:') ? k : `/media/${k.replace(/^\/+media\/+/, '')}`
-            ),
+            mediaUrls: (p.mediaKeys || []).map((k: string) => resolveAvatarSrc(k) || k),
             likesCount: p.likesCount || 0,
             commentsCount: p.commentsCount || 0,
             isLiked: Boolean(p.isLiked),
@@ -1327,7 +1325,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
                           <img 
                             src={getAvatarUrl(c.authorPhoto)} 
                             alt={c.authorName} 
-                            className="w-7 h-7 rounded-full object-cover border border-neutral-800 flex-shrink-0" 
+                            className="w-7 h-7 rounded-lg object-cover border border-neutral-800 flex-shrink-0" 
                           />
                           <div className="flex-1 min-w-0">
                             <p className="text-neutral-200 text-xs leading-snug break-words">
@@ -1374,7 +1372,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
 
                             {showReplies && c.replies.map((reply: any) => (
                               <div key={reply.id} className="flex items-start gap-2 text-xs pt-1">
-                                <img src={getAvatarUrl(reply.authorPhoto)} alt={reply.authorName} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
+                                <img src={getAvatarUrl(reply.authorPhoto)} alt={reply.authorName} className="w-5 h-5 rounded-md object-cover flex-shrink-0" />
                                 <div className="flex-1 min-w-0">
                                   <p className="text-neutral-200 text-[11px] leading-snug break-words">
                                     <span className="font-semibold text-white mr-1">{reply.authorName}</span>
@@ -1417,7 +1415,7 @@ export const PostDetailView: React.FC<PostDetailViewProps> = ({ postId, onClose,
             <img 
               src={getAvatarUrl(profile?.photoURL)} 
               alt="You" 
-              className="w-7 h-7 rounded-full object-cover border border-neutral-800 flex-shrink-0" 
+              className="w-7 h-7 rounded-lg object-cover border border-neutral-800 flex-shrink-0" 
             />
             <input 
               ref={mobileInputRef}

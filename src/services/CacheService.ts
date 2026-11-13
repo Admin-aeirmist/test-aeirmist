@@ -119,6 +119,9 @@ class CacheService {
         }
       },
     });
+    if (typeof window !== 'undefined') {
+      this.clearCorruptMedia().catch(() => {});
+    }
   }
 
   // --- Messages ---
@@ -160,12 +163,49 @@ class CacheService {
   }
 
   // --- Media ---
+  async isValidMediaBlob(blob: any): Promise<boolean> {
+    if (!(blob instanceof Blob) || blob.size < 32) return false;
+    const t = (blob.type || '').toLowerCase();
+    if (t.startsWith('text/') || t.includes('html') || t.includes('json') || t.includes('xml')) {
+      return false;
+    }
+    try {
+      const buf = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+      if (buf.length < 12) return false;
+      const head = String.fromCharCode(...buf.slice(0, 16)).trim().toLowerCase();
+      if (
+        head.startsWith('not found') ||
+        head.startsWith('<!doc') ||
+        head.startsWith('<html') ||
+        head.startsWith('<error') ||
+        head.startsWith('<?xml') ||
+        head.startsWith('{')
+      ) {
+        return false;
+      }
+      if (t.startsWith('image/') || t.startsWith('video/') || t.startsWith('audio/')) {
+        return true;
+      }
+      const isJpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+      const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+      const isGif = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38;
+      const isRiff = buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46;
+      const isMp4 = buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70;
+      const isWebm = buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3;
+      const isSvg = head.includes('<svg');
+      return isJpeg || isPng || isGif || isRiff || isMp4 || isWebm || isSvg;
+    } catch {
+      return false;
+    }
+  }
+
   async saveMedia(url: string, blob: Blob, type: string) {
+    if (!(await this.isValidMediaBlob(blob))) return;
     const db = await this.db;
     return db.put('media', {
       url,
       blob,
-      type,
+      type: blob.type || type,
       timestamp: Date.now()
     });
   }
@@ -174,7 +214,40 @@ class CacheService {
     const db = await this.db;
     const item = await db.get('media', url);
     if (!item) return null;
+    if (!(await this.isValidMediaBlob(item.blob))) {
+      await db.delete('media', url).catch(() => {});
+      return null;
+    }
     return item.blob;
+  }
+
+  async deleteMedia(url: string) {
+    try {
+      const db = await this.db;
+      await db.delete('media', url);
+    } catch {}
+  }
+
+  async clearCorruptMedia() {
+    try {
+      const db = await this.db;
+      const entries = await db.getAll('media');
+      const badUrls: string[] = [];
+      for (const entry of entries) {
+        if (!entry?.url) continue;
+        const ok = await this.isValidMediaBlob(entry.blob);
+        if (!ok) {
+          badUrls.push(entry.url);
+        }
+      }
+      if (badUrls.length > 0) {
+        const tx = db.transaction('media', 'readwrite');
+        for (const u of badUrls) {
+          tx.store.delete(u);
+        }
+        await tx.done;
+      }
+    } catch {}
   }
 
   async clearOldCache() {

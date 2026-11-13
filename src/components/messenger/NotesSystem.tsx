@@ -2011,7 +2011,7 @@ export const NotesSystem = ({ chats, onChatSelect, onReplyNote }: { chats: any[]
                     <div className="space-y-1.5">
                       {myNote.seenBy.map((s: any, idx: number) => (
                         <div key={idx} className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-2xl transition-all">
-                          <img src={getAvatarUrl(s.userAvatar)} className="w-10 h-10 rounded-full object-cover" />
+                          <img src={getAvatarUrl(s.userAvatar)} className="w-10 h-10 rounded-xl object-cover" />
                           <div className="flex-1 flex flex-col min-w-0">
                             <span className="text-sm font-medium text-white truncate">{s.userName}</span>
                             <span className="text-xs text-neutral-400">{getRelativeTime(s.timestamp)} ago</span>
@@ -2040,7 +2040,7 @@ export const NotesSystem = ({ chats, onChatSelect, onReplyNote }: { chats: any[]
                         {myNote.reactions.map((r: any, idx: number) => (
                           <div key={idx} className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-2xl transition-all">
                             <div className="relative">
-                              <img src={getAvatarUrl(r.userAvatar)} className="w-10 h-10 rounded-full object-cover" />
+                              <img src={getAvatarUrl(r.userAvatar)} className="w-10 h-10 rounded-xl object-cover" />
                               <span className="absolute -bottom-1 -right-1 text-base">{r.emoji}</span>
                             </div>
                             <div className="flex-1 flex flex-col min-w-0">

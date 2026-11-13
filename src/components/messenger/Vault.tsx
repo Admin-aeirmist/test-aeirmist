@@ -2395,10 +2395,10 @@ export const Vault: React.FC<VaultProps> = ({
                        <div className="mt-4 flex items-center gap-2 relative z-10">
                          <div className="flex -space-x-2">
                            {filteredVaultChats.slice(0, 3).map((chat, i) => (
-                             <img key={i} src={chat.photo} className="w-6 h-6 rounded-full border-2 border-[#030107]" alt="" />
+                             <img key={i} src={chat.photo} className="w-6 h-6 rounded-md border-2 border-[#030107] object-cover" alt="" />
                            ))}
                            {filteredVaultChats.length > 3 && (
-                             <div className="w-6 h-6 rounded-full bg-white/5 border-2 border-[#030107] flex items-center justify-center text-[8px] font-bold">
+                             <div className="w-6 h-6 rounded-md bg-white/5 border-2 border-[#030107] flex items-center justify-center text-[8px] font-bold">
                                +{filteredVaultChats.length - 3}
                              </div>
                            )}
@@ -2443,7 +2443,7 @@ export const Vault: React.FC<VaultProps> = ({
                       className="flex items-center gap-4 p-4 rounded-3xl bg-white/[0.03] border border-white/5 hover:border-[#c77dff]/30 hover:bg-white/[0.05] transition-all cursor-pointer group"
                     >
                       <div className="relative shrink-0">
-                        <img src={chat.photo} alt={chat.name} className="w-12 h-12 rounded-full object-cover border border-white/10" referrerPolicy="no-referrer" />
+                        <img src={chat.photo} alt={chat.name} className="w-12 h-12 rounded-2xl object-cover border border-white/10" referrerPolicy="no-referrer" />
                         {chat.online && (
                           <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-4 border-[#030107]" />
                         )}
@@ -2573,7 +2573,7 @@ export const Vault: React.FC<VaultProps> = ({
                         className="flex items-center justify-between p-3 rounded-[20px] bg-[#090412]/30 border border-white/5 hover:border-[#7b2cbf]/20 transition-all select-none"
                       >
                         <div className="flex items-center gap-3 shrink min-w-0 pr-2">
-                          <img src={chat.photo} className="w-10 h-10 rounded-full object-cover shrink-0 border border-white/5" alt="" referrerPolicy="no-referrer" />
+                          <img src={chat.photo} className="w-10 h-10 rounded-xl object-cover shrink-0 border border-white/5" alt="" referrerPolicy="no-referrer" />
                           <div className="text-left min-w-0">
                             <p className="text-xs font-bold text-white truncate">{chat.name}</p>
                             <p className="text-[9px] text-white/30 font-semibold truncate leading-none pt-0.5">Active Session</p>
@@ -2598,7 +2598,7 @@ export const Vault: React.FC<VaultProps> = ({
                         className="flex items-center justify-between p-3 rounded-[20px] bg-[#090412]/30 border border-white/5 hover:border-[#7b2cbf]/20 transition-all select-none"
                       >
                         <div className="flex items-center gap-3 shrink min-w-0 pr-2">
-                          <img src={getAvatarUrl(friend.photoURL)} className="w-10 h-10 rounded-full object-cover shrink-0 border border-white/5" alt="" referrerPolicy="no-referrer" />
+                          <img src={getAvatarUrl(friend.photoURL)} className="w-10 h-10 rounded-xl object-cover shrink-0 border border-white/5" alt="" referrerPolicy="no-referrer" />
                           <div className="text-left min-w-0">
                             <p className="text-xs font-bold text-white truncate">{friend.displayName || friend.username}</p>
                             <p className="text-[9px] text-white/30 font-semibold truncate leading-none pt-0.5">@{friend.username}</p>
@@ -2626,7 +2626,7 @@ export const Vault: React.FC<VaultProps> = ({
                         className="flex items-center justify-between p-3 rounded-[20px] bg-[#090412]/30 border border-white/5 hover:border-[#7b2cbf]/20 transition-all select-none"
                       >
                         <div className="flex items-center gap-3 shrink min-w-0 pr-2">
-                          <img src={getAvatarUrl(friend.photoURL)} className="w-10 h-10 rounded-full object-cover shrink-0 border border-white/5" alt="" referrerPolicy="no-referrer" />
+                          <img src={getAvatarUrl(friend.photoURL)} className="w-10 h-10 rounded-xl object-cover shrink-0 border border-white/5" alt="" referrerPolicy="no-referrer" />
                           <div className="text-left min-w-0">
                             <p className="text-xs font-bold text-white truncate">{friend.displayName || friend.username}</p>
                             <p className="text-[9px] text-white/30 font-semibold truncate leading-none pt-0.5">@{friend.username}</p>

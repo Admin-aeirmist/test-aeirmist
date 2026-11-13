@@ -1742,14 +1742,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
 
   const handleLoadedFiles = (files: File[]) => {
     const file = files[0];
-    if (file && file.size > 45 * 1024 * 1024) {
-      addToast({
-        title: "File Too Large",
-        message: "Story media limit is 45 MB. Please select a smaller file.",
-        type: "warning"
-      });
-      return;
-    }
+    if (!file) return;
     const type = file.type.startsWith('video') ? 'video' : 'image';
     const objectUrl = URL.createObjectURL(file);
     
@@ -4827,7 +4820,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                   >
                     <img 
                       src={getAvatarUrl(user?.uid || '', profile?.avatarUrl || user?.photoURL)} 
-                      className="w-5 h-5 rounded-full object-cover shrink-0 border border-white/20" 
+                      className="w-5 h-5 rounded-md object-cover shrink-0 border border-white/20" 
                       alt=""
                       width={20}
                       height={20}
@@ -5324,7 +5317,7 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
                         <>
                           <img 
                             src={getAvatarUrl(user?.uid || '', profile?.avatarUrl || user?.photoURL)} 
-                            className="w-5 h-5 rounded-full object-cover shrink-0" 
+                            className="w-5 h-5 rounded-md object-cover shrink-0" 
                             alt="" 
                           />
                           <span className="text-slate-900 font-black text-xs tracking-wider">

@@ -79,7 +79,7 @@ export class NotificationDAL {
           senderId: meta.senderId || actor?.userId || r.actorId,
           senderName: meta.senderName || actor?.displayName || actor?.username || r.title || 'Aeirmist User',
           senderUsername: meta.senderUsername || actor?.username || 'user',
-          senderPhoto: meta.senderPhoto || (actor?.avatarKey ? (actor.avatarKey.startsWith('http') || actor.avatarKey.startsWith('data:') ? actor.avatarKey : `/media/${actor.avatarKey}`) : null),
+          senderPhoto: meta.senderPhoto || (actor?.avatarKey ? (actor.avatarKey.startsWith('http') || actor.avatarKey.startsWith('data:') || actor.avatarKey.startsWith('ai:') || actor.avatarKey.startsWith('/media/') ? actor.avatarKey : `/media/${actor.avatarKey}`) : null),
           senderVerified: meta.senderVerified ?? actor?.isVerified ?? false,
         }
       };

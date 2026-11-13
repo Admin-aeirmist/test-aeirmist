@@ -22,7 +22,7 @@ import { useAeirmist } from '../../context/AeirmistContext';
 import { api } from '../../services/api/client';
 import { formatAeirmistTimestamp } from '../../lib/date';
 import { AeirmistLogo } from '../ui/AeirmistLogo';
-import { getAvatarUrl, BLANK_DP } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc, BLANK_DP } from '../../lib/avatar';
 import { Skeleton } from '../ui/Skeleton';
 import { logger } from '@/src/utils/logger';
 import { LocalSqlService } from '../../services/LocalSqlService';
@@ -243,9 +243,7 @@ export const HomeFeedSystem: React.FC<{ onUserClick?: (user: any) => void, onPos
               isVerified: isVerified,
               content: p.content,
               mediaKeys: p.mediaKeys || [],
-              mediaUrls: (p.mediaKeys || []).map((k: string) => 
-                k.startsWith('http') || k.startsWith('data:') ? k : `/media/${k.replace(/^\/+media\/+/, '')}`
-              ),
+              mediaUrls: (p.mediaKeys || []).map((k: string) => resolveAvatarSrc(k) || k),
               mediaType: p.mediaType || ((p.mediaKeys && p.mediaKeys.length > 0) ? 'image' : 'none'),
               likesCount: p.likesCount || 0,
               commentsCount: p.commentsCount || 0,

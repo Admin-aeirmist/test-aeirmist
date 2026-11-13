@@ -225,7 +225,8 @@ export const getPathForAppState = (
   vStoryUserId: string | null = null,
   vSettingsSection: string | null = null,
   vIsPosting: boolean = false,
-  ownProfile?: any
+  ownProfile?: any,
+  vBondUrl?: string | null
 ): string => {
   if (vPostId) return `/post/${vPostId}`;
   if (vVideoId) return `/videos/${vVideoId}`;
@@ -249,7 +250,10 @@ export const getPathForAppState = (
 
   switch (tab) {
     case 'feed': return '/';
-    case 'discover': return '/bonds';
+    case 'discover': {
+      if (vBondUrl) return vBondUrl;
+      return '/bonds';
+    }
     case 'videos': return '/videos';
     case 'messenger': 
       if (vChatUid) return `/messages/${vChatUid}`;
@@ -314,7 +318,17 @@ export const getInitialStateFromPath = (path: string) => {
       : cleanPath.substring('/marketplace/item/'.length)).split('?')[0];
     return { tab: 'discover' as Tab, notifs: false, productId: productId || null };
   }
-  if (lowerPath === '/bonds' || lowerPath === '/marketplace' || lowerPath === '/shop') {
+  if (
+    lowerPath.startsWith('/bonds/groups/') || 
+    lowerPath.startsWith('/bonds/communities/') || 
+    lowerPath.startsWith('/bonds/teams/') || 
+    lowerPath.startsWith('/groups/') || 
+    lowerPath.startsWith('/communities/') || 
+    lowerPath.startsWith('/teams/')
+  ) {
+    return { tab: 'discover' as Tab, notifs: false, bondUrl: cleanPath };
+  }
+  if (lowerPath === '/bonds' || lowerPath === '/marketplace' || lowerPath === '/shop' || lowerPath.startsWith('/bonds/')) {
     return { tab: 'discover' as Tab, notifs: false };
   }
 
@@ -508,6 +522,11 @@ function AppContent() {
   const isGlobalBgActive = Boolean(settings?.globalBgType && settings.globalBgType !== 'none');
   const [viewingPostId, setViewingPostId] = useState<string | null>(null);
   const [viewingStoreId, setViewingStoreId] = useState<string | null>(null);
+  const [viewingBondUrl, setViewingBondUrl] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const pathInit = getInitialStateFromPath(window.location.pathname);
+    return (pathInit as any)?.bondUrl || null;
+  });
   const [viewingProductId, setViewingProductId] = useState<string | null>(null);
   const [viewingVideoId, setViewingVideoId] = useState<string | null>(null);
   const [viewingProfile, setViewingProfile] = useState<any>(null);
@@ -641,6 +660,7 @@ function AppContent() {
       viewingProfile,
       viewingStoreId,
       viewingProductId,
+      viewingBondUrl,
       messageRecipient,
       activeTab,
       storyState,
@@ -944,6 +964,9 @@ function AppContent() {
     if (tab !== 'settings') {
       setSettingsSection(null);
     }
+    if (tab !== 'discover') {
+      setViewingBondUrl(null);
+    }
     setActiveTab(tab);
   };
 
@@ -1029,6 +1052,7 @@ function AppContent() {
       viewingVideoId: (pathInit as any).videoId || null,
       viewingStoreId: (pathInit as any).storeId || null,
       viewingProductId: (pathInit as any).productId || null,
+      viewingBondUrl: (pathInit as any).bondUrl || null,
       messageRecipient: (pathInit as any).chatUid ? { id: (pathInit as any).chatUid } : null,
       isPosting: !!(pathInit as any).isPosting,
       isNotificationsOpen: pathInit.notifs,
@@ -1054,6 +1078,9 @@ function AppContent() {
     }
     if ((pathInit as any).productId) {
       setViewingProductId((pathInit as any).productId);
+    }
+    if ((pathInit as any).bondUrl) {
+      setViewingBondUrl((pathInit as any).bondUrl);
     }
     if ((pathInit as any).chatUid) {
       setMessageRecipient({ id: (pathInit as any).chatUid });
@@ -1177,6 +1204,7 @@ function AppContent() {
       viewingVideoId,
       viewingStoreId,
       viewingProductId,
+      viewingBondUrl,
       messageRecipient,
       isPosting,
       isNotificationsOpen,
@@ -1198,7 +1226,8 @@ function AppContent() {
       storyState.activeStoryGroup?.userId || null,
       settingsSection,
       isPosting,
-      profile
+      profile,
+      viewingBondUrl
     );
 
     const hState = window.history.state;
@@ -1221,6 +1250,7 @@ function AppContent() {
     viewingVideoId, 
     viewingStoreId, 
     viewingProductId, 
+    viewingBondUrl,
     messageRecipient, 
     isPosting, 
     isNotificationsOpen, 
@@ -1244,6 +1274,7 @@ function AppContent() {
         setViewingVideoId(poppedState.viewingVideoId || null);
         setViewingStoreId(poppedState.viewingStoreId || null);
         setViewingProductId(poppedState.viewingProductId || null);
+        setViewingBondUrl(poppedState.viewingBondUrl || null);
         setMessageRecipient(poppedState.messageRecipient);
         setIsPosting(poppedState.isPosting);
         setIsNotificationsOpen(poppedState.isNotificationsOpen);
@@ -1272,6 +1303,7 @@ function AppContent() {
         setActiveTab(pathInit.tab);
         setIsNotificationsOpen(pathInit.notifs);
         setSettingsSection(null);
+        setViewingBondUrl((pathInit as any).bondUrl || null);
       }
     };
 
@@ -2026,6 +2058,21 @@ function AppContent() {
                                 initialProductId={viewingProductId}
                                 onStoreChange={setViewingStoreId}
                                 onProductChange={setViewingProductId}
+                                initialBondUrl={viewingBondUrl}
+                                onBondChange={setViewingBondUrl}
+                                onMessageEntity={(entity) => {
+                                  setMessageRecipient({
+                                    conversationId: entity.conversationId,
+                                    id: entity.conversationId,
+                                    type: 'bond_entity',
+                                    name: entity.name,
+                                    logoUrl: entity.logoUrl,
+                                    entity,
+                                    isMember: entity.isMember,
+                                    membershipStatus: entity.membershipStatus,
+                                  });
+                                  handleTabChange('messenger');
+                                }}
                               />
                             </Suspense>
                           </ErrorBoundary>

@@ -49,6 +49,15 @@ class MessagingService {
   private isVisibilityListenerAttached: boolean = false;
   private isSafeMode: boolean = false;
   private messageMemoryCache: Map<string, Message[]> = new Map();
+  private knownSelfIds: Set<string> = new Set();
+
+  public registerCurrentIdentity(ids: Array<string | undefined | null>) {
+    for (const id of ids) {
+      if (id && typeof id === 'string') {
+        this.knownSelfIds.add(id.toLowerCase());
+      }
+    }
+  }
 
   public getCachedMessages(conversationId: string): Message[] | undefined {
     if (!conversationId) return undefined;
@@ -94,17 +103,19 @@ class MessagingService {
       : (m.createdAt ? extractTimestampMs(m.createdAt) : Date.now());
     const date = new Date(timestampMs);
     const rawKey = m.mediaKey || m.media_key;
-    const normalizedKey = rawKey 
-      ? (String(rawKey).startsWith('/media/') ? String(rawKey) : `/media/${String(rawKey).replace(/^\/+/, '')}`) 
-      : null;
+    const normalizedKey = rawKey ? resolveAvatarSrc(String(rawKey)) : null;
     const rawMedia = m.mediaUrl || m.attachmentUrl || normalizedKey;
     const resolvedMedia = rawMedia ? normalizeMediaUrl(rawMedia) : null;
-    const rawSenderPhoto = m.senderPhoto 
-      || (m.sender?.avatarKey ? (String(m.sender.avatarKey).startsWith('/media/') ? m.sender.avatarKey : `/media/${m.sender.avatarKey}`) : null) 
-      || m.metadata?.senderPhoto 
-      || m.sender?.photoURL 
-      || null;
-    const resolvedSenderPhoto = rawSenderPhoto ? normalizeMediaUrl(rawSenderPhoto) : undefined;
+    const resolvedSenderId = m.senderId || m.sender?.profileId || m.sender?.id || m.senderUid;
+    const rawSenderPhoto =
+      resolveAvatarSrc(m.senderPhoto) ||
+      resolveAvatarSrc(m.sender?.avatarKey) ||
+      resolveAvatarSrc(m.metadata?.senderPhoto) ||
+      resolveAvatarSrc(m.sender?.photoURL) ||
+      (resolvedSenderId === '00000000-0000-4000-a000-000000000001' ? 'ai:era_official' : null);
+    const resolvedSenderPhoto = rawSenderPhoto
+      ? (rawSenderPhoto.startsWith('ai:') ? rawSenderPhoto : normalizeMediaUrl(rawSenderPhoto))
+      : undefined;
 
     return {
       ...m,
@@ -355,6 +366,29 @@ class MessagingService {
       const targetConvId = String(payload.conversationId || rawMsg?.conversationId || '');
       const rawConvId = String(payload.rawConversationId || '');
 
+      const senderCandidates = [
+        rawMsg?.senderId,
+        rawMsg?.senderUid,
+        rawMsg?.senderProfileId,
+        rawMsg?.senderDbId,
+        rawMsg?.sender?.id,
+        rawMsg?.sender?.userId,
+        rawMsg?.sender?.firebaseUid,
+        rawMsg?.sender?.profileId,
+      ]
+        .filter(Boolean)
+        .map((v: any) => String(v).toLowerCase());
+      const isFromSelf = senderCandidates.some((id) => this.knownSelfIds.has(id));
+      if (!isFromSelf && targetConvId && this.knownSelfIds.size > 0) {
+        try {
+          socket.emit('message_delivered', {
+            conversationId: targetConvId,
+            messageId: rawMsg?.id,
+          });
+        } catch {}
+      }
+
+      let matchedAnySubscriber = false;
       for (const convId of this.activeMessageSubscribers.keys()) {
         const current = this.getCachedMessages(convId) || [];
         const matches =
@@ -363,9 +397,17 @@ class MessagingService {
           (!!targetConvId && current.some((m: any) => String(m.conversationId || '') === targetConvId));
         if (!matches) continue;
 
+        matchedAnySubscriber = true;
         const normalized = this.normalizeMsg(rawMsg, convId);
         const merged = this.upsertMessages(current, [normalized]);
         this.notifySubscribers(convId, merged);
+      }
+
+      if (!matchedAnySubscriber && targetConvId) {
+        const current = this.getCachedMessages(targetConvId) || [];
+        const normalized = this.normalizeMsg(rawMsg, targetConvId);
+        const merged = this.upsertMessages(current, [normalized]);
+        this.setCachedMessages(targetConvId, merged);
       }
     });
 
@@ -516,6 +558,7 @@ class MessagingService {
     logger.info(`[MessagingService] Subscribed to messages for ${conversationId}`);
     
     let isCancelled = false;
+    this.registerCurrentIdentity([currentProfileId]);
     this.initGlobalSocketListeners();
 
     // Identify current user and join conversation rooms for instant real-time events
@@ -597,6 +640,8 @@ class MessagingService {
     let isCancelled = false;
     let localCurrentChats: Chat[] = [];
 
+    this.registerCurrentIdentity([userUid, profileId]);
+    this.initGlobalSocketListeners();
     if (userUid) identifyUserSocket(userUid);
     if (profileId) identifyUserSocket(profileId);
 
@@ -654,8 +699,56 @@ class MessagingService {
 
       const resolvedPhoto = resolveAvatarSrc(c.avatarKey) || resolveAvatarSrc(other?.avatarKey) || resolveAvatarSrc(c.photo) || resolveAvatarSrc(other?.photoURL) || null;
 
-      const uCount = typeof c.unreadCount === 'number' ? c.unreadCount : (typeof c.unreadCount === 'object' ? (c.unreadCount[profileId] || 0) : 0);
+      const uCount = typeof c.unreadCount === 'number' ? c.unreadCount : (typeof c.unreadCount === 'object' ? (c.unreadCount?.[profileId] || 0) : 0);
       const isUnread = typeof c.unread === 'boolean' ? c.unread : (uCount > 0);
+      const isGroupLike = Boolean(
+        c.isGroup ||
+        c.groupName ||
+        ['group', 'community', 'team', 'channel', 'bond_entity'].includes(String(c.type || '').toLowerCase()) ||
+        (Array.isArray(c.participants) && c.participants.length > 2)
+      );
+
+      const participantObjects = Array.isArray(c.participants) && typeof c.participants[0] === 'object'
+        ? c.participants
+        : (c.participantObjects || []);
+
+      // If participant objects exist, build/enrich participantDetails cache automatically
+      const existingDetails = { ...(c.participantDetails || {}) };
+      if (participantObjects.length > 0) {
+        for (const p of participantObjects) {
+          const uId = p.userId;
+          const pId = p.profileId;
+          const fUid = p.firebaseUid;
+          const dObj = {
+            id: uId || pId || fUid,
+            userId: uId,
+            profileId: pId,
+            firebaseUid: fUid,
+            displayName: p.displayName || p.username || 'Member',
+            username: p.username,
+            photoURL: resolveAvatarSrc(p.avatarKey) || resolveAvatarSrc(p.photoURL),
+            isVerified: Boolean(p.isVerified),
+            role: p.role || 'member'
+          };
+          if (uId) existingDetails[uId] = dObj;
+          if (pId) existingDetails[pId] = dObj;
+          if (fUid) existingDetails[fUid] = dObj;
+        }
+      }
+
+      // Canonical participant IDs: 1 identifier per user (prefer users.id, fallback to profileId/firebaseUid)
+      const canonicalParticipantIds = Array.isArray(c.participants)
+        ? (typeof c.participants[0] === 'object'
+            ? Array.from(new Set(c.participants.map((p: any) => p?.userId || p?.profileId || p?.firebaseUid).filter(Boolean)))
+            : Array.from(new Set(c.participants)))
+        : [userUid];
+
+      const canonicalProfileIds = Array.from(new Set([
+        ...(Array.isArray(c.profileIds) ? c.profileIds : []),
+        ...canonicalParticipantIds,
+        profileId,
+        ...(otherParticipantId ? [otherParticipantId] : []),
+      ].filter(Boolean)));
 
       return {
         ...c,
@@ -679,8 +772,10 @@ class MessagingService {
         latestMessagePreview: c.lastMessagePreview || c.lastMessage?.text || '',
         unreadCount: uCount,
         unread: isUnread,
-        participants: c.participants ? (Array.isArray(c.participants) && typeof c.participants[0] === 'object' ? c.participants.map((p: any) => p.userId) : c.participants) : [userUid],
-        profileIds: c.profileIds || (otherParticipantId ? [profileId, otherParticipantId] : [profileId])
+        participants: canonicalParticipantIds,
+        profileIds: canonicalProfileIds,
+        participantDetails: existingDetails,
+        participantObjects,
       } as Chat;
     };
 
@@ -830,7 +925,9 @@ class MessagingService {
           const normalized = res.conversations.map(normalizeChat);
           mergeAndEmitChats(normalized);
         }
-      } catch (err) {}
+      } catch (err) {
+        logger.warn('[MessagingService] Failed to fetch conversations:', err);
+      }
     };
 
     fetchApiChats();
@@ -885,12 +982,42 @@ class MessagingService {
     };
     socket.on('seen_update', handleSeenUpdate);
 
+    const handleDeliveryUpdate = () => {
+      if (!isCancelled) fetchApiChats();
+    };
+    socket.on('messages_delivered', handleDeliveryUpdate);
+
+    const handleProfileUpdated = () => {
+      if (!isCancelled) fetchApiChats();
+    };
+    socket.on('profile_updated', handleProfileUpdated);
+
+    const handleConversationUpdated = () => {
+      if (!isCancelled) fetchApiChats();
+    };
+    socket.on('conversation_created', handleConversationUpdated);
+    socket.on('new_conversation', handleConversationUpdated);
+    socket.on('conversation_joined', handleConversationUpdated);
+    socket.on('bonds_membership_approved', handleConversationUpdated);
+    socket.on('conversation_updated', handleConversationUpdated);
+    socket.on('group_member_added', handleConversationUpdated);
+    socket.on('group_updated', handleConversationUpdated);
+
     const cleanup = () => {
       isCancelled = true;
       clearInterval(fallbackInterval);
       socket.off('connect', handleReconnect);
       socket.off('new_message', handleNewMessage);
       socket.off('seen_update', handleSeenUpdate);
+      socket.off('messages_delivered', handleDeliveryUpdate);
+      socket.off('profile_updated', handleProfileUpdated);
+      socket.off('conversation_created', handleConversationUpdated);
+      socket.off('new_conversation', handleConversationUpdated);
+      socket.off('conversation_joined', handleConversationUpdated);
+      socket.off('bonds_membership_approved', handleConversationUpdated);
+      socket.off('conversation_updated', handleConversationUpdated);
+      socket.off('group_member_added', handleConversationUpdated);
+      socket.off('group_updated', handleConversationUpdated);
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
@@ -1018,8 +1145,60 @@ class MessagingService {
     }
   }
 
-  public async addGroupMembers(_db: any, conversationId: string, _requesterId: string, newMemberIds: string[], _memberDetailsMap?: Record<string, any>, _actorName?: string) {
+  public async addGroupMembers(
+    db: any, 
+    conversationId: string, 
+    requesterId: string, 
+    newMemberIds: string[], 
+    memberDetailsMap?: Record<string, any>, 
+    actorName?: string
+  ): Promise<{ success: boolean; addedCount: number }> {
     logger.info(`[MessagingService] addGroupMembers in ${conversationId}:`, newMemberIds);
+    if (!conversationId || !newMemberIds || newMemberIds.length === 0) {
+      return { success: false, addedCount: 0 };
+    }
+
+    const uniqueNewIds = Array.from(new Set(newMemberIds.filter(Boolean)));
+    let addedCount = 0;
+
+    // 1. Call Backend API for PostgreSQL persistence, authorization & Socket.IO broadcasts
+    try {
+      const res = await api.chat.addGroupMembers(conversationId, uniqueNewIds);
+      if (res && res.success) {
+        addedCount = res.addedCount ?? uniqueNewIds.length;
+      }
+    } catch (apiErr) {
+      logger.warn('[MessagingService] Backend addGroupMembers API warning:', apiErr);
+    }
+
+    // 2. Dual-write to Firestore for immediate multi-device cache sync
+    if (db) {
+      try {
+        const { doc, updateDoc, arrayUnion } = await import('firebase/firestore');
+        const convRef = doc(db, 'conversations', conversationId);
+        
+        const updates: Record<string, any> = {
+          participants: arrayUnion(...uniqueNewIds),
+          profileIds: arrayUnion(...uniqueNewIds),
+        };
+
+        if (memberDetailsMap && Object.keys(memberDetailsMap).length > 0) {
+          for (const [k, v] of Object.entries(memberDetailsMap)) {
+            updates[`participantDetails.${k}`] = v;
+          }
+        }
+
+        await updateDoc(convRef, updates);
+
+        if (actorName) {
+          await this.sendSystemEvent(db, conversationId, `${actorName} added new members to the group.`);
+        }
+      } catch (fsErr) {
+        logger.warn('[MessagingService] Firestore addGroupMembers dual-write warning:', fsErr);
+      }
+    }
+
+    return { success: true, addedCount };
   }
 
   public async removeGroupMember(_db: any, conversationId: string, _adminId: string, memberIdToRemove: string, _actorName?: string, _memberName?: string, _reason?: string) {

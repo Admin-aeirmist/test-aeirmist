@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { messagingService } from '../../modules/messaging/MessagingService';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
+import { api } from '../../services/api/client';
 import { collection, query, getDocs, limit, addDoc, serverTimestamp } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
@@ -60,13 +61,6 @@ const CHANNEL_TYPES: {
   }
 ];
 
-const FALLBACK_CONTACTS = [
-  { id: 'usr_shajidur', displayName: 'Shajidur Rahman', username: 'shajidur', photoURL: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?auto=format&fit=crop&q=80&w=200' },
-  { id: 'usr_shahriar', displayName: 'Shahriar Aman', username: 'shahriar', photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200' },
-  { id: 'usr_nishat', displayName: 'Nishat Tasnim', username: 'nishat', photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200' },
-  { id: 'usr_abdullah', displayName: 'Abdullah Al', username: 'abdullah', photoURL: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&q=80&w=200' }
-];
-
 const isSystemOrAiUser = (p: any): boolean => {
   if (!p) return true;
   const id = String(p.id || p.uid || p.userId || '').toLowerCase().trim();
@@ -108,10 +102,6 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      addToast({ title: 'File too large', message: 'Picture must be under 5MB.', type: 'warning' });
-      return;
-    }
     const reader = new FileReader();
     reader.onload = () => {
       setGroupPhoto(reader.result as string);
@@ -119,24 +109,39 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
     reader.readAsDataURL(file);
   };
 
-  // Fetch Firestore profiles
+  // Fetch real users from PostgreSQL API + Firestore profiles
   useEffect(() => {
     let isMounted = true;
     const fetchRemoteUsers = async () => {
-      if (!db) return;
       setIsFetchingUsers(true);
+      const fetched: any[] = [];
       try {
-        const profilesRef = collection(db, 'profiles');
-        const q = query(profilesRef, limit(40));
-        const snap = await getDocs(q);
-        if (isMounted) {
-          const fetched = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setFirestoreProfiles(fetched);
+        const res = await api.users.getSuggestions(200);
+        if (res && Array.isArray(res.users)) {
+          res.users.forEach((u: any) => {
+            fetched.push({
+              ...u,
+              id: u.profileId || u.id || u.userId,
+              photoURL: resolveAvatarSrc(u.avatarKey) || resolveAvatarSrc(u.photoURL) || '',
+            });
+          });
         }
-      } catch (e) {
-        logger.warn('Failed to fetch profiles for creation modal:', e);
-      } finally {
-        if (isMounted) setIsFetchingUsers(false);
+      } catch (apiErr) {
+        logger.warn('Failed to fetch PostgreSQL users for group creation:', apiErr);
+      }
+      if (db) {
+        try {
+          const profilesRef = collection(db, 'profiles');
+          const q = query(profilesRef, limit(100));
+          const snap = await getDocs(q);
+          snap.docs.forEach(doc => fetched.push({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          logger.warn('Failed to fetch Firestore profiles for creation modal:', e);
+        }
+      }
+      if (isMounted) {
+        setFirestoreProfiles(fetched);
+        setIsFetchingUsers(false);
       }
     };
     fetchRemoteUsers();
@@ -170,20 +175,39 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
     return Array.from(usersMap.values());
   }, [chats, profile?.id, user?.uid]);
 
-  // Combined candidates
+  // Combined candidates (deduplicated, real users only)
   const availablePeople = useMemo(() => {
     const unique = new Map<string, any>();
-    (suggestedUsers || []).forEach(p => { if (p && p.id) unique.set(p.id, p); });
-    chatUsers.forEach(p => { if (p && p.id && !unique.has(p.id)) unique.set(p.id, p); });
-    firestoreProfiles.forEach(p => { if (p && p.id && !unique.has(p.id)) unique.set(p.id, p); });
-    (allProfiles || []).forEach(p => { if (p && p.id && !unique.has(p.id)) unique.set(p.id, p); });
+    const addCandidate = (p: any) => {
+      if (!p) return;
+      const cid = p.id || p.profileId || p.userId;
+      if (!cid) return;
+      const uname = String(p.username || '').trim().toLowerCase();
+      const dedupeKey = (uname && uname.length >= 2 && uname !== 'user' && uname !== 'unknown') ? `u:${uname}` : `id:${cid}`;
+      const existing = unique.get(dedupeKey) || {};
+      const resolvedPhoto =
+        resolveAvatarSrc(p.avatarKey) ||
+        resolveAvatarSrc(p.photoURL) ||
+        resolveAvatarSrc(existing.avatarKey) ||
+        resolveAvatarSrc(existing.photoURL) ||
+        undefined;
+      unique.set(dedupeKey, {
+        ...existing,
+        ...p,
+        id: existing.id || cid,
+        photoURL: resolvedPhoto,
+      });
+    };
 
-    if (unique.size < 3) {
-      FALLBACK_CONTACTS.forEach(p => { if (!unique.has(p.id)) unique.set(p.id, p); });
-    }
+    firestoreProfiles.forEach(addCandidate);
+    (suggestedUsers || []).forEach(addCandidate);
+    chatUsers.forEach(addCandidate);
+    (allProfiles || []).forEach(addCandidate);
 
-    return Array.from(unique.values()).filter(p => p.id !== profile?.id && p.uid !== user?.uid && !isSystemOrAiUser(p));
-  }, [suggestedUsers, chatUsers, firestoreProfiles, allProfiles, profile?.id, user?.uid]);
+    return Array.from(unique.values()).filter(
+      p => p.id !== profile?.id && p.userId !== profile?.userId && p.uid !== user?.uid && !isSystemOrAiUser(p)
+    );
+  }, [suggestedUsers, chatUsers, firestoreProfiles, allProfiles, profile?.id, profile?.userId, user?.uid]);
 
   const toggleMember = (id: string) => {
     setSelectedMembers(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
@@ -431,7 +455,7 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
                   >
                     <img 
                       src={getAvatarUrl(mem.photoURL)} 
-                      className="w-4 h-4 rounded-full object-cover" 
+                      className="w-4 h-4 rounded-md object-cover" 
                       alt="" 
                     />
                     <span className="font-medium text-[11px] max-w-[80px] truncate">{mem.displayName || mem.username}</span>

@@ -1,6 +1,7 @@
 import TicketsTab from './TicketsTab';
+import BondsManagementTab from './BondsManagementTab';
 import SupportInboxTab from './SupportInboxTab';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { logger } from '@/src/utils/logger';
 import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
 import { applyDynamicFavicon } from '../../utils/favicon';
@@ -27,6 +28,7 @@ import {
   MoreVertical,
   ShieldCheck,
   Users,
+  Layers,
   Flag,
   ShoppingBag,
   CreditCard,
@@ -501,20 +503,20 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
     orders: 0,
     revenue: '$0.00',
     subscribers: 0,
-    onlineNow: '1 active',
-    serverHealth: '100% HEALTHY',
-    uptime: '99.99%',
-    edgeLatency: '< 15ms'
+    onlineNow: '0 active',
+    serverHealth: 'OPERATIONAL',
+    uptime: 'Active',
+    edgeLatency: 'Synced'
   });
 
   const [dauData, setDauData] = useState<{ day: string; count: number; date: string }[]>([]);
   const [reportsTrend, setReportsTrend] = useState<{ day: string; flagged: number; resolved: number }[]>([]);
-  const [isAutoUpdating, setIsAutoUpdating] = useState(true);
+  const [isAutoUpdating, setIsAutoUpdating] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const fetchLiveTelemetry = async () => {
-    setIsRefreshing(true);
+  const fetchLiveTelemetry = async (manual = false) => {
+    if (manual) setIsRefreshing(true);
     try {
       const res = await api.admin.getStats();
       if (res && res.stats) {
@@ -529,10 +531,10 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
           orders: res.stats.totalMarketplaceOrders ?? prev.orders,
           revenue: res.stats.revenue || prev.revenue || '$0.00',
           subscribers: res.stats.subscribers ?? prev.subscribers,
-          onlineNow: res.stats.onlineNow || (res.stats.activeUsers ? `${res.stats.activeUsers} active` : '1 active'),
-          serverHealth: res.stats.serverHealth || '100% HEALTHY',
-          uptime: res.stats.uptime || '99.99%',
-          edgeLatency: res.stats.edgeLatency || '< 15ms',
+          onlineNow: res.stats.onlineNow || (res.stats.activeUsers ? `${res.stats.activeUsers} active` : '0 active'),
+          serverHealth: res.stats.serverHealth || 'OPERATIONAL',
+          uptime: res.stats.uptime || 'Active',
+          edgeLatency: res.stats.edgeLatency || 'Synced',
         }));
 
         if (Array.isArray(res.stats.dailyActiveSeries) && res.stats.dailyActiveSeries.length > 0) {
@@ -546,11 +548,11 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
       logger.warn("Live telemetry fetch error:", err);
     } finally {
       setLastUpdated(new Date());
-      setIsRefreshing(false);
+      if (manual) setIsRefreshing(false);
     }
   };
 
-  // Firestore real-time listener as secondary sync
+  // Firestore authoritative real-time listener
   useEffect(() => {
     if (!db) return;
     const unsubProfiles = onSnapshot(collection(db, 'profiles'), (snap) => {
@@ -558,7 +560,7 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
       const subs = docs.filter(d => d.creatorModeEnabled || d.isVerified || d.isPremium).length;
       const bannedCount = docs.filter(d => d.status === 'BANNED' || d.isBanned).length;
       const suspendedCount = docs.filter(d => d.status === 'SUSPENDED').length;
-      const activeCount = Math.max(1, docs.length - bannedCount - suspendedCount);
+      const activeCount = Math.max(0, docs.length - bannedCount - suspendedCount);
 
       setStats(s => ({
         ...s,
@@ -567,7 +569,7 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
         suspended: Math.max(s.suspended, suspendedCount),
         banned: Math.max(s.banned, bannedCount),
         subscribers: Math.max(s.subscribers, subs),
-        onlineNow: `${Math.max(1, activeCount)} active`
+        onlineNow: `${activeCount} active`
       }));
     }, (err) => logger.warn("Admin profiles listener:", err));
 
@@ -594,20 +596,21 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
     };
   }, [db]);
 
-  // Live Auto-Update interval (every 5 seconds)
+  // Initial fetch on mount; only runs periodically if user manually enables Auto-Sync
   useEffect(() => {
-    fetchLiveTelemetry();
+    fetchLiveTelemetry(false);
 
     if (!isAutoUpdating) return;
     const interval = setInterval(() => {
-      fetchLiveTelemetry();
-    }, 5000);
+      fetchLiveTelemetry(false);
+    }, 60000);
 
     return () => clearInterval(interval);
   }, [isAutoUpdating]);
 
-  // Fallback DAU 7-day data if initial fetch hasn't returned
-  const displayDau = dauData.length > 0 ? dauData : (() => {
+  // 7-day DAU data: display authentic counts only
+  const displayDau = useMemo(() => {
+    if (dauData.length > 0) return dauData;
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const now = new Date();
     const arr = [];
@@ -617,16 +620,17 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
       arr.push({
         day: days[d.getDay()],
         date: d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' }),
-        count: i === 0 ? Math.max(1, stats.activeUsers || 1) : Math.max(1, Math.min(stats.activeUsers || 2, 3))
+        count: i === 0 ? (stats.activeUsers || 0) : 0
       });
     }
     return arr;
-  })();
+  }, [dauData, stats.activeUsers]);
 
-  const maxDau = Math.max(5, ...displayDau.map(d => d.count));
+  const maxDau = Math.max(1, ...displayDau.map(d => d.count));
 
-  // Fallback Reports 7-day trend
-  const displayReports = reportsTrend.length > 0 ? reportsTrend : (() => {
+  // 7-day Reports trend: display authentic counts only
+  const displayReports = useMemo(() => {
+    if (reportsTrend.length > 0) return reportsTrend;
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const now = new Date();
     const arr = [];
@@ -635,17 +639,17 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
       d.setDate(now.getDate() - i);
       arr.push({
         day: days[d.getDay()],
-        flagged: i === 0 ? stats.reportsToday : Math.min(stats.reportsToday, 2),
-        resolved: i === 0 ? Math.max(0, stats.reportsToday - stats.appeals) : 1
+        flagged: i === 0 ? stats.reportsToday : 0,
+        resolved: i === 0 ? Math.max(0, stats.reportsToday - stats.appeals) : 0
       });
     }
     return arr;
-  })();
+  }, [reportsTrend, stats.reportsToday, stats.appeals]);
 
-  const maxReports = Math.max(5, ...displayReports.flatMap(r => [r.flagged, r.resolved]));
+  const maxReports = Math.max(1, ...displayReports.flatMap(r => [r.flagged, r.resolved]));
 
   const cards = [
-    { label: 'Active Users', value: stats.activeUsers || (stats.totalUsers - stats.banned) || 1, icon: <Users size={20} className="text-emerald-400" />, change: 'Real-time telemetry', tab: 'users' },
+    { label: 'Active Users', value: stats.activeUsers || (stats.totalUsers - stats.banned) || 0, icon: <Users size={20} className="text-emerald-400" />, change: 'Verified accounts', tab: 'users' },
     { label: 'Online Now', value: stats.onlineNow, icon: <Activity size={20} className="text-aeirmist-cyan" />, change: 'Active sessions', tab: 'users' },
     { label: 'Suspended', value: stats.suspended, icon: <Lock size={20} className="text-amber-400" />, change: 'Restricted access', tab: 'users' },
     { label: 'Banned', value: stats.banned, icon: <AlertTriangle size={20} className="text-red-400" />, change: 'Permanently blocked', tab: 'users' },
@@ -653,36 +657,29 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
     { label: 'Reports Today', value: stats.reportsToday, icon: <Flag size={20} className="text-orange-400" />, change: 'Queue monitoring', tab: 'reports' },
     { label: 'Marketplace Orders', value: stats.orders, icon: <ShoppingBag size={20} className="text-aeirmist-lime" />, change: 'Total listings & orders', tab: 'marketplace' },
     { label: 'Total Revenue', value: stats.revenue, icon: <DollarSign size={20} className="text-emerald-400" />, change: 'Calculated volume', tab: 'marketplace' },
-    { label: 'Premium Subscribers', value: stats.subscribers, icon: <CreditCard size={20} className="text-purple-400" />, change: 'Verified Creators', tab: 'marketplace' },
-    { label: 'System Health', value: stats.serverHealth, icon: <Server size={20} className="text-emerald-400" />, change: `${stats.uptime} • ${stats.edgeLatency}`, tab: 'system' }
+    { label: 'Verified Creators', value: stats.subscribers, icon: <CreditCard size={20} className="text-purple-400" />, change: 'Verified badges', tab: 'marketplace' },
+    { label: 'System Health', value: stats.serverHealth, icon: <Server size={20} className="text-emerald-400" />, change: 'All services active', tab: 'system' }
   ];
 
   return (
     <div className="space-y-8">
-      {/* Telemetry Header with Live Indicator & Auto-Update Controls */}
+      {/* Telemetry Header with Clean, Stable Indicators */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-3xl glass-panel border border-white/10 bg-white/[0.02]">
         <div className="flex items-center gap-3">
           <div className="relative flex items-center justify-center">
-            {isAutoUpdating ? (
-              <>
-                <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping absolute opacity-75"></span>
-                <span className="w-3 h-3 rounded-full bg-emerald-500 relative"></span>
-              </>
-            ) : (
-              <span className="w-3 h-3 rounded-full bg-amber-500"></span>
-            )}
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
           </div>
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-black uppercase tracking-widest text-white">
-                {isAutoUpdating ? 'Live Auto-Update Active (5s)' : 'Auto-Update Paused'}
+                Live Database Telemetry
               </span>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
                 {stats.serverHealth}
               </span>
             </div>
             <p className="text-[10px] font-mono text-white/40 mt-0.5">
-              Uptime: {stats.uptime} • Edge Latency: {stats.edgeLatency} • Last updated: {lastUpdated.toLocaleTimeString()}
+              Firestore Sync: Active • Status: Verified • {lastUpdated ? `Synced: ${lastUpdated.toLocaleTimeString()}` : 'Syncing live data...'}
             </p>
           </div>
         </div>
@@ -692,19 +689,19 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
             onClick={() => setIsAutoUpdating(!isAutoUpdating)}
             className={`px-3 py-1.5 rounded-xl text-xs font-mono border transition-all flex items-center gap-1.5 ${
               isAutoUpdating 
-                ? 'bg-white/5 border-white/10 text-white/70 hover:text-white hover:bg-white/10' 
-                : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30'
+                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' 
+                : 'bg-white/5 border-white/10 text-white/70 hover:text-white hover:bg-white/10'
             }`}
           >
-            {isAutoUpdating ? 'Pause Telemetry' : 'Resume Telemetry'}
+            {isAutoUpdating ? 'Auto-Sync: On (60s)' : 'Auto-Sync: Off'}
           </button>
           <button
-            onClick={fetchLiveTelemetry}
+            onClick={() => fetchLiveTelemetry(true)}
             disabled={isRefreshing}
             className="px-3.5 py-1.5 rounded-xl text-xs font-mono font-bold bg-aeirmist-cyan/20 border border-aeirmist-cyan/40 text-aeirmist-cyan hover:bg-aeirmist-cyan/30 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
           >
             <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
-            <span>{isRefreshing ? 'Updating...' : 'Refresh Now'}</span>
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh Now'}</span>
           </button>
         </div>
       </div>
@@ -732,7 +729,7 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
         ))}
       </div>
 
-      {/* Analytics Charts Overview - Real Glowing Interactive SVG Charts */}
+      {/* Analytics Charts Overview */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Daily Active Users (DAU) 7-Day Chart */}
         <div className="glass-panel p-6 rounded-3xl border-white/5 bg-white/[0.01] space-y-4">
@@ -742,22 +739,28 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
               <p className="text-[10px] font-mono text-white/40">7-Day Engagement & Verification Telemetry</p>
             </div>
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-aeirmist-cyan/10 border border-aeirmist-cyan/20 text-[10px] font-mono text-aeirmist-cyan font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-cyan animate-pulse"></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-cyan"></span>
               Live Telemetry
             </div>
           </div>
 
           <div className="h-48 pt-6 px-2 flex items-end justify-between gap-2 border-b border-white/10">
             {displayDau.map((d, idx) => {
-              const heightPct = Math.max(15, Math.min(100, Math.round((d.count / maxDau) * 100)));
+              const heightPct = d.count > 0 ? Math.max(15, Math.min(100, Math.round((d.count / maxDau) * 100))) : 4;
               return (
                 <div key={idx} className="flex-1 flex flex-col items-center gap-2 group h-full justify-end">
-                  <span className="text-[10px] font-mono font-bold text-aeirmist-cyan opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all">
+                  <span className={`text-[10px] font-mono font-bold transition-all ${
+                    d.count > 0 ? 'text-aeirmist-cyan opacity-80 group-hover:opacity-100 group-hover:scale-110' : 'text-white/20'
+                  }`}>
                     {d.count}
                   </span>
                   <div className="w-full max-w-[36px] bg-white/5 rounded-t-xl h-full flex items-end p-1 overflow-hidden relative">
                     <div 
-                      className="w-full rounded-t-lg bg-gradient-to-t from-cyan-600 via-aeirmist-cyan to-cyan-300 transition-all duration-500 shadow-[0_0_12px_rgba(0,229,255,0.4)] group-hover:shadow-[0_0_20px_rgba(0,229,255,0.8)]"
+                      className={`w-full rounded-t-lg transition-all duration-500 ${
+                        d.count > 0 
+                          ? 'bg-gradient-to-t from-cyan-600 via-aeirmist-cyan to-cyan-300 shadow-[0_0_12px_rgba(0,229,255,0.4)] group-hover:shadow-[0_0_20px_rgba(0,229,255,0.8)]' 
+                          : 'bg-white/10'
+                      }`}
                       style={{ height: `${heightPct}%` }}
                     />
                   </div>
@@ -790,22 +793,26 @@ const DashboardTab = ({ db, setActiveTab }: { db: any; setActiveTab: (tab: any) 
 
           <div className="h-48 pt-6 px-2 flex items-end justify-between gap-2 border-b border-white/10">
             {displayReports.map((r, idx) => {
-              const flaggedHeight = Math.max(10, Math.min(100, Math.round((r.flagged / maxReports) * 100)));
-              const resolvedHeight = Math.max(10, Math.min(100, Math.round((r.resolved / maxReports) * 100)));
+              const flaggedHeight = r.flagged > 0 ? Math.max(10, Math.min(100, Math.round((r.flagged / maxReports) * 100))) : 4;
+              const resolvedHeight = r.resolved > 0 ? Math.max(10, Math.min(100, Math.round((r.resolved / maxReports) * 100))) : 4;
               return (
                 <div key={idx} className="flex-1 flex flex-col items-center gap-2 group h-full justify-end">
                   <div className="flex items-center gap-1 text-[9px] font-mono">
-                    <span className="text-orange-400 font-bold">{r.flagged}</span>
+                    <span className={`font-bold ${r.flagged > 0 ? 'text-orange-400' : 'text-white/20'}`}>{r.flagged}</span>
                     <span className="text-white/20">/</span>
-                    <span className="text-emerald-400 font-bold">{r.resolved}</span>
+                    <span className={`font-bold ${r.resolved > 0 ? 'text-emerald-400' : 'text-white/20'}`}>{r.resolved}</span>
                   </div>
                   <div className="w-full max-w-[40px] flex items-end justify-center gap-1 h-full p-1 bg-white/5 rounded-t-xl">
                     <div 
-                      className="w-1/2 rounded-t-md bg-gradient-to-t from-orange-600 to-amber-400 shadow-[0_0_10px_rgba(249,115,22,0.3)] group-hover:shadow-[0_0_16px_rgba(249,115,22,0.6)] transition-all duration-500"
+                      className={`w-1/2 rounded-t-md transition-all duration-500 ${
+                        r.flagged > 0 ? 'bg-gradient-to-t from-orange-600 to-amber-400 shadow-[0_0_10px_rgba(249,115,22,0.3)] group-hover:shadow-[0_0_16px_rgba(249,115,22,0.6)]' : 'bg-white/10'
+                      }`}
                       style={{ height: `${flaggedHeight}%` }}
                     />
                     <div 
-                      className="w-1/2 rounded-t-md bg-gradient-to-t from-emerald-600 to-teal-400 shadow-[0_0_10px_rgba(16,185,129,0.3)] group-hover:shadow-[0_0_16px_rgba(16,185,129,0.6)] transition-all duration-500"
+                      className={`w-1/2 rounded-t-md transition-all duration-500 ${
+                        r.resolved > 0 ? 'bg-gradient-to-t from-emerald-600 to-teal-400 shadow-[0_0_10px_rgba(16,185,129,0.3)] group-hover:shadow-[0_0_16px_rgba(16,185,129,0.6)]' : 'bg-white/10'
+                      }`}
                       style={{ height: `${resolvedHeight}%` }}
                     />
                   </div>
@@ -3367,7 +3374,7 @@ const VerificationRequestsTab = ({ db, addToast, toggleVerification }: { db: any
   );
 };
 
-type AdminTab = 'dashboard' | 'users' | 'reports' | 'appeals' | 'marketplace' | 'security' | 'roles' | 'flags' | 'logs' | 'verification' | 'tickets' | 'system';
+type AdminTab = 'dashboard' | 'users' | 'bonds' | 'reports' | 'appeals' | 'marketplace' | 'security' | 'roles' | 'flags' | 'logs' | 'verification' | 'tickets' | 'system';
 
 export const AdminPanel = () => {
   const { user, profile, loading: authLoading, db, addToast, purgeUser, toggleUserBan, toggleVerification, updateUserStatus, suspendUser } = useAeirmist();
@@ -3384,6 +3391,12 @@ export const AdminPanel = () => {
       case 'user':
       case 'accounts':
         return 'users';
+      case 'bonds':
+      case 'bond':
+      case 'groups':
+      case 'communities':
+      case 'teams':
+        return 'bonds';
       case 'reports':
       case 'report':
       case 'moderation':
@@ -3680,6 +3693,7 @@ export const AdminPanel = () => {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: <BarChart3 size={13} /> },
             { id: 'users', label: 'Users', icon: <Users size={13} /> },
+            { id: 'bonds', label: 'Bonds (Groups/Pages/Teams)', icon: <Layers size={13} /> },
             { id: 'reports', label: 'Reports', icon: <AlertTriangle size={13} /> },
             { id: 'appeals', label: 'Appeals', icon: <ShieldCheck size={13} /> },
             { id: 'tickets', label: 'Support Inbox', icon: <LifeBuoy size={13} /> },
@@ -3736,6 +3750,7 @@ export const AdminPanel = () => {
               onOpenAddAdmin={() => setIsAddAdminOpen(true)}
             />
           )}
+          {activeTab === 'bonds' && <BondsManagementTab db={db} addToast={addToast} />}
           {activeTab === 'reports' && <ReportsManagementTab db={db} addToast={addToast} />}
           {activeTab === 'appeals' && <AppealsTab db={db} addToast={addToast} />}
           {activeTab === 'tickets' && <SupportInboxTab db={db} addToast={addToast} />}

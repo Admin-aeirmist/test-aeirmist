@@ -24,7 +24,8 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
+import { api } from '../../services/api/client';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
 
@@ -172,53 +173,103 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
     return () => clearInterval(timer);
   }, []);
 
-  // Real-time Firestore Sync with mounting safety
+  // Real-time PostgreSQL API + Firestore Sync with mounting safety (loads ALL active users)
   useEffect(() => {
-    if (!db) {
-      setProfiles([]);
-      setLoadingProfiles(false);
-      return;
-    }
-
     let isMounted = true;
     setLoadingProfiles(true);
-    const profilesColl = collection(db, 'profiles');
-    
-    const unsubProfiles = onSnapshot(profilesColl, (snap) => {
+
+    const myIds = new Set(
+      [profile?.id, profile?.userId, user?.uid, (user as any)?.id]
+        .filter(Boolean)
+        .map((v: any) => String(v).toLowerCase())
+    );
+    const myUsername = (profile?.username || '').trim().toLowerCase();
+
+    let apiUsersCache: any[] = [];
+    let fsUsersCache: any[] = [];
+
+    const mergeAndSet = () => {
       if (!isMounted) return;
-      const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      const others = docs.filter((p: any) => {
-        // Exclude current user
-        if (p.id === profile?.id || p.uid === user?.uid || p.ownerUid === user?.uid) return false;
+      const mergedMap = new Map<string, any>();
 
-        // Kick unregistered / incomplete accounts: Must have a valid username (not 'user', null, undefined, or empty)
-        const rawUname = (p.username || '').trim().toLowerCase();
-        if (!rawUname || rawUname === 'user' || rawUname === 'null' || rawUname === 'undefined' || rawUname.length < 2) {
-          return false;
+      const ingest = (raw: any) => {
+        if (!raw) return;
+        const rawIds = [raw.id, raw.profileId, raw.userId, raw.uid, raw.ownerUid].filter(Boolean).map((v: any) => String(v).toLowerCase());
+        if (rawIds.some(id => myIds.has(id))) return;
+
+        const rawUname = (raw.username || '').trim().toLowerCase();
+        if (myUsername && rawUname === myUsername) return;
+        const rawName = (raw.displayName || raw.name || raw.username || '').trim();
+        if (!rawName && (!rawUname || rawUname.length < 2)) return;
+        if (rawUname === 'user' || rawUname === 'null' || rawUname === 'undefined') return;
+        if (raw.scheduledForPurge || raw.status === 'scheduled_for_deletion' || raw.isBanned) return;
+
+        const key = (rawUname && rawUname.length >= 2) ? `u:${rawUname}` : `id:${raw.profileId || raw.id || raw.userId}`;
+        const existing = mergedMap.get(key) || {};
+        const resolvedPhoto =
+          resolveAvatarSrc(raw.avatarKey) ||
+          resolveAvatarSrc(raw.photoURL) ||
+          resolveAvatarSrc(existing.avatarKey) ||
+          resolveAvatarSrc(existing.photoURL) ||
+          undefined;
+
+        mergedMap.set(key, {
+          ...existing,
+          ...raw,
+          id: raw.profileId || existing.profileId || existing.id || raw.id || raw.userId,
+          userId: raw.userId || existing.userId || raw.id,
+          uid: raw.firebaseUid || existing.uid || raw.uid || raw.userId || raw.id,
+          username: raw.username || existing.username || '',
+          displayName: raw.displayName || raw.name || existing.displayName || raw.username || 'Aeirmist Member',
+          photoURL: resolvedPhoto,
+          avatarKey: raw.avatarKey || existing.avatarKey,
+          bannerURL: resolveAvatarSrc(raw.bannerKey) || raw.bannerURL || existing.bannerURL,
+        });
+      };
+
+      // Primary source: PostgreSQL active users directory
+      apiUsersCache.forEach(ingest);
+      // Secondary enrichment: Firestore profiles
+      fsUsersCache.forEach(ingest);
+
+      setProfiles(Array.from(mergedMap.values()));
+    };
+
+    const loadApiUsers = async () => {
+      try {
+        const res = await api.users.getSuggestions(200);
+        if (res && Array.isArray(res.users)) {
+          apiUsersCache = res.users;
+          mergeAndSet();
+          if (isMounted) setLoadingProfiles(false);
         }
-
-        // Must have a valid display name
-        const rawName = (p.displayName || p.name || '').trim();
-        if (!rawName) return false;
-
-        // Exclude accounts scheduled for deletion or purge or banned
-        if (p.scheduledForPurge || p.status === 'scheduled_for_deletion' || p.isBanned) return false;
-
-        return true;
-      });
-      
-      setProfiles(others);
-      setLoadingProfiles(false);
-    }, (error) => {
-      logger.warn("Profiles subscription failing:", error);
-      if (isMounted) {
-        setProfiles([]);
-        setLoadingProfiles(false);
+      } catch (err) {
+        logger.warn("PostgreSQL users fetch failed:", err);
       }
-    });
+    };
+    loadApiUsers();
+
+    let unsubProfiles = () => {};
+    if (db) {
+      const profilesColl = collection(db, 'profiles');
+      unsubProfiles = onSnapshot(profilesColl, (snap) => {
+        if (!isMounted) return;
+        fsUsersCache = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+        mergeAndSet();
+        setLoadingProfiles(false);
+      }, (error) => {
+        logger.warn("Profiles subscription failing:", error);
+        if (isMounted) {
+          if (apiUsersCache.length > 0) mergeAndSet();
+          setLoadingProfiles(false);
+        }
+      });
+    } else {
+      setLoadingProfiles(false);
+    }
 
     let unsubRequests = () => {};
-    if (profile?.id) {
+    if (db && profile?.id) {
       const reqsColl = collection(db, 'follow_requests');
       const q = query(reqsColl, where('toId', '==', profile.id));
       
@@ -237,7 +288,7 @@ export const AeirmistDashboard: React.FC<AeirmistDashboardProps> = ({ onUserClic
       unsubProfiles();
       unsubRequests();
     };
-  }, [db, profile?.id, user?.uid]);
+  }, [db, profile?.id, profile?.userId, profile?.username, user?.uid]);
 
   // Handle follow click
   const handleFollow = async (targetId: string, displayName: string) => {

@@ -244,7 +244,7 @@ export const StoriesSystem: React.FC = React.memo(() => {
         acc[uId] = {
           userId: uId,
           userName: uId === user?.uid ? (profile?.displayName || profile?.username || 'You') : story.userName,
-          userAvatar: uId === user?.uid ? (profile?.photoURL || story.userAvatar) : story.userAvatar,
+          userAvatar: uId === user?.uid ? (profile?.photoURL || profile?.avatarKey || story.userAvatar) : story.userAvatar,
           stories: []
         };
       }
@@ -263,17 +263,8 @@ export const StoriesSystem: React.FC = React.memo(() => {
   const handleStoryUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    
-    if (file.size > 45 * 1024 * 1024) {
-      addToast({
-        title: "File Too Large",
-        message: "Story media limit is 45 MB. Please select a smaller file.",
-        type: "warning"
-      });
-      return;
-    }
 
-    // Use the optimized publishStory from context
+    // Use the optimized publishStory from context (unlimited media size)
     publishStory({
       file,
       type: file.type.startsWith('video') ? 'video' : 'image',
@@ -511,8 +502,8 @@ export const StoriesSystem: React.FC = React.memo(() => {
               <div className="flex flex-col items-center mb-10 relative z-10">
                 <div className="relative group">
                   <div className="absolute -inset-1 bg-gradient-to-tr from-aeirmist-cyan to-aeirmist-magenta rounded-[2.2rem] blur-md opacity-40 group-hover:opacity-100 transition-opacity" />
-                  <div className="w-24 h-24 rounded-full p-1 bg-aeirmist-bg border border-white/20 relative overflow-hidden">
-                    <img src={getAvatarUrl(profile?.photoURL)} alt="" className="w-full h-full rounded-full object-cover" />
+                  <div className="w-24 h-24 rounded-2xl p-1 bg-aeirmist-bg border border-white/20 relative overflow-hidden">
+                    <img src={getAvatarUrl(profile?.photoURL)} alt="" className="w-full h-full rounded-xl object-cover" />
                   </div>
                   <div className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-aeirmist-cyan flex items-center justify-center text-black shadow-lg">
                     <Mic size={14} strokeWidth={3} />
@@ -643,7 +634,7 @@ export const StoryViewer = ({
 }) => {
   const { settings } = useAppearance();
   const isGlobalBgActive = settings?.globalBgType && settings.globalBgType !== 'none';
-  const { user, db, canWrite, sendMessage, addToast, deleteStory } = useAeirmist();
+  const { user, profile, db, canWrite, sendMessage, addToast, deleteStory } = useAeirmist();
   const navigate = useNavigate();
   const [currentIndex, setCurrentIndex] = useState(0);
   const activeStory = group.stories[currentIndex] || group.stories[0] || { id: '', mediaUrl: '', mediaType: 'image' };
@@ -1393,8 +1384,8 @@ export const StoryViewer = ({
           {/* Header */}
           <div className="absolute top-[calc(2rem+var(--spacing-safe-top))] inset-x-6 z-50 flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-full border border-white/20 p-[1px] shrink-0 overflow-hidden shadow-md">
-                <img src={getAvatarUrl(group.userAvatar, group.userName)} className="w-full h-full rounded-full object-cover" alt="" />
+              <div className="w-10 h-10 rounded-xl border border-white/20 p-[1px] shrink-0 overflow-hidden shadow-md">
+                <img src={getAvatarUrl(group.userAvatar, group.userName)} className="w-full h-full rounded-[10px] object-cover" alt="" />
               </div>
               <div className="flex flex-col min-w-0">
                 <span className="text-sm font-bold text-white tracking-wide truncate drop-shadow">{group.userName}</span>
@@ -2431,7 +2422,7 @@ export const StoryViewer = ({
                           src={
                             userStoriesForEdit.find(s => s.id === (editCoverStoryId || editSelectedStoryIds[0]))?.mediaUrl || 
                             group.coverUrl || 
-                            'https://picsum.photos/seed/highlight/200/200'
+                            getAvatarUrl(profile?.photoURL)
                           } 
                           className="w-full h-full object-cover rounded-[14px]" 
                           alt="Cover Preview" 

@@ -23,9 +23,10 @@ import {
 import { Video, VideoComment, VideoPlaylist } from '../../types/videos';
 import { VideoPlayerComponent } from './VideoPlayer';
 import { VideoCard } from './VideoCard';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
 import { formatAeirmistTimestamp } from '../../lib/date';
 import { useAeirmist } from '../../context/AeirmistContext';
+import { useSharedProfile } from '../../hooks/useSharedProfile';
 import { getPlaybackProgressMap, addToWatchHistory, getLocalPlaylists, saveLocalPlaylists } from '../../utils/videoStorage';
 import { collection, query, where, getDocs, doc, updateDoc, increment, arrayUnion, arrayRemove, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
@@ -48,6 +49,11 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
   onUserClick
 }) => {
   const { profile, user, db, addToast, toggleFollow } = useAeirmist();
+  const creatorProfile = useSharedProfile(db, video.creatorId);
+  const resolvedCreatorAvatar = resolveAvatarSrc(
+    creatorProfile?.photoURL || creatorProfile?.avatarKey || creatorProfile?.avatar || video.creatorAvatar
+  ) || video.creatorAvatar || '';
+  const resolvedCreatorName = creatorProfile?.displayName || creatorProfile?.name || creatorProfile?.username || video.creatorName;
 
   const [isLiked, setIsLiked] = useState(() => 
     profile?.id ? (video.likedBy || []).includes(profile.id) : false
@@ -243,7 +249,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
         authorUid: authorUid,
         profileId: profile.id,
         userName: profile.name || profile.displayName || profile.username || 'Aeirmist User',
-        userAvatar: profile.avatar || profile.photoURL || '',
+        userAvatar: profile.photoURL || profile.avatarKey || profile.avatar || '',
         isVerified: profile.isVerified || false,
         text: commentInput.trim(),
         createdAt: new Date().toISOString(),
@@ -442,23 +448,23 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
             {/* Creator Profile */}
             <div className="flex items-center gap-3">
               <div 
-                onClick={() => onUserClick({ id: video.creatorId, name: video.creatorName })}
+                onClick={() => onUserClick({ id: video.creatorId, name: resolvedCreatorName, photoURL: resolvedCreatorAvatar })}
                 className="cursor-pointer"
               >
                 <img 
-                  src={getAvatarUrl(video.creatorAvatar, video.creatorName)} 
-                  alt={video.creatorName}
-                  className="w-11 h-11 rounded-full object-cover border border-white/20 hover:border-aeirmist-cyan transition-colors"
+                  src={getAvatarUrl(resolvedCreatorAvatar, resolvedCreatorName)} 
+                  alt={resolvedCreatorName}
+                  className="w-11 h-11 rounded-xl object-cover border border-white/20 hover:border-aeirmist-cyan transition-colors"
                 />
               </div>
 
               <div>
                 <div 
-                  onClick={() => onUserClick({ id: video.creatorId, name: video.creatorName })}
+                  onClick={() => onUserClick({ id: video.creatorId, name: resolvedCreatorName, photoURL: resolvedCreatorAvatar })}
                   className="flex items-center gap-1.5 cursor-pointer hover:text-aeirmist-cyan transition-colors"
                 >
-                  <span className="font-semibold text-sm text-white">{video.creatorName}</span>
-                  {video.isVerified && (
+                  <span className="font-semibold text-sm text-white">{resolvedCreatorName}</span>
+                  {(creatorProfile?.isVerified ?? video.isVerified) && (
                     <ShieldCheck className="text-aeirmist-cyan shrink-0" size={16} />
                   )}
                 </div>
@@ -603,9 +609,9 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
             {/* Comment Form */}
             <form onSubmit={handleAddComment} className="flex gap-3">
               <img 
-                src={getAvatarUrl(profile?.avatar, profile?.name || 'Me')} 
+                src={getAvatarUrl(profile?.photoURL || profile?.avatarKey || profile?.avatar, profile?.displayName || profile?.name || 'Me')} 
                 alt="Me" 
-                className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0"
+                className="w-8 h-8 rounded-lg object-cover border border-white/10 shrink-0"
               />
               <div className="flex-1 flex gap-2">
                 <input
@@ -636,7 +642,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
                         <img 
                           src={getAvatarUrl(c.userAvatar, c.userName)} 
                           alt={c.userName} 
-                          className="w-6 h-6 rounded-full object-cover"
+                          className="w-6 h-6 rounded-md object-cover"
                         />
                         <span className="font-semibold text-xs text-white/90">{c.userName}</span>
                         {c.isVerified && <ShieldCheck size={12} className="text-aeirmist-cyan" />}

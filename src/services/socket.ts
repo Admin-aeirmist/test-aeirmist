@@ -12,6 +12,9 @@ function resolveSocketUrl(): string {
   if (typeof window !== 'undefined') {
     const customApi = localStorage.getItem('aeirmist_backend_url');
     if (customApi) return customApi.replace(/\/+$/, '');
+    if ((window as any).aeirmistDesktop?.isElectron || navigator.userAgent.includes('Electron')) {
+      return 'https://aeirmist.com';
+    }
   }
   const base = resolveApiBase();
   if (base) return base;

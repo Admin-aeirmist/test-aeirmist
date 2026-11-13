@@ -17,6 +17,7 @@ import {
 import { Video } from '../../types/videos';
 import { formatDuration, savePlaybackProgress } from '../../utils/videoStorage';
 import { logger } from '@/src/utils/logger';
+import { normalizeMediaUrl } from '../../utils/mediaUtils';
 
 
 interface VideoPlayerProps {
@@ -63,13 +64,15 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize starting position
+  // Initialize starting position & reset error state on video change
   useEffect(() => {
+    setHasError(false);
+    setIsLoading(true);
     if (videoRef.current && initialTime > 0) {
       videoRef.current.currentTime = initialTime;
       setCurrentTime(initialTime);
     }
-  }, [initialTime, video.id]);
+  }, [initialTime, video.id, video.videoURL]);
 
   // Autoplay handler when explicitly mounted in watch mode
   useEffect(() => {
@@ -203,9 +206,8 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
       {!hasError && (
         <video
           ref={videoRef}
-          src={video.videoURL}
-          poster={video.thumbnailURL || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1200'}
-          crossOrigin="anonymous"
+          src={normalizeMediaUrl(video.videoURL || (video as any).videoUrl || (video as any).mediaKey)}
+          poster={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1200'}
           preload="auto"
           playsInline
           className="w-full h-full object-contain cursor-pointer"
