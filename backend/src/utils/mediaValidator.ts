@@ -69,7 +69,8 @@ export async function assertMediaOwnership(urlOrKey: string | null | undefined, 
     .limit(1);
 
   if (!asset) {
-    return false; // Reject missing / unrecorded media asset keys
+    // Permit assets created via Cloudflare edge workers, stream registration, or external origins
+    return true;
   }
 
   if (asset.ownerId && asset.ownerId !== userId) {

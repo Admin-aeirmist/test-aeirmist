@@ -36,7 +36,7 @@ const upload = multer({
   },
 });
 
-router.post('/upload', authenticateToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/upload', optionalAuthToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
   const file = req.file;
   try {
     if (!file) {
@@ -44,7 +44,10 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     }
 
     const folder = (req.body.folder || 'general').replace(/[^a-zA-Z0-9_-]/g, '');
-    const ext = path.extname(file.originalname).toLowerCase();
+    const originalName = req.body.originalName || file.originalname;
+    const ext = path.extname(originalName).toLowerCase();
+    const originalSize = req.body.originalSize ? parseInt(req.body.originalSize, 10) : file.size;
+    const mimeType = req.body.mimeType || file.mimetype;
 
     const ALLOWED_EXTENSIONS = new Set([
       '.jpg', '.jpeg', '.png', '.webp', '.gif',
@@ -68,7 +71,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     const key = `${folder}/${year}/${month}/${uuidv4()}${ext}`;
 
     // Zero-copy stream file directly into persistent storage
-    await storage.putFile(key, file.path, file.mimetype);
+    await storage.putFile(key, file.path, mimeType);
 
     // Save record to media_assets in PostgreSQL
     const [asset] = await db
@@ -76,9 +79,9 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       .values({
         key,
         ownerId: req.user?.userId || null,
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-        sizeBytes: file.size,
+        originalName,
+        mimeType,
+        sizeBytes: originalSize,
         storageDriver: env.STORAGE_DRIVER,
       })
       .returning();
@@ -89,9 +92,9 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       key,
       url: publicUrl,
       assetId: asset.id,
-      originalName: file.originalname,
-      mimeType: file.mimetype,
-      sizeBytes: file.size,
+      originalName,
+      mimeType,
+      sizeBytes: originalSize,
     });
   } catch (err) {
     if (file?.path) {

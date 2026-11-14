@@ -18,6 +18,7 @@ import { Video } from '../../types/videos';
 import { formatDuration, savePlaybackProgress } from '../../utils/videoStorage';
 import { logger } from '@/src/utils/logger';
 import { normalizeMediaUrl } from '../../utils/mediaUtils';
+import { aeirmistCache } from '../../services/CacheService';
 
 
 interface VideoPlayerProps {
@@ -61,8 +62,34 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
+  const [blobSrc, setBlobSrc] = useState<string>('');
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Check local offline vault cache for instant zero-buffer video playback
+  useEffect(() => {
+    let isCurrent = true;
+    let objectUrl = '';
+
+    const checkCache = async () => {
+      const raw = video.videoURL || (video as any).videoUrl || (video as any).mediaKey;
+      if (!raw) return;
+      try {
+        const cachedBlob = await aeirmistCache.getMedia(raw);
+        if (cachedBlob && isCurrent) {
+          objectUrl = URL.createObjectURL(cachedBlob);
+          setBlobSrc(objectUrl);
+        }
+      } catch {}
+    };
+
+    checkCache();
+
+    return () => {
+      isCurrent = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [video.id, video.videoURL]);
 
   // Initialize starting position & reset error state on video change
   useEffect(() => {
@@ -206,7 +233,7 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
       {!hasError && (
         <video
           ref={videoRef}
-          src={normalizeMediaUrl(video.videoURL || (video as any).videoUrl || (video as any).mediaKey)}
+          src={blobSrc || normalizeMediaUrl(video.videoURL || (video as any).videoUrl || (video as any).mediaKey)}
           poster={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1200'}
           preload="auto"
           playsInline

@@ -95,7 +95,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   const isPlayableVideoUrl = (url?: string): boolean => {
     if (!url || typeof url !== 'string') return false;
     const trimmed = url.trim();
-    if (!trimmed || trimmed.startsWith('blob:')) return false;
+    if (!trimmed) return false;
     // Public GCS sample bucket returns 403 AccessDenied XML; skip dead fixture videos
     if (trimmed.includes('commondatastorage.googleapis.com/gtv-videos-bucket/sample/')) return false;
     return true;
@@ -654,7 +654,24 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
         {showUploader && (
           <AeirmistVideoUploader
             onClose={() => setShowUploader(false)}
-            onUploadSuccess={() => setShowUploader(false)}
+            onUploadSuccess={(newVideo) => {
+              setShowUploader(false);
+              if (newVideo) {
+                const norm = normalizeVideoRecord(newVideo);
+                setDbVideos(prev => [norm, ...prev.filter(v => v.id !== norm.id)]);
+                setSelectedVideo(norm);
+                try {
+                  const currentCached = JSON.parse(localStorage.getItem('aeirmist_cached_videos') || '[]');
+                  const updated = [norm, ...currentCached.filter((v: any) => v.id !== norm.id)];
+                  localStorage.setItem('aeirmist_cached_videos', JSON.stringify(updated.slice(0, 30)));
+                } catch {}
+                addToast({
+                  title: 'VIDEO BROADCAST LIVE',
+                  message: `"${norm.caption || norm.title || 'Video'}" is now live and visible in your feed!`,
+                  type: 'success'
+                });
+              }
+            }}
           />
         )}
       </AnimatePresence>
