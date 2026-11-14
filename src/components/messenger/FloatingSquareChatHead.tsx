@@ -1,13 +1,23 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, MessageSquare, Maximize2, SquarePen, Plus, Loader2 } from 'lucide-react';
+import { 
+  X, 
+  MessageSquare, 
+  Maximize2, 
+  SquarePen, 
+  Plus, 
+  Loader2, 
+  Search, 
+  ChevronLeft 
+} from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { getAvatarUrl } from '../../lib/avatar';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { SystemChatHead } from '../../utils/nativeSettings';
 import { DockedChatWindow } from './DockedChatWindow';
 import { api } from '../../services/api/client';
-import { logger } from '@/src/utils/logger';
+import { logger } from '../../utils/logger';
+import { formatShortTimestamp } from '../../lib/date';
 
 interface FloatingSquareChatHeadProps {
   onOpenChat: (chatId: string) => void;
@@ -31,7 +41,7 @@ const HeadBubble: React.FC<{
 }> = ({ head, isOpenInDock, preview, onOpen, onClose }) => {
   const { onlineUsers, profile, user } = useAeirmist();
   const [isHovered, setIsHovered] = useState(false);
-  const avatar = getAvatarUrl(head.photo);
+  const avatar = getAvatarUrl(head.photo, head.name || head.id);
   const isOnline = Boolean(
     (head.participantId && head.participantId !== profile?.id && head.participantId !== user?.uid && onlineUsers?.has(head.participantId)) ||
     (head.id && !head.id.startsWith('conv_') && head.id !== profile?.id && head.id !== user?.uid && onlineUsers?.has(head.id))
@@ -139,12 +149,20 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
   onNewMessage,
   isInboxView = false 
 }) => {
-  const { floatingChatHeads, setFloatingChatHeads, removeFloatingChatHead, profile, addToast } = useAeirmist();
-  const [openChatIds, setOpenChatIds] = useState<string[]>([]);
+  const { floatingChatHeads, setFloatingChatHeads, removeFloatingChatHead, profile, user, onlineUsers, addToast } = useAeirmist();
+  
+  // Floating Messages Card & Active Docked Chat state
+  const [isMessagesPopupOpen, setIsMessagesPopupOpen] = useState(false);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
   const [activePreviews, setActivePreviews] = useState<Record<string, MessagePreview>>({});
-  const [isLoadingRecents, setIsLoadingRecents] = useState(false);
-  // Debounce ref to prevent accidental double-tap/click close bug
+  
+  const popupRef = useRef<HTMLDivElement>(null);
+  const triggerBtnRef = useRef<HTMLDivElement>(null);
   const lastHeadClickRef = useRef<{ id: string; time: number }>({ id: '', time: 0 });
 
   // Responsive breakpoint tracking
@@ -159,12 +177,50 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
   const chatHeadsEnabled = profile?.messagingSettings?.enableChatHeads !== false;
   const heads: Head[] = chatHeadsEnabled ? (floatingChatHeads || []) : [];
 
-  // Automatically keep openChatIds synced with active heads
-  useEffect(() => {
-    setOpenChatIds(prev => prev.filter(id => heads.some(h => h.id === id)));
-  }, [heads]);
+  // Fetch real-time conversations list
+  const loadConversations = useCallback(async () => {
+    setIsLoadingConversations(true);
+    try {
+      const res = await api.chat.getConversations();
+      const list: any[] = res?.conversations || [];
+      setConversations(list);
+    } catch (err) {
+      logger.error('[FloatingSquareChatHead] Failed to load conversations:', err);
+    } finally {
+      setIsLoadingConversations(false);
+    }
+  }, []);
 
-  // Listen for real-time incoming message pop-up preview events
+  // Fetch initial conversations list on mount
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
+
+  // Refresh conversations when popup opens
+  useEffect(() => {
+    if (isMessagesPopupOpen) {
+      loadConversations();
+    }
+  }, [isMessagesPopupOpen, loadConversations]);
+
+  // Close popup on click outside
+  useEffect(() => {
+    if (!isMessagesPopupOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        popupRef.current && 
+        !popupRef.current.contains(e.target as Node) &&
+        triggerBtnRef.current &&
+        !triggerBtnRef.current.contains(e.target as Node)
+      ) {
+        setIsMessagesPopupOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMessagesPopupOpen]);
+
+  // Listen for real-time incoming message pop-up preview events & live updates
   useEffect(() => {
     const handlePreview = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -175,7 +231,9 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
         [detail.chatId]: { text: detail.text, senderName: detail.senderName || 'Message' }
       }));
 
-      // Auto-dismiss preview popup after 6 seconds
+      // Refresh conversations list on incoming message
+      loadConversations();
+
       setTimeout(() => {
         setActivePreviews(prev => {
           const next = { ...prev };
@@ -189,17 +247,32 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       const cid = e.detail?.conversationId;
       if (cid) {
         removeFloatingChatHead?.(cid);
-        setOpenChatIds(prev => prev.filter(id => id !== cid));
+        if (activeChatId === cid) setActiveChatId(null);
+        setConversations(prev => prev.filter(c => c.id !== cid));
       }
+    };
+
+    const handleIncomingLive = () => {
+      loadConversations();
     };
 
     window.addEventListener('aeirmist_chathead_preview', handlePreview);
     window.addEventListener('aeirmist_chat_deleted', handleChatDeleted);
+    window.addEventListener('aeirmist_message_received', handleIncomingLive);
+    window.addEventListener('aeirmist_chat_updated', handleIncomingLive);
+
     return () => {
       window.removeEventListener('aeirmist_chathead_preview', handlePreview);
       window.removeEventListener('aeirmist_chat_deleted', handleChatDeleted);
+      window.removeEventListener('aeirmist_message_received', handleIncomingLive);
+      window.removeEventListener('aeirmist_chat_updated', handleIncomingLive);
     };
-  }, [removeFloatingChatHead]);
+  }, [activeChatId, loadConversations, removeFloatingChatHead]);
+
+  // Calculate total unread count for badge
+  const totalUnreadCount = useMemo(() => {
+    return conversations.reduce((acc, c) => acc + (c.unreadCount || (c.unread ? 1 : 0)), 0);
+  }, [conversations]);
 
   // Stable key so native sync only runs when something actually changed
   const headsKey = heads.map(h => `${h.id}|${h.name}|${h.photo || ''}|${h.unreadCount || 0}`).join(';');
@@ -257,7 +330,8 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     const onNativeOpen = (e: Event) => {
       const id = (e as CustomEvent).detail?.id;
       if (!id) return;
-      onOpenChat(id);
+      setActiveChatId(id);
+      setIsMessagesPopupOpen(true);
     };
     const onNativeClose = (e: Event) => {
       const id = (e as CustomEvent).detail?.id;
@@ -269,75 +343,19 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       window.removeEventListener('aeirmist_chathead_open', onNativeOpen);
       window.removeEventListener('aeirmist_chathead_close', onNativeClose);
     };
-  }, [onOpenChat, removeFloatingChatHead]);
+  }, [removeFloatingChatHead]);
 
   const isInboxRoute = isInboxView || (typeof window !== 'undefined' && (window.location.pathname.startsWith('/messages') || window.location.pathname === '/messages'));
   if (isInboxRoute) return null;
 
-  // Toggle recent chats as chat heads
-  const handleToggleRecentChatHeads = async (e: React.MouseEvent) => {
+  // Toggle Messages Popup from cyan squircle floating button
+  const handleFloatingButtonClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     triggerNativeHaptic('selection');
-
-    // Case 1: If docked chat is currently open, minimize/close it
-    if (openChatIds.length > 0) {
-      setOpenChatIds([]);
-      return;
-    }
-
-    // Case 2: If heads already exist on screen, open top one on desktop or toggle close
-    if (heads.length > 0) {
-      if (isDesktop && heads[0]) {
-        setOpenChatIds([heads[0].id]);
-      } else {
-        setFloatingChatHeads([]);
-      }
-      return;
-    }
-
-    // Case 3: Heads are empty, fetch recent conversations from API
-    setIsLoadingRecents(true);
-    try {
-      const res = await api.chat.getConversations();
-      const convs: any[] = res?.conversations || [];
-      if (convs.length > 0) {
-        const newHeads: Head[] = convs.slice(0, 4).map((c: any) => {
-          const other = c.otherParticipant || c.otherProfile;
-          const name = c.name || other?.displayName || other?.username || 'Chat';
-          const photo = c.photo || other?.photoURL || other?.avatarKey || '';
-          const participantId = c.otherParticipantId || other?.id || other?.userId || '';
-          return {
-            id: c.id,
-            name,
-            photo,
-            unreadCount: c.unreadCount || 0,
-            participantId,
-            themeSettings: c.themeSettings || null
-          };
-        });
-
-        setFloatingChatHeads(newHeads);
-
-        // On desktop, immediately dock the top recent chat so user can chat right away!
-        if (isDesktop && newHeads[0]) {
-          setOpenChatIds([newHeads[0].id]);
-        }
-      } else {
-        addToast?.({
-          title: 'No recent conversations',
-          message: 'You have no recent messages yet.',
-          type: 'info'
-        });
-        if (onNewMessage) onNewMessage();
-      }
-    } catch (err) {
-      logger.error('Failed to load recent chats for chat heads:', err);
-    } finally {
-      setIsLoadingRecents(false);
-    }
+    setIsMessagesPopupOpen(prev => !prev);
   };
 
-  // Click on a head bubble: Toggle floating popup chat window on both mobile & desktop!
+  // Click on a head bubble in the column
   const handleHeadClick = (id: string) => {
     const now = Date.now();
     if (lastHeadClickRef.current.id === id && now - lastHeadClickRef.current.time < 450) {
@@ -346,65 +364,327 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     lastHeadClickRef.current = { id, time: now };
     triggerNativeHaptic('selection');
 
-    setOpenChatIds(prev => {
-      if (prev.includes(id)) {
-        // If already open, minimize it
-        return prev.filter(openId => openId !== id);
-      }
-      // On mobile screen show 1 active window, on desktop up to 2-3
-      const maxDocked = isDesktop ? (window.innerWidth >= 1440 ? 3 : 2) : 1;
-      const next = [id, ...prev.filter(openId => openId !== id)];
-      return next.slice(0, maxDocked);
-    });
+    if (activeChatId === id && isMessagesPopupOpen) {
+      // Toggle closed if same
+      setIsMessagesPopupOpen(false);
+    } else {
+      setActiveChatId(id);
+      setIsMessagesPopupOpen(true);
+    }
   };
 
   const handleCloseHead = (id: string) => {
     triggerNativeHaptic('light');
-    setOpenChatIds(prev => prev.filter(openId => openId !== id));
+    if (activeChatId === id) setActiveChatId(null);
     removeFloatingChatHead(id);
   };
 
-  const handleMinimizeDocked = (id: string) => {
-    triggerNativeHaptic('light');
-    setOpenChatIds(prev => prev.filter(openId => openId !== id));
+  // Helper to extract conversation presentation info
+  const getConversationDisplay = useCallback((c: any) => {
+    const isGrp = c.isGroup || c.type === 'group';
+    const other = c.otherParticipant || c.otherProfile;
+    const name = isGrp ? (c.title || c.name || 'Group') : (c.name || other?.displayName || other?.username || 'Chat');
+    const photo = isGrp ? (c.avatarKey || c.photo) : (c.photo || other?.photoURL || other?.avatarKey || '');
+    const participantId = isGrp ? undefined : (c.otherParticipantId || other?.id || other?.userId || other?.firebaseUid || undefined);
+
+    const isOnline = Boolean(
+      participantId &&
+      participantId !== profile?.id &&
+      participantId !== user?.uid &&
+      onlineUsers?.has(participantId)
+    );
+
+    // Format snippet
+    let snippet = c.lastMessageSnippet || c.lastMessage || '';
+    if (typeof snippet === 'object') {
+      snippet = snippet.text || snippet.content || '';
+    }
+    if (!snippet && c.lastMessageContent) {
+      snippet = c.lastMessageContent;
+    }
+    if (c.lastMessageType === 'image') snippet = 'Sent an attachment';
+    if (c.lastMessageType === 'audio' || c.lastMessageType === 'voice') snippet = 'Voice message';
+    if (c.lastMessageType === 'video') snippet = 'Video message';
+
+    const isMeSender = c.lastMessageSenderId && (c.lastMessageSenderId === profile?.id || c.lastMessageSenderId === user?.uid);
+    const snippetPrefix = isMeSender ? 'You: ' : '';
+    const displaySnippet = snippet ? `${snippetPrefix}${snippet}` : 'No messages yet';
+
+    const timestamp = c.lastMessageAt || c.updatedAt || c.createdAt;
+    const shortTime = timestamp ? formatShortTimestamp(timestamp) : '';
+
+    return {
+      id: c.id,
+      name,
+      photo,
+      participantId,
+      isOnline,
+      displaySnippet,
+      shortTime,
+      unreadCount: c.unreadCount || 0,
+      isUnread: Boolean((c.unreadCount && c.unreadCount > 0) || c.unread),
+      themeSettings: c.themeSettings || null,
+    };
+  }, [profile?.id, user?.uid, onlineUsers]);
+
+  // Find active conversation details for DockedChatWindow
+  const activeConv = useMemo(() => {
+    if (!activeChatId) return null;
+    const fromList = conversations.find(c => c.id === activeChatId);
+    if (fromList) return getConversationDisplay(fromList);
+    const fromHead = heads.find(h => h.id === activeChatId);
+    if (fromHead) {
+      return {
+        id: fromHead.id,
+        name: fromHead.name,
+        photo: fromHead.photo,
+        participantId: fromHead.participantId,
+        isOnline: Boolean(fromHead.participantId && onlineUsers?.has(fromHead.participantId)),
+        displaySnippet: '',
+        shortTime: '',
+        unreadCount: fromHead.unreadCount || 0,
+        isUnread: Boolean(fromHead.unreadCount && fromHead.unreadCount > 0),
+        themeSettings: fromHead.themeSettings,
+      };
+    }
+    return {
+      id: activeChatId,
+      name: 'Chat',
+      photo: '',
+      participantId: undefined,
+      isOnline: false,
+      displaySnippet: '',
+      shortTime: '',
+      unreadCount: 0,
+      isUnread: false,
+      themeSettings: null,
+    };
+  }, [activeChatId, conversations, heads, onlineUsers, getConversationDisplay]);
+
+  // Filter conversations by search input
+  const filteredConversations = useMemo(() => {
+    if (!searchQuery.trim()) return conversations;
+    const q = searchQuery.toLowerCase().trim();
+    return conversations.filter(c => {
+      const disp = getConversationDisplay(c);
+      return disp.name.toLowerCase().includes(q) || disp.displaySnippet.toLowerCase().includes(q);
+    });
+  }, [conversations, searchQuery, getConversationDisplay]);
+
+  // Handle conversation click in list
+  const handleSelectConversation = (disp: any) => {
+    triggerNativeHaptic('selection');
+    setActiveChatId(disp.id);
+    if (disp.isUnread) {
+      setConversations(prev => prev.map(c => c.id === disp.id ? { ...c, unreadCount: 0, unread: false } : c));
+      api.chat.markSeen(disp.id).catch(() => {});
+    }
   };
 
-  const handleCloseDocked = (id: string) => {
-    handleCloseHead(id);
-  };
-
-  const handleMaximizeDocked = (id: string) => {
-    setOpenChatIds(prev => prev.filter(openId => openId !== id));
-    onOpenChat(id);
+  const handleComposeClick = () => {
+    triggerNativeHaptic('selection');
+    if (onNewMessage) {
+      onNewMessage();
+    } else {
+      setIsMessagesPopupOpen(false);
+      onOpenChat('');
+    }
   };
 
   return (
     <>
-      {/* ── Facebook-Style Popup Chat Windows (Both Mobile & Desktop Web) ── */}
-      {!isInboxRoute && openChatIds.length > 0 && (
-        <div 
-          className="fixed bottom-[74px] sm:bottom-0 right-2 sm:right-[82px] z-[320] flex flex-row-reverse items-end gap-3 pointer-events-none max-w-[calc(100vw-16px)]"
-        >
-          {openChatIds.map(chatId => {
-            const head = heads.find(h => h.id === chatId);
-            if (!head) return null;
-            return (
-              <div key={chatId} className="pointer-events-auto">
-                <DockedChatWindow
-                  chatId={head.id}
-                  chatName={head.name}
-                  chatPhoto={head.photo}
-                  participantId={head.participantId}
-                  initialThemeSettings={head.themeSettings}
-                  onMinimize={() => handleMinimizeDocked(head.id)}
-                  onClose={() => handleCloseDocked(head.id)}
-                  onMaximize={() => handleMaximizeDocked(head.id)}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {/* ── Facebook-Style Floating Messages Card / Docked Chat Window ── */}
+      <AnimatePresence>
+        {!isInboxRoute && isMessagesPopupOpen && (
+          <div
+            ref={popupRef}
+            className="fixed bottom-[74px] sm:bottom-0 right-2 sm:right-[82px] z-[320] pointer-events-auto"
+          >
+            {activeChatId && activeConv ? (
+              /* When a chat is selected, show DockedChatWindow with the '<' Back button */
+              <DockedChatWindow
+                chatId={activeConv.id}
+                chatName={activeConv.name}
+                chatPhoto={activeConv.photo}
+                participantId={activeConv.participantId}
+                initialThemeSettings={activeConv.themeSettings}
+                onBack={() => setActiveChatId(null)}
+                onMinimize={() => setIsMessagesPopupOpen(false)}
+                onClose={() => {
+                  setActiveChatId(null);
+                  setIsMessagesPopupOpen(false);
+                }}
+                onMaximize={() => {
+                  setIsMessagesPopupOpen(false);
+                  onOpenChat(activeConv.id);
+                }}
+              />
+            ) : (
+              /* When in List view, show Floating Messages Card matching Screenshot 1 & 2 */
+              <motion.div
+                initial={{ opacity: 0, scale: 0.94, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.94, y: 15 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                className="w-[calc(100vw-20px)] max-w-[360px] sm:w-[360px] h-[72vh] max-h-[560px] sm:h-[530px] rounded-2xl sm:rounded-t-2xl sm:rounded-b-none shadow-[0_15px_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden relative border border-white/20 bg-[#090a10]/98 backdrop-blur-2xl select-none"
+              >
+                {/* ── Top Header Bar (Matching Screenshot 1: Messages (6) [ ] X) ── */}
+                <div className="h-14 px-4 border-b border-white/10 bg-black/50 backdrop-blur-xl flex items-center justify-between shrink-0 select-none z-10">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white tracking-tight">Messages</h3>
+                    {totalUnreadCount > 0 && (
+                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-[0_0_10px_rgba(244,63,94,0.6)] animate-pulse">
+                        {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMessagesPopupOpen(false);
+                        onOpenChat('');
+                      }}
+                      title="Open in Messenger"
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                    >
+                      <Maximize2 size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsMessagesPopupOpen(false)}
+                      title="Close"
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* ── Compact Search Input Bar ── */}
+                <div className="px-3.5 py-2.5 border-b border-white/5 bg-white/[0.02]">
+                  <div className="relative flex items-center">
+                    <Search size={14} className="absolute left-3 text-white/40 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search messages..."
+                      className="w-full h-8 pl-8 pr-7 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-white/40 focus:outline-none focus:border-aeirmist-cyan/60 focus:bg-white/10 transition-all"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2.5 text-white/40 hover:text-white text-xs cursor-pointer"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Conversation List (Avatar, Name, Snippet · Time, Unread Dot) ── */}
+                <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 custom-scrollbar">
+                  {isLoadingConversations && conversations.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center gap-2 text-white/40 py-16">
+                      <Loader2 size={24} className="animate-spin text-aeirmist-cyan" />
+                      <span className="text-xs font-mono">Syncing messages...</span>
+                    </div>
+                  ) : filteredConversations.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center px-4 py-16 text-white/40">
+                      <MessageSquare size={32} className="text-white/20 mb-2" />
+                      <p className="text-xs font-medium text-white/70">
+                        {searchQuery ? 'No matching conversations' : 'No recent messages'}
+                      </p>
+                      <p className="text-[11px] text-white/40 mt-1">
+                        {searchQuery ? 'Try another keyword' : 'Start a new conversation to chat'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleComposeClick}
+                        className="mt-3 px-3.5 py-1.5 rounded-xl bg-aeirmist-cyan/10 border border-aeirmist-cyan/30 text-aeirmist-cyan text-xs font-semibold hover:bg-aeirmist-cyan/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <SquarePen size={12} />
+                        <span>Start Conversation</span>
+                      </button>
+                    </div>
+                  ) : (
+                    filteredConversations.map((c: any) => {
+                      const disp = getConversationDisplay(c);
+                      const avatar = getAvatarUrl(disp.photo, disp.name || disp.participantId);
+                      return (
+                        <div
+                          key={disp.id}
+                          onClick={() => handleSelectConversation(disp)}
+                          className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl hover:bg-white/[0.07] active:bg-white/10 transition-all cursor-pointer group relative ${
+                            disp.isUnread ? 'bg-white/[0.03]' : ''
+                          }`}
+                        >
+                          {/* Avatar with active online indicator */}
+                          <div className="relative shrink-0">
+                            <div className="w-12 h-12 rounded-full overflow-hidden bg-neutral-900 border border-white/10 group-hover:border-aeirmist-cyan/50 transition-colors">
+                              <img
+                                src={avatar}
+                                alt={disp.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                            </div>
+                            {disp.isOnline && (
+                              <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-aeirmist-lime border-2 border-[#090a10] shadow-[0_0_8px_rgba(191,255,0,0.7)]" />
+                            )}
+                          </div>
+
+                          {/* Contact Name & Snippet */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1 mb-0.5">
+                              <h4 className={`text-xs font-semibold truncate group-hover:text-aeirmist-cyan transition-colors ${
+                                disp.isUnread ? 'text-white font-bold' : 'text-white/90'
+                              }`}>
+                                {disp.name}
+                              </h4>
+                              {disp.shortTime && (
+                                <span className={`text-[10px] shrink-0 font-mono ${
+                                  disp.isUnread ? 'text-aeirmist-cyan font-semibold' : 'text-white/40'
+                                }`}>
+                                  {disp.shortTime}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className={`text-[11px] truncate leading-tight ${
+                                disp.isUnread ? 'text-white font-medium' : 'text-white/50'
+                              }`}>
+                                {disp.displaySnippet}
+                              </p>
+                              {disp.isUnread && (
+                                <span className="w-2.5 h-2.5 rounded-full bg-aeirmist-cyan shadow-[0_0_8px_rgba(0,242,255,0.8)] shrink-0" />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* ── Bottom-Right Floating Compose Pen Button (Matching Screenshot 1) ── */}
+                <button
+                  type="button"
+                  onClick={handleComposeClick}
+                  title="New Message"
+                  className="absolute bottom-4 right-4 w-11 h-11 rounded-full bg-gradient-to-br from-[#161a29] to-[#090a10] border-2 border-aeirmist-cyan/60 text-aeirmist-cyan hover:border-aeirmist-cyan hover:shadow-[0_0_20px_rgba(0,242,255,0.5)] active:scale-95 transition-all flex items-center justify-center shadow-2xl cursor-pointer z-20 group"
+                >
+                  <SquarePen size={18} className="group-hover:rotate-6 transition-transform" />
+                </button>
+              </motion.div>
+            )}
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* ── Side Rail / Floating Chat Heads Column (Right Side) ── */}
       {!isInboxRoute && (
@@ -423,28 +703,38 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
             right: '16px'
           }}
         >
-          {/* ── Recent Chats / Chat Heads Button ── */}
+          {/* ── Floating Squircle Button (Click to toggle Messages Card) ── */}
           <motion.div
+            ref={triggerBtnRef}
             layout
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={handleToggleRecentChatHeads}
+            onClick={handleFloatingButtonClick}
             className="relative cursor-pointer group select-none"
           >
             <div className={`w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-[#121422] to-[#090a10] border-2 transition-all duration-200 flex items-center justify-center text-aeirmist-cyan ${
-              heads.length > 0 || openChatIds.length > 0
-                ? 'border-aeirmist-cyan shadow-[0_0_22px_rgba(0,242,255,0.5)] ring-2 ring-aeirmist-cyan/30'
-                : 'border-aeirmist-cyan/40 hover:border-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.25)] hover:shadow-[0_0_22px_rgba(0,242,255,0.5)]'
+              isMessagesPopupOpen
+                ? 'border-aeirmist-cyan shadow-[0_0_25px_rgba(0,242,255,0.6)] ring-2 ring-aeirmist-cyan/40 scale-105'
+                : 'border-aeirmist-cyan/50 hover:border-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.25)] hover:shadow-[0_0_22px_rgba(0,242,255,0.5)]'
             }`}>
-              {isLoadingRecents ? (
+              {isLoadingConversations && conversations.length === 0 ? (
                 <Loader2 size={20} className="animate-spin text-aeirmist-cyan" />
               ) : (
                 <SquarePen size={20} className="group-hover:rotate-6 transition-transform" />
               )}
             </div>
+
+            {/* Unread badge on the trigger button itself */}
+            {totalUnreadCount > 0 && !isMessagesPopupOpen && (
+              <div className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 border-2 border-[#0c0d14] text-[9px] font-black text-white flex items-center justify-center shadow-[0_0_10px_rgba(244,63,94,0.7)] animate-pulse select-none">
+                {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+              </div>
+            )}
+
+            {/* Hover tooltip */}
             <div className="absolute right-16 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-white/15 text-white text-[11px] font-bold whitespace-nowrap shadow-2xl z-50 flex items-center gap-1.5">
               <MessageSquare size={12} className="text-aeirmist-cyan" />
-              <span>{heads.length > 0 ? (openChatIds.length > 0 ? 'Minimize' : 'Recent Chats') : 'Recent Chats'}</span>
+              <span>{isMessagesPopupOpen ? 'Close Messages' : 'Messages'}</span>
             </div>
           </motion.div>
 
@@ -454,7 +744,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
               <HeadBubble
                 key={h.id}
                 head={h}
-                isOpenInDock={openChatIds.includes(h.id)}
+                isOpenInDock={isMessagesPopupOpen && activeChatId === h.id}
                 preview={activePreviews[h.id]}
                 onOpen={handleHeadClick}
                 onClose={handleCloseHead}

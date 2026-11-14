@@ -18,7 +18,8 @@ import {
   Trash2,
   PhoneOutgoing,
   PhoneIncoming,
-  PhoneMissed
+  PhoneMissed,
+  ChevronLeft
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
@@ -43,6 +44,7 @@ interface DockedChatWindowProps {
   onMinimize: () => void;
   onClose: () => void;
   onMaximize: () => void;
+  onBack?: () => void;
 }
 
 const QUICK_EMOJIS = ['❤️', '😂', '🔥', '😍', '👏', '⚡', '✨', '👍', '🙏', '🎉'];
@@ -55,7 +57,8 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   initialThemeSettings,
   onMinimize,
   onClose,
-  onMaximize
+  onMaximize,
+  onBack
 }) => {
   const { user, profile, startCall, uploadMedia, onlineUsers, addToast, db } = useAeirmist();
   const { settings } = useAppearance();
@@ -581,13 +584,27 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
       />
 
       {/* ── Top Header Bar (Matching Picture 2 with Active Now) ── */}
-      <div className="h-14 px-3.5 border-b border-white/10 bg-black/60 backdrop-blur-2xl flex items-center justify-between shrink-0 select-none z-10">
+      <div className="h-14 px-3 border-b border-white/10 bg-black/60 backdrop-blur-2xl flex items-center justify-between shrink-0 select-none z-10">
         {/* User info */}
-        <div 
-          onClick={onMaximize}
-          className="flex items-center gap-2.5 min-w-0 cursor-pointer group"
-          title="Open in full Messenger"
-        >
+        <div className="flex items-center gap-1.5 min-w-0">
+          {onBack && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onBack();
+              }}
+              className="w-7 h-7 -ml-0.5 rounded-full bg-white/5 hover:bg-white/15 flex items-center justify-center text-white/80 hover:text-aeirmist-cyan transition-all cursor-pointer shrink-0"
+              title="Back to Messages"
+            >
+              <ChevronLeft size={18} />
+            </button>
+          )}
+          <div 
+            onClick={onMaximize}
+            className="flex items-center gap-2.5 min-w-0 cursor-pointer group"
+            title="Open in full Messenger"
+          >
           <div className="relative shrink-0">
             <div className="w-9 h-9 rounded-xl overflow-hidden bg-neutral-900 border border-white/15 group-hover:border-aeirmist-cyan/60 transition-colors">
               <img 
@@ -623,6 +640,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
             </div>
           </div>
         </div>
+      </div>
 
         {/* Action icons */}
         <div className="flex items-center gap-1 shrink-0 text-white/60">
