@@ -2155,7 +2155,7 @@ function AppContent() {
                     {/* 8. Videos Tab */}
                     {visitedTabs.has('videos') && (
                       <div
-                        className={`flex-1 h-full overflow-hidden flex flex-col ${activeTab === 'videos' ? '' : '!hidden'}`}
+                        className={`flex-1 h-full min-h-0 overflow-hidden flex flex-col ${activeTab === 'videos' ? '' : '!hidden'}`}
                       >
                         {featureFlags?.videos === false ? (
                           <ComingSoonScreen sectorName="Reels & Short Videos Feed" onHomeClick={() => setActiveTab('feed')} />

@@ -351,7 +351,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   }
 
   return (
-    <div className={`flex flex-col h-full ${isGlobalBgActive ? 'bg-[#050505]/40 backdrop-blur-xl' : 'bg-[#050505]'} relative overflow-y-auto overflow-x-hidden no-scrollbar font-sans text-white pb-28 min-w-0 w-full`}>
+    <div className={`flex flex-col h-full ${isGlobalBgActive ? 'bg-[#050505]/40 backdrop-blur-xl' : 'bg-[#050505]'} relative overflow-y-auto overflow-x-hidden no-scrollbar font-sans text-white pb-6 sm:pb-8 min-w-0 w-full`}>
       
       {/* Header */}
       <header 

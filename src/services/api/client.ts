@@ -960,61 +960,154 @@ export const api = {
       folder = 'general',
       onProgress?: (percent: number, details?: UploadProgressDetails) => void
     ): Promise<{ key: string; url: string; sizeBytes: number; mimeType: string }> => {
-      const isLargeStream = file.size > 20 * 1024 * 1024; // > 20MB files, e.g. 150MB video files
+      const token = await getFreshToken();
+      const base = resolveApiBase();
+      const totalMB = (file.size / (1024 * 1024)).toFixed(1);
 
-      // For large video/media files, avoid sending 100MB+ in a single request across Cloudflare edge (which causes 413/timeouts/hangs)
-      // Instead, we register the stream via high-speed handshake slice, cache the full file locally in IndexedDB vault, and return immediate public stream key
-      const payloadFile = isLargeStream ? new File([file.slice(0, 512 * 1024, file.type)], file.name, { type: file.type }) : file;
+      // If file is larger than 20MB, use high-speed chunked upload (8MB chunks) to prevent Cloudflare 100MB body limit
+      if (file.size > 20 * 1024 * 1024) {
+        const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const uploadId = 'up_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
+        const chunkUrl = `${base}/api/v1/media/upload-chunk`;
+        const startTime = Date.now();
 
+        let finalResult: { key: string; url: string; sizeBytes: number; mimeType: string } | null = null;
+
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+          const start = chunkIndex * CHUNK_SIZE;
+          const end = Math.min(file.size, start + CHUNK_SIZE);
+          const chunkBlob = file.slice(start, end, file.type);
+
+          const chunkFormData = new FormData();
+          chunkFormData.append('chunk', chunkBlob, file.name);
+          chunkFormData.append('uploadId', uploadId);
+          chunkFormData.append('chunkIndex', String(chunkIndex));
+          chunkFormData.append('totalChunks', String(totalChunks));
+          chunkFormData.append('folder', folder);
+          chunkFormData.append('originalName', file.name);
+          chunkFormData.append('mimeType', file.type);
+          chunkFormData.append('totalSize', String(file.size));
+
+          const res = await new Promise<any>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', chunkUrl, true);
+            xhr.withCredentials = true;
+            xhr.timeout = 180000;
+
+            if (token) {
+              xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            }
+            if (typeof window !== 'undefined') {
+              try {
+                const s = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
+                if (s) {
+                  const parsed = JSON.parse(s);
+                  const uid = parsed.uid || parsed.id || parsed.userId || localStorage.getItem('aeirmist_user_id');
+                  if (uid) xhr.setRequestHeader('X-User-Id', uid);
+                  const pid = parsed.profileId || parsed.activeProfileId || (parsed.profile ? parsed.profile.id : null) || localStorage.getItem('aeirmist_active_profile_id');
+                  if (pid) xhr.setRequestHeader('X-Profile-Id', pid);
+                }
+              } catch {}
+            }
+
+            xhr.upload.onprogress = (evt) => {
+              if (evt.lengthComputable && onProgress) {
+                const currentBytes = start + evt.loaded;
+                const elapsedSec = (Date.now() - startTime) / 1000;
+                const speed = elapsedSec > 0 ? currentBytes / elapsedSec : 0;
+                const remainingBytes = Math.max(0, file.size - currentBytes);
+                const eta = speed > 0 ? Math.round(remainingBytes / speed) : 0;
+                const pct = Math.min(99, Math.round((currentBytes / file.size) * 100));
+                onProgress(pct, {
+                  loadedBytes: currentBytes,
+                  totalBytes: file.size,
+                  speedBytesPerSec: speed,
+                  etaSeconds: eta,
+                  loadedMB: (currentBytes / (1024 * 1024)).toFixed(1),
+                  totalMB,
+                  speedMBPerSec: (speed / (1024 * 1024)).toFixed(2),
+                });
+              }
+            };
+
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                  resolve(JSON.parse(xhr.responseText));
+                } catch {
+                  reject(new Error('Invalid chunk upload JSON response'));
+                }
+              } else {
+                reject(new Error(`Chunk ${chunkIndex + 1}/${totalChunks} upload failed with HTTP ${xhr.status}`));
+              }
+            };
+
+            xhr.onerror = () => reject(new Error(`Network error uploading chunk ${chunkIndex + 1}/${totalChunks}`));
+            xhr.ontimeout = () => reject(new Error(`Timeout uploading chunk ${chunkIndex + 1}/${totalChunks}`));
+
+            xhr.send(chunkFormData);
+          });
+
+          if (res.status === 'completed') {
+            finalResult = {
+              key: res.key,
+              url: res.url || `/media/${res.key}`,
+              sizeBytes: file.size,
+              mimeType: file.type,
+            };
+          }
+        }
+
+        if (!finalResult) {
+          throw new Error('Chunked video upload did not produce a final media record');
+        }
+
+        // Cache the full original file immediately in local IndexedDB vault for instant 0-buffer playback
+        try {
+          const { aeirmistCache } = await import('../CacheService');
+          await aeirmistCache.saveMedia(finalResult.url, file, file.type);
+          await aeirmistCache.saveMedia(finalResult.key, file, file.type);
+          if (finalResult.url.startsWith('/media/')) {
+            await aeirmistCache.saveMedia(finalResult.url.replace(/^\/media\//, ''), file, file.type);
+          }
+        } catch (cacheErr) {
+          console.warn('[Cache] Offline media caching note:', cacheErr);
+        }
+
+        onProgress?.(100, {
+          loadedBytes: file.size,
+          totalBytes: file.size,
+          speedBytesPerSec: 35000000,
+          etaSeconds: 0,
+          loadedMB: totalMB,
+          totalMB,
+          speedMBPerSec: '35.00'
+        });
+
+        return finalResult;
+      }
+
+      // Direct single-request upload for normal-sized files (<= 20MB)
       const formData = new FormData();
-      formData.append('file', payloadFile);
+      formData.append('file', file);
       formData.append('folder', folder);
       formData.append('originalSize', String(file.size));
       formData.append('originalName', file.name);
       formData.append('mimeType', file.type);
-      if (isLargeStream) {
-        formData.append('isStreamRegistration', 'true');
-      }
 
-      const base = resolveApiBase();
       const url = `${base}/api/v1/media/upload`;
-      const token = await getFreshToken();
 
       return new Promise<{ key: string; url: string; sizeBytes: number; mimeType: string }>((resolve, reject) => {
-        const totalMB = (file.size / (1024 * 1024)).toFixed(1);
-
-        // If large stream, provide active high-speed progress simulation so user never stares at a frozen screen
-        let progressInterval: any = null;
-        if (isLargeStream && onProgress) {
-          let simulatedPct = 15;
-          progressInterval = setInterval(() => {
-            if (simulatedPct < 92) {
-              simulatedPct += Math.min(25, Math.floor(Math.random() * 20) + 12);
-              const loaded = Math.min(file.size, Math.floor((simulatedPct / 100) * file.size));
-              const loadedMB = (loaded / (1024 * 1024)).toFixed(1);
-              onProgress(simulatedPct, {
-                loadedBytes: loaded,
-                totalBytes: file.size,
-                speedBytesPerSec: 42000000,
-                etaSeconds: Math.max(0, Math.ceil((100 - simulatedPct) / 45)),
-                loadedMB,
-                totalMB,
-                speedMBPerSec: '42.50'
-              });
-            }
-          }, 200);
-        }
-
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url, true);
         xhr.withCredentials = true;
-        xhr.timeout = 180000; // 3 minutes
+        xhr.timeout = 180000;
 
         if (token) {
           xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         }
 
-        // Attach persistent user session headers
         if (typeof window !== 'undefined') {
           try {
             const s = localStorage.getItem('aeirmist_session') || localStorage.getItem('aeirmist_user_profile') || localStorage.getItem('aeirmist_cached_profile');
@@ -1028,13 +1121,12 @@ export const api = {
           } catch {}
         }
 
-        // Standard Upload Progress Tracker for small files
         const startTime = Date.now();
         let lastLoaded = 0;
         let lastTime = startTime;
         let smoothedSpeed = 0;
 
-        if (!isLargeStream && xhr.upload && onProgress) {
+        if (xhr.upload && onProgress) {
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable && event.total > 0) {
               const now = Date.now();
@@ -1070,7 +1162,6 @@ export const api = {
         }
 
         xhr.onload = async () => {
-          if (progressInterval) clearInterval(progressInterval);
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const data = JSON.parse(xhr.responseText);
@@ -1078,7 +1169,6 @@ export const api = {
               data.mimeType = file.type;
               data.url = data.url || `/media/${data.key}`;
 
-              // Cache the full original file immediately in local IndexedDB vault for instant 0-buffer playback
               try {
                 const { aeirmistCache } = await import('../CacheService');
                 await aeirmistCache.saveMedia(data.url, file, file.type);
@@ -1109,73 +1199,16 @@ export const api = {
               const errData = JSON.parse(xhr.responseText);
               if (errData.error) errorMsg = errData.error;
             } catch {}
-
-            // Resilient fallback for large media so users are NEVER locked out
-            if (isLargeStream) {
-              try {
-                const ext = file.name ? file.name.substring(file.name.lastIndexOf('.')) : '.mp4';
-                const fallbackKey = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
-                const fallbackUrl = `/media/${fallbackKey}`;
-                const { aeirmistCache } = await import('../CacheService');
-                await aeirmistCache.saveMedia(fallbackUrl, file, file.type);
-                await aeirmistCache.saveMedia(fallbackKey, file, file.type);
-                onProgress?.(100, {
-                  loadedBytes: file.size,
-                  totalBytes: file.size,
-                  speedBytesPerSec: 35000000,
-                  etaSeconds: 0,
-                  loadedMB: totalMB,
-                  totalMB,
-                  speedMBPerSec: '35.00'
-                });
-                resolve({
-                  key: fallbackKey,
-                  url: fallbackUrl,
-                  sizeBytes: file.size,
-                  mimeType: file.type
-                });
-                return;
-              } catch {}
-            }
-
             reject(new Error(errorMsg));
           }
         };
 
-        xhr.onerror = async () => {
-          if (progressInterval) clearInterval(progressInterval);
-          if (isLargeStream) {
-            try {
-              const ext = file.name ? file.name.substring(file.name.lastIndexOf('.')) : '.mp4';
-              const fallbackKey = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
-              const fallbackUrl = `/media/${fallbackKey}`;
-              const { aeirmistCache } = await import('../CacheService');
-              await aeirmistCache.saveMedia(fallbackUrl, file, file.type);
-              await aeirmistCache.saveMedia(fallbackKey, file, file.type);
-              onProgress?.(100, {
-                loadedBytes: file.size,
-                totalBytes: file.size,
-                speedBytesPerSec: 35000000,
-                etaSeconds: 0,
-                loadedMB: totalMB,
-                totalMB,
-                speedMBPerSec: '35.00'
-              });
-              resolve({
-                key: fallbackKey,
-                url: fallbackUrl,
-                sizeBytes: file.size,
-                mimeType: file.type
-              });
-              return;
-            } catch {}
-          }
+        xhr.onerror = () => {
           reject(new Error('Network error during media upload. Please verify connection to the Aeirmist server.'));
         };
 
         xhr.ontimeout = () => {
-          if (progressInterval) clearInterval(progressInterval);
-          reject(new Error('Upload timed out. The video file took too long to transfer.'));
+          reject(new Error('Upload timed out. The file took too long to transfer.'));
         };
 
         xhr.send(formData);

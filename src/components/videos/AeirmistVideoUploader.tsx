@@ -390,71 +390,91 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         savedBy: []
       };
 
-      // Dual-Sync Persistence: Universal API / Cloudflare Edge
-      try {
-        await api.videos.create({
-          title,
-          description,
-          videoUrl: finalVideoUrl,
-          thumbnailUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
-          category,
-          tags: parsedTags,
-        });
-      } catch (apiErr) {
-        logger.warn('[Uploader] Universal API video sync note:', apiErr);
-      }
-
-      try {
-        await api.posts.create({
-          content: title + (description ? `\n\n${description}` : ''),
-          mediaKeys: [finalVideoUrl],
-          mediaType: 'video',
-          tags: parsedTags,
-        });
-      } catch (postErr) {
-        logger.warn('[Uploader] Universal API post companion sync note:', postErr);
-      }
-
-      if (db) {
-        // Real Firestore persistence
-        try {
-          await setDoc(doc(db, 'videos', id), finalVideoRecord);
-          await addDoc(collection(db, 'posts'), {
-            type: 'video',
-            videoId: id,
-            authorId: activeId,
-            authorUid: activeUid,
-            author: {
-              displayName: profile?.displayName || 'User',
-              username: profile?.username || 'user',
-              photoURL: profile?.photoURL || null,
-              isVerified: profile?.isVerified || false,
-            },
-            caption: title,
-            mediaUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
-            videoURL: finalVideoUrl,
-            likesCount: 0,
-            commentsCount: 0,
-            createdAt: serverTimestamp(),
-          });
-        } catch (dbErr) {
-          logger.warn('[Uploader] Firestore persistence note:', dbErr);
-        }
-      } else {
-        logger.warn('Database unlinked, video saved via Universal API');
-      }
-
+      // 1. Mark 100% complete and close modal IMMEDIATELY
       setUploadProgress(100);
       setUploadTelemetry('Broadcast Node Active & Live!');
 
-      setTimeout(() => {
-        addToast({
-          title: 'Video published',
-          message: 'Your video is now live on the Feed.',
-          type: 'success'
-        });
-        onUploadSuccess(finalVideoRecord);
-      }, 500);
+      addToast({
+        title: 'Video published',
+        message: 'Your video is now live on the Feed.',
+        type: 'success'
+      });
+
+      // Dispatch to feed immediately so modal closes and video becomes visible without delay
+      onUploadSuccess(finalVideoRecord);
+      onClose();
+      setIsPublishing(false);
+
+      // 2. Perform background synchronization non-blockingly with safe timeouts
+      const safeSync = async () => {
+        const timeoutPromise = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        // Universal API / Cloudflare Edge sync
+        try {
+          await Promise.race([
+            api.videos.create({
+              title,
+              description,
+              videoUrl: finalVideoUrl,
+              thumbnailUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
+              category,
+              tags: parsedTags,
+            }),
+            timeoutPromise(3500)
+          ]);
+        } catch (apiErr) {
+          logger.warn('[Uploader] Universal API video sync note:', apiErr);
+        }
+
+        try {
+          await Promise.race([
+            api.posts.create({
+              content: title + (description ? `\n\n${description}` : ''),
+              mediaKeys: [finalVideoUrl],
+              mediaType: 'video',
+              tags: parsedTags,
+            }),
+            timeoutPromise(3500)
+          ]);
+        } catch (postErr) {
+          logger.warn('[Uploader] Universal API post companion sync note:', postErr);
+        }
+
+        if (db) {
+          // Real Firestore persistence
+          try {
+            await Promise.race([
+              (async () => {
+                await setDoc(doc(db, 'videos', id), finalVideoRecord);
+                await addDoc(collection(db, 'posts'), {
+                  type: 'video',
+                  videoId: id,
+                  authorId: activeId,
+                  authorUid: activeUid,
+                  author: {
+                    displayName: profile?.displayName || 'User',
+                    username: profile?.username || 'user',
+                    photoURL: profile?.photoURL || null,
+                    isVerified: profile?.isVerified || false,
+                  },
+                  caption: title,
+                  mediaUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
+                  videoURL: finalVideoUrl,
+                  likesCount: 0,
+                  commentsCount: 0,
+                  createdAt: serverTimestamp(),
+                });
+              })(),
+              timeoutPromise(4000)
+            ]);
+          } catch (dbErr) {
+            logger.warn('[Uploader] Firestore persistence note:', dbErr);
+          }
+        }
+      };
+
+      // Fire and forget in background
+      safeSync().catch(() => {});
 
     } catch (e: any) {
       logger.error('[Uploader] Broadcast error:', e);
