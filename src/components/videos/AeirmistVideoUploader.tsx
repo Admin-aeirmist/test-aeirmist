@@ -31,6 +31,7 @@ import { getAvatarUrl } from '../../lib/avatar';
 import { MediaQuality } from '../../services/MediaService';
 import { collection, doc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { logger } from '@/src/utils/logger';
+import { api } from '../../services/api/client';
 
 
 interface AeirmistVideoUploaderProps {
@@ -70,6 +71,7 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
   const [step, setStep] = useState<1 | 2>(1); // 1: Select files/source, 2: Details & Thumbnail
   const [isPublishing, setIsPublishing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadTelemetry, setUploadTelemetry] = useState<string>('');
 
   // Metadata States
   const [title, setTitle] = useState('');
@@ -173,6 +175,14 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
   };
 
   const processVideoFile = (file: File) => {
+    if (file.size > 95 * 1024 * 1024) {
+      addToast({
+        title: 'LARGE VIDEO FILE',
+        message: `Video size is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Videos under 90MB are recommended for instant line-speed upload.`,
+        type: 'info'
+      });
+    }
+
     setVideoFile(file);
     const localUrl = URL.createObjectURL(file);
     setVideoPreviewUrl(localUrl);
@@ -261,6 +271,7 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
 
     setIsPublishing(true);
     setUploadProgress(5);
+    setUploadTelemetry('Initializing stream signal...');
 
     try {
       let finalVideoUrl = videoUrl;
@@ -269,17 +280,32 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
       // 1. Upload Video File to Aeirmist Server
       if (videoFile && uploadMedia) {
         setUploadProgress(10);
+        setUploadTelemetry('Connecting to Aeirmist streaming engine...');
 
         try {
           const userFolder = user?.uid || profile?.id || profile?.userId || 'guest';
-          finalVideoUrl = await uploadMedia(videoFile, `users/${userFolder}/videos`, (p) => {
-            const mapped = Math.floor(10 + p * 0.75);
-            setUploadProgress(mapped);
-          });
+          finalVideoUrl = await uploadMedia(
+            videoFile,
+            `users/${userFolder}/videos`,
+            (p, status, details) => {
+              const currentPercent = details && details.totalBytes > 0
+                ? Math.min(88, Math.max(10, Math.floor(10 + (details.loadedBytes / details.totalBytes) * 78)))
+                : Math.floor(10 + p * 0.75);
+              setUploadProgress(currentPercent);
+
+              if (details && details.totalMB) {
+                const eta = details.etaSeconds > 0 ? ` • ETA: ${details.etaSeconds}s` : '';
+                setUploadTelemetry(`${details.loadedMB} / ${details.totalMB} MB (${Math.round((details.loadedBytes / details.totalBytes) * 100)}%) • ${details.speedMBPerSec} MB/s${eta}`);
+              } else if (status) {
+                setUploadTelemetry(status);
+              }
+            }
+          );
         } catch (e: any) {
           logger.error('[Uploader] Video server upload failed:', e);
           setIsPublishing(false);
           setUploadProgress(0);
+          setUploadTelemetry('');
           addToast({
             title: 'Video Upload Failed',
             message: e?.message || 'Failed to upload video to the Aeirmist server. Please check your connection.',
@@ -292,6 +318,7 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         if (!finalVideoUrl || finalVideoUrl.startsWith('blob:')) {
           setIsPublishing(false);
           setUploadProgress(0);
+          setUploadTelemetry('');
           addToast({
             title: 'Server Upload Failed',
             message: 'A public video stream could not be created on the Aeirmist server. Please try again.',
@@ -303,7 +330,8 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
 
       // 2. Upload Thumbnail to Aeirmist Server
       if (finalThumbnailUrl && finalThumbnailUrl.startsWith('data:') && uploadMedia) {
-        setUploadProgress(88);
+        setUploadProgress(90);
+        setUploadTelemetry('Generating high-res thumbnail preview...');
         try {
           const res = await fetch(finalThumbnailUrl);
           const blob = await res.blob();
@@ -315,7 +343,8 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         }
       }
 
-      setUploadProgress(95);
+      setUploadProgress(94);
+      setUploadTelemetry('Publishing stream metadata to Aeirmist network...');
 
       const id = 'vid_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
       
@@ -361,36 +390,62 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
         savedBy: []
       };
 
+      // Dual-Sync Persistence: Universal API / Cloudflare Edge
+      try {
+        await api.videos.create({
+          title,
+          description,
+          videoUrl: finalVideoUrl,
+          thumbnailUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
+          category,
+          tags: parsedTags,
+        });
+      } catch (apiErr) {
+        logger.warn('[Uploader] Universal API video sync note:', apiErr);
+      }
+
+      try {
+        await api.posts.create({
+          content: title + (description ? `\n\n${description}` : ''),
+          mediaKeys: [finalVideoUrl],
+          mediaType: 'video',
+          tags: parsedTags,
+        });
+      } catch (postErr) {
+        logger.warn('[Uploader] Universal API post companion sync note:', postErr);
+      }
+
       if (db) {
         // Real Firestore persistence
-        await setDoc(doc(db, 'videos', id), finalVideoRecord);
-
-        // Also create a lightweight companion post so this video actually shows up
-        // in the main Home Feed (which only reads from the 'posts' collection).
-        // Tapping this feed card opens the Videos section (see PremiumPostCard.tsx).
-        await addDoc(collection(db, 'posts'), {
-          type: 'video',
-          videoId: id,
-          authorId: activeId,
-          authorUid: activeUid,
-          author: {
-            displayName: profile?.displayName || 'User',
-            username: profile?.username || 'user',
-            photoURL: profile?.photoURL || null,
-            isVerified: profile?.isVerified || false,
-          },
-          caption: title,
-          mediaUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
-          videoURL: finalVideoUrl,
-          likesCount: 0,
-          commentsCount: 0,
-          createdAt: serverTimestamp(),
-        });
+        try {
+          await setDoc(doc(db, 'videos', id), finalVideoRecord);
+          await addDoc(collection(db, 'posts'), {
+            type: 'video',
+            videoId: id,
+            authorId: activeId,
+            authorUid: activeUid,
+            author: {
+              displayName: profile?.displayName || 'User',
+              username: profile?.username || 'user',
+              photoURL: profile?.photoURL || null,
+              isVerified: profile?.isVerified || false,
+            },
+            caption: title,
+            mediaUrl: finalThumbnailUrl || finalVideoRecord.thumbnailURL,
+            videoURL: finalVideoUrl,
+            likesCount: 0,
+            commentsCount: 0,
+            createdAt: serverTimestamp(),
+          });
+        } catch (dbErr) {
+          logger.warn('[Uploader] Firestore persistence note:', dbErr);
+        }
       } else {
-        logger.warn('Database unlinked, video saved locally');
+        logger.warn('Database unlinked, video saved via Universal API');
       }
 
       setUploadProgress(100);
+      setUploadTelemetry('Broadcast Node Active & Live!');
 
       setTimeout(() => {
         addToast({
@@ -891,18 +946,22 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
                   {/* Submission Progress / Buttons */}
                   <div className="pt-2 sticky bottom-0 bg-[#08060d] py-4 mt-auto border-t border-white/5 lg:border-none lg:relative lg:bg-transparent lg:p-0">
                     {isPublishing ? (
-                      <div className="space-y-3 p-4 rounded-2xl bg-white/[0.02] border border-white/5">
-                        <div className="flex justify-between items-center text-[10px] uppercase font-black font-mono tracking-widest text-white">
-                          <span className="flex items-center gap-1.5 animate-pulse text-aeirmist-cyan">
-                            Saving Media Signal
+                      <div className="space-y-3 p-4 rounded-2xl bg-white/[0.03] border border-aeirmist-cyan/20 backdrop-blur-md">
+                        <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-widest text-white">
+                          <span className="flex items-center gap-2 text-aeirmist-cyan font-bold truncate max-w-[80%]">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-aeirmist-cyan opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-aeirmist-cyan"></span>
+                            </span>
+                            {uploadTelemetry || 'Streaming Media Signal'}
                           </span>
-                          <span>{uploadProgress}%</span>
+                          <span className="font-bold font-mono text-aeirmist-cyan ml-2 shrink-0">{uploadProgress}%</span>
                         </div>
-                        <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden p-0.5 border border-white/5">
                           <motion.div 
-                            className="h-full bg-aeirmist-cyan"
+                            className="h-full bg-gradient-to-r from-aeirmist-cyan via-[#00f2fe] to-[#4facfe] rounded-full shadow-[0_0_12px_rgba(0,242,255,0.5)]"
                             animate={{ width: `${uploadProgress}%` }}
-                            transition={{ duration: 0.1 }}
+                            transition={{ duration: 0.15, ease: 'easeOut' }}
                           />
                         </div>
                       </div>

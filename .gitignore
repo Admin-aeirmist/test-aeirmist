@@ -24,3 +24,4 @@ release/
 *.msix
 build/appx/
 scripts/pack_test_zip.mjs
+!backend/src/storage/

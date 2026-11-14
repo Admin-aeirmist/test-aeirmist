@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
+import * as fsSync from 'fs';
+import * as fs from 'fs/promises';
 import { storage } from '../storage';
 import { db } from '../db';
 import { mediaAssets } from '../db/schema';
@@ -10,9 +12,24 @@ import { env } from '../config/env';
 
 const router = Router();
 
-// Configure multer memory storage: Unlimited file size for all video and media uploads
+// Configure high-speed streaming disk storage for zero-memory video transfers
+const tempUploadDir = path.resolve(process.cwd(), env.STORAGE_PATH, 'temp');
+if (!fsSync.existsSync(tempUploadDir)) {
+  fsSync.mkdirSync(tempUploadDir, { recursive: true });
+}
+
+const diskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, tempUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `stream_${Date.now()}_${uuidv4()}${ext}`);
+  },
+});
+
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: diskStorage,
   limits: {
     fieldSize: Infinity,
     fileSize: Infinity,
@@ -20,8 +37,8 @@ const upload = multer({
 });
 
 router.post('/upload', authenticateToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
+  const file = req.file;
   try {
-    const file = req.file;
     if (!file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -37,6 +54,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     ]);
 
     if (!ext || !ALLOWED_EXTENSIONS.has(ext)) {
+      if (file.path) await fs.unlink(file.path).catch(() => {});
       return res.status(400).json({ 
         error: 'Unsupported or unsafe file type. Permitted formats: images (jpg, png, webp, gif), audio (mp3, wav, m4a), video (mp4, webm, mov), and pdf.' 
       });
@@ -46,11 +64,11 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
 
-    // Generated storage key: e.g. posts/2026/10/uuid.jpg
+    // Generated storage key: e.g. posts/2026/10/uuid.mp4
     const key = `${folder}/${year}/${month}/${uuidv4()}${ext}`;
 
-    // Upload via unified storage module
-    await storage.put(key, file.buffer, file.mimetype);
+    // Zero-copy stream file directly into persistent storage
+    await storage.putFile(key, file.path, file.mimetype);
 
     // Save record to media_assets in PostgreSQL
     const [asset] = await db
@@ -76,6 +94,9 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       sizeBytes: file.size,
     });
   } catch (err) {
+    if (file?.path) {
+      await fs.unlink(file.path).catch(() => {});
+    }
     console.error('[Upload Error]', err);
     res.status(500).json({ error: 'File upload failed' });
   }

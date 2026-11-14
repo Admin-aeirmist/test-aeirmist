@@ -1,6 +1,6 @@
 import { aeirmistCache } from './CacheService';
 import { logger } from '@/src/utils/logger';
-import { api } from './api/client';
+import { api, UploadProgressDetails } from './api/client';
 
 export enum MediaQuality {
   AUTO = 'auto',
@@ -20,7 +20,7 @@ interface UploadTask {
   path: string;
   isHD: boolean;
   quality: MediaQuality;
-  onProgress: (progress: number, status: string) => void;
+  onProgress: (progress: number, status: string, details?: UploadProgressDetails) => void;
   resolve: (url: string) => void;
   reject: (error: any) => void;
   retries: number;
@@ -147,7 +147,7 @@ class MediaService {
     storage: any, 
     file: File, 
     path: string, 
-    onProgress: (progress: number, status: string) => void,
+    onProgress: (progress: number, status: string, details?: UploadProgressDetails) => void,
     quality: MediaQuality = MediaQuality.AUTO
   ): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -254,10 +254,13 @@ class MediaService {
     // Primary & High-Speed: Native Aeirmist Server Storage Engine (Local Disk & PostgreSQL)
     try {
       const folderName = path.split('/')[0] || 'general';
-      const deviceRes = await api.media.upload(uploadFile, folderName, (uploadPct) => {
+      const deviceRes = await api.media.upload(uploadFile, folderName, (uploadPct, details) => {
         // Smoothly map 0-100% upload bytes into 15% - 95% total task progress
         const mapped = Math.floor(15 + (uploadPct * 0.80));
-        onProgress(mapped, `Streaming media bytes (${uploadPct}%)...`);
+        const statusMsg = details
+          ? `Streaming ${details.loadedMB} / ${details.totalMB} MB (${uploadPct}%) • ${details.speedMBPerSec} MB/s`
+          : `Streaming media bytes (${uploadPct}%)...`;
+        onProgress(mapped, statusMsg, details);
       });
       if (deviceRes && (deviceRes.url || deviceRes.key)) {
         const publicUrl = deviceRes.url || `/media/${deviceRes.key}`;

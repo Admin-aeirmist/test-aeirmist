@@ -343,6 +343,16 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 }
 
+export interface UploadProgressDetails {
+  loadedBytes: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  etaSeconds: number;
+  loadedMB: string;
+  totalMB: string;
+  speedMBPerSec: string;
+}
+
 export const api = {
   // Health
   checkHealth: () => request<{ status: string; services: Record<string, string> }>('/health'),
@@ -945,7 +955,11 @@ export const api = {
 
   // Media
   media: {
-    upload: async (file: File, folder = 'general', onProgress?: (percent: number) => void): Promise<{ key: string; url: string; sizeBytes: number; mimeType: string }> => {
+    upload: async (
+      file: File,
+      folder = 'general',
+      onProgress?: (percent: number, details?: UploadProgressDetails) => void
+    ): Promise<{ key: string; url: string; sizeBytes: number; mimeType: string }> => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('folder', folder);
@@ -958,7 +972,7 @@ export const api = {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url, true);
         xhr.withCredentials = true;
-        xhr.timeout = 300000; // 5 minutes for large high-definition video files
+        xhr.timeout = 600000; // 10 minutes for large high-definition video files
 
         if (token) {
           xhr.setRequestHeader('Authorization', `Bearer ${token}`);
@@ -978,12 +992,44 @@ export const api = {
           } catch {}
         }
 
-        // Live Upload Progress Tracker: Real-time byte calculation
+        // Live Upload Progress Tracker: Real-time byte calculation & streaming speed telemetry
+        const startTime = Date.now();
+        let lastLoaded = 0;
+        let lastTime = startTime;
+        let smoothedSpeed = 0;
+
         if (xhr.upload && onProgress) {
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable && event.total > 0) {
+              const now = Date.now();
+              const deltaSec = (now - lastTime) / 1000;
+              const totalElapsedSec = (now - startTime) / 1000;
+
+              if (deltaSec >= 0.15 || event.loaded === event.total) {
+                const instantSpeed = deltaSec > 0 ? (event.loaded - lastLoaded) / deltaSec : 0;
+                smoothedSpeed = smoothedSpeed === 0 ? instantSpeed : (smoothedSpeed * 0.65 + instantSpeed * 0.35);
+                lastLoaded = event.loaded;
+                lastTime = now;
+              }
+
+              const effectiveSpeed = smoothedSpeed > 0 ? smoothedSpeed : (totalElapsedSec > 0 ? event.loaded / totalElapsedSec : 0);
+              const remainingBytes = Math.max(0, event.total - event.loaded);
+              const etaSeconds = effectiveSpeed > 0 ? Math.round(remainingBytes / effectiveSpeed) : 0;
+
               const percent = Math.min(99, Math.max(1, Math.round((event.loaded / event.total) * 100)));
-              onProgress(percent);
+              const loadedMB = (event.loaded / (1024 * 1024)).toFixed(1);
+              const totalMB = (event.total / (1024 * 1024)).toFixed(1);
+              const speedMBPerSec = (effectiveSpeed / (1024 * 1024)).toFixed(2);
+
+              onProgress(percent, {
+                loadedBytes: event.loaded,
+                totalBytes: event.total,
+                speedBytesPerSec: effectiveSpeed,
+                etaSeconds,
+                loadedMB,
+                totalMB,
+                speedMBPerSec
+              });
             }
           };
         }
@@ -992,7 +1038,16 @@ export const api = {
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const data = JSON.parse(xhr.responseText);
-              onProgress?.(100);
+              const totalMB = (file.size / (1024 * 1024)).toFixed(1);
+              onProgress?.(100, {
+                loadedBytes: file.size,
+                totalBytes: file.size,
+                speedBytesPerSec: 0,
+                etaSeconds: 0,
+                loadedMB: totalMB,
+                totalMB,
+                speedMBPerSec: '0.00'
+              });
               resolve(data);
             } catch (err) {
               reject(new Error('Invalid JSON response from media storage server'));

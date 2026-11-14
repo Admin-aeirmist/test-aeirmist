@@ -1195,7 +1195,7 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const { permissions, requestPermission: _requestPermission } = usePermissions();
   const [pendingPermission, setPendingPermission] = useState<any>(null);
 
-  const uploadMedia = useCallback(async (file: File, folder: string, onProgress?: (p: number, status: string) => void, quality: MediaQuality = MediaQuality.AUTO) => {
+  const uploadMedia = useCallback(async (file: File, folder: string, onProgress?: (p: number, status: string, details?: any) => void, quality: MediaQuality = MediaQuality.AUTO) => {
     const activeStorage = storage || { driver: 'native' };
 
     // Resolve active session user across React state, profile, Firebase Auth, and persistent storage
@@ -1229,7 +1229,15 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       } catch {}
     }
 
-    const token = getAuthToken();
+    const token = getAuthToken() || (typeof window !== 'undefined' ? (localStorage.getItem('aeirmist_auth_token') || localStorage.getItem('auth_token')) : null);
+    if (!activeUser && token) {
+      activeUser = {
+        uid: 'user_authenticated',
+        id: 'user_authenticated',
+        email: '',
+        displayName: 'Aeirmist User'
+      };
+    }
     const hasActiveSession = Boolean(activeUser || token);
 
     logger.info(`[MediaContext] Initiating upload, user: ${user ? 'present' : 'null'}, profile: ${profile ? 'present' : 'null'}, auth.currentUser: ${auth.currentUser ? 'present' : 'null'}, token: ${token ? 'present' : 'null'}`);
@@ -1245,8 +1253,8 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     logger.info(`[MediaContext] Queuing upload: ${file.name} to ${filePath} (Quality: ${quality})`);
     
     try {
-      const url = await mediaService.uploadWithProgress(activeStorage, file, filePath, (p, status) => {
-        onProgress?.(p, status);
+      const url = await mediaService.uploadWithProgress(activeStorage, file, filePath, (p, status, details) => {
+        onProgress?.(p, status, details);
       }, quality);
       
       logger.info(`[MediaContext] Upload task completed: ${url}`);

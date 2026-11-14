@@ -419,6 +419,9 @@ async function parseUserFromToken(token: string): Promise<any | null> {
 let edgePosts: any[] = [];
 const edgeCommentsMap = new Map<string, any[]>();
 
+// Edge Videos Store (0% Dummy, 100% Authentic User Content)
+let edgeVideos: any[] = [];
+
 // Edge Chat Stores
 let edgeConversations: any[] = [];
 const edgeMessagesMap = new Map<string, any[]>();
@@ -1419,9 +1422,118 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     return new Response(JSON.stringify({ notifications: [], unreadCount: 0 }), { status: 200, headers: CORS_HEADERS });
   }
 
-  // Videos Feed
-  if (path === "/api/v1/videos/feed" && method === "GET") {
-    return new Response(JSON.stringify({ videos: [] }), { status: 200, headers: CORS_HEADERS });
+  // Videos: Feed
+  if ((path === "/api/v1/videos/feed" || path === "/api/v1/videos") && method === "GET") {
+    return new Response(JSON.stringify({ videos: edgeVideos, total: edgeVideos.length }), { status: 200, headers: CORS_HEADERS });
+  }
+
+  // Videos: Create Video
+  if (path === "/api/v1/videos" && method === "POST") {
+    try {
+      const authHeader = request.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const authUser = await parseUserFromToken(token);
+      if (!authUser) {
+        return new Response(JSON.stringify({ error: "Unauthorized: Valid login required to publish video" }), { status: 401, headers: CORS_HEADERS });
+      }
+
+      const body = await request.json() as any;
+      const authorId = authUser.id || authUser.uid;
+      const authorName = authUser.displayName || authUser.username || "Aeirmist User";
+      const authorUsername = authUser.username || "user";
+      const authorAvatar = authUser?.profile?.avatarKey || authUser?.profile?.photoURL || "";
+
+      const videoId = `vid_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const newVideo = {
+        id: videoId,
+        creatorId: authorId,
+        creatorUid: authorId,
+        authorUid: authorId,
+        authorId: authorId,
+        userId: authorId,
+        creatorName: authorName,
+        creatorAvatar: authorAvatar,
+        videoURL: body.videoUrl || body.videoURL,
+        caption: body.title || "Video Stream",
+        title: body.title || "Video Stream",
+        description: body.description || "",
+        tags: body.tags || ["aeirmist"],
+        category: body.category || "General",
+        aspectRatio: body.aspectRatio || "horizontal",
+        thumbnailURL: body.thumbnailUrl || body.thumbnailURL || "",
+        likeCount: 0,
+        commentCount: 0,
+        shareCount: 0,
+        viewCount: 0,
+        createdAt: new Date().toISOString(),
+        likedBy: [],
+        savedBy: []
+      };
+
+      edgeVideos.unshift(newVideo);
+
+      // Also create companion post in main feed
+      const newPost = {
+        id: `post_vid_${Date.now()}`,
+        userId: authorId,
+        authorId: authorId,
+        content: body.title || "",
+        mediaKeys: [body.videoUrl || body.videoURL],
+        mediaType: "video",
+        tags: body.tags || [],
+        author: {
+          id: authorId,
+          name: authorName,
+          displayName: authorName,
+          username: authorUsername,
+          isVerified: Boolean(authUser?.isAdmin || authUser?.isVerified),
+          avatar: authorAvatar
+        },
+        likesCount: 0,
+        commentsCount: 0,
+        sharesCount: 0,
+        viewsCount: 0,
+        likedBy: [],
+        savedBy: [],
+        createdAt: new Date().toISOString()
+      };
+      edgePosts.unshift(newPost);
+
+      return new Response(JSON.stringify({ video: newVideo }), { status: 201, headers: CORS_HEADERS });
+    } catch {
+      return new Response(JSON.stringify({ error: "Failed to publish video" }), { status: 400, headers: CORS_HEADERS });
+    }
+  }
+
+  // Videos: Single Video
+  if (path.startsWith("/api/v1/videos/") && !path.includes("/like") && !path.includes("/view") && !path.includes("/comments") && method === "GET") {
+    const vidId = path.replace("/api/v1/videos/", "");
+    const video = edgeVideos.find(v => v.id === vidId);
+    if (video) {
+      return new Response(JSON.stringify({ video }), { status: 200, headers: CORS_HEADERS });
+    }
+    return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: CORS_HEADERS });
+  }
+
+  // Videos: Like Toggle
+  if (path.startsWith("/api/v1/videos/") && path.endsWith("/like") && method === "POST") {
+    const vidId = path.replace("/api/v1/videos/", "").replace("/like", "");
+    const video = edgeVideos.find(v => v.id === vidId);
+    if (video) {
+      video.likeCount = (video.likeCount || 0) + 1;
+      return new Response(JSON.stringify({ success: true, isLiked: true, totalLikes: video.likeCount }), { status: 200, headers: CORS_HEADERS });
+    }
+    return new Response(JSON.stringify({ success: true, isLiked: true, totalLikes: 1 }), { status: 200, headers: CORS_HEADERS });
+  }
+
+  // Videos: View Record
+  if (path.startsWith("/api/v1/videos/") && path.endsWith("/view") && method === "POST") {
+    const vidId = path.replace("/api/v1/videos/", "").replace("/view", "");
+    const video = edgeVideos.find(v => v.id === vidId);
+    if (video) {
+      video.viewCount = (video.viewCount || 0) + 1;
+    }
+    return new Response(JSON.stringify({ success: true }), { status: 200, headers: CORS_HEADERS });
   }
 
   // ========================================================
