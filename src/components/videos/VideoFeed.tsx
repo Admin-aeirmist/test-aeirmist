@@ -228,13 +228,67 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
     return () => { isMounted = false; };
   }, [db]);
 
-  // Handle deep link loading from props
+  // Handle deep link loading from props (local match or direct API fallback for videos & companion video posts)
   useEffect(() => {
-    if (initialVideoId && !selectedVideo && dbVideos.length > 0) {
-      const match = dbVideos.find(v => v.id === initialVideoId);
-      if (match) setSelectedVideo(match);
+    if (!initialVideoId || selectedVideo) return;
+    let isCancelled = false;
+
+    // 1. Instant match from loaded videos
+    const match = dbVideos.find(v => v.id === initialVideoId);
+    if (match) {
+      setSelectedVideo(match);
+      return;
     }
-  }, [initialVideoId, dbVideos]);
+
+    // 2. Fetch directly from backend videos or posts endpoint
+    const fetchDirectVideo = async () => {
+      try {
+        // Try videos API
+        const vidRes = await api.videos.getById(initialVideoId).catch(() => null);
+        if (!isCancelled && vidRes?.video) {
+          const norm = normalizeVideoRecord(vidRes.video);
+          if (norm.id && isPlayableVideoUrl(norm.videoURL)) {
+            setSelectedVideo(norm);
+            setDbVideos(prev => (prev.some(v => v.id === norm.id) ? prev : [norm, ...prev]));
+            return;
+          }
+        }
+
+        // If not found in videos, check if it's a companion post containing a video
+        const postRes = await api.posts.getById(initialVideoId).catch(() => null);
+        if (!isCancelled && postRes?.post) {
+          const p = postRes.post;
+          const keys: string[] = Array.isArray(p.mediaKeys) && p.mediaKeys.length > 0
+            ? p.mediaKeys
+            : (Array.isArray(p.mediaUrls) ? p.mediaUrls : []);
+          const vidKey = keys.find((k) => /\.(mp4|webm|mov|m4v|ogg|mkv)(\?.*)?$/i.test(String(k)) || String(k).includes('/video/upload/'));
+          const chosenKey = vidKey || keys[0];
+          if (chosenKey) {
+            const norm = normalizeVideoRecord({
+              ...p,
+              id: p.id,
+              title: (p.content || 'Aeirmist Video').slice(0, 80),
+              description: p.content || '',
+              videoUrl: chosenKey,
+              category: 'Social',
+            });
+            if (norm.id && isPlayableVideoUrl(norm.videoURL)) {
+              setSelectedVideo(norm);
+              setDbVideos(prev => (prev.some(v => v.id === norm.id) ? prev : [norm, ...prev]));
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn('[VideoFeed] Direct deep-link video fetch note:', err);
+      }
+    };
+
+    fetchDirectVideo();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [initialVideoId, selectedVideo, dbVideos]);
 
   // Sync selection back to parent URL router
   useEffect(() => {

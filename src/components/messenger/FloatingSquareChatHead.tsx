@@ -401,9 +401,6 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     };
   }, [removeFloatingChatHead]);
 
-  const isInboxRoute = isInboxView || (typeof window !== 'undefined' && (window.location.pathname.startsWith('/messages') || window.location.pathname === '/messages'));
-  if (isInboxRoute) return null;
-
   // Toggle Messages Popup from cyan squircle floating button
   const handleFloatingButtonClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -609,6 +606,9 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       onOpenChat('');
     }
   };
+
+  const isInboxRoute = isInboxView || (typeof window !== 'undefined' && (window.location.pathname.startsWith('/messages') || window.location.pathname === '/messages'));
+  if (isInboxRoute) return null;
 
   return (
     <>
