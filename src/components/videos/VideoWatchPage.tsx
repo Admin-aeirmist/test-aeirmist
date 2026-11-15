@@ -375,19 +375,21 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
     <div className="flex flex-col h-full bg-[#050505] text-white overflow-y-auto no-scrollbar font-sans pb-24">
       {/* Desktop Top Bar Navigation */}
       <div 
-        className="hidden sm:flex sticky top-0 z-30 bg-[#050505]/90 backdrop-blur-xl border-b border-white/5 px-6 py-2.5 items-center justify-between transition-all"
+        className="hidden sm:flex sticky top-0 z-30 bg-[#050505]/90 backdrop-blur-xl border-b border-white/5 px-4 sm:px-6 lg:px-8 py-2.5 transition-all"
         style={{ paddingTop: 'calc(0.5rem + var(--sat, var(--safe-area-inset-top, 0px)))' }}
       >
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/90 hover:text-white transition-colors border border-white/10"
-        >
-          <ArrowLeft size={16} />
-          <span>Back to Feed</span>
-        </button>
-        <div className="flex items-center gap-1.5 font-bold text-xs uppercase tracking-wider text-white/60">
-          <Film size={14} className="text-aeirmist-cyan" />
-          <span>Aeirmist Cinema</span>
+        <div className="w-full max-w-[1720px] mx-auto flex items-center justify-between">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/90 hover:text-white transition-colors border border-white/10 cursor-pointer"
+          >
+            <ArrowLeft size={16} />
+            <span>Back to Feed</span>
+          </button>
+          <div className="flex items-center gap-1.5 font-bold text-xs uppercase tracking-wider text-white/60">
+            <Film size={14} className="text-aeirmist-cyan" />
+            <span>Aeirmist Cinema</span>
+          </div>
         </div>
       </div>
 
@@ -411,14 +413,16 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
       </div>
 
       {/* Main Content Area (Player + Information) - Edge to Edge on Mobile */}
-      <div className={`p-0 sm:p-6 mx-auto w-full transition-all ${
-        isTheaterMode ? 'max-w-7xl' : 'max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-0 lg:gap-8'
+      <div className={`p-0 sm:p-6 lg:p-8 mx-auto w-full transition-all ${
+        isTheaterMode 
+          ? 'max-w-[1720px] flex flex-col space-y-6' 
+          : 'max-w-[1720px] flex flex-col lg:flex-row gap-6 lg:gap-8 items-start'
       }`}>
         
         {/* Main Content Area (Player + Information) */}
-        <div className={isTheaterMode ? 'w-full space-y-4 sm:space-y-6' : 'lg:col-span-2 space-y-4 sm:space-y-6'}>
+        <div className="flex-1 min-w-0 w-full space-y-4 sm:space-y-6">
           {/* 16:9 Production Video Player - Seamless Flush With Screen */}
-          <div className="w-full aspect-video bg-black">
+          <div className="w-full aspect-video bg-black rounded-none sm:rounded-2xl overflow-hidden border border-transparent sm:border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.8)]">
             <VideoPlayerComponent
               video={video}
               initialTime={initialTime}
@@ -673,13 +677,13 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
         </div>
 
         {/* Sidebar / Recommended Videos */}
-        <div className={isTheaterMode ? 'w-full space-y-4 pt-6 border-t border-white/10 px-3.5 sm:px-0' : 'space-y-4 px-3.5 sm:px-0'}>
+        <div className={isTheaterMode ? 'w-full space-y-4 pt-6 border-t border-white/10 px-3.5 sm:px-0' : 'w-full lg:w-[380px] xl:w-[420px] shrink-0 space-y-4 px-3.5 sm:px-0 pt-6 lg:pt-0'}>
           <h2 className="text-sm font-bold uppercase tracking-wider text-white/80 flex items-center gap-2">
             <Sparkles size={16} className="text-aeirmist-cyan" />
             <span>Recommended Videos</span>
           </h2>
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {recommendedVideos.length > 0 ? (
               recommendedVideos.map((rec) => (
                 <VideoCard

@@ -162,10 +162,10 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       <motion.div 
         whileHover={{ scale: 1.01 }}
         onClick={() => onSelect(video)}
-        className="flex flex-col sm:flex-row gap-4 p-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-2xl cursor-pointer transition-all group"
+        className="flex flex-row gap-3 p-2.5 bg-white/[0.03] hover:bg-white/[0.07] border border-white/5 hover:border-white/15 rounded-xl cursor-pointer transition-all group overflow-hidden"
       >
-        {/* Thumbnail 16:9 */}
-        <div className="relative aspect-video w-full sm:w-64 rounded-xl overflow-hidden bg-black shrink-0">
+        {/* Thumbnail 16:9 - YouTube style compact sidebar thumbnail */}
+        <div className="relative aspect-video w-36 sm:w-40 md:w-44 rounded-lg overflow-hidden bg-black shrink-0">
           <img 
             src={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600'} 
             alt={video.title || video.caption}
@@ -176,13 +176,13 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             loading="lazy"
           />
           {/* Duration Badge */}
-          <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md text-[10px] font-mono text-white/90">
+          <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-md text-[9px] font-mono text-white/90">
             {formatDuration(video.duration || 300)}
           </div>
           {/* Play Icon Overlay */}
           <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 flex items-center justify-center transition-colors">
-            <div className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Play size={18} className="ml-0.5" />
+            <div className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Play size={14} className="ml-0.5" />
             </div>
           </div>
           {/* Progress bar if saved */}
@@ -197,36 +197,38 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         </div>
 
         {/* Info */}
-        <div className="flex-1 flex flex-col justify-between min-w-0 py-1">
-          <div>
-            <h3 className="text-sm font-semibold text-white/90 line-clamp-2 mb-1 group-hover:text-aeirmist-cyan transition-colors">
+        <div className="flex-1 flex flex-col justify-between min-w-0 py-0.5">
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-[13px] font-semibold text-white/95 line-clamp-2 leading-snug group-hover:text-aeirmist-cyan transition-colors mb-1">
               {displayTitle}
             </h3>
-            <p className="text-xs text-white/50 line-clamp-2 mb-3">
-              {video.description || video.caption}
-            </p>
+            {video.description && (
+              <p className="text-[10px] text-white/40 line-clamp-1 mb-1 hidden sm:block">
+                {video.description}
+              </p>
+            )}
           </div>
 
-          <div className="flex items-center justify-between text-xs text-white/60">
+          <div className="min-w-0 space-y-1">
             <div 
               onClick={(e) => {
                 e.stopPropagation();
                 if (onUserClick) onUserClick({ id: video.creatorId, name: resolvedCreatorName, photoURL: resolvedCreatorAvatar });
               }}
-              className="flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer min-w-0"
             >
               <img 
                 src={getAvatarUrl(resolvedCreatorAvatar, resolvedCreatorName)} 
                 alt={resolvedCreatorName} 
-                className="w-5 h-5 rounded-md object-cover border border-white/10"
+                className="w-4 h-4 rounded-full object-cover border border-white/10 shrink-0"
               />
-              <span className="font-medium text-xs truncate">{resolvedCreatorName}</span>
+              <span className="font-medium text-[11px] text-white/70 truncate">{resolvedCreatorName}</span>
               {(creatorProfile?.isVerified ?? video.isVerified) && (
-                <ShieldCheck className="text-aeirmist-cyan shrink-0" size={13} />
+                <ShieldCheck className="text-aeirmist-cyan shrink-0" size={11} />
               )}
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 text-[10px] text-white/40 font-medium truncate">
               <span>{(video.viewCount || 0).toLocaleString()} views</span>
               <span>•</span>
               <span>{formatAeirmistTimestamp(video.createdAt)}</span>
