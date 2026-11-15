@@ -20,12 +20,14 @@ import {
   PhoneIncoming,
   PhoneMissed,
   ChevronLeft,
-  ShieldCheck
+  ShieldCheck,
+  Users
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
 import { messagingService } from '../../modules/messaging/MessagingService';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, getGroupAvatarUrl } from '../../lib/avatar';
+import { GroupInfoPanel } from './GroupInfoPanel';
 import { api } from '../../services/api/client';
 import { Message } from '../../types/messenger';
 import { logger } from '../../utils/logger';
@@ -47,6 +49,7 @@ interface DockedChatWindowProps {
   onMaximize: () => void;
   onBack?: () => void;
   isVerified?: boolean;
+  isGroup?: boolean;
 }
 
 const QUICK_EMOJIS = ['❤️', '😂', '🔥', '😍', '👏', '⚡', '✨', '👍', '🙏', '🎉'];
@@ -61,7 +64,8 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   onClose,
   onMaximize,
   onBack,
-  isVerified
+  isVerified,
+  isGroup
 }) => {
   const { user, profile, startCall, uploadMedia, onlineUsers, addToast, db } = useAeirmist();
   const { settings } = useAppearance();
@@ -124,11 +128,14 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
         c.id === chatId || 
         (participantId && (c.otherParticipantId === participantId || c.otherParticipant?.id === participantId || c.otherParticipant?.userId === participantId))
       );
-      if (match?.themeSettings) {
-        setConversationData(match.themeSettings);
-        try {
-          localStorage.setItem(`chat_settings_${chatId}`, JSON.stringify(match.themeSettings));
-        } catch {}
+      if (match) {
+        setFullConversation(match);
+        if (match.themeSettings) {
+          setConversationData(match.themeSettings);
+          try {
+            localStorage.setItem(`chat_settings_${chatId}`, JSON.stringify(match.themeSettings));
+          } catch {}
+        }
       }
     }).catch(() => {});
 
@@ -144,7 +151,67 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
     return () => window.removeEventListener('aeirmist_chat_theme_updated', handleThemeUpdate);
   }, [chatId, participantId]);
 
-  const avatar = getAvatarUrl(chatPhoto || targetProfile?.photoURL, chatName || targetProfile?.displayName || targetUserId);
+  const [currentChatName, setCurrentChatName] = useState(chatName);
+  const [currentChatPhoto, setCurrentChatPhoto] = useState(chatPhoto);
+  const [isGroupInfoOpen, setIsGroupInfoOpen] = useState(false);
+
+  useEffect(() => {
+    setCurrentChatName(chatName);
+    setCurrentChatPhoto(chatPhoto);
+  }, [chatName, chatPhoto]);
+
+  useEffect(() => {
+    const handleUpdate = (e: any) => {
+      const detail = e.detail;
+      if (detail && (detail.conversationId === chatId || detail.id === chatId)) {
+        if (detail.name || detail.title || detail.groupName) {
+          setCurrentChatName(detail.name || detail.title || detail.groupName);
+        }
+        if (detail.photo || detail.groupPhotoURL || detail.avatarKey) {
+          setCurrentChatPhoto(detail.photo || detail.groupPhotoURL || detail.avatarKey);
+        }
+      }
+    };
+    window.addEventListener('aeirmist_conversation_updated', handleUpdate);
+    window.addEventListener('aeirmist_chat_updated', handleUpdate);
+    return () => {
+      window.removeEventListener('aeirmist_conversation_updated', handleUpdate);
+      window.removeEventListener('aeirmist_chat_updated', handleUpdate);
+    };
+  }, [chatId]);
+
+  const isGroupChat = Boolean(
+    isGroup || 
+    initialThemeSettings?.isGroup || 
+    initialThemeSettings?.groupName || 
+    fullConversation?.isGroup || 
+    fullConversation?.type === 'group'
+  );
+
+  const groupChatObject = useMemo(() => {
+    return {
+      id: chatId,
+      name: currentChatName,
+      groupName: currentChatName,
+      photo: currentChatPhoto,
+      groupPhotoURL: currentChatPhoto,
+      photoURL: currentChatPhoto,
+      avatarKey: currentChatPhoto,
+      isGroup: true,
+      type: 'group',
+      participants: fullConversation?.participants || fullConversation?.memberIds || [],
+      members: fullConversation?.members || fullConversation?.participants || [],
+      admins: fullConversation?.admins || [],
+      creatorId: fullConversation?.creatorId || fullConversation?.createdBy || fullConversation?.ownerId,
+      owner: fullConversation?.creatorId || fullConversation?.createdBy || fullConversation?.ownerId,
+      themeSettings: currentChatTheme,
+      ...fullConversation
+    };
+  }, [chatId, currentChatName, currentChatPhoto, fullConversation, currentChatTheme]);
+
+  const avatar = isGroupChat
+    ? getGroupAvatarUrl(currentChatName, currentChatPhoto)
+    : getAvatarUrl(currentChatPhoto || targetProfile?.photoURL, currentChatName || targetProfile?.displayName || targetUserId);
 
   // Accurate last seen timestamp calculation combining user presence and latest message activity
   const accurateLastSeenMs = useMemo(() => {
@@ -613,36 +680,42 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
             </button>
           )}
           <div 
-            onClick={onMaximize}
+            onClick={isGroupChat ? () => setIsGroupInfoOpen(true) : onMaximize}
             className="flex items-center gap-2.5 min-w-0 cursor-pointer group"
-            title="Open in full Messenger"
+            title={isGroupChat ? "Group Details & Members" : "Open in full Messenger"}
           >
           <div className="relative shrink-0">
             <div className="w-9 h-9 rounded-xl overflow-hidden bg-neutral-900 border border-white/15 group-hover:border-aeirmist-cyan/60 transition-colors">
               <img 
                 src={avatar} 
-                alt={chatName} 
+                alt={currentChatName} 
                 className="w-full h-full object-cover"
                 onError={(e) => { 
-                  (e.target as HTMLImageElement).src = getAvatarUrl(null, chatName || targetProfile?.displayName || targetUserId); 
+                  (e.target as HTMLImageElement).src = isGroupChat
+                    ? getGroupAvatarUrl(currentChatName, null)
+                    : getAvatarUrl(null, currentChatName || targetProfile?.displayName || targetUserId); 
                 }}
               />
             </div>
-            {isOnline && (
+            {!isGroupChat && isOnline && (
               <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-aeirmist-lime border-2 border-[#0e1019] shadow-[0_0_8px_rgba(191,255,0,0.6)]" />
             )}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 min-w-0">
               <h4 className="text-xs font-bold text-white truncate group-hover:text-aeirmist-cyan transition-colors">
-                {chatName}
+                {currentChatName}
               </h4>
-              {(isVerified || targetProfile?.isVerified || (targetProfile as any)?.badge === 'verified') && (
+              {!isGroupChat && (isVerified || targetProfile?.isVerified || (targetProfile as any)?.badge === 'verified') && (
                 <ShieldCheck size={12} className="text-aeirmist-cyan fill-aeirmist-cyan/20 shrink-0 inline-block drop-shadow-[0_0_6px_rgba(0,242,255,0.6)]" />
               )}
             </div>
             <div className="mt-0.5 truncate">
-              {isOnline ? (
+              {isGroupChat ? (
+                <span className="text-[8px] uppercase tracking-widest font-bold text-white/40 leading-none">
+                  Group • Details
+                </span>
+              ) : isOnline ? (
                 <div className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-aeirmist-lime animate-pulse shrink-0 inline-block" />
                   <span className="text-[8px] uppercase tracking-widest font-bold text-aeirmist-lime leading-none">
@@ -661,6 +734,16 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
 
         {/* Action icons */}
         <div className="flex items-center gap-1 shrink-0 text-white/60">
+          {isGroupChat && (
+            <button
+              type="button"
+              onClick={() => setIsGroupInfoOpen(true)}
+              className="w-7 h-7 rounded-full bg-white/5 hover:bg-white/15 flex items-center justify-center text-white/70 hover:text-aeirmist-cyan transition-all cursor-pointer"
+              title="Group Details & Members"
+            >
+              <Users size={14} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setIsWallpaperCustomizerOpen(true)}
@@ -1095,6 +1178,24 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
             } catch {}
           }}
         />
+      )}
+      {/* ── Group Details & Members Panel ── */}
+      {isGroupInfoOpen && (
+        <div className="absolute inset-0 z-50 bg-[#0c0f17] flex flex-col overflow-hidden animate-in fade-in duration-200">
+          <GroupInfoPanel 
+            chat={groupChatObject}
+            onClose={() => setIsGroupInfoOpen(false)}
+            onInitiateCall={(type) => {
+              setIsGroupInfoOpen(false);
+              if (type === 'audio') handleStartAudioCall();
+              else handleStartVideoCall();
+            }}
+            onOpenWallpaper={() => {
+              setIsGroupInfoOpen(false);
+              setIsWallpaperCustomizerOpen(true);
+            }}
+          />
+        </div>
       )}
     </div>
   );

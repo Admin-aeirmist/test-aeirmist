@@ -124,6 +124,35 @@ export class ChatDAL {
     };
   }
 
+  static async updateConversationDetails(
+    conversationId: string,
+    updates: { title?: string; avatarKey?: string; themeSettings?: any },
+    _actorUserId?: string
+  ) {
+    if (!conversationId || typeof conversationId !== 'string') throw new Error('Invalid conversation ID');
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);
+    if (!isUuid) throw new Error('Conversation not found');
+
+    const updateFields: any = { updatedAt: new Date() };
+    if (typeof updates.title === 'string' && updates.title.trim()) {
+      updateFields.title = updates.title.trim();
+    }
+    if (updates.avatarKey !== undefined) {
+      updateFields.avatarKey = updates.avatarKey;
+    }
+    if (updates.themeSettings !== undefined) {
+      updateFields.themeSettings = updates.themeSettings;
+    }
+
+    const [updated] = await db
+      .update(conversations)
+      .set(updateFields)
+      .where(eq(conversations.id, conversationId))
+      .returning();
+
+    return updated;
+  }
+
   static async addMembersToConversation(conversationId: string, userIds: string[], actorUserId?: string) {
     if (!conversationId || typeof conversationId !== 'string') throw new Error('Invalid conversation ID');
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId);

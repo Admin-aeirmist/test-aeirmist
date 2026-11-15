@@ -102,4 +102,48 @@ export function getAvatarUrl(photoURL?: string | null, seed?: string, isLight?: 
   return trimmed;
 }
 
+/**
+ * Generates an authentic Aeirmist Cyber Group Display Picture (DP)
+ * If an uploaded photoURL exists, resolves it.
+ * Otherwise, generates a stylized vector squircle with group initial and neon cyan cyber glow.
+ */
+export function getGroupAvatarUrl(groupName?: string, photoURL?: string | null): string {
+  if (photoURL && typeof photoURL === 'string') {
+    const trimmed = photoURL.trim();
+    if (trimmed && trimmed !== 'null' && trimmed !== 'undefined' && !trimmed.includes('placeholder')) {
+      const resolved = resolveAvatarSrc(trimmed);
+      if (resolved) return getAvatarUrl(resolved, groupName);
+      if (trimmed.startsWith('http') || trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/')) {
+        return trimmed;
+      }
+    }
+  }
+
+  const initial = (groupName || 'G').trim().charAt(0).toUpperCase() || 'G';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+    <defs>
+      <linearGradient id="cyberGroupBg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0e1320"/>
+        <stop offset="60%" stop-color="#080a12"/>
+        <stop offset="100%" stop-color="#001824"/>
+      </linearGradient>
+      <linearGradient id="cyberCyanGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#00f2ff"/>
+        <stop offset="100%" stop-color="#3b82f6"/>
+      </linearGradient>
+    </defs>
+    <rect width="100" height="100" rx="28" fill="url(#cyberGroupBg)"/>
+    <rect x="2.5" y="2.5" width="95" height="95" rx="26" fill="none" stroke="url(#cyberCyanGlow)" stroke-width="2.5" stroke-opacity="0.45"/>
+    <text x="50" y="56" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="900" fill="#00f2ff" text-anchor="middle" dominant-baseline="middle" letter-spacing="1">${initial}</text>
+    <!-- Group multi-user indicator glyph badge in bottom corner -->
+    <g transform="translate(68, 68)">
+      <circle cx="12" cy="12" r="14" fill="#06080e" stroke="#00f2ff" stroke-width="2" stroke-opacity="0.8"/>
+      <path d="M7 19c0-2.8 2.2-5 5-5s5 2.2 5 5" fill="none" stroke="#00f2ff" stroke-width="1.8" stroke-linecap="round"/>
+      <circle cx="12" cy="10" r="2.8" fill="#00f2ff"/>
+    </g>
+  </svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 

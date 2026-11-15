@@ -697,16 +697,19 @@ class MessagingService {
         }
       }
 
-      const resolvedPhoto = resolveAvatarSrc(c.avatarKey) || resolveAvatarSrc(other?.avatarKey) || resolveAvatarSrc(c.photo) || resolveAvatarSrc(other?.photoURL) || null;
-
-      const uCount = typeof c.unreadCount === 'number' ? c.unreadCount : (typeof c.unreadCount === 'object' ? (c.unreadCount?.[profileId] || 0) : 0);
-      const isUnread = typeof c.unread === 'boolean' ? c.unread : (uCount > 0);
       const isGroupLike = Boolean(
         c.isGroup ||
         c.groupName ||
         ['group', 'community', 'team', 'channel', 'bond_entity'].includes(String(c.type || '').toLowerCase()) ||
         (Array.isArray(c.participants) && c.participants.length > 2)
       );
+
+      const groupPhoto = resolveAvatarSrc(c.avatarKey) || resolveAvatarSrc(c.groupPhotoURL) || resolveAvatarSrc(c.groupPhoto) || resolveAvatarSrc(c.photo) || null;
+      const directPhoto = resolveAvatarSrc(other?.avatarKey) || resolveAvatarSrc(other?.photoURL) || resolveAvatarSrc(c.avatarKey) || resolveAvatarSrc(c.photo) || null;
+      const resolvedPhoto = isGroupLike ? groupPhoto : directPhoto;
+
+      const uCount = typeof c.unreadCount === 'number' ? c.unreadCount : (typeof c.unreadCount === 'object' ? (c.unreadCount?.[profileId] || 0) : 0);
+      const isUnread = typeof c.unread === 'boolean' ? c.unread : (uCount > 0);
 
       const participantObjects = Array.isArray(c.participants) && typeof c.participants[0] === 'object'
         ? c.participants
@@ -1237,8 +1240,60 @@ class MessagingService {
     logger.info(`[MessagingService] rejectJoinRequest in ${conversationId}: ${requesterId}`);
   }
 
-  public async updateGroupDetails(_db: any, conversationId: string, updates: any, ..._rest: any[]) {
+  public async updateGroupDetails(db: any, conversationId: string, updates: any, _actorName?: string) {
     logger.info(`[MessagingService] updateGroupDetails in ${conversationId}:`, updates);
+    const photo = updates.photoURL || updates.groupPhotoURL || updates.avatarKey || updates.photo;
+    const name = updates.name || updates.title || updates.groupName;
+
+    // 1. Call Backend API
+    try {
+      await api.chat.updateGroup(conversationId, {
+        title: name,
+        name,
+        avatarKey: photo,
+        photoURL: photo,
+        groupPhotoURL: photo,
+      });
+    } catch (apiErr) {
+      logger.warn('[MessagingService] API updateGroup failed:', apiErr);
+    }
+
+    // 2. Update Firestore if present
+    if (db) {
+      try {
+        const { doc, updateDoc } = await import('firebase/firestore');
+        const fsUpdates: any = { updatedAt: new Date().toISOString() };
+        if (name) {
+          fsUpdates.name = name;
+          fsUpdates.title = name;
+          fsUpdates.groupName = name;
+        }
+        if (photo) {
+          fsUpdates.groupPhotoURL = photo;
+          fsUpdates.photo = photo;
+          fsUpdates.avatarKey = photo;
+        }
+        await updateDoc(doc(db, 'conversations', conversationId), fsUpdates);
+      } catch (fsErr) {
+        logger.warn('[MessagingService] Firestore updateGroup failed:', fsErr);
+      }
+    }
+
+    // 3. Dispatch local event for instant UI update everywhere
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('aeirmist_conversation_updated', {
+        detail: {
+          conversationId,
+          ...updates,
+          name,
+          title: name,
+          groupName: name,
+          photo,
+          groupPhotoURL: photo,
+          avatarKey: photo,
+        }
+      }));
+    }
   }
 
   public async setGroupNickname(_db: any, conversationId: string, memberId: string, nickname: string, ..._rest: any[]) {

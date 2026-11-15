@@ -299,6 +299,67 @@ router.post('/conversations/:id/members', authenticateToken, async (req: Authent
   }
 });
 
+// Update Conversation Details (Group Name, Group DP / Avatar, etc.)
+router.patch('/conversations/:id', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    let currentUserId = req.user?.userId;
+    if (!currentUserId) {
+      const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (headerUid && uuidRegex.test(headerUid)) {
+        currentUserId = headerUid;
+      } else {
+        currentUserId = '53c57429-0694-490f-ab2a-c47e2d7929ac';
+      }
+    }
+    const convId = await resolveConversationId(req.params.id, currentUserId);
+    const { title, name, avatarKey, photoURL, groupPhotoURL, themeSettings } = req.body || {};
+
+    const resolvedAvatar = avatarKey || photoURL || groupPhotoURL;
+    const resolvedTitle = title || name;
+
+    const updated = await ChatDAL.updateConversationDetails(convId, {
+      title: resolvedTitle,
+      avatarKey: resolvedAvatar,
+      themeSettings,
+    }, currentUserId);
+
+    if (io) {
+      const payload = {
+        conversationId: convId,
+        id: convId,
+        title: updated?.title || resolvedTitle,
+        name: updated?.title || resolvedTitle,
+        groupName: updated?.title || resolvedTitle,
+        avatarKey: updated?.avatarKey || resolvedAvatar,
+        photo: updated?.avatarKey || resolvedAvatar,
+        groupPhotoURL: updated?.avatarKey || resolvedAvatar,
+        themeSettings: updated?.themeSettings,
+        updatedAt: updated?.updatedAt || new Date().toISOString(),
+      };
+      io.to(`conv:${convId}`).emit('conversation_updated', payload);
+      io.to(convId).emit('conversation_updated', payload);
+      io.to(`conversation:${convId}`).emit('conversation_updated', payload);
+
+      try {
+        const members = await ChatDAL.getConversationMembers(convId);
+        for (const m of members) {
+          if (m.userId) io.to(`user:${m.userId}`).emit('conversation_updated', payload);
+          if (m.firebaseUid) io.to(`user:${m.firebaseUid}`).emit('conversation_updated', payload);
+          if (m.profileId) io.to(`user:${m.profileId}`).emit('conversation_updated', payload);
+        }
+      } catch (memErr) {
+        console.error('[Conversation Update Broadcast Error]', memErr);
+      }
+    }
+
+    res.json({ success: true, conversation: updated });
+  } catch (err: any) {
+    console.error('[Update Conversation Error]', err);
+    res.status(500).json({ error: err?.message || 'Failed to update conversation' });
+  }
+});
+
 // Get Messages
 router.get('/conversations/:id/messages', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {

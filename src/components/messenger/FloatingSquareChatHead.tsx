@@ -11,7 +11,7 @@ import {
   ChevronLeft 
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
-import { getAvatarUrl } from '../../lib/avatar';
+import { getAvatarUrl, getGroupAvatarUrl } from '../../lib/avatar';
 import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { SystemChatHead } from '../../utils/nativeSettings';
 import { DockedChatWindow } from './DockedChatWindow';
@@ -321,12 +321,14 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     window.addEventListener('aeirmist_chat_deleted', handleChatDeleted);
     window.addEventListener('aeirmist_message_received', handleIncomingLive);
     window.addEventListener('aeirmist_chat_updated', handleIncomingLive);
+    window.addEventListener('aeirmist_conversation_updated', handleIncomingLive);
 
     return () => {
       window.removeEventListener('aeirmist_chathead_preview', handlePreview);
       window.removeEventListener('aeirmist_chat_deleted', handleChatDeleted);
       window.removeEventListener('aeirmist_message_received', handleIncomingLive);
       window.removeEventListener('aeirmist_chat_updated', handleIncomingLive);
+      window.removeEventListener('aeirmist_conversation_updated', handleIncomingLive);
     };
   }, [activeChatId, loadConversations, removeFloatingChatHead]);
 
@@ -481,10 +483,16 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     );
 
     // ── Photo Resolution ──
-    const photo = isGrp ? (c.avatarKey || c.groupPhotoURL || c.photo) : (c.photo || other?.photoURL || other?.avatarKey || '');
+    let photo = isGrp ? (c.avatarKey || c.groupPhotoURL || c.groupPhoto || c.photo) : (c.photo || other?.photoURL || other?.avatarKey || '');
+    if (isGrp) {
+      // If group photo is a member photo or empty/null, ensure it's a real group photo or cyber group DP
+      if (!photo || photo === other?.photoURL || photo === other?.avatarKey) {
+        photo = getGroupAvatarUrl(baseName, null);
+      }
+    }
 
     // ── Active Online Status ──
-    const isOnline = isUserOnline(c, participantId);
+    const isOnline = isGrp ? false : isUserOnline(c, participantId);
 
     // ── Last Message Snippet Resolution ──
     let snippet = c.lastMessagePreview || c.latestMessagePreview || c.lastMessageSnippet || c.lastMessageContent || '';
@@ -532,7 +540,8 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       photo,
       participantId,
       isOnline,
-      isVerified,
+      isVerified: isGrp ? false : isVerified,
+      isGroup: isGrp,
       displaySnippet,
       shortTime,
       unreadCount: c.unreadCount || 0,
@@ -555,6 +564,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
         participantId: fromHead.participantId,
         isOnline: Boolean(fromHead.participantId && onlineUsers?.has(fromHead.participantId)),
         isVerified: Boolean(fromHead.isVerified),
+        isGroup: false,
         displaySnippet: '',
         shortTime: '',
         unreadCount: fromHead.unreadCount || 0,
@@ -569,6 +579,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       participantId: undefined,
       isOnline: false,
       isVerified: false,
+      isGroup: false,
       displaySnippet: '',
       shortTime: '',
       unreadCount: 0,
@@ -628,6 +639,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                 participantId={activeConv.participantId}
                 initialThemeSettings={activeConv.themeSettings}
                 isVerified={activeConv.isVerified}
+                isGroup={activeConv.isGroup}
                 onBack={() => setActiveChatId(null)}
                 onMinimize={() => setIsMessagesPopupOpen(false)}
                 onClose={() => {
@@ -727,7 +739,9 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                   ) : (
                     filteredConversations.map((c: any) => {
                       const disp = getConversationDisplay(c);
-                      const avatar = getAvatarUrl(disp.photo, disp.name || disp.participantId);
+                      const avatar = disp.isGroup
+                        ? getGroupAvatarUrl(disp.name, disp.photo)
+                        : getAvatarUrl(disp.photo, disp.name || disp.participantId);
                       return (
                         <div
                           key={disp.id}
@@ -793,16 +807,6 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                     })
                   )}
                 </div>
-
-                {/* ── Bottom-Right Floating Compose Pen Button (Square / Squircle) ── */}
-                <button
-                  type="button"
-                  onClick={handleComposeClick}
-                  title="New Message"
-                  className="absolute bottom-4 right-4 w-11 h-11 rounded-2xl bg-gradient-to-br from-[#161a29] to-[#090a10] border-2 border-aeirmist-cyan/60 text-aeirmist-cyan hover:border-aeirmist-cyan hover:shadow-[0_0_20px_rgba(0,242,255,0.5)] active:scale-95 transition-all flex items-center justify-center shadow-2xl cursor-pointer z-20 group"
-                >
-                  <SquarePen size={18} className="group-hover:rotate-6 transition-transform" />
-                </button>
               </motion.div>
             )}
           </div>

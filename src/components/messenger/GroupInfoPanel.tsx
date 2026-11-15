@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { messagingService } from '../../modules/messaging/MessagingService';
-import { getAvatarUrl, resolveAvatarSrc } from '../../lib/avatar';
+import { getAvatarUrl, resolveAvatarSrc, getGroupAvatarUrl } from '../../lib/avatar';
 import { useSharedProfile } from '../../hooks/useSharedProfile';
 import { api } from '../../services/api/client';
 import { Avatar } from '../ui/Avatar';
@@ -720,22 +720,34 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     if (!file) return;
 
     setIsUpdating(true);
-    const reader = new FileReader();
-    reader.onload = async () => {
+    try {
+      let finalPhotoUrl = '';
       try {
-        const photoData = reader.result as string;
-        await messagingService.updateGroupDetails(db, chat.id, { photoURL: photoData }, profile?.displayName);
-        chat.groupPhotoURL = photoData;
-        chat.photo = photoData;
-        addToast({ title: 'Photo Updated', message: 'Group picture has been changed.', type: 'success' });
-      } catch (err) {
-        logger.error('Failed to update group photo:', err);
-        addToast({ title: 'Error', message: 'Failed to update photo.', type: 'warning' });
-      } finally {
-        setIsUpdating(false);
+        const uploadRes = await api.media.upload(file, `chats/groups`);
+        finalPhotoUrl = uploadRes?.url || '';
+      } catch (uploadErr) {
+        logger.warn('Direct media upload failed, using dataURL fallback:', uploadErr);
       }
-    };
-    reader.readAsDataURL(file);
+
+      if (!finalPhotoUrl) {
+        const reader = new FileReader();
+        finalPhotoUrl = await new Promise((resolve) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      }
+
+      await messagingService.updateGroupDetails(db, chat.id, { photoURL: finalPhotoUrl, avatarKey: finalPhotoUrl }, profile?.displayName);
+      chat.groupPhotoURL = finalPhotoUrl;
+      chat.photo = finalPhotoUrl;
+      chat.avatarKey = finalPhotoUrl;
+      addToast({ title: 'Photo Updated', message: 'Group picture has been changed.', type: 'success' });
+    } catch (err) {
+      logger.error('Failed to update group photo:', err);
+      addToast({ title: 'Error', message: 'Failed to update photo.', type: 'warning' });
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   // Group Name Save
@@ -983,8 +995,8 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     addToast({ title: 'Link Copied', message: 'Group invite link copied to clipboard.', type: 'success' });
   };
 
-  const groupPhoto = getAvatarUrl(chat.groupPhotoURL || chat.photo);
-  const groupTitle = chat.groupName || chat.name || 'Group Chat';
+  const groupPhoto = getGroupAvatarUrl(chat.groupName || chat.name || (chat as any).title || 'Group Chat', chat.groupPhotoURL || chat.photo || chat.avatarKey);
+  const groupTitle = chat.groupName || chat.name || (chat as any).title || 'Group Chat';
 
   return (
     <div className="w-full h-full bg-[#0D1117] text-white flex flex-col border-l border-white/10 overflow-hidden relative font-sans">

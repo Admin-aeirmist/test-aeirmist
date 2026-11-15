@@ -802,6 +802,11 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ themeSettings }),
       }),
+    updateGroup: (conversationId: string, data: { title?: string; name?: string; avatarKey?: string; photoURL?: string; groupPhotoURL?: string; themeSettings?: any }) =>
+      request<{ success: boolean; conversation: any }>(`/api/v1/chat/conversations/${conversationId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Videos & Video Creator Studio
