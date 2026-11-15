@@ -5,9 +5,9 @@ import {
   MessageSquare, 
   Maximize2, 
   SquarePen, 
-  Plus, 
   Loader2, 
   Search, 
+  ShieldCheck,
   ChevronLeft 
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
@@ -16,6 +16,7 @@ import { triggerNativeHaptic } from '../../lib/nativeHaptics';
 import { SystemChatHead } from '../../utils/nativeSettings';
 import { DockedChatWindow } from './DockedChatWindow';
 import { api } from '../../services/api/client';
+import { messagingService } from '../../modules/messaging/MessagingService';
 import { logger } from '../../utils/logger';
 import { formatShortTimestamp } from '../../lib/date';
 
@@ -25,7 +26,15 @@ interface FloatingSquareChatHeadProps {
   isInboxView?: boolean;
 }
 
-type Head = { id: string; name: string; photo?: string; unreadCount?: number; participantId?: string; themeSettings?: any };
+type Head = { 
+  id: string; 
+  name: string; 
+  photo?: string; 
+  unreadCount?: number; 
+  participantId?: string; 
+  themeSettings?: any;
+  isVerified?: boolean;
+};
 
 interface MessagePreview {
   text: string;
@@ -42,6 +51,7 @@ const HeadBubble: React.FC<{
   const { onlineUsers, profile, user } = useAeirmist();
   const [isHovered, setIsHovered] = useState(false);
   const avatar = getAvatarUrl(head.photo, head.name || head.id);
+  
   const isOnline = Boolean(
     (head.participantId && head.participantId !== profile?.id && head.participantId !== user?.uid && onlineUsers?.has(head.participantId)) ||
     (head.id && !head.id.startsWith('conv_') && head.id !== profile?.id && head.id !== user?.uid && onlineUsers?.has(head.id))
@@ -59,7 +69,7 @@ const HeadBubble: React.FC<{
       onClick={(e) => { e.stopPropagation(); onOpen(head.id); }}
       className="relative cursor-pointer group select-none"
     >
-      {/* Squircle / Circular frame — Facebook style with Aeirmist cyber aesthetics */}
+      {/* Squircle frame — Aeirmist cyber aesthetics */}
       <div 
         className={`relative w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-neutral-900 border-2 transition-all duration-200 group-hover:scale-105 active:scale-95 overflow-hidden ${
           isOpenInDock
@@ -86,13 +96,6 @@ const HeadBubble: React.FC<{
           <Maximize2 size={16} className="text-white drop-shadow-md" />
         </div>
       </div>
-
-      {/* Unread badge up to 9+ */}
-      {!!head.unreadCount && head.unreadCount > 0 && (
-        <div className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 border-2 border-[#0c0d14] text-[9px] font-black text-white flex items-center justify-center shadow-[0_0_10px_rgba(244,63,94,0.7)] animate-pulse select-none">
-          {head.unreadCount > 9 ? '9+' : head.unreadCount}
-        </div>
-      )}
 
       {/* Live Message Pop-up Preview Bubble */}
       <AnimatePresence>
@@ -126,6 +129,7 @@ const HeadBubble: React.FC<{
             className="absolute right-16 top-1/2 -translate-y-1/2 pointer-events-none px-3 py-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-white/15 text-white text-[11px] font-bold whitespace-nowrap shadow-2xl z-50 flex items-center gap-1.5"
           >
             <span className="truncate max-w-[130px] block">{head.name}</span>
+            {head.isVerified && <ShieldCheck size={11} className="text-aeirmist-cyan shrink-0" />}
             {isOpenInDock && <span className="text-[9px] text-aeirmist-cyan font-mono">• open</span>}
           </motion.div>
         )}
@@ -149,7 +153,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
   onNewMessage,
   isInboxView = false 
 }) => {
-  const { floatingChatHeads, setFloatingChatHeads, removeFloatingChatHead, profile, user, onlineUsers, addToast } = useAeirmist();
+  const { db, floatingChatHeads, setFloatingChatHeads, removeFloatingChatHead, profile, user, onlineUsers, addToast } = useAeirmist();
   
   // Floating Messages Card & Active Docked Chat state
   const [isMessagesPopupOpen, setIsMessagesPopupOpen] = useState(false);
@@ -177,13 +181,71 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
   const chatHeadsEnabled = profile?.messagingSettings?.enableChatHeads !== false;
   const heads: Head[] = chatHeadsEnabled ? (floatingChatHeads || []) : [];
 
-  // Fetch real-time conversations list
+  // Helper: check if a participant or conversation is active/online
+  const isUserOnline = useCallback((c: any, participantId?: string): boolean => {
+    if (c.online === true) return true;
+    if (c.otherParticipant?.isOnline === true || c.otherParticipant?.online === true) return true;
+    if (c.otherProfile?.isOnline === true || c.otherProfile?.online === true) return true;
+
+    const candidateIds = [
+      participantId,
+      c.otherParticipantId,
+      c.otherParticipantUid,
+      c.otherParticipant?.userId,
+      c.otherParticipant?.firebaseUid,
+      c.otherParticipant?.profileId,
+      c.otherParticipant?.id,
+      c.otherProfile?.userId,
+      c.otherProfile?.firebaseUid,
+      c.otherProfile?.profileId,
+      c.otherProfile?.id,
+      c.otherProfile?.username
+    ].filter(Boolean) as string[];
+
+    if (onlineUsers && onlineUsers.size > 0) {
+      for (const cid of candidateIds) {
+        if (cid === profile?.id || cid === user?.uid) continue;
+        const lower = String(cid).toLowerCase();
+        if (onlineUsers.has(cid) || onlineUsers.has(lower)) return true;
+        const cleanProfile = lower.replace(/^profile_/, '');
+        if (onlineUsers.has(cleanProfile) || onlineUsers.has(`profile_${cleanProfile}`)) return true;
+      }
+    }
+    return false;
+  }, [onlineUsers, profile?.id, user?.uid]);
+
+  // Subscribe to real-time chats across PostgreSQL, IndexedDB, Sockets via MessagingService
+  useEffect(() => {
+    if (!user?.uid || !profile?.id) return;
+
+    const unsubscribe = messagingService.subscribeToChats(db, user.uid, profile.id, (chats) => {
+      if (Array.isArray(chats) && chats.length > 0) {
+        setConversations(chats);
+      }
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [db, user?.uid, profile?.id]);
+
+  // Direct fetch fallback from API
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
     try {
       const res = await api.chat.getConversations();
       const list: any[] = res?.conversations || [];
-      setConversations(list);
+      if (list.length > 0) {
+        setConversations(prev => {
+          if (prev.length === 0) return list;
+          const map = new Map(prev.map(c => [c.id, c]));
+          list.forEach(c => {
+            const existing = map.get(c.id);
+            map.set(c.id, { ...existing, ...c });
+          });
+          return Array.from(map.values());
+        });
+      }
     } catch (err) {
       logger.error('[FloatingSquareChatHead] Failed to load conversations:', err);
     } finally {
@@ -191,7 +253,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     }
   }, []);
 
-  // Fetch initial conversations list on mount
+  // Fetch initial conversations on mount
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
@@ -231,7 +293,6 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
         [detail.chatId]: { text: detail.text, senderName: detail.senderName || 'Message' }
       }));
 
-      // Refresh conversations list on incoming message
       loadConversations();
 
       setTimeout(() => {
@@ -268,11 +329,6 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       window.removeEventListener('aeirmist_chat_updated', handleIncomingLive);
     };
   }, [activeChatId, loadConversations, removeFloatingChatHead]);
-
-  // Calculate total unread count for badge
-  const totalUnreadCount = useMemo(() => {
-    return conversations.reduce((acc, c) => acc + (c.unreadCount || (c.unread ? 1 : 0)), 0);
-  }, [conversations]);
 
   // Stable key so native sync only runs when something actually changed
   const headsKey = heads.map(h => `${h.id}|${h.name}|${h.photo || ''}|${h.unreadCount || 0}`).join(';');
@@ -365,7 +421,6 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     triggerNativeHaptic('selection');
 
     if (activeChatId === id && isMessagesPopupOpen) {
-      // Toggle closed if same
       setIsMessagesPopupOpen(false);
     } else {
       setActiveChatId(id);
@@ -379,53 +434,115 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     removeFloatingChatHead(id);
   };
 
-  // Helper to extract conversation presentation info
+  // Helper to extract conversation presentation info including Nicknames and Verified Badge
   const getConversationDisplay = useCallback((c: any) => {
     const isGrp = c.isGroup || c.type === 'group';
     const other = c.otherParticipant || c.otherProfile;
-    const name = isGrp ? (c.title || c.name || 'Group') : (c.name || other?.displayName || other?.username || 'Chat');
-    const photo = isGrp ? (c.avatarKey || c.photo) : (c.photo || other?.photoURL || other?.avatarKey || '');
     const participantId = isGrp ? undefined : (c.otherParticipantId || other?.id || other?.userId || other?.firebaseUid || undefined);
+    const targetUserId = participantId || other?.userId || other?.id || other?.profileId;
 
-    const isOnline = Boolean(
-      participantId &&
-      participantId !== profile?.id &&
-      participantId !== user?.uid &&
-      onlineUsers?.has(participantId)
+    // ── Nickname Resolution ──
+    let nickname = '';
+    if (targetUserId) {
+      // 1. Check conversation theme settings
+      if (c.themeSettings?.nicknames && c.themeSettings.nicknames[targetUserId]) {
+        nickname = c.themeSettings.nicknames[targetUserId];
+      }
+      // 2. Check conversation root nicknames
+      if (!nickname && c.nicknames && c.nicknames[targetUserId]) {
+        nickname = c.nicknames[targetUserId];
+      }
+      // 3. Check other participant/profile nickname
+      if (!nickname && (other?.nickname || c.nickname)) {
+        nickname = other?.nickname || c.nickname;
+      }
+      // 4. Check locally saved chat settings
+      if (!nickname && typeof window !== 'undefined' && c.id) {
+        try {
+          const raw = localStorage.getItem(`chat_settings_${c.id}`);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed?.nicknames && parsed.nicknames[targetUserId]) {
+              nickname = parsed.nicknames[targetUserId];
+            }
+          }
+        } catch {}
+      }
+    }
+
+    const baseName = isGrp ? (c.title || c.groupName || c.name || 'Group') : (c.name || other?.displayName || other?.username || 'Chat');
+    const finalDisplayName = nickname || baseName;
+
+    // ── Verified Badge Resolution ──
+    const isVerified = Boolean(
+      c.isVerified ||
+      other?.isVerified ||
+      c.otherProfile?.isVerified ||
+      c.otherParticipant?.isVerified ||
+      c.badge === 'verified' ||
+      other?.badge === 'verified'
     );
 
-    // Format snippet
-    let snippet = c.lastMessageSnippet || c.lastMessage || '';
+    // ── Photo Resolution ──
+    const photo = isGrp ? (c.avatarKey || c.groupPhotoURL || c.photo) : (c.photo || other?.photoURL || other?.avatarKey || '');
+
+    // ── Active Online Status ──
+    const isOnline = isUserOnline(c, participantId);
+
+    // ── Last Message Snippet Resolution ──
+    let snippet = c.lastMessagePreview || c.latestMessagePreview || c.lastMessageSnippet || c.lastMessageContent || '';
+    if (!snippet && c.lastMessage) {
+      snippet = typeof c.lastMessage === 'string' ? c.lastMessage : (c.lastMessage.text || c.lastMessage.content || '');
+    }
+    if (!snippet && c.rawLastMessage) {
+      snippet = typeof c.rawLastMessage === 'string' ? c.rawLastMessage : (c.rawLastMessage.text || c.rawLastMessage.content || '');
+    }
     if (typeof snippet === 'object') {
-      snippet = snippet.text || snippet.content || '';
+      snippet = (snippet as any).text || (snippet as any).content || '';
     }
-    if (!snippet && c.lastMessageContent) {
-      snippet = c.lastMessageContent;
+
+    if (c.lastMessageType === 'image' || (!snippet && (c.lastMessage?.mediaUrl || c.rawLastMessage?.mediaUrl))) {
+      snippet = 'Sent an attachment';
+    } else if (c.lastMessageType === 'audio' || c.lastMessageType === 'voice') {
+      snippet = 'Voice message';
+    } else if (c.lastMessageType === 'video') {
+      snippet = 'Video message';
     }
-    if (c.lastMessageType === 'image') snippet = 'Sent an attachment';
-    if (c.lastMessageType === 'audio' || c.lastMessageType === 'voice') snippet = 'Voice message';
-    if (c.lastMessageType === 'video') snippet = 'Video message';
 
-    const isMeSender = c.lastMessageSenderId && (c.lastMessageSenderId === profile?.id || c.lastMessageSenderId === user?.uid);
-    const snippetPrefix = isMeSender ? 'You: ' : '';
-    const displaySnippet = snippet ? `${snippetPrefix}${snippet}` : 'No messages yet';
+    // Sender prefix (You: ...)
+    const myId = profile?.id;
+    const myUid = user?.uid;
+    const lastSenderId = c.latestMessageSenderId || c.lastMessageSenderId || c.lastSenderId || c.lastMessage?.senderId || c.rawLastMessage?.senderId;
+    const isMeSender = Boolean(
+      lastSenderId && 
+      (lastSenderId === myId || lastSenderId === myUid || lastSenderId === (user as any)?.userId)
+    );
 
-    const timestamp = c.lastMessageAt || c.updatedAt || c.createdAt;
+    let displaySnippet = snippet;
+    if (snippet && snippet !== 'No messages yet' && snippet !== 'Sent an attachment' && !snippet.startsWith('You: ')) {
+      displaySnippet = isMeSender ? `You: ${snippet}` : snippet;
+    }
+    if (!displaySnippet) {
+      displaySnippet = 'No messages yet';
+    }
+
+    const timestamp = c.latestMessageAt || c.lastMessageAt || c.updatedAt || c.createdAt;
     const shortTime = timestamp ? formatShortTimestamp(timestamp) : '';
 
     return {
       id: c.id,
-      name,
+      name: finalDisplayName,
       photo,
       participantId,
       isOnline,
+      isVerified,
       displaySnippet,
       shortTime,
       unreadCount: c.unreadCount || 0,
       isUnread: Boolean((c.unreadCount && c.unreadCount > 0) || c.unread),
       themeSettings: c.themeSettings || null,
     };
-  }, [profile?.id, user?.uid, onlineUsers]);
+  }, [isUserOnline, profile?.id, user]);
 
   // Find active conversation details for DockedChatWindow
   const activeConv = useMemo(() => {
@@ -440,6 +557,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
         photo: fromHead.photo,
         participantId: fromHead.participantId,
         isOnline: Boolean(fromHead.participantId && onlineUsers?.has(fromHead.participantId)),
+        isVerified: Boolean(fromHead.isVerified),
         displaySnippet: '',
         shortTime: '',
         unreadCount: fromHead.unreadCount || 0,
@@ -453,6 +571,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
       photo: '',
       participantId: undefined,
       isOnline: false,
+      isVerified: false,
       displaySnippet: '',
       shortTime: '',
       unreadCount: 0,
@@ -508,6 +627,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                 chatPhoto={activeConv.photo}
                 participantId={activeConv.participantId}
                 initialThemeSettings={activeConv.themeSettings}
+                isVerified={activeConv.isVerified}
                 onBack={() => setActiveChatId(null)}
                 onMinimize={() => setIsMessagesPopupOpen(false)}
                 onClose={() => {
@@ -520,7 +640,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                 }}
               />
             ) : (
-              /* When in List view, show Floating Messages Card matching Screenshot 1 & 2 */
+              /* When in List view, show Floating Messages Card */
               <motion.div
                 initial={{ opacity: 0, scale: 0.94, y: 15 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -528,15 +648,10 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                 className="w-[calc(100vw-20px)] max-w-[360px] sm:w-[360px] h-[72vh] max-h-[560px] sm:h-[530px] rounded-2xl sm:rounded-t-2xl sm:rounded-b-none shadow-[0_15px_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden relative border border-white/20 bg-[#090a10]/98 backdrop-blur-2xl select-none"
               >
-                {/* ── Top Header Bar (Matching Screenshot 1: Messages (6) [ ] X) ── */}
+                {/* ── Top Header Bar (Clean Messages title without red badge) ── */}
                 <div className="h-14 px-4 border-b border-white/10 bg-black/50 backdrop-blur-xl flex items-center justify-between shrink-0 select-none z-10">
                   <div className="flex items-center gap-2">
                     <h3 className="text-base font-bold text-white tracking-tight">Messages</h3>
-                    {totalUnreadCount > 0 && (
-                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-[0_0_10px_rgba(244,63,94,0.6)] animate-pulse">
-                        {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
-                      </span>
-                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <button
@@ -584,7 +699,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                   </div>
                 </div>
 
-                {/* ── Conversation List (Avatar, Name, Snippet · Time, Unread Dot) ── */}
+                {/* ── Conversation List (Square Avatar, Name + Nickname + Verified, Snippet · Time, Unread Dot) ── */}
                 <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 custom-scrollbar">
                   {isLoadingConversations && conversations.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center gap-2 text-white/40 py-16">
@@ -621,31 +736,39 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                             disp.isUnread ? 'bg-white/[0.03]' : ''
                           }`}
                         >
-                          {/* Avatar with active online indicator */}
+                          {/* Square / Squircle Avatar with active online indicator */}
                           <div className="relative shrink-0">
-                            <div className="w-12 h-12 rounded-full overflow-hidden bg-neutral-900 border border-white/10 group-hover:border-aeirmist-cyan/50 transition-colors">
+                            <div className="w-12 h-12 rounded-2xl overflow-hidden bg-neutral-900 border border-white/10 group-hover:border-aeirmist-cyan/50 transition-colors">
                               <img
                                 src={avatar}
                                 alt={disp.name}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-cover rounded-xl"
                                 onError={(e) => {
                                   (e.target as HTMLElement).style.display = 'none';
                                 }}
                               />
                             </div>
                             {disp.isOnline && (
-                              <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-aeirmist-lime border-2 border-[#090a10] shadow-[0_0_8px_rgba(191,255,0,0.7)]" />
+                              <span 
+                                title="Active now"
+                                className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-aeirmist-lime border-2 border-[#090a10] ring-1 ring-aeirmist-lime/50 shadow-[0_0_8px_rgba(191,255,0,0.8)]" 
+                              />
                             )}
                           </div>
 
-                          {/* Contact Name & Snippet */}
+                          {/* Contact Name (with Nickname support) + Verified Badge & Snippet */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-1 mb-0.5">
-                              <h4 className={`text-xs font-semibold truncate group-hover:text-aeirmist-cyan transition-colors ${
-                                disp.isUnread ? 'text-white font-bold' : 'text-white/90'
-                              }`}>
-                                {disp.name}
-                              </h4>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <h4 className={`text-xs font-semibold truncate group-hover:text-aeirmist-cyan transition-colors ${
+                                  disp.isUnread ? 'text-white font-bold' : 'text-white/90'
+                                }`}>
+                                  {disp.name}
+                                </h4>
+                                {disp.isVerified && (
+                                  <ShieldCheck size={13} className="text-aeirmist-cyan fill-aeirmist-cyan/20 shrink-0 inline-block drop-shadow-[0_0_6px_rgba(0,242,255,0.6)]" />
+                                )}
+                              </div>
                               {disp.shortTime && (
                                 <span className={`text-[10px] shrink-0 font-mono ${
                                   disp.isUnread ? 'text-aeirmist-cyan font-semibold' : 'text-white/40'
@@ -671,12 +794,12 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                   )}
                 </div>
 
-                {/* ── Bottom-Right Floating Compose Pen Button (Matching Screenshot 1) ── */}
+                {/* ── Bottom-Right Floating Compose Pen Button (Square / Squircle) ── */}
                 <button
                   type="button"
                   onClick={handleComposeClick}
                   title="New Message"
-                  className="absolute bottom-4 right-4 w-11 h-11 rounded-full bg-gradient-to-br from-[#161a29] to-[#090a10] border-2 border-aeirmist-cyan/60 text-aeirmist-cyan hover:border-aeirmist-cyan hover:shadow-[0_0_20px_rgba(0,242,255,0.5)] active:scale-95 transition-all flex items-center justify-center shadow-2xl cursor-pointer z-20 group"
+                  className="absolute bottom-4 right-4 w-11 h-11 rounded-2xl bg-gradient-to-br from-[#161a29] to-[#090a10] border-2 border-aeirmist-cyan/60 text-aeirmist-cyan hover:border-aeirmist-cyan hover:shadow-[0_0_20px_rgba(0,242,255,0.5)] active:scale-95 transition-all flex items-center justify-center shadow-2xl cursor-pointer z-20 group"
                 >
                   <SquarePen size={18} className="group-hover:rotate-6 transition-transform" />
                 </button>
@@ -723,13 +846,6 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
                 <SquarePen size={20} className="group-hover:rotate-6 transition-transform" />
               )}
             </div>
-
-            {/* Unread badge on the trigger button itself */}
-            {totalUnreadCount > 0 && !isMessagesPopupOpen && (
-              <div className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 border-2 border-[#0c0d14] text-[9px] font-black text-white flex items-center justify-center shadow-[0_0_10px_rgba(244,63,94,0.7)] animate-pulse select-none">
-                {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
-              </div>
-            )}
 
             {/* Hover tooltip */}
             <div className="absolute right-16 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-white/15 text-white text-[11px] font-bold whitespace-nowrap shadow-2xl z-50 flex items-center gap-1.5">

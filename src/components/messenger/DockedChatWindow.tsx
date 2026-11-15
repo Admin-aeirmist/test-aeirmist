@@ -19,7 +19,8 @@ import {
   PhoneOutgoing,
   PhoneIncoming,
   PhoneMissed,
-  ChevronLeft
+  ChevronLeft,
+  ShieldCheck
 } from 'lucide-react';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { useAppearance } from '../../context/AppearanceContext';
@@ -45,6 +46,7 @@ interface DockedChatWindowProps {
   onClose: () => void;
   onMaximize: () => void;
   onBack?: () => void;
+  isVerified?: boolean;
 }
 
 const QUICK_EMOJIS = ['❤️', '😂', '🔥', '😍', '👏', '⚡', '✨', '👍', '🙏', '🎉'];
@@ -58,7 +60,8 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   onMinimize,
   onClose,
   onMaximize,
-  onBack
+  onBack,
+  isVerified
 }) => {
   const { user, profile, startCall, uploadMedia, onlineUsers, addToast, db } = useAeirmist();
   const { settings } = useAppearance();
@@ -190,8 +193,17 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
     ].filter(id => Boolean(id) && id !== profile?.id && id !== user?.uid && id !== (user as any)?.userId) as string[];
 
     // 1. Live socket presence from Redis/Socket.IO
-    const matchInOnlineSet = candidateIds.some(id => onlineUsers?.has(id));
-    if (matchInOnlineSet) return true;
+    const matchInOnlineSet = candidateIds.some(id => {
+      const lower = id.toLowerCase();
+      const clean = lower.replace(/^profile_/, '');
+      return (
+        onlineUsers?.has(id) || 
+        onlineUsers?.has(lower) || 
+        onlineUsers?.has(clean) || 
+        onlineUsers?.has(`profile_${clean}`)
+      );
+    });
+    if (matchInOnlineSet || targetProfile?.isOnline || (targetProfile as any)?.online) return true;
 
     // 2. Verified active heartbeat within the last 60 seconds (strictly > 0)
     if (accurateLastSeenMs > 0 && (Date.now() - accurateLastSeenMs < 60000)) {
@@ -621,9 +633,14 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
             )}
           </div>
           <div className="min-w-0">
-            <h4 className="text-xs font-bold text-white truncate group-hover:text-aeirmist-cyan transition-colors">
-              {chatName}
-            </h4>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h4 className="text-xs font-bold text-white truncate group-hover:text-aeirmist-cyan transition-colors">
+                {chatName}
+              </h4>
+              {(isVerified || targetProfile?.isVerified || (targetProfile as any)?.badge === 'verified') && (
+                <ShieldCheck size={12} className="text-aeirmist-cyan fill-aeirmist-cyan/20 shrink-0 inline-block drop-shadow-[0_0_6px_rgba(0,242,255,0.6)]" />
+              )}
+            </div>
             <div className="mt-0.5 truncate">
               {isOnline ? (
                 <div className="flex items-center gap-1">

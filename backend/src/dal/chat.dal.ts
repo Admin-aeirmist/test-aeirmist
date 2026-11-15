@@ -207,6 +207,7 @@ export class ChatDAL {
           userId: conversationMembers.userId,
           role: conversationMembers.role,
           lastReadAt: conversationMembers.lastReadAt,
+          nickname: conversationMembers.nickname,
           username: profiles.username,
           displayName: profiles.displayName,
           avatarKey: profiles.avatarKey,
@@ -261,6 +262,7 @@ export class ChatDAL {
         otherParticipantId: isGrp ? null : (otherParticipant?.profileId || otherParticipant?.userId || otherParticipant?.firebaseUid || null),
         otherParticipantUid: isGrp ? null : (otherParticipant?.firebaseUid || null),
         otherProfile: isGrp ? null : otherParticipant,
+        nickname: isGrp ? null : (otherParticipant?.nickname || null),
         online: isGrp ? false : isOtherOnline,
         lastRead,
       });
