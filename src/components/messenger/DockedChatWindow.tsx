@@ -77,6 +77,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
   const [showEmojiBar, setShowEmojiBar] = useState(false);
   const [targetProfile, setTargetProfile] = useState<any>(null);
   const [conversationData, setConversationData] = useState<any>(initialThemeSettings || null);
+  const [fullConversation, setFullConversation] = useState<any>(null);
   const [isWallpaperCustomizerOpen, setIsWallpaperCustomizerOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
