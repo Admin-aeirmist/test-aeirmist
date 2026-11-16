@@ -519,6 +519,29 @@ function AppContent() {
       });
     }
   }, [activeTab]);
+
+  // Dynamic SEO Canonical & Metadata updates for Google indexing
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let cleanPath = location.pathname.replace(/\/+/g, '/');
+    if (cleanPath.length > 1 && cleanPath.endsWith('/')) {
+      cleanPath = cleanPath.slice(0, -1);
+    }
+    const canonicalUrl = `https://aeirmist.com${cleanPath}`;
+
+    let canonicalLink = document.querySelector('link[rel="canonical"]');
+    if (!canonicalLink) {
+      canonicalLink = document.createElement('link');
+      canonicalLink.setAttribute('rel', 'canonical');
+      document.head.appendChild(canonicalLink);
+    }
+    canonicalLink.setAttribute('href', canonicalUrl);
+
+    let ogUrl = document.querySelector('meta[property="og:url"]');
+    if (ogUrl) {
+      ogUrl.setAttribute('content', canonicalUrl);
+    }
+  }, [location.pathname]);
   const isGlobalBgActive = Boolean(settings?.globalBgType && settings.globalBgType !== 'none');
   const [viewingPostId, setViewingPostId] = useState<string | null>(null);
   const [viewingStoreId, setViewingStoreId] = useState<string | null>(null);
