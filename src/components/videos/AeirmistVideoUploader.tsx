@@ -66,6 +66,17 @@ export const AeirmistVideoUploader: React.FC<AeirmistVideoUploaderProps> = ({ on
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string>('');
   const [videoFormat, setVideoFormat] = useState<'mp4' | 'mov' | 'webm'>('mp4');
   const [videoAspectRatio, setVideoAspectRatio] = useState<'short' | 'long' | 'vertical' | 'horizontal' | 'square'>('horizontal');
+
+  // Prevent memory leak by revoking local object URL when changed or unmounted
+  useEffect(() => {
+    return () => {
+      if (videoPreviewUrl && videoPreviewUrl.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(videoPreviewUrl);
+        } catch {}
+      }
+    };
+  }, [videoPreviewUrl]);
   
   // Loading & Flow State
   const [step, setStep] = useState<1 | 2>(1); // 1: Select files/source, 2: Details & Thumbnail

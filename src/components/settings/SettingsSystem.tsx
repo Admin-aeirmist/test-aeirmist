@@ -241,6 +241,17 @@ const SettingsSystem: React.FC<SettingsSystemProps> = ({ initialSection, onSecti
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [editingImage, setEditingImage] = useState<{ src: string; type: 'avatar' | 'banner' } | null>(null);
+
+  // Revoke object URLs on change or unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (editingImage?.src && editingImage.src.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(editingImage.src);
+        } catch {}
+      }
+    };
+  }, [editingImage]);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);

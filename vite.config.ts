@@ -13,6 +13,7 @@ export default defineConfig(({mode}) => {
     },
     esbuild: isProd ? {
       drop: ['debugger'],
+      pure: ['console.log', 'console.debug', 'console.info'],
     } : {},
     resolve: {
       alias: {
@@ -28,14 +29,30 @@ export default defineConfig(({mode}) => {
       minify: 'esbuild',
       rollupOptions: {
         output: {
-          manualChunks: {
-            'react-vendor': ['react', 'react-dom'],
-            'motion-vendor': ['motion/react'],
-            'lucide-vendor': ['lucide-react'],
-            'emoji-vendor': ['emoji-picker-react'],
-            'charts-vendor': ['recharts'],
-            'stripe-vendor': ['@stripe/stripe-js'],
-            'firebase-vendor': ['firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/storage'],
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('react/') || id.includes('react-dom/') || id.includes('react-router')) {
+                return 'vendor-react';
+              }
+              if (id.includes('firebase')) {
+                return 'vendor-firebase';
+              }
+              if (id.includes('lucide-react')) {
+                return 'vendor-lucide';
+              }
+              if (id.includes('motion')) {
+                return 'vendor-motion';
+              }
+              if (id.includes('emoji-picker-react')) {
+                return 'vendor-emoji';
+              }
+              if (id.includes('recharts') || id.includes('d3-')) {
+                return 'vendor-charts';
+              }
+              if (id.includes('@stripe')) {
+                return 'vendor-stripe';
+              }
+            }
           }
         }
       }

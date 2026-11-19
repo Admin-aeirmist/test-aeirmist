@@ -27,12 +27,30 @@ export interface SharedProfileData {
 
 const ERA_AI_USER_ID = '00000000-0000-4000-a000-000000000001';
 const PROFILE_TTL_MS = 60_000;
+const MAX_PROFILE_CACHE_ENTRIES = 500;
 
 const memoryProfileCache = new Map<string, SharedProfileData>();
 const profileFetchedAt = new Map<string, number>();
 const activeSubscribers = new Map<string, Set<(data: SharedProfileData | null) => void>>();
 const inFlightFetches = new Map<string, Promise<SharedProfileData | null>>();
 let isGlobalListenerAttached = false;
+
+function trimProfileCacheIfNeeded() {
+  if (memoryProfileCache.size > MAX_PROFILE_CACHE_ENTRIES) {
+    const iter = memoryProfileCache.keys();
+    let current = iter.next();
+    let evicted = 0;
+    while (!current.done && memoryProfileCache.size > MAX_PROFILE_CACHE_ENTRIES && evicted < 50) {
+      const key = current.value;
+      if (!activeSubscribers.has(key) && key !== ERA_AI_USER_ID) {
+        memoryProfileCache.delete(key);
+        profileFetchedAt.delete(key);
+        evicted++;
+      }
+      current = iter.next();
+    }
+  }
+}
 
 function normalizeProfileData(raw: any): SharedProfileData {
   if (!raw) return { isDeleted: false };
@@ -78,6 +96,7 @@ function broadcastToSubscribers(keys: Array<string | undefined | null>, data: Sh
       subs.forEach(cb => cb(data));
     }
   }
+  trimProfileCacheIfNeeded();
 }
 
 export function seedSharedProfile(

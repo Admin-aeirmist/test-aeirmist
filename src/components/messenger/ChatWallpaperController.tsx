@@ -194,6 +194,17 @@ export const ChatWallpaperController: React.FC<ChatWallpaperControllerProps> = (
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Revoke object URLs on change or unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (currentWallpaper && currentWallpaper.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(currentWallpaper);
+        } catch {}
+      }
+    };
+  }, [currentWallpaper]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);

@@ -1754,6 +1754,9 @@ export const StoryStudio = ({ onClose }: { onClose: () => void }) => {
 
     const reader = new FileReader();
     reader.onload = () => {
+      try {
+        URL.revokeObjectURL(objectUrl);
+      } catch {}
       if (typeof reader.result === 'string') {
         setCapturedMedia(prev => {
           if (prev && prev.file === file) {

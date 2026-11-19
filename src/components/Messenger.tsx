@@ -1057,6 +1057,8 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
     socket?.on?.('conversation_deleted', handleSocketConvDeleted);
 
     return () => {
+      window.removeEventListener('aeirmist:open_conversation', handleOpenConv);
+      socket?.off?.('bonds_membership_approved', handleBondsApproved);
       window.removeEventListener('aeirmist_chat_setting_changed', handleSettingChanged);
       window.removeEventListener('aeirmist_chat_deleted', handleChatDeleted);
       window.removeEventListener('aeirmist_chat_theme_updated', handleThemeUpdatedEvent);
