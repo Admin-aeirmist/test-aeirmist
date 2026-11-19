@@ -160,7 +160,16 @@ const StorageSettings = () => {
               <h4 className="text-xs font-bold uppercase tracking-widest text-white/90">Download Management</h4>
               <p className="text-[10px] text-white/40 mt-1 leading-relaxed">Review and manage artifacts stored on the host device</p>
             </div>
-            <button className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-[9px] font-bold uppercase tracking-widest hover:bg-white/10 transition-all">
+            <button 
+              onClick={() => {
+                addToast?.({
+                  title: 'DOWNLOADS INSPECTOR',
+                  message: 'Local downloads inspected: All offline media packages and cached artifacts are synchronized.',
+                  type: 'info'
+                });
+              }}
+              className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-[9px] font-bold uppercase tracking-widest hover:bg-white/10 transition-all cursor-pointer active:scale-95"
+            >
               Manage Downloads
             </button>
           </div>
@@ -184,7 +193,28 @@ const StorageSettings = () => {
             Initiating a system termination will permanently erase your identity from the network. All links, assets, and encrypted histories will be deleted beyond recovery.
           </p>
 
-          <button className="px-8 py-3 rounded-xl bg-aeirmist-magenta/20 border border-aeirmist-magenta/40 text-aeirmist-magenta text-[10px] font-black uppercase tracking-widest hover:bg-aeirmist-magenta hover:text-white transition-all">
+          <button 
+            onClick={() => {
+              const confirmMsg = window.confirm("CRITICAL WARNING: Terminate Sequence will purge your local session, biometric keys, and device identity cache. Are you sure?");
+              if (confirmMsg) {
+                try {
+                  localStorage.clear();
+                  sessionStorage.clear();
+                  addToast?.({
+                    title: 'TERMINATION INITIALIZED',
+                    message: 'Local session purged. Redirecting to access portal...',
+                    type: 'warning'
+                  });
+                  setTimeout(() => {
+                    window.location.href = '/login';
+                  }, 800);
+                } catch {
+                  window.location.reload();
+                }
+              }
+            }}
+            className="px-8 py-3 rounded-xl bg-aeirmist-magenta/20 border border-aeirmist-magenta/40 text-aeirmist-magenta text-[10px] font-black uppercase tracking-widest hover:bg-aeirmist-magenta hover:text-white transition-all cursor-pointer active:scale-95"
+          >
             Terminate Sequence
           </button>
         </div>

@@ -143,6 +143,19 @@ router.get('/:identifier', optionalAuthToken, async (req: AuthenticatedRequest, 
     const sanitized = { ...profile };
     delete sanitized.email;
     delete sanitized.firebaseUid;
+    delete sanitized.passwordHash;
+    delete sanitized.passwordSalt;
+
+    const isSelf = req.user?.userId && (req.user.userId === profile.userId || req.user.userId === profile.id);
+    if (!isSelf) {
+      delete sanitized.privacySettings;
+      delete sanitized.locationData;
+      delete sanitized.personalEmail;
+      delete sanitized.recoveryEmail;
+      delete sanitized.recoveryPhone;
+      delete sanitized.notificationSettings;
+      delete sanitized.themeSettings;
+    }
 
     res.json({
       profile: {

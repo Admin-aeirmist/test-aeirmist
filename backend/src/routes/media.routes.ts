@@ -175,7 +175,7 @@ router.post('/upload-chunk', optionalAuthToken, upload.single('chunk'), async (r
     const finalSize = totalSize || (stat ? stat.size : 0);
 
     let effectiveOwnerId = req.user?.userId || null;
-    if (!effectiveOwnerId) {
+    if (!effectiveOwnerId && process.env.NODE_ENV === "test") {
       const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (headerUid && uuidRegex.test(headerUid)) {

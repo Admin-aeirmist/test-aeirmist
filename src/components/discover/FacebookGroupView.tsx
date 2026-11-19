@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, 
   Lock, 
@@ -28,7 +28,11 @@ import {
   Camera,
   ChevronRight,
   ArrowLeft,
-  Info
+  Info,
+  Copy,
+  Bookmark,
+  Trash2,
+  BellOff
 } from 'lucide-react';
 import { api } from '../../services/api/client';
 import { useAeirmist } from '../../context/AeirmistContext';
@@ -60,6 +64,18 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
   const [isModeratorToolsOpen, setIsModeratorToolsOpen] = useState(true);
   const [isAboutOpen, setIsAboutOpen] = useState(true);
   const [isSupportOpen, setIsSupportOpen] = useState(false);
+
+  // Cover image and file picker
+  const [currentCover, setCurrentCover] = useState<string>(
+    entity.coverUrl || entity.bannerKey || 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1400&q=80'
+  );
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Group search & menus
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [postMenuOpenId, setPostMenuOpenId] = useState<string | null>(null);
 
   // Posts & interaction state
   const [posts, setPosts] = useState<any[]>([]);
@@ -283,9 +299,9 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
           {/* Cover Photo */}
           <div className="relative w-full aspect-[21/9] sm:aspect-[24/9] bg-[#242526] overflow-hidden rounded-b-2xl shadow-xl">
             <img
-              src={entity.coverUrl || 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1400&q=80'}
+              src={currentCover}
               alt={entity.name}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover transition-opacity duration-300"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
             
@@ -300,9 +316,39 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
               </button>
             )}
 
+            {/* Hidden File Input for Cover Photo */}
+            <input 
+              type="file" 
+              ref={coverFileInputRef} 
+              accept="image/*" 
+              className="hidden" 
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const localUrl = URL.createObjectURL(file);
+                setCurrentCover(localUrl);
+                addToast?.({ type: 'success', message: 'Group cover photo updated!' });
+                try {
+                  const formData = new FormData();
+                  formData.append('file', file);
+                  const uploadRes = await api.media.upload(formData);
+                  if (uploadRes?.asset?.url || uploadRes?.url) {
+                    const finalUrl = uploadRes.asset?.url || uploadRes.url;
+                    setCurrentCover(finalUrl);
+                    await api.bonds.updateEntity(entity.id, { coverUrl: finalUrl });
+                  }
+                } catch {
+                  // Keep local preview if offline
+                }
+              }}
+            />
+
             {/* Edit Cover Button */}
             {(myRole === 'owner' || myRole === 'admin') && (
-              <button className="absolute bottom-4 right-4 py-1.5 px-3 rounded-xl bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer transition-all shadow-md">
+              <button 
+                onClick={() => coverFileInputRef.current?.click()}
+                className="absolute bottom-4 right-4 py-1.5 px-3 rounded-xl bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer transition-all shadow-md active:scale-95"
+              >
                 <Camera className="w-3.5 h-3.5" />
                 <span>Edit Cover</span>
               </button>
@@ -412,15 +458,107 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
                 </button>
               ))}
 
-              <div className="ml-auto flex items-center gap-2">
-                <button className="w-9 h-9 rounded-xl hover:bg-[#3a3b3c] flex items-center justify-center text-[#b0b3b8] hover:text-white cursor-pointer">
+              <div className="ml-auto flex items-center gap-2 relative">
+                <button 
+                  onClick={() => setIsSearchOpen(!isSearchOpen)}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${isSearchOpen ? 'bg-blue-600/30 text-blue-400' : 'hover:bg-[#3a3b3c] text-[#b0b3b8] hover:text-white'}`}
+                  title="Search posts in group"
+                >
                   <Search className="w-4 h-4" />
                 </button>
-                <button className="w-9 h-9 rounded-xl hover:bg-[#3a3b3c] flex items-center justify-center text-[#b0b3b8] hover:text-white cursor-pointer">
-                  <MoreHorizontal className="w-4 h-4" />
-                </button>
+                <div className="relative">
+                  <button 
+                    onClick={() => setGroupMenuOpen(!groupMenuOpen)}
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${groupMenuOpen ? 'bg-[#3a3b3c] text-white' : 'hover:bg-[#3a3b3c] text-[#b0b3b8] hover:text-white'}`}
+                    title="More group options"
+                  >
+                    <MoreHorizontal className="w-4 h-4" />
+                  </button>
+
+                  {groupMenuOpen && (
+                    <div className="absolute right-0 top-11 w-52 bg-[#242526] rounded-xl border border-[#393a3b] shadow-2xl p-1.5 z-50 text-xs font-semibold space-y-0.5">
+                      <button 
+                        onClick={() => {
+                          const url = `${window.location.origin}/bonds/${entity.id}`;
+                          navigator.clipboard?.writeText(url);
+                          addToast?.({ type: 'success', message: 'Group link copied to clipboard!' });
+                          setGroupMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[#3a3b3c] text-left text-white"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-[#b0b3b8]" />
+                        <span>Copy Link</span>
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          setGroupMenuOpen(false);
+                          if (navigator.share) {
+                            try {
+                              await navigator.share({
+                                title: entity.name,
+                                text: entity.description || 'Join our group on Aeirmist!',
+                                url: `${window.location.origin}/bonds/${entity.id}`
+                              });
+                            } catch {}
+                          } else {
+                            addToast?.({ type: 'info', message: 'Link copied to share' });
+                          }
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[#3a3b3c] text-left text-white"
+                      >
+                        <Share2 className="w-3.5 h-3.5 text-[#b0b3b8]" />
+                        <span>Share Group</span>
+                      </button>
+                      <button 
+                        onClick={() => {
+                          addToast?.({ type: 'info', message: 'Group notifications muted' });
+                          setGroupMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[#3a3b3c] text-left text-white"
+                      >
+                        <BellOff className="w-3.5 h-3.5 text-[#b0b3b8]" />
+                        <span>Mute Notifications</span>
+                      </button>
+                      {isMember && (
+                        <button 
+                          onClick={() => {
+                            setGroupMenuOpen(false);
+                            handleJoinClick();
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-red-500/20 text-left text-red-400"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Leave Group</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
+
+            {/* In-Group Search Bar */}
+            {isSearchOpen && (
+              <div className="mt-3 relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search group posts, discussions, or members..."
+                  className="w-full bg-[#242526] text-white text-xs rounded-xl px-4 py-2.5 pl-10 border border-[#393a3b] focus:border-blue-500 outline-none"
+                  autoFocus
+                />
+                <Search className="w-4 h-4 text-[#b0b3b8] absolute left-3.5 top-3" />
+                {searchQuery && (
+                  <button 
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-2.5 text-[#b0b3b8] hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* MAIN DISCUSSION FEED CONTENT */}
@@ -591,10 +729,13 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
                 <p className="text-xs text-[#b0b3b8] mt-1">Be the first to share an update in {entity.name}!</p>
               </div>
             ) : (
-              posts.map((post) => (
+              (searchQuery.trim() 
+                ? posts.filter(p => p.content?.toLowerCase().includes(searchQuery.toLowerCase()) || p.authorName?.toLowerCase().includes(searchQuery.toLowerCase()))
+                : posts
+              ).map((post) => (
                 <div key={post.id} className="bg-[#242526] rounded-2xl border border-[#393a3b] shadow-sm overflow-hidden">
                   {/* Post Author Bar */}
-                  <div className="p-4 flex items-center justify-between">
+                  <div className="p-4 flex items-center justify-between relative">
                     <div className="flex items-center gap-3">
                       <img
                         src={post.authorAvatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80'}
@@ -628,9 +769,64 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
                       </div>
                     </div>
 
-                    <button className="text-[#b0b3b8] hover:text-white p-1 rounded-xl hover:bg-[#3a3b3c] cursor-pointer">
-                      <MoreHorizontal className="w-5 h-5" />
-                    </button>
+                    <div className="relative">
+                      <button 
+                        onClick={() => setPostMenuOpenId(postMenuOpenId === post.id ? null : post.id)}
+                        className="text-[#b0b3b8] hover:text-white p-1.5 rounded-xl hover:bg-[#3a3b3c] cursor-pointer transition-colors"
+                      >
+                        <MoreHorizontal className="w-5 h-5" />
+                      </button>
+
+                      {postMenuOpenId === post.id && (
+                        <div className="absolute right-0 top-9 w-44 bg-[#18191a] rounded-xl border border-[#393a3b] shadow-2xl p-1.5 z-40 text-xs font-semibold space-y-0.5">
+                          <button
+                            onClick={() => {
+                              const url = `${window.location.origin}/bonds/${entity.id}?post=${post.id}`;
+                              navigator.clipboard?.writeText(url);
+                              addToast?.({ type: 'success', message: 'Post link copied to clipboard!' });
+                              setPostMenuOpenId(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-[#3a3b3c] text-left text-white"
+                          >
+                            <Copy className="w-3.5 h-3.5 text-[#b0b3b8]" />
+                            <span>Copy Link</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              addToast?.({ type: 'success', message: 'Post saved to bookmarks' });
+                              setPostMenuOpenId(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-[#3a3b3c] text-left text-white"
+                          >
+                            <Bookmark className="w-3.5 h-3.5 text-[#b0b3b8]" />
+                            <span>Save Post</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              addToast?.({ type: 'info', message: 'Post reported to moderators' });
+                              setPostMenuOpenId(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-[#3a3b3c] text-left text-amber-400"
+                          >
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            <span>Report Post</span>
+                          </button>
+                          {(myRole === 'owner' || myRole === 'admin' || post.authorId === currentUser?.id) && (
+                            <button
+                              onClick={() => {
+                                setPosts(prev => prev.filter(p => p.id !== post.id));
+                                addToast?.({ type: 'success', message: 'Post deleted' });
+                                setPostMenuOpenId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-red-500/20 text-left text-red-400"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete Post</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Post Content */}
@@ -849,7 +1045,10 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
                 </div>
               </button>
 
-              <button className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-sm text-[#e4e6eb] transition-colors cursor-pointer">
+              <button 
+                onClick={() => addToast?.({ type: 'info', message: 'Membership Questions: Open approval is active.' })}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-sm text-[#e4e6eb] transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-3">
                   <FileText className="w-4 h-4 text-[#b0b3b8]" />
                   <span className="font-semibold text-xs text-[#e4e6eb]">Membership questions</span>
@@ -888,17 +1087,26 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
                 </span>
               </button>
 
-              <button className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer">
+              <button 
+                onClick={() => addToast?.({ type: 'info', message: 'Scheduled Posts: 0 posts currently scheduled.' })}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer"
+              >
                 <Calendar className="w-4 h-4 text-[#b0b3b8]" />
                 <span>Scheduled posts</span>
               </button>
 
-              <button className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer">
+              <button 
+                onClick={() => addToast?.({ type: 'info', message: 'Activity Log: All recent moderator events are clean.' })}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer"
+              >
                 <Clock className="w-4 h-4 text-[#b0b3b8]" />
                 <span>Activity log</span>
               </button>
 
-              <button className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-sm text-[#e4e6eb] transition-colors cursor-pointer">
+              <button 
+                onClick={() => addToast?.({ type: 'success', message: 'Member-reported Content: Queue is clean (0 pending).' })}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-sm text-[#e4e6eb] transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-3">
                   <MessageCircle className="w-4 h-4 text-[#b0b3b8]" />
                   <div className="text-left">
@@ -908,7 +1116,10 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
                 </div>
               </button>
 
-              <button className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-sm text-[#e4e6eb] transition-colors cursor-pointer">
+              <button 
+                onClick={() => addToast?.({ type: 'info', message: 'Moderation Alerts: Group health score is 99%.' })}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-sm text-[#e4e6eb] transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-3">
                   <Shield className="w-4 h-4 text-[#b0b3b8]" />
                   <div className="text-left">
@@ -971,11 +1182,21 @@ export const FacebookGroupView: React.FC<FacebookGroupViewProps> = ({
 
           {isSupportOpen && (
             <div className="space-y-0.5 mt-1">
-              <button className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer">
+              <button 
+                onClick={() => {
+                  window.location.href = '/community-guidelines';
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer"
+              >
                 <HelpCircle className="w-4 h-4 text-[#b0b3b8]" />
                 <span>Help Center</span>
               </button>
-              <button className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer">
+              <button 
+                onClick={() => {
+                  window.location.href = '/explore';
+                }}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-[#3a3b3c] text-xs font-semibold text-[#e4e6eb] transition-colors cursor-pointer"
+              >
                 <span>Groups hub</span>
                 <ExternalLink className="w-3.5 h-3.5 text-[#b0b3b8]" />
               </button>

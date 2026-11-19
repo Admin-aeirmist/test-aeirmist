@@ -11,6 +11,9 @@ interface ImageViewerModalProps {
   imageUrl: string;
   images?: string[];
   initialIndex?: number;
+  onReact?: (emoji: string) => void;
+  onReply?: (imageUrl: string) => void;
+  onQuote?: (imageUrl: string) => void;
 }
 
 export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ 
@@ -18,10 +21,15 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
   onClose, 
   imageUrl,
   images,
-  initialIndex = 0
+  initialIndex = 0,
+  onReact,
+  onReply,
+  onQuote
 }) => {
   const { addToast } = useAeirmist();
   const [isDownloading, setIsDownloading] = useState(false);
+  const [hasReacted, setHasReacted] = useState(false);
+  const [showReactions, setShowReactions] = useState(false);
   const activeList = images && images.length > 0 ? images : [imageUrl];
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
 
@@ -81,14 +89,59 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-2 z-50 bg-black/80 p-2 rounded-full backdrop-blur-xl border border-white/10"
+                    onClick={e => e.stopPropagation()}
                 >
-                   <button className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-white text-xs font-bold">
-                       <Heart size={16} /> React
+                   {showReactions && (
+                     <div className="absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 bg-[#242526] rounded-full border border-white/20 shadow-2xl">
+                       {['❤️', '👍', '🔥', '😂', '😮', '👏'].map(emoji => (
+                         <button
+                           key={emoji}
+                           onClick={() => {
+                             setHasReacted(true);
+                             setShowReactions(false);
+                             onReact?.(emoji);
+                             addToast?.({ type: 'success', message: `Reacted with ${emoji}` });
+                           }}
+                           className="p-1 hover:scale-125 transition-transform text-base"
+                         >
+                           {emoji}
+                         </button>
+                       ))}
+                     </div>
+                   )}
+                   <button 
+                     onClick={() => {
+                       setShowReactions(!showReactions);
+                       if (!showReactions) {
+                         setHasReacted(!hasReacted);
+                         if (!hasReacted) {
+                           onReact?.('❤️');
+                           addToast?.({ type: 'success', message: 'Reacted with ❤️' });
+                         }
+                       }
+                     }}
+                     className={`flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-xs font-bold transition-colors ${hasReacted ? 'text-red-400' : 'text-white'}`}
+                   >
+                       <Heart size={16} className={hasReacted ? 'fill-current' : ''} /> {hasReacted ? 'Liked' : 'React'}
                    </button>
-                   <button className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-white text-xs font-bold">
+                   <button 
+                     onClick={() => {
+                       onReply?.(currentImage);
+                       addToast?.({ type: 'info', message: 'Replying to image in chat...' });
+                       onClose();
+                     }}
+                     className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-white text-xs font-bold transition-colors cursor-pointer"
+                   >
                        <MessageCircle size={16} /> Reply
                    </button>
-                   <button className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-white text-xs font-bold">
+                   <button 
+                     onClick={() => {
+                       onQuote?.(currentImage);
+                       navigator.clipboard?.writeText(currentImage);
+                       addToast?.({ type: 'success', message: 'Image quoted & link copied to clipboard' });
+                     }}
+                     className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-white text-xs font-bold transition-colors cursor-pointer"
+                   >
                        <Repeat size={16} /> Quote
                    </button>
                 </motion.div>

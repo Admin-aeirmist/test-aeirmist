@@ -531,8 +531,8 @@ async function startServer() {
       ];
 
       // 1. Cloudflare Calls TURN integration (Direct Anycast Relay)
-      const cfTurnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID || "2098002d525676751626b65d0215cfac";
-      const cfTurnKeySecret = process.env.CLOUDFLARE_TURN_KEY_SECRET || "dfd391fd4e863d115a19d527167151c4364f999e8d073f5b7f0cd63447fd2225";
+      const cfTurnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID;
+      const cfTurnKeySecret = process.env.CLOUDFLARE_TURN_KEY_SECRET;
       if (cfTurnKeyId && cfTurnKeySecret) {
         try {
           const cfResp = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${cfTurnKeyId}/credentials/generate`, {

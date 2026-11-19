@@ -16,6 +16,71 @@ import { useAeirmist } from '../../../context/AeirmistContext';
 
 const CallsSettings = () => {
   const { addToast } = useAeirmist();
+  
+  const [callFilter, setCallFilter] = React.useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('aeirmist_call_filter')) || 'My Links';
+  });
+
+  const [p2pEnabled, setP2pEnabled] = React.useState<boolean>(() => {
+    return typeof window !== 'undefined' ? localStorage.getItem('aeirmist_p2p_enabled') !== 'false' : true;
+  });
+
+  const [audioFidelity, setAudioFidelity] = React.useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('aeirmist_audio_fidelity')) || 'High Definition (Lossless)';
+  });
+
+  const [videoResolution, setVideoResolution] = React.useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('aeirmist_video_res')) || '1080p (Full HD)';
+  });
+
+  const handleFilterChange = (option: string) => {
+    setCallFilter(option);
+    try {
+      localStorage.setItem('aeirmist_call_filter', option);
+      addToast({
+        title: 'Filter Configured',
+        message: `Call transmission filter set to: ${option}`,
+        type: 'info'
+      });
+    } catch {}
+  };
+
+  const handleToggleP2P = () => {
+    const next = !p2pEnabled;
+    setP2pEnabled(next);
+    try {
+      localStorage.setItem('aeirmist_p2p_enabled', String(next));
+      addToast({
+        title: 'P2P Precision',
+        message: next ? 'Peer-to-Peer direct transmission enabled.' : 'Relayed TURN proxy routing enabled.',
+        type: 'info'
+      });
+    } catch {}
+  };
+
+  const handleClearCallHistory = () => {
+    try {
+      localStorage.removeItem('aeirmist_call_logs');
+      localStorage.removeItem('aeirmist_recent_calls');
+      window.dispatchEvent(new CustomEvent('aeirmist_calls_cleared'));
+      addToast({
+        title: 'Registry Cleared',
+        message: 'All call history and transmission records deleted.',
+        type: 'success'
+      });
+    } catch {
+      addToast({ title: 'Error', message: 'Could not clear registry.', type: 'warning' });
+    }
+  };
+
+  const handleBlockedCommunicators = () => {
+    window.dispatchEvent(new CustomEvent('aeirmist_open_blocked_users'));
+    addToast({
+      title: 'Blocked Communicators',
+      message: 'Managing blocked users list.',
+      type: 'info'
+    });
+  };
 
   return (
     <motion.div 
@@ -48,10 +113,12 @@ const CallsSettings = () => {
               {['Everyone', 'My Links', 'Nobody'].map((option) => (
                 <button
                   key={option}
-                  className={`py-3 rounded-xl border text-[10px] font-bold uppercase tracking-widest transition-all ${
-                    option === 'My Links'
-                      ? 'bg-aeirmist-cyan/10 border-aeirmist-cyan text-aeirmist-cyan'
-                      : 'bg-white/5 border-white/5 text-white/40 hover:border-white/10'
+                  type="button"
+                  onClick={() => handleFilterChange(option)}
+                  className={`py-3 rounded-xl border text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer ${
+                    callFilter === option
+                      ? 'bg-aeirmist-cyan/10 border-aeirmist-cyan text-aeirmist-cyan shadow-[0_0_15px_rgba(0,242,255,0.2)]'
+                      : 'bg-white/5 border-white/5 text-white/40 hover:border-white/10 hover:text-white/70'
                   }`}
                 >
                   {option}
@@ -64,7 +131,8 @@ const CallsSettings = () => {
             icon={<Globe size={18} />}
             title="Peer-to-Peer Precision"
             desc="Use direct P2P connections for reduced latency (Exposes IP to trusted nodes)"
-            enabled={true}
+            enabled={p2pEnabled}
+            onToggle={handleToggleP2P}
           />
         </div>
       </section>
@@ -84,10 +152,20 @@ const CallsSettings = () => {
               <Volume2 size={16} className="text-aeirmist-cyan" />
               <h4 className="text-xs font-bold uppercase tracking-widest text-white">Audio Fidelity</h4>
             </div>
-            <select className="w-full h-11 px-4 bg-white/[0.03] border border-white/10 rounded-xl text-xs font-mono text-white/80 outline-none">
-              <option>Standard (VBR)</option>
-              <option>High Definition (Lossless)</option>
-              <option>Low Data Mode</option>
+            <select 
+              value={audioFidelity}
+              onChange={(e) => {
+                setAudioFidelity(e.target.value);
+                try {
+                  localStorage.setItem('aeirmist_audio_fidelity', e.target.value);
+                  addToast({ title: 'Audio Fidelity Set', message: e.target.value, type: 'info' });
+                } catch {}
+              }}
+              className="w-full h-11 px-4 bg-[#12151f] border border-white/10 rounded-xl text-xs font-mono text-white/80 outline-none cursor-pointer hover:border-white/20 transition-colors"
+            >
+              <option value="Standard (VBR)">Standard (VBR)</option>
+              <option value="High Definition (Lossless)">High Definition (Lossless)</option>
+              <option value="Low Data Mode">Low Data Mode</option>
             </select>
           </div>
 
@@ -96,10 +174,20 @@ const CallsSettings = () => {
               <Video size={16} className="text-aeirmist-magenta" />
               <h4 className="text-xs font-bold uppercase tracking-widest text-white">Video Resolution</h4>
             </div>
-            <select className="w-full h-11 px-4 bg-white/[0.03] border border-white/10 rounded-xl text-xs font-mono text-white/80 outline-none">
-              <option>720p (HD)</option>
-              <option>1080p (Full HD)</option>
-              <option>480p (Standard)</option>
+            <select 
+              value={videoResolution}
+              onChange={(e) => {
+                setVideoResolution(e.target.value);
+                try {
+                  localStorage.setItem('aeirmist_video_res', e.target.value);
+                  addToast({ title: 'Video Resolution Set', message: e.target.value, type: 'info' });
+                } catch {}
+              }}
+              className="w-full h-11 px-4 bg-[#12151f] border border-white/10 rounded-xl text-xs font-mono text-white/80 outline-none cursor-pointer hover:border-white/20 transition-colors"
+            >
+              <option value="720p (HD)">720p (HD)</option>
+              <option value="1080p (Full HD)">1080p (Full HD)</option>
+              <option value="480p (Standard)">480p (Standard)</option>
             </select>
           </div>
         </div>
@@ -115,21 +203,29 @@ const CallsSettings = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <button className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all flex items-center justify-between group">
+          <button 
+            type="button"
+            onClick={handleClearCallHistory}
+            className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-rose-500/30 hover:bg-white/[0.04] transition-all flex items-center justify-between group cursor-pointer"
+          >
             <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/40">
+              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/40 group-hover:text-rose-400 group-hover:bg-rose-500/10 transition-colors">
                 <Clock size={18} />
               </div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-white">Clear Call History</span>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-white group-hover:text-rose-300 transition-colors">Clear Call History</span>
             </div>
           </button>
 
-          <button className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all flex items-center justify-between group">
+          <button 
+            type="button"
+            onClick={handleBlockedCommunicators}
+            className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-aeirmist-cyan/30 hover:bg-white/[0.04] transition-all flex items-center justify-between group cursor-pointer"
+          >
             <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/40">
+              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/40 group-hover:text-aeirmist-cyan group-hover:bg-aeirmist-cyan/10 transition-colors">
                 <UserX size={18} />
               </div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-white">Blocked Communicators</span>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-white group-hover:text-aeirmist-cyan transition-colors">Blocked Communicators</span>
             </div>
           </button>
         </div>
@@ -138,8 +234,12 @@ const CallsSettings = () => {
   );
 };
 
-const CallToggle = ({ icon, title, desc, enabled }: any) => (
-  <button className="w-full p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all flex items-center justify-between text-left group">
+const CallToggle = ({ icon, title, desc, enabled, onToggle }: any) => (
+  <button 
+    type="button"
+    onClick={onToggle}
+    className="w-full p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all flex items-center justify-between text-left group cursor-pointer"
+  >
     <div className="flex items-center gap-5">
       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
         enabled ? 'bg-aeirmist-cyan/10 text-aeirmist-cyan' : 'bg-white/5 text-white/40 group-hover:text-white/60'

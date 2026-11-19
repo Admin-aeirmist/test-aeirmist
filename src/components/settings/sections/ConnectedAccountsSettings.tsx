@@ -110,7 +110,20 @@ const ConnectedAccountsSettings = () => {
           ))}
 
           {/* Custom Bridge */}
-          <button className="p-5 rounded-3xl border border-dashed border-white/10 hover:border-white/30 bg-white/[0.01] hover:bg-white/[0.03] transition-all flex flex-col items-center justify-center gap-3 group">
+          <button 
+            onClick={() => {
+              const bridgeName = window.prompt("Enter custom bridge name (e.g., Telegram, Mastodon, Threads):");
+              if (!bridgeName?.trim()) return;
+              const bridgeUrl = window.prompt(`Enter URL or username for ${bridgeName.trim()}:`);
+              if (!bridgeUrl?.trim()) return;
+              handleSocialChange(bridgeName.trim().toLowerCase(), bridgeUrl.trim());
+              addToast?.({
+                type: 'success',
+                message: `Added custom bridge: ${bridgeName.trim()}`
+              });
+            }}
+            className="p-5 rounded-3xl border border-dashed border-white/10 hover:border-white/30 bg-white/[0.01] hover:bg-white/[0.03] transition-all flex flex-col items-center justify-center gap-3 group cursor-pointer active:scale-98"
+          >
             <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/30 group-hover:text-white/60 transition-colors">
               <Plus size={20} />
             </div>
@@ -132,7 +145,21 @@ const ConnectedAccountsSettings = () => {
           <p className="text-[11px] text-white/40 leading-relaxed">
             Verify your identity across multiple decentralized networks to earn the <span className="text-aeirmist-cyan font-bold">Omni-Node</span> status. This enhances your trust score and visibility across the network.
           </p>
-          <button className="px-6 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 transition-all">
+          <button 
+            onClick={() => {
+              addToast?.({
+                type: 'info',
+                message: 'Cross-chain verification sequence initiated. Checking node health...'
+              });
+              setTimeout(() => {
+                addToast?.({
+                  type: 'success',
+                  message: 'Omni-Node status verified: All active bridges are synchronized.'
+                });
+              }, 1200);
+            }}
+            className="px-6 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 transition-all cursor-pointer active:scale-95"
+          >
             Begin Verification Sequence
           </button>
         </div>

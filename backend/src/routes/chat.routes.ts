@@ -31,9 +31,9 @@ const conversationCreateLimiter = createRateLimiter({
   message: 'Too many conversations created. Please wait a minute.',
 });
 
-// Universal fallback user provider for chat and real-time messaging
+// In development/test environments, allow mock user fallback; in production, enforce authentication
 router.use((req: any, _res: any, next: any) => {
-  if (!req.user || !req.user.userId) {
+  if (process.env.NODE_ENV === 'test' && (!req.user || !req.user.userId)) {
     const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let fallbackId = '53c57429-0694-490f-ab2a-c47e2d7929ac';
@@ -175,7 +175,10 @@ export async function resolveConversationId(rawConvId: string, currentUserId: st
 // List Conversations
 router.get('/conversations', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const list = await ChatDAL.getUserConversations(req.user!.userId);
+    if (!req.user || !req.user.userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const list = await ChatDAL.getUserConversations(req.user.userId);
     res.json({ conversations: list });
   } catch (err) {
     console.error('[Get Conversations Error]', err);
@@ -186,15 +189,9 @@ router.get('/conversations', optionalAuthToken, async (req: AuthenticatedRequest
 // Direct Chat
 router.post('/conversations/direct', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    let currentUserId = req.user?.userId;
+    const currentUserId = req.user?.userId;
     if (!currentUserId) {
-      const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (headerUid && uuidRegex.test(headerUid)) {
-        currentUserId = headerUid;
-      } else {
-        currentUserId = '53c57429-0694-490f-ab2a-c47e2d7929ac';
-      }
+      return res.status(401).json({ error: 'Authentication required' });
     }
     const { participantId } = DirectChatSchema.parse(req.body);
     const resolvedTargetId = await resolveUserId(participantId);
@@ -379,18 +376,12 @@ router.patch('/conversations/:id', optionalAuthToken, async (req: AuthenticatedR
 // Get Messages
 router.get('/conversations/:id/messages', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    let currentUserId = req.user?.userId;
+    const currentUserId = req.user?.userId;
     if (!currentUserId) {
-      const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (headerUid && uuidRegex.test(headerUid)) {
-        currentUserId = headerUid;
-      } else {
-        currentUserId = '53c57429-0694-490f-ab2a-c47e2d7929ac';
-      }
+      return res.status(401).json({ error: 'Authentication required to view messages' });
     }
     const convId = await resolveConversationId(req.params.id, currentUserId);
-    const entityAccess = await BondsDAL.checkEntityConversationAccess(convId, req.user!.userId);
+    const entityAccess = await BondsDAL.checkEntityConversationAccess(convId, currentUserId);
 
     if (entityAccess) {
       if (!entityAccess.canViewHistory) {
@@ -468,15 +459,9 @@ router.get('/conversations/:id/messages', optionalAuthToken, async (req: Authent
 // Send Message
 router.post('/conversations/:id/messages', optionalAuthToken, messageSendLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    let senderId = req.user?.userId;
+    const senderId = req.user?.userId;
     if (!senderId) {
-      const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (headerUid && uuidRegex.test(headerUid)) {
-        senderId = headerUid;
-      } else {
-        senderId = '53c57429-0694-490f-ab2a-c47e2d7929ac';
-      }
+      return res.status(401).json({ error: 'Authentication required to send messages' });
     }
 
     const convId = await resolveConversationId(req.params.id, senderId);

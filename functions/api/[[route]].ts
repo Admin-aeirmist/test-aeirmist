@@ -25,7 +25,7 @@ const tokensMap = new Map<string, any>();
 const defaultAdminUser: any = {
   id: "usr_admin_aeirmist",
   uid: "usr_admin_aeirmist",
-  email: "admin.aeirmist@gmail.com",
+  email: "admin@aeirmist.com",
   username: "admin_aeirmist",
   displayName: "Admin Aeirmist",
   role: "admin",
@@ -48,8 +48,8 @@ const defaultAdminUser: any = {
     displayName: "Admin Aeirmist",
     fullName: "Admin Aeirmist",
     name: "Admin Aeirmist",
-    email: "admin.aeirmist@gmail.com",
-    personalEmail: "admin.aeirmist@gmail.com",
+    email: "admin@aeirmist.com",
+    personalEmail: "admin@aeirmist.com",
     photoURL: "",
     avatarKey: "",
     role: "admin",
@@ -80,7 +80,7 @@ const defaultJunaedUser: any = {
   id: "53c57429-0694-490f-ab2a-c47e2d7929ac",
   uid: "53c57429-0694-490f-ab2a-c47e2d7929ac",
   accountId: "10000000001",
-  email: "junaedislamjim180@gmail.com",
+  email: "founder@aeirmist.com",
   username: "junaed_islam_jim9",
   displayName: "Junaed Islam Jim",
   role: "admin",
@@ -105,8 +105,8 @@ const defaultJunaedUser: any = {
     displayName: "Junaed Islam Jim",
     fullName: "Junaed Islam Jim",
     name: "Junaed Islam Jim",
-    email: "junaedislamjim180@gmail.com",
-    personalEmail: "junaedislamjim180@gmail.com",
+    email: "founder@aeirmist.com",
+    personalEmail: "founder@aeirmist.com",
     photoURL: "https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg",
     avatarKey: "https://res.cloudinary.com/eldujqpd/image/upload/v1790772140/aeirmist/users/xmlcj9meyto9nvp35dmm.jpg",
     coverURL: "https://res.cloudinary.com/eldujqpd/image/upload/v1791272920/aeirmist/users/guei0fuylstthi5tptr2.jpg",
@@ -237,8 +237,7 @@ function decodeBase64Url(str: string): string {
 
 const EDGE_TOKEN_SECRETS = [
   "aeirmist_edge_secret_v1_9a8f3b2c1e7d4a6b",
-  "aeirmist_jwt_secret_key_prod_auth_2026",
-  "aeirmist_default_jwt_secret_change_in_production"
+  "aeirmist_jwt_secret_key_prod_auth_2026"
 ];
 
 function uint8ArrayToBase64Url(uint8: Uint8Array): string {
@@ -337,22 +336,19 @@ async function parseUserFromToken(token: string): Promise<any | null> {
         }
       }
 
-      if (!isValidSig && !payload?.userId && !payload?.id && !payload?.uid) {
-        console.warn("[Security] JWT signature verification failed and payload lacks ID.");
+      if (!isValidSig) {
+        console.warn("[Security] JWT signature verification failed.");
         return null;
       }
-    } else if (parts.length === 2) {
-      // 2-part token: payload.signature or legacy format
-      const tokenBase = parts[0];
-      let b64 = tokenBase;
-      if (tokenBase.startsWith("aeirmist_")) {
-        b64 = tokenBase.substring("aeirmist_".length);
-      } else if (tokenBase.startsWith("jwt_aeirmist_")) {
-        const lastUnderscore = tokenBase.lastIndexOf('_');
-        b64 = tokenBase.substring(lastUnderscore + 1);
-      }
-      const jsonStr = decodeBase64Url(b64);
-      payload = JSON.parse(jsonStr);
+    } else {
+      console.warn("[Security] Malformed or unsigned token structure rejected.");
+      return null;
+    }
+
+    // Enforce token expiration
+    if (payload?.exp && typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) {
+      console.warn("[Security] Expired JWT token rejected.");
+      return null;
     }
 
     if (payload && (payload.id || payload.uid || payload.userId)) {
@@ -789,14 +785,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   if (path === "/api/v1/auth/refresh" && method === "POST") {
     const authHeader = request.headers.get("Authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    let authUser = token ? await parseUserFromToken(token) : null;
-
-    if (!authUser) {
-      const xUid = request.headers.get("X-User-Id");
-      if (xUid && usersMap.has(xUid)) {
-        authUser = usersMap.get(xUid);
-      }
-    }
+    const authUser = token ? await parseUserFromToken(token) : null;
 
     if (authUser) {
       const newToken = await createToken(authUser);
@@ -873,8 +862,60 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     }
   }
 
+function sanitizePublicProfile(rawUserOrProfile: any, requesterUserId?: string): any {
+  if (!rawUserOrProfile) return null;
+  const p = rawUserOrProfile.profile || rawUserOrProfile;
+  const uid = p.userId || p.uid || p.id || rawUserOrProfile.id;
+  const isOwner = Boolean(
+    requesterUserId && (
+      requesterUserId === uid ||
+      requesterUserId === p.ownerUid ||
+      requesterUserId === rawUserOrProfile.id
+    )
+  );
+
+  const sanitized: any = {
+    id: uid,
+    uid: uid,
+    userId: uid,
+    username: p.username || rawUserOrProfile.username || '',
+    displayName: p.displayName || p.name || p.username || 'User',
+    photoURL: p.photoURL || p.avatarKey || rawUserOrProfile.photoURL || '',
+    avatarKey: p.avatarKey || p.photoURL || rawUserOrProfile.avatarKey || '',
+    coverURL: p.coverURL || p.bannerKey || '',
+    bannerKey: p.bannerKey || p.coverURL || '',
+    bio: p.bio || '',
+    badge: p.badge || (p.isAdmin ? 'admin' : undefined),
+    isVerified: Boolean(p.isVerified || p.isAdmin || rawUserOrProfile.isVerified),
+    isAdmin: Boolean(p.isAdmin || rawUserOrProfile.isAdmin),
+    role: p.role || rawUserOrProfile.role || 'user',
+    followersCount: p.followersCount || 0,
+    followingCount: p.followingCount || 0,
+    postsCount: p.postsCount || 0,
+    status: p.status || 'ACTIVE',
+    createdAt: p.createdAt || '2026-01-01T00:00:00.000Z',
+    website: p.website || undefined,
+  };
+
+  if (isOwner) {
+    sanitized.email = p.email || rawUserOrProfile.email;
+    sanitized.personalEmail = p.personalEmail;
+    sanitized.location = p.location;
+    sanitized.privacySettings = p.privacySettings;
+    sanitized.messagingSettings = p.messagingSettings;
+    sanitized.themeSettings = p.themeSettings;
+  }
+
+  return sanitized;
+}
+
   // Users: Search (CRITICAL: Must match before /api/v1/users/:id)
   if ((path === "/api/v1/users/search" || path === "/api/v1/users/suggestions") && method === "GET") {
+    const authHeader = request.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const authUser = token ? await parseUserFromToken(token) : null;
+    const reqUserId = authUser?.id || authUser?.uid;
+
     const q = (url.searchParams.get("q") || "").toLowerCase().trim();
     const uniqueUsers = Array.from(new Set(Array.from(usersMap.values()).map(u => u.id)))
       .map(id => usersMap.get(id))
@@ -884,19 +925,24 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     if (q) {
       filtered = uniqueUsers.filter((u: any) => 
         (u.username && u.username.toLowerCase().includes(q)) ||
-        (u.displayName && u.displayName.toLowerCase().includes(q)) ||
-        (u.email && u.email.toLowerCase().includes(q))
+        (u.displayName && u.displayName.toLowerCase().includes(q))
       );
     }
-    return new Response(JSON.stringify({ users: filtered, total: filtered.length }), { status: 200, headers: CORS_HEADERS });
+    const sanitizedList = filtered.map((u: any) => sanitizePublicProfile(u, reqUserId)).filter(Boolean);
+    return new Response(JSON.stringify({ users: sanitizedList, total: sanitizedList.length }), { status: 200, headers: CORS_HEADERS });
   }
 
   // Users: Single Profile
   if (path.startsWith("/api/v1/users/") && method === "GET" && !path.includes("/follow") && !path.includes("/search")) {
+    const authHeader = request.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const authUser = token ? await parseUserFromToken(token) : null;
+    const reqUserId = authUser?.id || authUser?.uid;
+
     const rawId = decodeURIComponent(path.replace("/api/v1/users/", "")).trim();
     let found = usersMap.get(rawId) || usersMap.get(rawId.toLowerCase());
     if (found && found.profile) {
-      return new Response(JSON.stringify({ profile: found.profile }), { status: 200, headers: CORS_HEADERS });
+      return new Response(JSON.stringify({ profile: sanitizePublicProfile(found, reqUserId) }), { status: 200, headers: CORS_HEADERS });
     }
 
     const isAdmin = rawId === "admin.aeirmist@gmail.com" || rawId === "admin" || rawId === "admin_aeirmist" || rawId === "usr_admin_aeirmist";
@@ -908,7 +954,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       rawId.includes("e9c6763f");
     
     if (isJunaed) {
-      return new Response(JSON.stringify({ profile: defaultJunaedUser.profile }), { status: 200, headers: CORS_HEADERS });
+      return new Response(JSON.stringify({ profile: sanitizePublicProfile(defaultJunaedUser, reqUserId) }), { status: 200, headers: CORS_HEADERS });
     }
     const cleanUsername = isJunaed ? "junaed_islam_jim9" : (isAdmin ? "admin_aeirmist" : (rawId.startsWith("profile_") ? rawId.replace("profile_", "") : rawId));
     const cleanDisplayName = isJunaed ? "Junaed Islam Jim" : (isAdmin ? "Admin Aeirmist" : cleanUsername);
@@ -921,7 +967,6 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       displayName: cleanDisplayName,
       fullName: cleanDisplayName,
       name: cleanDisplayName,
-      email: isJunaed ? "junaedislamjim180@gmail.com" : (isAdmin ? "admin.aeirmist@gmail.com" : `${rawId}@aeirmist.com`),
       role: (isAdmin || isJunaed) ? "admin" : "user",
       isAdmin: isAdmin || isJunaed,
       isVerified: isAdmin || isJunaed,
@@ -932,7 +977,20 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       status: "ACTIVE",
       createdAt: new Date().toISOString()
     };
-    return new Response(JSON.stringify({ profile }), { status: 200, headers: CORS_HEADERS });
+    return new Response(JSON.stringify({ profile: sanitizePublicProfile(profile, reqUserId) }), { status: 200, headers: CORS_HEADERS });
+  }
+
+  // Admin Route Protection Guard (CRITICAL RED TEAM FIX)
+  if (path.startsWith("/api/v1/admin")) {
+    const authHeader = request.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const authUser = token ? await parseUserFromToken(token) : null;
+    if (!authUser || (!authUser.isAdmin && authUser.role !== 'admin' && authUser.role !== 'owner')) {
+      return new Response(JSON.stringify({ error: "Forbidden: Administrative privileges required" }), {
+        status: 403,
+        headers: CORS_HEADERS
+      });
+    }
   }
 
   // Admin: Stats
@@ -1219,17 +1277,9 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     try {
       const authHeader = request.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      let authUser = await parseUserFromToken(token);
+      const authUser = await parseUserFromToken(token);
       if (!authUser) {
-        const uidHeader = request.headers.get("X-User-Id") || request.headers.get("x-user-id");
-        const profileHeader = request.headers.get("X-Profile-Id") || request.headers.get("x-profile-id");
-        const fallbackId = uidHeader || profileHeader || `creator_${Date.now().toString(36)}`;
-        authUser = {
-          id: fallbackId,
-          uid: fallbackId,
-          displayName: "Aeirmist Creator",
-          username: "creator"
-        };
+        return new Response(JSON.stringify({ error: "Unauthorized: Valid session required to create posts" }), { status: 401, headers: CORS_HEADERS });
       }
 
       const body = await request.json() as any;
@@ -1440,17 +1490,9 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     try {
       const authHeader = request.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      let authUser = await parseUserFromToken(token);
+      const authUser = await parseUserFromToken(token);
       if (!authUser) {
-        const uidHeader = request.headers.get("X-User-Id") || request.headers.get("x-user-id");
-        const profileHeader = request.headers.get("X-Profile-Id") || request.headers.get("x-profile-id");
-        const fallbackId = uidHeader || profileHeader || `creator_${Date.now().toString(36)}`;
-        authUser = {
-          id: fallbackId,
-          uid: fallbackId,
-          displayName: "Aeirmist Creator",
-          username: "creator"
-        };
+        return new Response(JSON.stringify({ error: "Unauthorized: Valid session required to upload videos" }), { status: 401, headers: CORS_HEADERS });
       }
 
       const body = await request.json() as any;

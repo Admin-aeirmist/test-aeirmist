@@ -17,6 +17,23 @@ import { useAppearance } from '../../../context/AppearanceContext';
 
 const AccessibilitySettings = () => {
   const { addToast } = useAeirmist();
+  const [largeCursor, setLargeCursor] = React.useState(() => {
+    return typeof window !== 'undefined' && localStorage.getItem('aeirmist_large_cursor') === 'true';
+  });
+
+  const toggleLargeCursor = () => {
+    const next = !largeCursor;
+    setLargeCursor(next);
+    try {
+      localStorage.setItem('aeirmist_large_cursor', String(next));
+      document.documentElement.classList.toggle('large-cursor', next);
+      addToast({ 
+        title: 'Cursor Calibrated', 
+        message: next ? 'Large cursor support activated.' : 'Default cursor restored.', 
+        type: 'info' 
+      });
+    } catch {}
+  };
   const { 
     settings,
     updateAppearanceSettings
@@ -176,8 +193,16 @@ const AccessibilitySettings = () => {
                 <p className="text-[10px] text-white/30">Enhance pointer visibility for precise interaction</p>
               </div>
             </div>
-            <button className="w-12 h-6 bg-white/5 rounded-full relative transition-colors border border-white/10">
-              <div className="absolute top-1 left-1 w-4 h-4 bg-white/20 rounded-full" />
+            <button 
+              type="button"
+              onClick={toggleLargeCursor}
+              className={`w-12 h-6 rounded-full relative transition-colors border cursor-pointer ${
+                largeCursor ? 'bg-aeirmist-cyan/20 border-aeirmist-cyan/40' : 'bg-white/5 border-white/10'
+              }`}
+            >
+              <div className={`absolute top-1 transition-all w-4 h-4 rounded-full ${
+                largeCursor ? 'right-1 bg-aeirmist-cyan shadow-[0_0_8px_rgba(0,242,255,0.6)]' : 'left-1 bg-white/20'
+              }`} />
             </button>
           </div>
         </div>

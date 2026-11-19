@@ -173,7 +173,7 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
 
   try {
     let payload = candidateToken ? await resolveUserFromCredentials(candidateToken) : null;
-    if (!payload && headerUserId) {
+    if (!payload && headerUserId && process.env.NODE_ENV === 'test') {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(headerUserId);
       let matchedUser = null;
       if (isUuid) {

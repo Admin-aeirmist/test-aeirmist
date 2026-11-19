@@ -4,9 +4,9 @@ import fs from 'fs';
 async function test() {
   const client = new ftp.Client();
   await client.access({
-    host: 'ftpupload.net',
-    user: 'if0_42922540',
-    password: 'aeirmist1012',
+    host: process.env.INFINITYFREE_FTP_HOST || 'ftpupload.net',
+    user: process.env.INFINITYFREE_FTP_USER || '',
+    password: process.env.INFINITYFREE_FTP_PASSWORD || '',
     secure: false
   });
   console.log('Connected to FTP');

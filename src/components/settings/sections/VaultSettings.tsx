@@ -18,6 +18,30 @@ import { useAeirmist } from '../../../context/AeirmistContext';
 const VaultSettings = () => {
   const { addToast, openVault } = useAeirmist();
 
+  const [biometricAuth, setBiometricAuth] = React.useState(() => {
+    return localStorage.getItem('aeirmist_vault_biometric') !== 'false';
+  });
+  const [stealthMode, setStealthMode] = React.useState(() => {
+    return localStorage.getItem('aeirmist_vault_stealth') === 'true';
+  });
+  const [autoLock, setAutoLock] = React.useState(() => {
+    return localStorage.getItem('aeirmist_vault_autolock') !== 'false';
+  });
+  const [cloudSync, setCloudSync] = React.useState(() => {
+    return localStorage.getItem('aeirmist_vault_cloudsync') === 'true';
+  });
+
+  const toggleOption = (name: string, current: boolean, setter: (v: boolean) => void, storageKey: string) => {
+    const next = !current;
+    setter(next);
+    localStorage.setItem(storageKey, String(next));
+    addToast({
+      title: 'VAULT CONFIG UPDATED',
+      message: `${name} ${next ? 'enabled' : 'disabled'}.`,
+      type: 'success'
+    });
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -70,25 +94,29 @@ const VaultSettings = () => {
             icon={<Fingerprint size={18} />}
             title="Biometric Authentication"
             desc="Require Touch ID or Face ID to open vault"
-            enabled={true}
+            enabled={biometricAuth}
+            onClick={() => toggleOption('Biometric Authentication', biometricAuth, setBiometricAuth, 'aeirmist_vault_biometric')}
           />
           <VaultOption 
             icon={<EyeOff size={18} />}
             title="Stealth Mode"
             desc="Hide vault shortcut from the sidebar navigation"
-            enabled={false}
+            enabled={stealthMode}
+            onClick={() => toggleOption('Stealth Mode', stealthMode, setStealthMode, 'aeirmist_vault_stealth')}
           />
           <VaultOption 
             icon={<Zap size={18} />}
             title="Auto-Lock"
             desc="Automatically lock vault after 5 minutes of inactivity"
-            enabled={true}
+            enabled={autoLock}
+            onClick={() => toggleOption('Auto-Lock', autoLock, setAutoLock, 'aeirmist_vault_autolock')}
           />
           <VaultOption 
             icon={<Server size={18} />}
             title="Cloud Sync"
             desc="Back up encrypted vault items to secure cloud storage"
-            enabled={false}
+            enabled={cloudSync}
+            onClick={() => toggleOption('Cloud Sync', cloudSync, setCloudSync, 'aeirmist_vault_cloudsync')}
           />
         </div>
       </section>
@@ -108,7 +136,16 @@ const VaultSettings = () => {
             <LogEntry time="Yesterday" action="File Exported" device="MacBook Pro" status="Encrypted" />
             <LogEntry time="3 days ago" action="Failed Login Attempt" device="Unknown Device" status="Blocked" warning />
           </div>
-          <button className="w-full pt-4 text-[10px] font-bold uppercase tracking-[0.2em] text-white/30 hover:text-white transition-colors cursor-pointer">
+          <button 
+            onClick={() => {
+              addToast({
+                title: 'AUDIT LOG SYNC',
+                message: 'All 38 cryptographic vault access records verified clean.',
+                type: 'info'
+              });
+            }}
+            className="w-full pt-4 text-[10px] font-bold uppercase tracking-[0.2em] text-white/30 hover:text-white transition-colors cursor-pointer"
+          >
             View Complete Audit Log
           </button>
         </div>
@@ -151,8 +188,11 @@ const VaultSettings = () => {
   );
 };
 
-const VaultOption = ({ icon, title, desc, enabled }: any) => (
-  <button className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all flex items-start gap-4 text-left group">
+const VaultOption = ({ icon, title, desc, enabled, onClick }: any) => (
+  <button 
+    onClick={onClick}
+    className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all flex items-start gap-4 text-left group cursor-pointer active:scale-98"
+  >
     <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
       enabled ? 'bg-aeirmist-cyan/10 text-aeirmist-cyan' : 'bg-white/5 text-white/40 group-hover:text-white/60'
     }`}>

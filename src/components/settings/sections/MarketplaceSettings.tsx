@@ -19,7 +19,7 @@ import { AeirmistBillingHistory } from '../../marketplace/AeirmistBillingHistory
 import { InfinityPortal } from '../../dashboard/InfinityPortal';
 
 const MarketplaceSettings = () => {
-  const { profile } = useAeirmist();
+  const { profile, addToast } = useAeirmist();
 
   return (
     <motion.div 
@@ -52,7 +52,10 @@ const MarketplaceSettings = () => {
               Your premium sequence is active until <span className="text-white/60 font-mono">2024.12.31</span>. Enjoy unlimited artifacts and high-fidelity sonic waves.
             </p>
           </div>
-          <button className="px-8 py-3 rounded-2xl bg-white/5 border border-white/10 text-white text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all flex items-center gap-2">
+          <button 
+            onClick={() => addToast({ title: 'SUBSCRIPTION PORTAL', message: 'Current plan: Aeirmist Infinity Pro (Active through 2026).', type: 'info' })}
+            className="px-8 py-3 rounded-2xl bg-white/5 border border-white/10 text-white text-[10px] font-black uppercase tracking-widest hover:bg-white/10 active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+          >
             Manage Plan <ArrowRight size={12} />
           </button>
         </div>
@@ -80,13 +83,25 @@ const MarketplaceSettings = () => {
             </div>
             <div className="flex items-center gap-3">
               <span className="text-[8px] font-black uppercase tracking-widest text-aeirmist-cyan">Default</span>
-              <button className="p-2 rounded-lg hover:bg-white/5 text-white/20 hover:text-white/40 transition-colors">
+              <button 
+                onClick={() => addToast({ title: 'CARD SETTINGS', message: 'Mastercard •••• 4242 configured as primary billing method.', type: 'info' })}
+                className="p-2 rounded-lg hover:bg-white/5 text-white/20 hover:text-white/60 transition-colors cursor-pointer"
+              >
                 <Settings size={14} />
               </button>
             </div>
           </div>
 
-          <button className="w-full p-5 rounded-3xl border border-dashed border-white/10 hover:border-white/30 bg-white/[0.01] hover:bg-white/[0.03] transition-all flex items-center justify-center gap-3 group">
+          <button 
+            onClick={() => {
+              addToast({
+                title: 'PAYMENT GATEWAY',
+                message: 'Stripe wallet connector activated. Ready for tokenized card entry.',
+                type: 'info'
+              });
+            }}
+            className="w-full p-5 rounded-3xl border border-dashed border-white/10 hover:border-white/30 bg-white/[0.01] hover:bg-white/[0.03] transition-all flex items-center justify-center gap-3 group cursor-pointer active:scale-98"
+          >
             <Package size={16} className="text-white/20 group-hover:text-aeirmist-cyan transition-colors" />
             <span className="text-[10px] font-bold uppercase tracking-widest text-white/30 group-hover:text-white/50">Add Payment Source</span>
           </button>
