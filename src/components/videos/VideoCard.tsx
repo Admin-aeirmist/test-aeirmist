@@ -165,7 +165,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         className="flex flex-row gap-3 p-2.5 bg-white/[0.03] hover:bg-white/[0.07] border border-white/5 hover:border-white/15 rounded-xl cursor-pointer transition-all group overflow-hidden"
       >
         {/* Thumbnail 16:9 - YouTube style compact sidebar thumbnail */}
-        <div className="relative aspect-video w-36 sm:w-40 md:w-44 rounded-lg overflow-hidden bg-black shrink-0">
+        <div className="relative aspect-video w-32 sm:w-36 md:w-36 rounded-lg overflow-hidden bg-black shrink-0">
           <img 
             src={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600'} 
             alt={video.title || video.caption}

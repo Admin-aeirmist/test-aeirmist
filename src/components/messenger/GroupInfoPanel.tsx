@@ -76,6 +76,8 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
   
   const [isEditingName, setIsEditingName] = useState(false);
   const [groupNameInput, setGroupNameInput] = useState(chat.groupName || chat.name || '');
+  const [currentName, setCurrentName] = useState<string>(chat.groupName || chat.name || (chat as any).title || 'Group Chat');
+  const [currentPhoto, setCurrentPhoto] = useState<string>(chat.groupPhotoURL || chat.photo || chat.avatarKey || '');
   const [isUpdating, setIsUpdating] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   
@@ -155,6 +157,8 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
   // Update input state if chat changes
   useEffect(() => {
     setGroupNameInput(chat.groupName || chat.name || '');
+    setCurrentName(chat.groupName || chat.name || (chat as any).title || 'Group Chat');
+    setCurrentPhoto(chat.groupPhotoURL || chat.photo || chat.avatarKey || '');
     if (chat.nicknames) {
       setNicknames(chat.nicknames);
     }
@@ -741,6 +745,32 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
       chat.groupPhotoURL = finalPhotoUrl;
       chat.photo = finalPhotoUrl;
       chat.avatarKey = finalPhotoUrl;
+      setCurrentPhoto(finalPhotoUrl);
+
+      // Instantly dispatch cross-component events so top header, DockedChatWindow and sidebar update group DP
+      window.dispatchEvent(new CustomEvent('aeirmist_conversation_updated', {
+        detail: {
+          conversationId: chat.id,
+          id: chat.id,
+          photo: finalPhotoUrl,
+          groupPhotoURL: finalPhotoUrl,
+          avatarKey: finalPhotoUrl,
+          name: currentName,
+          groupName: currentName
+        }
+      }));
+      window.dispatchEvent(new CustomEvent('aeirmist_chat_updated', {
+        detail: {
+          conversationId: chat.id,
+          id: chat.id,
+          photo: finalPhotoUrl,
+          groupPhotoURL: finalPhotoUrl,
+          avatarKey: finalPhotoUrl,
+          name: currentName,
+          groupName: currentName
+        }
+      }));
+
       addToast({ title: 'Photo Updated', message: 'Group picture has been changed.', type: 'success' });
     } catch (err) {
       logger.error('Failed to update group photo:', err);
@@ -755,10 +785,35 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     if (!groupNameInput.trim()) return;
     setIsUpdating(true);
     try {
-      await messagingService.updateGroupDetails(db, chat.id, { name: groupNameInput.trim() }, profile?.displayName);
-      chat.groupName = groupNameInput.trim();
-      chat.name = groupNameInput.trim();
+      const nextName = groupNameInput.trim();
+      await messagingService.updateGroupDetails(db, chat.id, { name: nextName }, profile?.displayName);
+      chat.groupName = nextName;
+      chat.name = nextName;
+      setCurrentName(nextName);
       setIsEditingName(false);
+
+      // Instantly dispatch cross-component events so top header, DockedChatWindow and sidebar update group name
+      window.dispatchEvent(new CustomEvent('aeirmist_conversation_updated', {
+        detail: {
+          conversationId: chat.id,
+          id: chat.id,
+          name: nextName,
+          groupName: nextName,
+          photo: currentPhoto,
+          groupPhotoURL: currentPhoto
+        }
+      }));
+      window.dispatchEvent(new CustomEvent('aeirmist_chat_updated', {
+        detail: {
+          conversationId: chat.id,
+          id: chat.id,
+          name: nextName,
+          groupName: nextName,
+          photo: currentPhoto,
+          groupPhotoURL: currentPhoto
+        }
+      }));
+
       addToast({ title: 'Name Saved', message: 'Group name updated successfully.', type: 'success' });
     } catch (err) {
       logger.error('Failed to update group name:', err);
@@ -995,8 +1050,8 @@ export const GroupInfoPanel: React.FC<GroupInfoPanelProps> = ({ chat, onClose, o
     addToast({ title: 'Link Copied', message: 'Group invite link copied to clipboard.', type: 'success' });
   };
 
-  const groupPhoto = getGroupAvatarUrl(chat.groupName || chat.name || (chat as any).title || 'Group Chat', chat.groupPhotoURL || chat.photo || chat.avatarKey);
-  const groupTitle = chat.groupName || chat.name || (chat as any).title || 'Group Chat';
+  const groupPhoto = getGroupAvatarUrl(currentName, currentPhoto);
+  const groupTitle = currentName;
 
   return (
     <div className="w-full h-full bg-[#0D1117] text-white flex flex-col border-l border-white/10 overflow-hidden relative font-sans">

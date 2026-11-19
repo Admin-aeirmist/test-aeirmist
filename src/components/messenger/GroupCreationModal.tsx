@@ -317,6 +317,28 @@ export const GroupCreationModal: React.FC<GroupCreationModalProps> = ({ onClose,
         unread: false
       };
 
+      // Dispatch cross-component events so sidebar, rail and docked window instantly recognize the group & avatar
+      window.dispatchEvent(new CustomEvent('aeirmist_conversation_updated', {
+        detail: {
+          conversationId: newGroupId,
+          id: newGroupId,
+          name: cleanGroupName,
+          groupName: cleanGroupName,
+          photo: groupPhoto || '',
+          groupPhotoURL: groupPhoto || ''
+        }
+      }));
+      window.dispatchEvent(new CustomEvent('aeirmist_chat_updated', {
+        detail: {
+          conversationId: newGroupId,
+          id: newGroupId,
+          name: cleanGroupName,
+          groupName: cleanGroupName,
+          photo: groupPhoto || '',
+          groupPhotoURL: groupPhoto || ''
+        }
+      }));
+
       if (onGroupCreated) {
         onGroupCreated(newGroupId, newGroupData);
       } else {
