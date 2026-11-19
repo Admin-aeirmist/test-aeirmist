@@ -168,28 +168,8 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
   const cookieToken = (req as any).cookies?.token || (req as any).cookies?.auth_token || null;
   const candidateToken = token || (queryToken && queryToken !== 'null' && queryToken !== 'undefined' ? queryToken : null) || cookieToken;
 
-  // Resilient user ID resolution
-  const headerUserId = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
-
   try {
-    let payload = candidateToken ? await resolveUserFromCredentials(candidateToken) : null;
-    if (!payload && headerUserId && process.env.NODE_ENV === 'test') {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(headerUserId);
-      let matchedUser = null;
-      if (isUuid) {
-        const [u] = await db
-          .select({ id: users.id, role: users.role, email: users.email, isBanned: users.isBanned, status: users.status })
-          .from(users)
-          .where(eq(users.id, headerUserId))
-          .limit(1);
-        matchedUser = u;
-      } else {
-        matchedUser = await UserDAL.findByFirebaseUid(headerUserId);
-      }
-      if (matchedUser && !matchedUser.isBanned && matchedUser.status !== 'BANNED' && matchedUser.status !== 'DELETED') {
-        payload = { userId: matchedUser.id, role: matchedUser.role as any, email: matchedUser.email };
-      }
-    }
+    const payload = candidateToken ? await resolveUserFromCredentials(candidateToken) : null;
 
     if (!payload) {
       console.warn(`[Auth Failure] 401 Unauthorized: Invalid, expired, or unresolvable token. (Method: ${req.method}, Path: ${req.originalUrl}, Token Prefix: ${candidateToken ? candidateToken.substring(0, 15) : 'none'}...)`);

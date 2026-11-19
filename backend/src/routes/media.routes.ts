@@ -7,7 +7,7 @@ import * as fs from 'fs/promises';
 import { storage } from '../storage';
 import { db } from '../db';
 import { mediaAssets } from '../db/schema';
-import { authenticateToken, optionalAuthToken, AuthenticatedRequest } from '../middleware/auth';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { env } from '../config/env';
 
 const router = Router();
@@ -31,12 +31,12 @@ const diskStorage = multer.diskStorage({
 const upload = multer({
   storage: diskStorage,
   limits: {
-    fieldSize: Infinity,
-    fileSize: Infinity,
+    fieldSize: 10 * 1024 * 1024,
+    fileSize: 250 * 1024 * 1024,
   },
 });
 
-router.post('/upload', optionalAuthToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/upload', authenticateToken, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
   const file = req.file;
   try {
     if (!file) {
@@ -108,7 +108,7 @@ router.post('/upload', optionalAuthToken, upload.single('file'), async (req: Aut
 // ----------------------------------------------------------------------
 // High-Speed Chunked Upload for Large Media (Zero-Memory Stream Staging)
 // ----------------------------------------------------------------------
-router.post('/upload-chunk', optionalAuthToken, upload.single('chunk'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/upload-chunk', authenticateToken, upload.single('chunk'), async (req: AuthenticatedRequest, res: Response) => {
   const file = req.file;
   try {
     if (!file) {
@@ -174,14 +174,7 @@ router.post('/upload-chunk', optionalAuthToken, upload.single('chunk'), async (r
     const stat = await fs.stat(path.resolve(process.cwd(), env.STORAGE_PATH, key)).catch(() => null);
     const finalSize = totalSize || (stat ? stat.size : 0);
 
-    let effectiveOwnerId = req.user?.userId || null;
-    if (!effectiveOwnerId && process.env.NODE_ENV === "test") {
-      const headerUid = (req.headers['x-user-id'] as string) || (req.headers['x-profile-id'] as string);
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (headerUid && uuidRegex.test(headerUid)) {
-        effectiveOwnerId = headerUid;
-      }
-    }
+    const effectiveOwnerId = req.user!.userId;
 
     const [asset] = await db
       .insert(mediaAssets)

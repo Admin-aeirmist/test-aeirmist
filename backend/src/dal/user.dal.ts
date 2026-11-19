@@ -853,7 +853,6 @@ export class UserDAL {
       .select({
         id: users.id,
         userId: users.id,
-        firebaseUid: users.firebaseUid,
         profileId: profiles.id,
         username: profiles.username,
         displayName: profiles.displayName,
@@ -886,7 +885,6 @@ export class UserDAL {
       .select({
         id: users.id,
         userId: users.id,
-        firebaseUid: users.firebaseUid,
         profileId: profiles.id,
         username: profiles.username,
         displayName: profiles.displayName,
