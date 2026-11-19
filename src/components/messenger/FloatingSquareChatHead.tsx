@@ -633,7 +633,7 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
         {!isInboxRoute && isMessagesPopupOpen && (
           <div
             ref={popupRef}
-            className="fixed bottom-[74px] sm:bottom-0 right-2 sm:right-[82px] z-[320] pointer-events-auto"
+            className="fixed bottom-[74px] sm:bottom-0 right-[70px] sm:right-[82px] z-[320] pointer-events-auto"
           >
             {activeChatId && activeConv ? (
               /* When a chat is selected, show DockedChatWindow with the '<' Back button */
