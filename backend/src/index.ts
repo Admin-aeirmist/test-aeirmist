@@ -12,6 +12,7 @@ import { env } from './config/env';
 import { checkDatabaseHealth, pool } from './db';
 import { redis, checkRedisHealth } from './db/redis';
 import { UserDAL } from './dal/user.dal';
+import { BondsDAL } from './dal/bonds.dal';
 
 process.on('unhandledRejection', (reason: any) => {
   console.warn('⚠️ [Process] Unhandled Rejection intercepted:', reason?.message || reason);
@@ -289,13 +290,13 @@ io.on('connection', async (socket) => {
       }
     }
 
-    let isMember = await ChatDAL.isParticipant(canonicalConvId, authedUserId);
+    const isMember = await ChatDAL.isParticipant(canonicalConvId, authedUserId);
     if (!isMember) {
-      try {
-        await ChatDAL.addMembersToConversation(canonicalConvId, [authedUserId]);
-        isMember = true;
-      } catch (err) {
-        console.warn(`[Socket.IO] Auto-join participant note:`, err);
+      const entityAccess = await BondsDAL.checkEntityConversationAccess(canonicalConvId, authedUserId);
+      if (!entityAccess || (!entityAccess.canViewHistory && !entityAccess.canSendMessage)) {
+        console.warn(`?? [Socket.IO] Access denied: User ${authedUserId} is not a participant of room ${canonicalConvId}`);
+        if (typeof ack === "function") ack({ success: false, error: "Access denied: You are not a member of this conversation" });
+        return;
       }
     }
 
