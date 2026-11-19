@@ -493,6 +493,38 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
 
+  // 0. High-Performance Reverse Proxy to Real PostgreSQL/Redis Backend
+  const UPSTREAM_API_URL = "https://api.aeirmist.com";
+  try {
+    const upstreamUrl = `${UPSTREAM_API_URL}${url.pathname}${url.search}`;
+    const proxyHeaders = new Headers(request.headers);
+    proxyHeaders.set("X-Forwarded-Host", url.hostname);
+    proxyHeaders.set("X-Forwarded-Proto", "https");
+
+    const reqInit: RequestInit = {
+      method,
+      headers: proxyHeaders,
+      redirect: "follow",
+    };
+
+    if (method !== "GET" && method !== "HEAD") {
+      reqInit.body = await request.clone().arrayBuffer();
+    }
+
+    const upstreamResponse = await fetch(upstreamUrl, reqInit);
+    if (upstreamResponse.status !== 502 && upstreamResponse.status !== 503) {
+      const respHeaders = new Headers(upstreamResponse.headers);
+      Object.entries(CORS_HEADERS).forEach(([k, v]) => respHeaders.set(k, v));
+      return new Response(upstreamResponse.body, {
+        status: upstreamResponse.status,
+        statusText: upstreamResponse.statusText,
+        headers: respHeaders
+      });
+    }
+  } catch (proxyErr) {
+    console.warn("[Edge Reverse Proxy] Upstream proxy deferred, activating edge fallback:", proxyErr);
+  }
+
   // Health
   if (path === "/api/health" || path === "/health") {
     return new Response(JSON.stringify({

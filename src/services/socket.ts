@@ -12,15 +12,21 @@ function resolveSocketUrl(): string {
   if (typeof window !== 'undefined') {
     const customApi = localStorage.getItem('aeirmist_backend_url');
     if (customApi) return customApi.replace(/\/+$/, '');
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || 
+                    hostname === '127.0.0.1' ||
+                    hostname.startsWith('192.168.') ||
+                    hostname.startsWith('10.') ||
+                    hostname.endsWith('.local');
+    if (!isLocal) {
+      return 'https://api.aeirmist.com';
+    }
     if ((window as any).aeirmistDesktop?.isElectron || navigator.userAgent.includes('Electron')) {
-      return 'https://aeirmist.com';
+      return 'https://api.aeirmist.com';
     }
   }
   const base = resolveApiBase();
   if (base) return base;
-  if (typeof window !== 'undefined' && window.location.origin) {
-    return window.location.origin;
-  }
   return 'http://localhost:4000';
 }
 
