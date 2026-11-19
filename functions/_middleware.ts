@@ -9,6 +9,20 @@
 
 interface Env {}
 
+type PagesFunction<T = any> = (context: {
+  request: Request;
+  next: (input?: Request | string, init?: RequestInit) => Promise<Response>;
+  env: T;
+  params: Record<string, string | string[]>;
+  data: Record<string, unknown>;
+  waitUntil: (promise: Promise<any>) => void;
+}) => Promise<Response>;
+
+declare class HTMLRewriter {
+  on(selector: string, handlers: any): this;
+  transform(response: Response): Response;
+}
+
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, next } = context;
   const url = new URL(request.url);

@@ -29,8 +29,30 @@ export const onRequest = async (context: { request: Request; params: { route?: s
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
 
-  // If request contains an extension like .jpg, .png, .webp, .svg, return clean image content
+  // 1. Forward request to authoritative media origin if on staging/preview (*.pages.dev)
+  if (url.hostname.endsWith('.pages.dev')) {
+    try {
+      const originMediaUrl = `https://aeirmist.com${url.pathname}${url.search}`;
+      const forwardHeaders = new Headers(request.headers);
+      forwardHeaders.set('Host', 'aeirmist.com');
+      const originRes = await fetch(originMediaUrl, {
+        method: request.method,
+        headers: forwardHeaders,
+      });
+      if (originRes.status === 200 || originRes.status === 206) {
+        return originRes;
+      }
+    } catch {}
+  }
+
   const path = url.pathname.toLowerCase();
+  const isVideo = /\.(mp4|webm|mov|m4v|ogg|mkv)(\?.*)?$/i.test(path);
+  if (isVideo) {
+    return new Response(JSON.stringify({ error: 'Media stream unavailable' }), {
+      status: 503,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+    });
+  }
 
   if (path.endsWith(".svg")) {
     const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#18181b"/></svg>`;

@@ -189,6 +189,54 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
     fullConversation?.type === 'group'
   );
 
+  // Derive per-chat wallpaper, conversation shared wallpaper, global chat wallpaper, or appearance wallpaper
+  const currentChatTheme = useMemo<ChatWallpaperConfig | undefined>(() => {
+    // 1. Check user profile per-chat wallpaper override
+    const profileChatTheme = 
+      profile?.themeSettings?.perChatWallpapers?.[chatId] || 
+      (participantId ? profile?.themeSettings?.perChatWallpapers?.[participantId] : undefined);
+    if (profileChatTheme && (profileChatTheme.wallpaperURL || profileChatTheme.themeId)) {
+      return profileChatTheme;
+    }
+
+    // 2. Initial props passed from chat head
+    if (initialThemeSettings && (initialThemeSettings.wallpaperURL || initialThemeSettings.themeId || initialThemeSettings.bubbleGradient)) {
+      return initialThemeSettings;
+    }
+
+    // 3. Conversation shared themeSettings from state
+    const convTheme = conversationData?.themeSettings || conversationData;
+    if (convTheme && (convTheme.wallpaperURL || convTheme.themeId || convTheme.bubbleGradient)) {
+      return convTheme;
+    }
+
+    // 4. Cached settings in localStorage
+    try {
+      const stored = 
+        localStorage.getItem(`chat_settings_${chatId}`) || 
+        (participantId ? localStorage.getItem(`chat_settings_${participantId}`) : null) ||
+        localStorage.getItem(`chat_theme_${chatId}`) ||
+        (participantId ? localStorage.getItem(`chat_theme_${participantId}`) : null);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const resolved = parsed?.themeSettings || parsed;
+        if (resolved && (resolved.wallpaperURL || resolved.themeId || resolved.bubbleGradient)) {
+          return resolved;
+        }
+      }
+    } catch {}
+
+    // 5. Global chat wallpaper fallback
+    return profile?.themeSettings?.chatWallpaper || (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined);
+  }, [profile?.themeSettings, chatId, participantId, initialThemeSettings, conversationData, settings?.globalBgValue]);
+
+  const globalChatTheme = useMemo<ChatWallpaperConfig | undefined>(() => {
+    return (
+      profile?.themeSettings?.chatWallpaper || 
+      (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined)
+    );
+  }, [profile?.themeSettings?.chatWallpaper, settings?.globalBgValue]);
+
   const groupChatObject = useMemo(() => {
     return {
       id: chatId,
@@ -280,54 +328,6 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
 
     return false;
   }, [targetUserId, targetProfile, onlineUsers, accurateLastSeenMs, profile?.id, user?.uid, profile?.messagingSettings?.onlineStatus]);
-
-  // Derive per-chat wallpaper, conversation shared wallpaper, global chat wallpaper, or appearance wallpaper
-  const currentChatTheme = useMemo<ChatWallpaperConfig | undefined>(() => {
-    // 1. Check user profile per-chat wallpaper override
-    const profileChatTheme = 
-      profile?.themeSettings?.perChatWallpapers?.[chatId] || 
-      (participantId ? profile?.themeSettings?.perChatWallpapers?.[participantId] : undefined);
-    if (profileChatTheme && (profileChatTheme.wallpaperURL || profileChatTheme.themeId)) {
-      return profileChatTheme;
-    }
-
-    // 2. Initial props passed from chat head
-    if (initialThemeSettings && (initialThemeSettings.wallpaperURL || initialThemeSettings.themeId || initialThemeSettings.bubbleGradient)) {
-      return initialThemeSettings;
-    }
-
-    // 3. Conversation shared themeSettings from state
-    const convTheme = conversationData?.themeSettings || conversationData;
-    if (convTheme && (convTheme.wallpaperURL || convTheme.themeId || convTheme.bubbleGradient)) {
-      return convTheme;
-    }
-
-    // 4. Cached settings in localStorage
-    try {
-      const stored = 
-        localStorage.getItem(`chat_settings_${chatId}`) || 
-        (participantId ? localStorage.getItem(`chat_settings_${participantId}`) : null) ||
-        localStorage.getItem(`chat_theme_${chatId}`) ||
-        (participantId ? localStorage.getItem(`chat_theme_${participantId}`) : null);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        const resolved = parsed?.themeSettings || parsed;
-        if (resolved && (resolved.wallpaperURL || resolved.themeId || resolved.bubbleGradient)) {
-          return resolved;
-        }
-      }
-    } catch {}
-
-    // 5. Global chat wallpaper fallback
-    return profile?.themeSettings?.chatWallpaper || (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined);
-  }, [profile?.themeSettings, chatId, participantId, initialThemeSettings, conversationData, settings?.globalBgValue]);
-
-  const globalChatTheme = useMemo<ChatWallpaperConfig | undefined>(() => {
-    return (
-      profile?.themeSettings?.chatWallpaper || 
-      (settings?.globalBgValue ? { wallpaperURL: settings.globalBgValue } : undefined)
-    );
-  }, [profile?.themeSettings?.chatWallpaper, settings?.globalBgValue]);
 
   const bubbleGradient = useMemo(() => {
     if (currentChatTheme?.bubbleGradient) return currentChatTheme.bubbleGradient;

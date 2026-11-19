@@ -32,6 +32,9 @@ export function normalizeMediaUrl(url?: string | null): string {
       if (hostname.endsWith('.pages.dev') || window.location.protocol === 'capacitor:') {
         return `https://aeirmist.com${clean}`;
       }
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && window.location.port && window.location.port !== '4000') {
+        return `http://localhost:4000${clean}`;
+      }
     }
   }
 

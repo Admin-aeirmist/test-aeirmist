@@ -33,6 +33,7 @@ import {
 import { api } from '../../services/api/client';
 import { useAeirmist } from '../../context/AeirmistContext';
 import { ActiveIdentity } from './FacebookProfileSwitcherModal';
+import { getAvatarUrl } from '../../lib/avatar';
 
 interface FacebookGroupViewProps {
   entity: any;

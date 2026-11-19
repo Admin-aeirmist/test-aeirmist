@@ -362,13 +362,18 @@ const LiveParticipantAvatar = ({
 };
 
 export const LiveParticipantName = ({ participantId, fallbackName, className = "", chatId }: { participantId: string, fallbackName: string, className?: string, chatId?: string }) => {
-  if (participantId === '00000000-0000-4000-a000-000000000001') {
+  const isEraAI = participantId === '00000000-0000-4000-a000-000000000001';
+  const { db } = useAeirmist();
+  const profileData = useSharedProfile(db, isEraAI ? undefined : participantId);
+  const [nickname, setNickname] = useState<string>('');
+
+  useEffect(() => {
+    setNickname('');
+  }, [participantId, chatId]);
+
+  if (isEraAI) {
     return <span className={`inline-flex items-center gap-1 font-bold ${className}`}>Era AI <span className="text-[10px] text-cyan-400 font-mono">✓</span></span>;
   }
-
-  const { db } = useAeirmist();
-  const profileData = useSharedProfile(db, participantId);
-  const [nickname, setNickname] = useState<string>('');
 
   const isDeleted = profileData?.isDeleted === true;
   const isFallbackValid = Boolean(
@@ -383,10 +388,6 @@ export const LiveParticipantName = ({ participantId, fallbackName, className = "
   const profileName = isDeleted 
     ? 'Aeirmist User' 
     : (profileData?.displayName || profileData?.username || (isFallbackValid ? fallbackName : '') || 'Chat');
-
-  useEffect(() => {
-    setNickname('');
-  }, [participantId, chatId]);
 
   return <span className={className}>{isDeleted ? 'Aeirmist User' : (nickname || profileName)}</span>;
 };

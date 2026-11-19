@@ -23,17 +23,16 @@ export const BondsEntityDetailModal: React.FC<BondsEntityDetailModalProps> = ({
   onMessageClick,
   onJoinSuccess,
 }) => {
-  if (!isOpen || !entity) return null;
-
   const [activeTab, setActiveTab] = useState<string>('about');
   const [members, setMembers] = useState<any[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const [joinStatus, setJoinStatus] = useState<string>(entity.membershipStatus || 'not_member');
+  const [joinStatus, setJoinStatus] = useState<string>(entity?.membershipStatus || 'not_member');
   const [isJoining, setIsJoining] = useState(false);
   const [selectedRoleForApply, setSelectedRoleForApply] = useState<string | undefined>(undefined);
 
   useEffect(() => {
+    if (!entity) return;
     setJoinStatus(entity.membershipStatus || 'not_member');
     if (entity.type === 'team') {
       setActiveTab('roles');
@@ -44,14 +43,16 @@ export const BondsEntityDetailModal: React.FC<BondsEntityDetailModalProps> = ({
 
   // Load members when clicking members tab
   useEffect(() => {
-    if (activeTab === 'members' && entity.id) {
+    if (activeTab === 'members' && entity?.id) {
       setLoadingMembers(true);
       api.bonds.getEntityMembers(entity.id)
         .then(res => setMembers(res.members || []))
         .catch(() => setMembers([]))
         .finally(() => setLoadingMembers(false));
     }
-  }, [activeTab, entity.id]);
+  }, [activeTab, entity?.id]);
+
+  if (!isOpen || !entity) return null;
 
   const handleJoinOrRequest = async () => {
     if (entity.type === 'team') {

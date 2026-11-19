@@ -1890,6 +1890,10 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   // Bonds: Create Entity
   if (path === "/api/v1/bonds/entities" && method === "POST") {
     try {
+      const authHeader = request.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const authUser = token ? await parseUserFromToken(token) : null;
+
       const data = await request.json().catch(() => ({})) as any;
       const id = data.id || `entity_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const slug = data.slug || `${data.entityNumber || Date.now()}-${(data.name || 'entity').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
@@ -1962,6 +1966,10 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   // Bonds: Create Entity Post
   if (path.includes("/api/v1/bonds/entities/") && path.endsWith("/posts") && method === "POST") {
     try {
+      const authHeader = request.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const authUser = token ? await parseUserFromToken(token) : null;
+
       const entityId = path.replace("/api/v1/bonds/entities/", "").replace("/posts", "");
       const data = await request.json().catch(() => ({})) as any;
       const targetEntity = edgeBondsEntities.find(e => e.id === entityId);
@@ -2011,6 +2019,10 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   // Bonds: Create Comment
   if (path.startsWith("/api/v1/bonds/posts/") && path.endsWith("/comments") && method === "POST") {
     try {
+      const authHeader = request.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const authUser = token ? await parseUserFromToken(token) : null;
+
       const postId = path.replace("/api/v1/bonds/posts/", "").replace("/comments", "");
       const data = await request.json().catch(() => ({})) as any;
       const post = edgeBondsPosts.find(p => p.id === postId);

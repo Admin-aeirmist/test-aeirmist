@@ -23,8 +23,6 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
   const { db, profile } = useAeirmist();
   const [voting, setVoting] = useState(false);
 
-  if (!poll || !poll.options) return null;
-
   const normalizedOptions = React.useMemo(() => {
     if (!poll?.options || !Array.isArray(poll.options)) return [];
     return poll.options.map((opt: any, idx: number) => {
@@ -40,6 +38,8 @@ export const Poll: React.FC<PollProps> = ({ postId, poll }) => {
       return { id: String(opt), text: String(opt), votes: 0 };
     });
   }, [poll]);
+
+  if (!poll || !poll.options) return null;
 
   const totalVotes = typeof (poll as any).totalVotes === 'number'
     ? (poll as any).totalVotes

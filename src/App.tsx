@@ -543,15 +543,31 @@ function AppContent() {
     }
   }, [location.pathname]);
   const isGlobalBgActive = Boolean(settings?.globalBgType && settings.globalBgType !== 'none');
-  const [viewingPostId, setViewingPostId] = useState<string | null>(null);
-  const [viewingStoreId, setViewingStoreId] = useState<string | null>(null);
+  const [viewingPostId, setViewingPostId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const pathInit = getInitialStateFromPath(window.location.pathname);
+    return (pathInit as any)?.postId || null;
+  });
+  const [viewingStoreId, setViewingStoreId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const pathInit = getInitialStateFromPath(window.location.pathname);
+    return (pathInit as any)?.storeId || null;
+  });
   const [viewingBondUrl, setViewingBondUrl] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     const pathInit = getInitialStateFromPath(window.location.pathname);
     return (pathInit as any)?.bondUrl || null;
   });
-  const [viewingProductId, setViewingProductId] = useState<string | null>(null);
-  const [viewingVideoId, setViewingVideoId] = useState<string | null>(null);
+  const [viewingProductId, setViewingProductId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const pathInit = getInitialStateFromPath(window.location.pathname);
+    return (pathInit as any)?.productId || null;
+  });
+  const [viewingVideoId, setViewingVideoId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const pathInit = getInitialStateFromPath(window.location.pathname);
+    return (pathInit as any)?.videoId || null;
+  });
   const [viewingProfile, setViewingProfile] = useState<any>(null);
   const [messageRecipient, setMessageRecipient] = useState<any>(null);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);

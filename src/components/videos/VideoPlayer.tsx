@@ -202,6 +202,10 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
   const handleRetry = () => {
     setHasError(false);
     setIsLoading(true);
+    if (blobSrc) {
+      try { URL.revokeObjectURL(blobSrc); } catch {}
+      setBlobSrc('');
+    }
     if (videoRef.current) {
       videoRef.current.load();
       videoRef.current.play().then(() => {
@@ -229,42 +233,47 @@ export const VideoPlayerComponent: React.FC<VideoPlayerProps> = ({
         isFullscreen ? 'h-screen w-screen flex items-center justify-center' : ''
       }`}
     >
-      {/* Video Element */}
-      {!hasError && (
-        <video
-          ref={videoRef}
-          src={blobSrc || normalizeMediaUrl(video.videoURL || (video as any).videoUrl || (video as any).mediaKey)}
-          poster={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1200'}
-          preload="auto"
-          playsInline
-          className="w-full h-full object-contain cursor-pointer"
-          onClick={togglePlay}
-          onTimeUpdate={() => {
-            if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
-          }}
-          onLoadedMetadata={() => {
-            if (videoRef.current) setDuration(videoRef.current.duration);
-            setIsLoading(false);
-          }}
-          onWaiting={() => setIsLoading(true)}
-          onPlaying={() => {
-            setIsLoading(false);
-            setIsPlaying(true);
-          }}
-          onPause={() => setIsPlaying(false)}
-          onError={() => {
-            setHasError(true);
-            setIsLoading(false);
-          }}
-          onEnded={() => {
-            setIsPlaying(false);
-            if (videoRef.current && duration) {
-              savePlaybackProgress(video.id, duration, duration);
-            }
-            onEnded?.();
-          }}
-        />
-      )}
+      {/* Video Element - Permanently mounted so videoRef and retry work reliably */}
+      <video
+        ref={videoRef}
+        src={blobSrc || normalizeMediaUrl(video.videoURL || (video as any).videoUrl || (video as any).mediaKey)}
+        poster={normalizeMediaUrl(video.thumbnailURL || (video as any).thumbnailUrl) || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1200'}
+        preload="auto"
+        playsInline
+        className={`w-full h-full object-contain cursor-pointer transition-opacity duration-200 ${hasError ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+        onClick={togglePlay}
+        onTimeUpdate={() => {
+          if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+        }}
+        onLoadedMetadata={() => {
+          if (videoRef.current) setDuration(videoRef.current.duration);
+          setIsLoading(false);
+        }}
+        onWaiting={() => setIsLoading(true)}
+        onPlaying={() => {
+          setIsLoading(false);
+          setIsPlaying(true);
+        }}
+        onPause={() => setIsPlaying(false)}
+        onError={() => {
+          if (blobSrc) {
+            try { URL.revokeObjectURL(blobSrc); } catch {}
+            setBlobSrc('');
+            setIsLoading(true);
+            if (videoRef.current) videoRef.current.load();
+            return;
+          }
+          setHasError(true);
+          setIsLoading(false);
+        }}
+        onEnded={() => {
+          setIsPlaying(false);
+          if (videoRef.current && duration) {
+            savePlaybackProgress(video.id, duration, duration);
+          }
+          onEnded?.();
+        }}
+      />
 
       {/* Loading Overlay */}
       {isLoading && !hasError && (

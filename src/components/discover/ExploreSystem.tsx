@@ -874,7 +874,7 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
                   <div className="flex items-center justify-center gap-3">
                     <button
                       type="button"
-                      onClick={() => handleCreateNewClick('group')}
+                      onClick={() => setIsCreateGroupOpen(true)}
                       style={{ backgroundColor: accentHex }}
                       className="px-4 py-2 rounded-xl text-xs font-bold text-black hover:opacity-90 transition-all cursor-pointer shadow-md"
                     >
@@ -882,7 +882,7 @@ export const ExploreSystem: React.FC<ExploreSystemProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleCreateNewClick('team')}
+                      onClick={() => setIsCreateTeamOpen(true)}
                       className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-white/10 hover:bg-white/15 border border-white/10 transition-all cursor-pointer"
                     >
                       + Create Team

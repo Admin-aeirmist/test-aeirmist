@@ -3549,6 +3549,9 @@ const TabButton = ({ active, icon, label, onClick }: { active: boolean, icon: an
 );
 
 const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
+  const type = (post?.mediaUrls?.length || 0) > 1 ? 'collage' : ((post?.mediaURL || post?.mediaUrl) ? 'photo' : 'text');
+  usePostAnalytics({ postId: post?.id || '', type });
+
   if (!post) return null;
   const hasMedia = (post.mediaUrls && post.mediaUrls.length > 0) || post.mediaURL || post.mediaUrl;
   
@@ -3558,9 +3561,6 @@ const PostCard = ({ post, onClick }: { post: any, onClick: () => void }) => {
     (post.mediaUrl && post.mediaUrl.toString().toLowerCase().includes('.mp4')) ||
     (post.mediaURL && post.mediaURL.toString().toLowerCase().includes('.mp4')) ||
     (post.mediaUrls && post.mediaUrls.some((u: string) => u?.toString().toLowerCase().includes('.mp4') || u?.toString().toLowerCase().includes('video')));
-
-  const type = (post.mediaUrls?.length || 0) > 1 ? 'collage' : ((post.mediaURL || post.mediaUrl) ? 'photo' : 'text');
-  usePostAnalytics({ postId: post.id, type });
 
   // Get the best thumbnail for video posts
   let videoThumbnail = post.thumbnailUrl || post.thumbnailURL || post.videoThumbnail || post.coverUrl || post.coverURL || null;

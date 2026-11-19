@@ -299,7 +299,7 @@ interface AeirmistContextType {
   setLocalCoverURL: (url: string | null) => void;
   setProfileUploadProgress: (p: number) => void;
   setCoverUploadProgress: (p: number) => void;
-  uploadMedia: (file: File, folder: string, onProgress?: (p: number, status: string) => void, quality?: MediaQuality) => Promise<string>;
+  uploadMedia: (file: File, folder: string, onProgress?: (p: number, status: string, details?: any) => void, quality?: MediaQuality) => Promise<string>;
   mediaSettings: { quality: MediaQuality, autoDownload: boolean };
   setMediaSettings: (settings: { quality: MediaQuality, autoDownload: boolean }) => void;
   clearCache: () => Promise<void>;
