@@ -2714,7 +2714,7 @@ const Messenger = ({ initialRecipient, onUserClick, onOpenSettings }: { initialR
                 const isUnread = Boolean(chat.unread || (typeof chat.unreadCount === 'number' && chat.unreadCount > 0));
                 const messagePreview = typeof chat.lastMessage === 'string'
                   ? chat.lastMessage
-                  : (chat.lastMessage?.text || chat.latestMessagePreview || 'No messages yet');
+                  : (chat.lastMessage?.text || chat.lastMessage?.content || chat.lastMessagePreview || chat.latestMessagePreview || chat.lastMessageSnippet || chat.lastMessageContent || 'No messages yet');
 
                 return (
                   <div 

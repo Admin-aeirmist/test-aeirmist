@@ -71,7 +71,7 @@ app.use(cors({
 app.use(express.json({ limit: '2048mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2048mb' }));
 if (env.NODE_ENV !== 'test') {
-  app.use(morgan('dev'));
+  app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 }
 
 // -------------------------------------------------------------

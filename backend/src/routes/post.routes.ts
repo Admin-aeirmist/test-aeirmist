@@ -9,6 +9,14 @@ import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 import { broadcastNotification } from './notification.routes';
 import { redis } from '../db/redis';
+import { postCreationRateLimiter, createRateLimiter } from '../middleware/rateLimiter';
+
+const commentRateLimiter = createRateLimiter({
+  prefix: 'comment_create',
+  windowSeconds: 30,
+  maxRequests: 15,
+  message: 'You are commenting too quickly. Please slow down.',
+});
 
 const router = Router();
 
@@ -82,7 +90,7 @@ router.get('/user/:userId', optionalAuthToken, async (req: AuthenticatedRequest,
 });
 
 // Create Post
-router.post('/', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', optionalAuthToken, postCreationRateLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreatePostSchema.parse(req.body);
     let userId = req.user?.userId;

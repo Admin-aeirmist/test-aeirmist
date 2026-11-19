@@ -495,12 +495,17 @@ export const FloatingSquareChatHead: React.FC<FloatingSquareChatHeadProps> = ({
     const isOnline = isGrp ? false : isUserOnline(c, participantId);
 
     // ── Last Message Snippet Resolution ──
-    let snippet = c.lastMessagePreview || c.latestMessagePreview || c.lastMessageSnippet || c.lastMessageContent || '';
+    let snippet = c.lastMessagePreview || c.latestMessagePreview || c.lastMessageSnippet || c.lastMessageContent || c.lastMessageText || '';
     if (!snippet && c.lastMessage) {
-      snippet = typeof c.lastMessage === 'string' ? c.lastMessage : (c.lastMessage.text || c.lastMessage.content || '');
+      snippet = typeof c.lastMessage === 'string' ? c.lastMessage : (c.lastMessage?.text || c.lastMessage?.content || c.lastMessage?.body || '');
     }
     if (!snippet && c.rawLastMessage) {
-      snippet = typeof c.rawLastMessage === 'string' ? c.rawLastMessage : (c.rawLastMessage.text || c.rawLastMessage.content || '');
+      snippet = typeof c.rawLastMessage === 'string' ? c.rawLastMessage : (c.rawLastMessage?.text || c.rawLastMessage?.content || '');
+    }
+    // Check messages array if present (from some API responses)
+    if (!snippet && Array.isArray(c.messages) && c.messages.length > 0) {
+      const lastMsg = c.messages[c.messages.length - 1];
+      snippet = lastMsg?.text || lastMsg?.content || lastMsg?.body || '';
     }
     if (typeof snippet === 'object') {
       snippet = (snippet as any).text || (snippet as any).content || '';

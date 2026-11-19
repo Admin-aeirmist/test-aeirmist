@@ -12,8 +12,24 @@ import { assertMediaOwnership } from '../utils/mediaValidator';
 import { io } from '../index';
 import { redis } from '../db/redis';
 import { ERA_AI_USER_ID, triggerEraAssistantReply } from '../lib/eraAi';
+import { createRateLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
+
+// Rate limiters
+const messageSendLimiter = createRateLimiter({
+  prefix: 'msg_send',
+  windowSeconds: 10,
+  maxRequests: 20,
+  message: 'You are sending messages too fast. Please slow down.',
+});
+
+const conversationCreateLimiter = createRateLimiter({
+  prefix: 'conv_create',
+  windowSeconds: 60,
+  maxRequests: 10,
+  message: 'Too many conversations created. Please wait a minute.',
+});
 
 // Universal fallback user provider for chat and real-time messaging
 router.use((req: any, _res: any, next: any) => {
@@ -450,7 +466,7 @@ router.get('/conversations/:id/messages', optionalAuthToken, async (req: Authent
 });
 
 // Send Message
-router.post('/conversations/:id/messages', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/conversations/:id/messages', optionalAuthToken, messageSendLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     let senderId = req.user?.userId;
     if (!senderId) {

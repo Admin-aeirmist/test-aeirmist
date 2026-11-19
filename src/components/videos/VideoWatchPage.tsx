@@ -413,7 +413,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
       </div>
 
       {/* Main Content Area (Player + Information) - Edge to Edge on Mobile */}
-      <div className={`p-0 sm:p-6 lg:p-8 mx-auto w-full transition-all ${
+      <div className={`px-0 sm:px-6 lg:px-8 py-0 sm:py-6 mx-auto w-full transition-all ${
         isTheaterMode 
           ? 'max-w-[1720px] flex flex-col space-y-6' 
           : 'max-w-[1720px] flex flex-col lg:flex-row gap-6 lg:gap-8 items-start'
@@ -559,7 +559,7 @@ export const VideoWatchPage: React.FC<VideoWatchPageProps> = ({
             </div>
 
             <p className={`whitespace-pre-wrap leading-relaxed ${isDescriptionExpanded ? '' : 'line-clamp-3'}`}>
-              {video.description || video.caption}
+              {video.description || (video.caption !== video.title ? video.caption : null)}
             </p>
 
             {video.tags && video.tags.length > 0 && (

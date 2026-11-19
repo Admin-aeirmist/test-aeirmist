@@ -47,7 +47,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Aeirmist – Social Media, Video Reels & Real-Time Chat</title>
     <meta name="description" content="Aeirmist is a next-gen social media platform. Connect with friends, share stories and posts, watch creative video reels, chat in real-time, and discover trending creators." />
-    <link rel="canonical" href="https://aeirmist.com/" />
+    <link rel="canonical" id="canonical-tag" href="https://aeirmist.com/" />
+    <script>
+      (function() {
+        // Dynamic canonical: update to current URL so each SPA route gets its own canonical
+        try {
+          var canon = document.getElementById('canonical-tag');
+          if (canon) {
+            var path = window.location.pathname;
+            var canonical = 'https://aeirmist.com' + (path === '/' ? '/' : path.replace(/\/$/, ''));
+            canon.setAttribute('href', canonical);
+          }
+        } catch(e) {}
+      })();
+    </script>
     
     <!-- Open Graph Metadata -->
     <meta property="og:site_name" content="Aeirmist" />

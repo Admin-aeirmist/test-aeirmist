@@ -5,6 +5,13 @@ import * as path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+// Production startup guard — fail fast if critical secrets are missing
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET) throw new Error('FATAL: JWT_SECRET env var required in production');
+  if (!process.env.VAPID_PRIVATE_KEY) throw new Error('FATAL: VAPID_PRIVATE_KEY env var required in production');
+  if (!process.env.DATABASE_URL) throw new Error('FATAL: DATABASE_URL env var required in production');
+}
+
 export const env = {
   // Server
   PORT: parseInt(process.env.PORT || '4000', 10),

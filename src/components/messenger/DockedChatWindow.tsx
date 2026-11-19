@@ -254,7 +254,7 @@ export const DockedChatWindow: React.FC<DockedChatWindowProps> = ({
       creatorId: fullConversation?.creatorId || fullConversation?.createdBy || fullConversation?.ownerId,
       owner: fullConversation?.creatorId || fullConversation?.createdBy || fullConversation?.ownerId,
       themeSettings: currentChatTheme,
-      ...fullConversation
+      ...(fullConversation || {})
     };
   }, [chatId, currentChatName, currentChatPhoto, fullConversation, currentChatTheme]);
 
