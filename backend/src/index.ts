@@ -195,33 +195,16 @@ io.use(async (socket, next) => {
     let authedRole = resolved?.role || 'user';
 
     if (!authedUserId) {
-      const candidateId = socket.handshake.auth?.userId ||
-                          (socket.handshake.headers['x-user-id'] as string) ||
-                          (socket.handshake.headers['x-profile-id'] as string) ||
-                          (socket.handshake.query?.userId as string);
-
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (candidateId && uuidRegex.test(candidateId)) {
-        authedUserId = candidateId;
-      } else if (candidateId) {
-        const u = await UserDAL.findByFirebaseUid(candidateId);
-        if (u) authedUserId = u.id;
-      }
-
-      if (!authedUserId) {
-        authedUserId = '53c57429-0694-490f-ab2a-c47e2d7929ac';
-        authedRole = 'owner';
-      }
+      console.warn(`🔌 [Socket.IO] Unauthorized connection rejected for socket ${socket.id}: No valid token`);
+      return next(new Error('Authentication required: Valid session token must be provided'));
     }
 
     (socket as any).userId = authedUserId;
     (socket as any).userRole = authedRole;
     next();
   } catch (err: any) {
-    console.warn(`🔌 [Socket.IO] Handshake recovery for socket ${socket.id}:`, err?.message);
-    (socket as any).userId = '53c57429-0694-490f-ab2a-c47e2d7929ac';
-    (socket as any).userRole = 'owner';
-    next();
+    console.warn(`🔌 [Socket.IO] Handshake failed for socket ${socket.id}:`, err?.message);
+    return next(new Error('Authentication failure: Could not verify credentials'));
   }
 });
 
