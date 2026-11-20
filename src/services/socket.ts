@@ -35,7 +35,7 @@ export function getSocket(): Socket {
     const endpoint = resolveSocketUrl();
     socketInstance = io(endpoint, {
       path: '/socket.io',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       withCredentials: true,
       autoConnect: true,
       reconnection: true,
@@ -73,14 +73,11 @@ export function getSocket(): Socket {
 
       if (isAuthErr && !isRefreshingSocketToken) {
         isRefreshingSocketToken = true;
-        console.warn('🔌 [Socket.IO Diagnostics] Auth failure detected. Requesting Firebase force token refresh...');
+        console.warn('🔌 [Socket.IO Diagnostics] Auth failure detected. Requesting fresh session token...');
         try {
-          if (auth && auth.currentUser) {
-            const fresh = await auth.currentUser.getIdToken(true);
-            if (fresh) {
-              setAuthToken(fresh);
-              updateSocketAuth(fresh);
-            }
+          const fresh = await getFreshToken();
+          if (fresh) {
+            updateSocketAuth(fresh);
           }
         } catch (refreshErr: any) {
           console.warn('🔌 [Socket.IO Diagnostics] Automatic token refresh failed:', refreshErr?.message || 'Session expired');

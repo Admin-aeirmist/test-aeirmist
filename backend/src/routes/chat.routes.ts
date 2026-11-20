@@ -523,7 +523,10 @@ router.post('/conversations/:id/messages', authenticateToken, messageSendLimiter
         try {
           const roomIds = [`user:${m.userId}`, m.firebaseUid ? `user:${m.firebaseUid}` : null, m.profileId ? `user:${m.profileId}` : null].filter(Boolean) as string[];
           for (const rId of roomIds) {
-            const socks = await io.in(rId).fetchSockets();
+            const socks = await Promise.race([
+              io.in(rId).fetchSockets(),
+              new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 250))
+            ]);
             if (socks && socks.length > 0) {
               deliveredRecipients.push(m.userId);
               break;

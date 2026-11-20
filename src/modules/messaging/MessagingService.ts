@@ -314,6 +314,7 @@ class MessagingService {
           status: 'sent',
           isDelivered: Boolean(serverMsg?.isDelivered ?? false),
           isSeen: false,
+          isOptimistic: false,
           timestampMs: Date.now(),
           metadata: {
             ...metadata,

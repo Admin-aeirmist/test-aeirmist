@@ -3779,7 +3779,20 @@ const ChatWindow = ({
       if (m.id && String(m.id).startsWith('opt_')) confirmedOptIds.add(m.id);
     });
 
-    const pendingOptimistic = optimistic.filter(opt => !confirmedOptIds.has(opt.id));
+    const pendingOptimistic = optimistic.filter(opt => {
+      if (confirmedOptIds.has(opt.id)) return false;
+      // Content & time based reconciliation fallback: If an identical message exists in messages within 60s, consider confirmed
+      const optText = (opt.text || opt.content || '').trim();
+      if (optText) {
+        const hasMatch = messages.some(m => {
+          const mText = (m.text || m.content || '').trim();
+          const timeDiff = Math.abs((m.timestampMs || 0) - (opt.timestampMs || 0));
+          return mText === optText && timeDiff < 60000;
+        });
+        if (hasMatch) return false;
+      }
+      return true;
+    });
 
     const seenIds = new Set<string>();
     const merged: any[] = [];

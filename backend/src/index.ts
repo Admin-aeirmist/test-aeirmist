@@ -124,6 +124,84 @@ app.get('/api/v1/ping', (_req, res) => {
 });
 
 // -------------------------------------------------------------
+// WebRTC ICE / TURN Configuration (Cloudflare Calls Relay + Anycast)
+// -------------------------------------------------------------
+const webrtcIceHandler = async (_req: express.Request, res: express.Response) => {
+  try {
+    const iceServers: any[] = [
+      {
+        urls: [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+          'stun:stun3.l.google.com:19302',
+          'stun:stun4.l.google.com:19302',
+          'stun:stun.cloudflare.com:3478'
+        ]
+      }
+    ];
+
+    const cfTurnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID;
+    const cfTurnKeySecret = process.env.CLOUDFLARE_TURN_KEY_SECRET;
+    if (cfTurnKeyId && cfTurnKeySecret) {
+      try {
+        const { redis } = await import('./db/redis');
+        const cached = await redis.get('cf_turn_credentials');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          iceServers.push(parsed);
+        } else {
+          const cfResp = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${cfTurnKeyId}/credentials/generate`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${cfTurnKeySecret}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ttl: 86400 })
+          });
+          if (cfResp.ok) {
+            const cfData = await cfResp.json() as any;
+            if (cfData?.iceServers?.username && cfData?.iceServers?.credential) {
+              const turnConfig = {
+                urls: [
+                  'stun:stun.cloudflare.com:3478',
+                  'turn:turn.cloudflare.com:3478?transport=udp',
+                  'turn:turn.cloudflare.com:3478?transport=tcp',
+                  'turns:turn.cloudflare.com:5349?transport=tcp'
+                ],
+                username: cfData.iceServers.username,
+                credential: cfData.iceServers.credential
+              };
+              iceServers.push(turnConfig);
+              await redis.setex('cf_turn_credentials', 43200, JSON.stringify(turnConfig));
+            }
+          }
+        }
+      } catch (cfErr) {
+        console.warn('[WebRTC] Cloudflare TURN credential generation deferred:', cfErr);
+      }
+    }
+
+    const hasTurn = iceServers.some(s => 
+      Array.isArray(s.urls) 
+        ? s.urls.some((u: string) => u.startsWith('turn:') || u.startsWith('turns:'))
+        : String(s.urls).startsWith('turn:') || String(s.urls).startsWith('turns:')
+    );
+
+    res.json({
+      iceServers,
+      hasTurn
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: 'Failed to generate ICE server configuration' });
+  }
+};
+
+app.get('/api/webrtc/ice-servers', webrtcIceHandler);
+app.get('/api/v1/webrtc/ice-servers', webrtcIceHandler);
+app.get('/api/v1/calls/ice-servers', webrtcIceHandler);
+
+// -------------------------------------------------------------
 // Mount Universal API Routes
 // -------------------------------------------------------------
 import authRoutes from './routes/auth.routes';

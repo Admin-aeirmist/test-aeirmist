@@ -561,6 +561,61 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     }), { status: 200, headers: CORS_HEADERS });
   }
 
+  // WebRTC ICE / TURN Configuration Endpoint (Cloudflare Calls Direct Anycast Relay)
+  if ((path === "/api/webrtc/ice-servers" || path === "/api/v1/webrtc/ice-servers" || path === "/api/v1/calls/ice-servers") && method === "GET") {
+    const iceServers: any[] = [
+      {
+        urls: [
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:stun2.l.google.com:19302",
+          "stun:stun3.l.google.com:19302",
+          "stun:stun4.l.google.com:19302",
+          "stun:stun.cloudflare.com:3478"
+        ]
+      }
+    ];
+
+    const cfTurnKeyId = "2098002d525676751626b65d0215cfac";
+    const cfTurnKeySecret = "dfd391fd4e863d115a19d527167151c4364f999e8d073f5b7f0cd63447fd2225";
+    try {
+      const cfResp = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${cfTurnKeyId}/credentials/generate`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${cfTurnKeySecret}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ ttl: 86400 })
+      });
+      if (cfResp.ok) {
+        const cfData = await cfResp.json() as any;
+        if (cfData?.iceServers?.username && cfData?.iceServers?.credential) {
+          iceServers.push({
+            urls: [
+              "stun:stun.cloudflare.com:3478",
+              "turn:turn.cloudflare.com:3478?transport=udp",
+              "turn:turn.cloudflare.com:3478?transport=tcp",
+              "turns:turn.cloudflare.com:5349?transport=tcp"
+            ],
+            username: cfData.iceServers.username,
+            credential: cfData.iceServers.credential
+          });
+        }
+      }
+    } catch {}
+
+    const hasTurn = iceServers.some(s => 
+      Array.isArray(s.urls) 
+        ? s.urls.some((u: string) => u.startsWith("turn:") || u.startsWith("turns:"))
+        : String(s.urls).startsWith("turn:") || String(s.urls).startsWith("turns:")
+    );
+
+    return new Response(JSON.stringify({ iceServers, hasTurn }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
   // Auth: Register
   // Auth: Register
   if (path === "/api/v1/auth/register" && method === "POST") {

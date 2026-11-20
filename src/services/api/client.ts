@@ -60,11 +60,14 @@ export async function getFreshToken(): Promise<string | null> {
   // 1. A valid native backend session always wins (it identifies the real account).
   if (hasUsableNativeToken()) return getAuthToken();
 
-  // 2. A real Firebase user (never the shared gateway account) -> auto-refreshing ID token.
+  // 2. A real Firebase user (never the shared gateway account) -> auto-refreshing ID token (bounded 3s timeout).
   try {
     const u = auth?.currentUser;
     if (u && u.email !== GATEWAY_EMAIL) {
-      const freshToken = await u.getIdToken();
+      const freshToken = await Promise.race([
+        u.getIdToken(),
+        new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 3000))
+      ]);
       if (freshToken) {
         setAuthToken(freshToken);
         return freshToken;
@@ -236,14 +239,43 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   try {
     let res = await doFetch(token);
 
-    if (res.status === 401 && auth && auth.currentUser && auth.currentUser.email !== GATEWAY_EMAIL && !hasUsableNativeToken()) {
+    if (res.status === 401) {
+      // 1. Native refresh token attempt (seamless zero-kickout session durability)
       try {
-        const fresh = await auth.currentUser.getIdToken(true);
-        if (fresh) {
-          setAuthToken(fresh);
-          res = await doFetch(fresh);
+        const rt = typeof window !== 'undefined' ? localStorage.getItem('aeirmist_refresh_token') : null;
+        if (rt) {
+          const base = resolveApiBase();
+          const refreshRes = await fetch(`${base}/api/v1/auth/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: rt }),
+          });
+          if (refreshRes.ok) {
+            const data = await refreshRes.json();
+            if (data.token) {
+              setAuthToken(data.token);
+              if (data.refreshToken) {
+                localStorage.setItem('aeirmist_refresh_token', data.refreshToken);
+              }
+              res = await doFetch(data.token);
+            }
+          }
         }
       } catch {}
+
+      // 2. Firebase auto-refresh attempt (if native refresh did not resolve it)
+      if (res.status === 401 && auth && auth.currentUser && auth.currentUser.email !== GATEWAY_EMAIL && !hasUsableNativeToken()) {
+        try {
+          const fresh = await Promise.race([
+            auth.currentUser.getIdToken(true),
+            new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 3000))
+          ]);
+          if (fresh) {
+            setAuthToken(fresh);
+            res = await doFetch(fresh);
+          }
+        } catch {}
+      }
     }
 
     if (!res.ok) {
