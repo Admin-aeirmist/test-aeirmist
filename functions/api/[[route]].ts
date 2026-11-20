@@ -516,13 +516,25 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     const upstreamResponse = await fetch(upstreamUrl, reqInit);
     const isCloudflareGatewayError = [502, 503, 504, 520, 521, 522, 523, 524, 525, 526].includes(upstreamResponse.status);
     if (!isCloudflareGatewayError) {
-      const respHeaders = new Headers(upstreamResponse.headers);
-      Object.entries(CORS_HEADERS).forEach(([k, v]) => respHeaders.set(k, v));
-      return new Response(upstreamResponse.body, {
-        status: upstreamResponse.status,
-        statusText: upstreamResponse.statusText,
-        headers: respHeaders
-      });
+      const contentType = upstreamResponse.headers.get("content-type") || "";
+      // If upstream returned 404 HTML, delegate to edge handlers for resilience
+      if (upstreamResponse.status === 404 && contentType.includes("text/html")) {
+        console.warn(`[Edge Reverse Proxy] Upstream returned 404 HTML for ${path}, delegating to edge fallback`);
+      } else {
+        const respHeaders = new Headers(upstreamResponse.headers);
+        respHeaders.set("Access-Control-Allow-Origin", "*");
+        respHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+        respHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+        respHeaders.set("Access-Control-Max-Age", "86400");
+        if (!respHeaders.has("Content-Type")) {
+          respHeaders.set("Content-Type", "application/json");
+        }
+        return new Response(upstreamResponse.body, {
+          status: upstreamResponse.status,
+          statusText: upstreamResponse.statusText,
+          headers: respHeaders
+        });
+      }
     }
   } catch (proxyErr) {
     console.warn("[Edge Reverse Proxy] Upstream proxy deferred, activating edge fallback:", proxyErr);

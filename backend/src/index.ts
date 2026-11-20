@@ -94,7 +94,7 @@ app.use('/media', express.static(localUploadsPath, {
 // -------------------------------------------------------------
 // Production / Health Endpoint
 // -------------------------------------------------------------
-app.get('/health', async (_req, res) => {
+const healthHandler = async (_req: express.Request, res: express.Response) => {
   const [dbOk, redisOk] = await Promise.all([
     checkDatabaseHealth(),
     checkRedisHealth(),
@@ -113,7 +113,11 @@ app.get('/health', async (_req, res) => {
       storageDriver: env.STORAGE_DRIVER,
     },
   });
-});
+};
+
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
+app.get('/api/v1/health', healthHandler);
 
 app.get('/api/v1/ping', (_req, res) => {
   res.json({ message: 'Aeirmist Universal API is online', version: '1.0.0' });
@@ -513,6 +517,24 @@ if (effectiveDistPath) {
 } else {
   console.warn('⚠️ [Frontend SPA] Could not find dist/index.html in candidate paths!');
 }
+
+// -------------------------------------------------------------
+// JSON 404 & Global Error Handling for API routes
+// -------------------------------------------------------------
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `API endpoint not found: ${req.method} ${req.originalUrl}`
+  });
+});
+
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[API Error Intercepted]', err?.message || err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || 'Internal Server Error'
+  });
+});
 
 // -------------------------------------------------------------
 // Start Server
