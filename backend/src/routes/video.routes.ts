@@ -60,7 +60,7 @@ router.get('/:id', optionalAuthToken, async (req: AuthenticatedRequest, res: Res
 });
 
 // Create / Upload Video
-router.post('/', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreateVideoSchema.parse(req.body);
     const userId = req.user?.userId;

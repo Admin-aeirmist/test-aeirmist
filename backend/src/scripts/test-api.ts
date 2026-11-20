@@ -66,14 +66,28 @@ async function main() {
     if (!res.message || !res.version) throw new Error('Invalid ping response');
   });
 
-  // 3. User Login
-  await runTest('User Login with Credentials', async () => {
+  // 3. User Login (Supports direct session or 2FA verification flow)
+  await runTest('User Login with Credentials & 2FA Flow', async () => {
     const res = await request('/api/v1/auth/login', {
       method: 'POST',
       body: { identifier: 'demo_user', password: 'password123' },
     });
-    if (!res.token || !res.user) throw new Error('Missing token or user');
-    authToken = res.token;
+    if (res.token && res.user) {
+      authToken = res.token;
+    } else if (res.requires2FA && res.tempToken) {
+      const { redis } = await import('../db/redis');
+      const raw = await redis.get(`login_2fa:${res.tempToken}`);
+      if (!raw) throw new Error('2FA challenge not found in Redis');
+      const challenge = JSON.parse(raw);
+      const verifyRes = await request('/api/v1/auth/login/verify-2fa', {
+        method: 'POST',
+        body: { tempToken: res.tempToken, otp: challenge.otp, trustDevice: true },
+      });
+      if (!verifyRes.token || !verifyRes.user) throw new Error('2FA verification failed');
+      authToken = verifyRes.token;
+    } else {
+      throw new Error('Unexpected login response format');
+    }
   });
 
   // 4. Me endpoint
@@ -179,7 +193,9 @@ async function main() {
       },
       authToken
     );
-    if (!res.success || !res.ticketId) throw new Error('Support ticket creation failed');
+    if (!res.success || (!res.ticketId && !res.ticket?.id)) {
+      throw new Error(`Support ticket creation failed: ${JSON.stringify(res)}`);
+    }
   });
 
   // 14. Content Report
@@ -198,7 +214,9 @@ async function main() {
       },
       authToken
     );
-    if (!res.success || !res.reportId) throw new Error('Report submission failed');
+    if (!res.success || (!res.reportId && !res.report?.id)) {
+      throw new Error(`Report submission failed: ${JSON.stringify(res)}`);
+    }
   });
 
   // Summary

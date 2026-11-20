@@ -90,7 +90,7 @@ router.get('/user/:userId', optionalAuthToken, async (req: AuthenticatedRequest,
 });
 
 // Create Post
-router.post('/', optionalAuthToken, postCreationRateLimiter, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken, postCreationRateLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = CreatePostSchema.parse(req.body);
     const userId = req.user?.userId;

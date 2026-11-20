@@ -48,7 +48,7 @@ router.post('/tickets', authenticateToken, async (req: AuthenticatedRequest, res
       details: { ticketRef, type: data.type },
     });
 
-    res.status(201).json({ success: true, ticket });
+    res.status(201).json({ success: true, ticket, ticketId: ticket.id, ticketRef: ticket.ticketRef });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: err.errors });
@@ -101,7 +101,7 @@ router.post('/reports', authenticateToken, async (req: AuthenticatedRequest, res
       details: { reportRef, reportedUserId: data.reportedUid, reason: data.reason },
     });
 
-    res.status(201).json({ success: true, report });
+    res.status(201).json({ success: true, report, reportId: report.id, reportRef: report.reportRef });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: err.errors });

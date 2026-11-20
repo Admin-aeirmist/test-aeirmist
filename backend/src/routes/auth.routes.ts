@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { UserDAL } from '../dal/user.dal';
 import { hashPassword, comparePassword, generateAccessToken, generateRefreshToken } from '../lib/auth';
-import { authenticateToken, AuthenticatedRequest, resolveUserFromCredentials } from '../middleware/auth';
+import { authenticateToken, optionalAuthToken, AuthenticatedRequest, resolveUserFromCredentials } from '../middleware/auth';
 import { authRateLimiter, passwordResetRateLimiter } from '../middleware/rateLimiter';
 import * as crypto from 'crypto';
 import { sendPasswordResetEmail, sendOtpEmail, isMailConfigured } from '../lib/mailer';
@@ -429,7 +429,8 @@ router.post('/login', authRateLimiter, async (req, res: Response) => {
 // 4. Verify Login 2FA Code (Supports "Trust this device" 30-day token)
 router.post('/login/verify-2fa', authRateLimiter, async (req, res: Response) => {
   try {
-    const { tempToken, otp, trustDevice } = req.body;
+    const { tempToken, trustDevice } = req.body;
+    const otp = req.body.otp || req.body.code;
     if (!tempToken || !otp) {
       return res.status(400).json({ error: 'Session token and 6-digit code are required' });
     }
@@ -612,21 +613,60 @@ router.get('/me', authenticateToken, async (req: AuthenticatedRequest, res: Resp
   }
 });
 
-// Refresh / Exchange session for canonical JWT
-router.post('/refresh', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+// Refresh / Exchange session for canonical JWT (Supports active Bearer token OR valid refreshToken in body)
+router.post('/refresh', optionalAuthToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    let targetUserId = req.user?.userId;
+    let targetEmail = req.user?.email;
+    let targetRole = req.user?.role;
+    let rotatedRefreshToken: string | undefined;
+
+    if (!targetUserId && req.body?.refreshToken) {
+      const rt = String(req.body.refreshToken).trim();
+      const { refreshTokens } = await import('../db/schema');
+      const { db: database } = await import('../db');
+      const { eq, gt, and } = await import('drizzle-orm');
+
+      const [found] = await database.select().from(refreshTokens)
+        .where(and(eq(refreshTokens.token, rt), gt(refreshTokens.expiresAt, new Date())))
+        .limit(1);
+
+      if (found) {
+        const u = await UserDAL.findById(found.userId);
+        if (u && !u.isBanned && u.status !== 'BANNED' && u.status !== 'DELETED') {
+          targetUserId = u.id;
+          targetEmail = u.email;
+          targetRole = u.role;
+
+          // Rotate refresh token
+          await database.delete(refreshTokens).where(eq(refreshTokens.id, found.id));
+          rotatedRefreshToken = generateRefreshToken();
+          await database.insert(refreshTokens).values({
+            userId: u.id,
+            token: rotatedRefreshToken,
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          });
+        }
+      }
+    }
+
+    if (!targetUserId || !targetEmail) {
+      return res.status(401).json({ error: 'Authentication required or invalid refresh token' });
+    }
+
     const token = generateAccessToken({
-      userId: req.user!.userId,
-      email: req.user!.email,
-      role: req.user!.role,
+      userId: targetUserId,
+      email: targetEmail,
+      role: targetRole || 'user',
     });
-    const profile = await UserDAL.getProfileByUserId(req.user!.userId);
+    const profile = await UserDAL.getProfileByUserId(targetUserId);
     res.json({
       token,
+      refreshToken: rotatedRefreshToken,
       user: {
-        id: req.user!.userId,
-        email: req.user!.email,
-        role: req.user!.role,
+        id: targetUserId,
+        email: targetEmail,
+        role: targetRole || 'user',
         profile,
       },
     });

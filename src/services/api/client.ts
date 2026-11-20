@@ -72,6 +72,29 @@ export async function getFreshToken(): Promise<string | null> {
     }
   } catch {}
 
+  // 3. Native session auto-refresh via refresh token (seamless, zero-kickout session durability)
+  try {
+    const rt = typeof window !== 'undefined' ? localStorage.getItem('aeirmist_refresh_token') : null;
+    if (rt) {
+      const base = resolveApiBase();
+      const res = await fetch(`${base}/api/v1/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: rt }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.token) {
+          setAuthToken(data.token);
+          if (data.refreshToken) {
+            localStorage.setItem('aeirmist_refresh_token', data.refreshToken);
+          }
+          return data.token;
+        }
+      }
+    }
+  } catch {}
+
   return getAuthToken();
 }
 
@@ -136,6 +159,8 @@ export function setAuthToken(token: string | null): void {
   } else {
     localStorage.removeItem('aeirmist_auth_token');
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('aeirmist_refresh_token');
+    localStorage.removeItem('aeirmist_session_token');
     try {
       const s = localStorage.getItem('aeirmist_session');
       if (s) {
@@ -386,6 +411,11 @@ export const api = {
         if (res && res.token) {
           setAuthToken(res.token);
         }
+        if (res && res.refreshToken) {
+          try {
+            localStorage.setItem('aeirmist_refresh_token', res.refreshToken);
+          } catch {}
+        }
         if (res && res.sessionToken) {
           try {
             localStorage.setItem('aeirmist_session_token', res.sessionToken);
@@ -409,6 +439,11 @@ export const api = {
       }).then(res => {
         if (res && res.token) {
           setAuthToken(res.token);
+        }
+        if (res && res.refreshToken) {
+          try {
+            localStorage.setItem('aeirmist_refresh_token', res.refreshToken);
+          } catch {}
         }
         if (res && res.sessionToken) {
           try {
@@ -466,6 +501,11 @@ export const api = {
         if (res && res.token) {
           setAuthToken(res.token);
         }
+        if (res && res.refreshToken) {
+          try {
+            localStorage.setItem('aeirmist_refresh_token', res.refreshToken);
+          } catch {}
+        }
         if (res && res.sessionToken) {
           try {
             localStorage.setItem('aeirmist_session_token', res.sessionToken);
@@ -493,6 +533,11 @@ export const api = {
       }).then(res => {
         if (res && res.token) {
           setAuthToken(res.token);
+        }
+        if (res && res.refreshToken) {
+          try {
+            localStorage.setItem('aeirmist_refresh_token', res.refreshToken);
+          } catch {}
         }
         if (res && res.trustToken) {
           try {
