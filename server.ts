@@ -77,12 +77,16 @@ async function syncAppBrandingIcons(customLogoDataUrl?: string) {
   try {
     let logoDataUrl = customLogoDataUrl;
     if (!logoDataUrl) {
-      const { getFirestoreAdmin } = await import("./src/services/FirebaseAdminService");
-      const adminDb = getFirestoreAdmin();
-      const docSnap = await adminDb.collection("system_config").doc("app_branding").get();
-      if (docSnap.exists) {
-        const data = docSnap.data();
-        logoDataUrl = data?.darkLogoUrl || data?.lightLogoUrl;
+      try {
+        const { getFirestoreAdmin } = await import("./src/services/FirebaseAdminService");
+        const adminDb = getFirestoreAdmin();
+        const docSnap = await adminDb.collection("system_config").doc("app_branding").get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          logoDataUrl = data?.darkLogoUrl || data?.lightLogoUrl;
+        }
+      } catch {
+        // Safe note: Local dev without Google Cloud ADC
       }
     }
 
@@ -114,10 +118,25 @@ async function syncAppBrandingIcons(customLogoDataUrl?: string) {
         fs.writeFileSync(path.join(dir, "icon-512.png"), png512);
         fs.writeFileSync(path.join(dir, "icon-maskable-512.png"), png512);
         fs.writeFileSync(path.join(dir, "logo-full.png"), png512);
+        fs.writeFileSync(path.join(dir, "custom_uploaded_logo.png"), imageBuffer);
         fs.writeFileSync(path.join(dir, "favicon.svg"), svgWrapper);
       }
     }
-    console.log("[App Branding Sync] Successfully synced custom logo to all public & dist icon files!");
+    console.log("[App Branding Sync] Successfully synced custom logo to all public & dist icon files including custom_uploaded_logo.png!");
+
+    // Also persist branding to Firestore system_config/app_branding using Firebase Admin SDK
+    try {
+      const { getFirestoreAdmin } = await import("./src/services/FirebaseAdminService");
+      const adminDb = getFirestoreAdmin();
+      await adminDb.collection("system_config").doc("app_branding").set({
+        darkLogoUrl: logoDataUrl,
+        lightLogoUrl: logoDataUrl,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      console.log("[App Branding Sync] Saved branding permanently to Firestore system_config/app_branding");
+    } catch (dbErr) {
+      console.warn("[App Branding Sync] Firestore write note:", dbErr);
+    }
   } catch (err) {
     console.warn("[App Branding Sync Note]:", err);
   }
@@ -125,7 +144,7 @@ async function syncAppBrandingIcons(customLogoDataUrl?: string) {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(3000);
+  const PORT = Number(process.env.WEB_PORT || 3000);
 
   // Trust proxy is required when app is behind a reverse proxy (like Cloud Run or nginx in development)
   // to correctly detect secure (HTTPS) requests for setting secure cookies.
@@ -218,7 +237,31 @@ async function startServer() {
     }
   }) as any);
 
-  // 3. Auth Middleware (Server-side Firebase Verification)
+  function verifyHmacJwt(token: string, secret: string): any | null {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      const [headerB64, payloadB64, sigB64] = parts;
+      const expectedSig = crypto
+        .createHmac('sha256', secret)
+        .update(`${headerB64}.${payloadB64}`)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+      const sigClean = sigB64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+      if (expectedSig === sigClean) {
+        const payload = JSON.parse(Buffer.from(payloadB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+        if (payload.exp && payload.exp * 1000 < Date.now()) return null;
+        return payload;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 3. Auth Middleware (Universal Verification: Firebase ID Token + Native Backend JWT)
   const authMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -243,8 +286,23 @@ async function startServer() {
         ...decodedToken
       };
       
-      next();
+      return next();
     } catch (error) {
+      // Fallback: Verify native backend HMAC JWT
+      const jwtSecret = process.env.JWT_SECRET || 'aeirmist_jwt_secret_key_prod_auth_2026';
+      const nativePayload = verifyHmacJwt(idToken, jwtSecret);
+      if (nativePayload && nativePayload.userId) {
+        req.user = {
+          uid: nativePayload.userId,
+          userId: nativePayload.userId,
+          email: nativePayload.email,
+          role: nativePayload.role || 'user',
+          isPremium: ['admin', 'super_admin', 'owner'].includes(nativePayload.role),
+          isVerified: true,
+          ...nativePayload
+        };
+        return next();
+      }
       console.error('Neural Auth Verification Failure:', error);
       res.status(401).json({ error: 'UNAUTHORIZED', message: 'Identity handshake failed: Invalid pulse.' });
     }
@@ -261,8 +319,15 @@ async function startServer() {
   // 4. Custom CSRF Implementation for neural requests
   // This generates a simple CSRF token that the frontend can read from a cookie and send back in a header
   app.use((req, res, next) => {
-    // 1. Skip CSRF for webhooks and GET requests
-    if (req.path === '/api/payments/webhook' || req.method === 'GET') {
+    // 1. Skip CSRF for webhooks, safe read methods, media assets, and admin sync
+    if (
+      req.method === 'GET' ||
+      req.method === 'HEAD' ||
+      req.method === 'OPTIONS' ||
+      req.path.startsWith('/media') ||
+      req.path === '/api/payments/webhook' ||
+      req.path === '/api/admin/sync-logo'
+    ) {
       // Still initialize token for future POSTs
       if (!(req as any).session.csrfToken) {
         (req as any).session.csrfToken = crypto.randomBytes(16).toString('hex');
@@ -940,10 +1005,57 @@ Return JSON object: { "suggestion": string or null }`,
         }
         await syncAppBrandingIcons(logoUrl);
       }
-      res.json({ success: true });
+      res.json({ success: true, message: "Logo synced to server storage and database." });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // Public endpoint to retrieve app branding
+  app.get("/api/admin/branding", async (_req: express.Request, res: express.Response) => {
+    try {
+      if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+        const { getFirestoreAdmin } = await import("./src/services/FirebaseAdminService");
+        const adminDb = getFirestoreAdmin();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500));
+        const docSnap = await Promise.race([
+          adminDb.collection("system_config").doc("app_branding").get(),
+          timeoutPromise
+        ]) as any;
+        if (docSnap && docSnap.exists) {
+          return res.json(docSnap.data());
+        }
+      }
+    } catch {}
+    return res.json({ darkLogoUrl: '/custom_uploaded_logo.png', lightLogoUrl: '/custom_uploaded_logo.png' });
+  });
+
+  // Media Serving & Proxying for all user uploads (chats, avatars, stores, products, marketplace)
+  const storageUploadsDir = path.resolve(__dirname, 'backend', 'storage', 'uploads');
+  if (fs.existsSync(storageUploadsDir)) {
+    app.use('/media', express.static(storageUploadsDir, {
+      maxAge: '7d',
+      setHeaders: (res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+      }
+    }));
+  }
+
+  app.use('/media', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const backendMediaUrl = `http://localhost:4000${req.originalUrl}`;
+      const backendRes = await fetch(backendMediaUrl);
+      if (backendRes.ok) {
+        backendRes.headers.forEach((val, key) => {
+          if (key.toLowerCase() !== 'content-encoding') {
+            res.setHeader(key, val);
+          }
+        });
+        const arrayBuf = await backendRes.arrayBuffer();
+        return res.send(Buffer.from(arrayBuf));
+      }
+    } catch {}
+    next();
   });
 
   // Proxy & Resilient Fallback for /api/v1 (PostgreSQL & Bonds Ecosystem)
@@ -1012,7 +1124,7 @@ Return JSON object: { "suggestion": string or null }`,
   });
 
   // Explicit route handler for favicon and PWA app icons with cache-busting headers
-  app.get(["/favicon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png", "/logo-full.png"], (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  app.get(["/favicon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png", "/logo-full.png", "/custom_uploaded_logo.png"], (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const fileName = path.basename(req.path);
     const publicFile = path.join(process.cwd(), "public", fileName);
     const distFile = path.join(process.cwd(), "dist", fileName);

@@ -152,6 +152,7 @@ app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/stories', storyRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/v1/support', supportRoutes);
 app.use('/api/v1/videos', videoRoutes);
 app.use('/api/v1/notes', notesRoutes);

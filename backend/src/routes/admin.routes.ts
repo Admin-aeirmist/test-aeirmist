@@ -60,6 +60,39 @@ async function resolveTargetUserId(id: string): Promise<string | null> {
   return null;
 }
 
+// ---------------- Branding & Logo Sync ----------------
+router.get('/branding', async (_req, res: Response) => {
+  try {
+    const { redis } = await import('../db/redis');
+    const raw = await redis.get('app_branding');
+    if (raw) {
+      return res.json(JSON.parse(raw));
+    }
+    return res.json({ darkLogoUrl: null, lightLogoUrl: null });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/sync-logo', authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { logoUrl } = req.body;
+    if (!logoUrl || typeof logoUrl !== 'string' || !logoUrl.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'INVALID_LOGO', message: 'Logo must be a valid image data URL.' });
+    }
+    const { redis } = await import('../db/redis');
+    const currentRaw = await redis.get('app_branding');
+    const branding = currentRaw ? JSON.parse(currentRaw) : {};
+    branding.darkLogoUrl = logoUrl;
+    branding.lightLogoUrl = logoUrl;
+    branding.updatedAt = new Date().toISOString();
+    await redis.set('app_branding', JSON.stringify(branding));
+    return res.json({ success: true, message: 'Logo synced and saved to server storage and cache.', branding });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ---------------- 1. Real Platform Stats ----------------
 router.get('/stats', authenticateToken, requireAdmin, async (_req, res: Response) => {
   try {

@@ -553,6 +553,14 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     }), { status: 200, headers: CORS_HEADERS });
   }
 
+  // Branding fallback
+  if (path === "/api/admin/branding" || path === "/api/v1/admin/branding") {
+    return new Response(JSON.stringify({
+      darkLogoUrl: null,
+      lightLogoUrl: null
+    }), { status: 200, headers: CORS_HEADERS });
+  }
+
   // Auth: Register
   // Auth: Register
   if (path === "/api/v1/auth/register" && method === "POST") {

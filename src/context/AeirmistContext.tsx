@@ -617,7 +617,25 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   });
 
   useEffect(() => {
-    if (!_db) return;
+    const fetchFromServer = () => {
+      fetch('/api/admin/branding')
+        .then(res => res.json())
+        .then(data => {
+          if (data && (data.darkLogoUrl || data.lightLogoUrl)) {
+            setAppBranding(prev => ({ ...prev, ...data }));
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('aeirmist_app_branding', JSON.stringify(data));
+            }
+          }
+        })
+        .catch(() => {});
+    };
+
+    if (!_db) {
+      fetchFromServer();
+      return;
+    }
+
     const brandingRef = doc(_db, 'system_config', 'app_branding');
     getDoc(brandingRef).then(snap => {
       if (snap.exists()) {
@@ -626,9 +644,12 @@ export const AeirmistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (typeof window !== 'undefined') {
           localStorage.setItem('aeirmist_app_branding', JSON.stringify(data));
         }
+      } else {
+        fetchFromServer();
       }
     }).catch(err => {
       logger.warn("App branding fetch notice:", err);
+      fetchFromServer();
     });
   }, []);
 

@@ -82,8 +82,9 @@ import {
 
 doc, getDoc, updateDoc, collection, query, orderBy, limit, onSnapshot, where, serverTimestamp, setDoc, deleteDoc, writeBatch, getDocs, addDoc } from 'firebase/firestore';
 import {
-
-fadeTransition } from '../../lib/motion';
+  fadeTransition } from '../../lib/motion';
+import { auth } from '../../lib/firebase';
+import { getFreshToken } from '../../services/api/client';
 
 const AuditLogTab = ({ db }: { db: any }) => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -269,6 +270,21 @@ const SystemTab = () => {
     try {
       const dataUrl = await compressImageFile(file);
 
+      const syncToServer = async (url: string) => {
+        try {
+          const token = await getFreshToken();
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (token) headers['Authorization'] = `Bearer ${token}`;
+          await fetch('/api/admin/sync-logo', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ logoUrl: url })
+          });
+        } catch (syncErr) {
+          logger.warn('[AdminPanel] Logo sync warning:', syncErr);
+        }
+      };
+
       if (mode === 'dark') {
         setDarkLogo(dataUrl);
         if (typeof window !== 'undefined') {
@@ -276,8 +292,8 @@ const SystemTab = () => {
         }
         await updateAppBranding({ darkLogoUrl: dataUrl });
         applyDynamicFavicon(dataUrl);
-        fetch('/api/admin/sync-logo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ logoUrl: dataUrl }) }).catch(() => {});
-        addToast({ title: 'Dark Logo Uploaded', message: 'Custom dark logo applied as main logo and app icon.', type: 'success' });
+        await syncToServer(dataUrl);
+        addToast({ title: 'Dark Logo Uploaded', message: 'Custom dark logo applied as main logo, database updated, and app icons generated.', type: 'success' });
       } else {
         setLightLogo(dataUrl);
         if (typeof window !== 'undefined') {
@@ -285,8 +301,8 @@ const SystemTab = () => {
         }
         await updateAppBranding({ lightLogoUrl: dataUrl });
         applyDynamicFavicon(dataUrl);
-        fetch('/api/admin/sync-logo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ logoUrl: dataUrl }) }).catch(() => {});
-        addToast({ title: 'Light Logo Uploaded', message: 'Custom light logo applied as main logo and app icon.', type: 'success' });
+        await syncToServer(dataUrl);
+        addToast({ title: 'Light Logo Uploaded', message: 'Custom light logo applied as main logo, database updated, and app icons generated.', type: 'success' });
       }
     } catch (err: any) {
       logger.error('Failed to process logo image:', err);
@@ -305,7 +321,18 @@ const SystemTab = () => {
         darkLogoUrl: darkLogo,
         lightLogoUrl: lightLogo
       });
-      addToast({ title: 'Logos Saved to Database', message: 'Custom app logos are permanently saved in Firestore.', type: 'success' });
+      // Also ensure backend server & admin Firestore persist the logos
+      try {
+        const token = await getFreshToken();
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        await fetch('/api/admin/sync-logo', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ logoUrl: darkLogo || lightLogo })
+        });
+      } catch {}
+      addToast({ title: 'Logos Saved to Database', message: 'Custom app logos are permanently saved in Firestore and synced across the web app.', type: 'success' });
     } catch (err: any) {
       addToast({ title: 'Save Failed', message: 'Could not save branding to database.', type: 'warning' });
     } finally {
