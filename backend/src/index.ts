@@ -53,6 +53,8 @@ app.use(cors({
       parsedHost === 'www.aeirmist.com' ||
       parsedHost.endsWith('.aeirmist.com') ||
       parsedHost === 'aeirmist-f0m.pages.dev' ||
+      parsedHost.endsWith('.aeirmist-f0m.pages.dev') ||
+      parsedHost.endsWith('.pages.dev') ||
       parsedHost === 'localhost' ||
       parsedHost === '127.0.0.1' ||
       origin.startsWith('capacitor://');

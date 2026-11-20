@@ -498,6 +498,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
   try {
     const upstreamUrl = `${UPSTREAM_API_URL}${url.pathname}${url.search}`;
     const proxyHeaders = new Headers(request.headers);
+    proxyHeaders.delete("host");
     proxyHeaders.set("X-Forwarded-Host", url.hostname);
     proxyHeaders.set("X-Forwarded-Proto", "https");
 
@@ -505,6 +506,7 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
       method,
       headers: proxyHeaders,
       redirect: "follow",
+      signal: AbortSignal.timeout(20000),
     };
 
     if (method !== "GET" && method !== "HEAD") {
@@ -512,7 +514,8 @@ export const onRequest = async (context: { request: Request; env: Env; params: {
     }
 
     const upstreamResponse = await fetch(upstreamUrl, reqInit);
-    if (upstreamResponse.status !== 502 && upstreamResponse.status !== 503) {
+    const isCloudflareGatewayError = [502, 503, 504, 520, 521, 522, 523, 524, 525, 526].includes(upstreamResponse.status);
+    if (!isCloudflareGatewayError) {
       const respHeaders = new Headers(upstreamResponse.headers);
       Object.entries(CORS_HEADERS).forEach(([k, v]) => respHeaders.set(k, v));
       return new Response(upstreamResponse.body, {
