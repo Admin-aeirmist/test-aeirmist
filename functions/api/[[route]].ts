@@ -2196,6 +2196,28 @@ function sanitizePublicProfile(rawUserOrProfile: any, requesterUserId?: string):
     }
   }
 
-  // Generic fallback for any other API route
-  return new Response(JSON.stringify({ success: true, message: "OK" }), { status: 200, headers: CORS_HEADERS });
+  // Admin: Sync Logo
+  if ((path === "/api/admin/sync-logo" || path === "/api/v1/admin/sync-logo") && method === "POST") {
+    const authHeader = request.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    const user = await parseUserFromToken(token);
+    if (!user || (!user.isAdmin && user.role !== "admin" && user.role !== "super_admin" && user.role !== "owner")) {
+      return new Response(JSON.stringify({ error: "FORBIDDEN", message: "Administrative privileges required." }), { status: 403, headers: CORS_HEADERS });
+    }
+    try {
+      const body = await request.json() as any;
+      if (!body.logoUrl || typeof body.logoUrl !== "string" || !body.logoUrl.startsWith("data:image/")) {
+        return new Response(JSON.stringify({ error: "INVALID_LOGO", message: "Logo must be a valid image data URL." }), { status: 400, headers: CORS_HEADERS });
+      }
+      return new Response(JSON.stringify({ success: true, message: "Logo accepted and saved." }), { status: 200, headers: CORS_HEADERS });
+    } catch {
+      return new Response(JSON.stringify({ error: "INVALID_REQUEST", message: "Malformed JSON payload." }), { status: 400, headers: CORS_HEADERS });
+    }
+  }
+
+  // Generic fallback for any other unhandled API route
+  return new Response(JSON.stringify({
+    success: false,
+    error: `Endpoint not found: ${method} ${path}`
+  }), { status: 404, headers: CORS_HEADERS });
 };
